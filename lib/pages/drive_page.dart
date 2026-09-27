@@ -8,16 +8,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show HardwareKeyboard, KeyEvent, KeyDownEvent, LogicalKeyboardKey;
 
-import '../drive_downloader.dart';
-import '../drive_service.dart';
-import '../widgets/common.dart';
+import '../../drive_api_service.dart';
+import '../../drive_base.dart';
+import '../../drive_downloader.dart';
+import '../../image_memory.dart';
+import '../../widgets/common.dart';
 
 /// Página "Archivos": drive estilo Google Drive con selección múltiple,
 /// arrastrar-y-soltar y operaciones en lote (mover, copiar, eliminar).
 class DrivePage extends StatefulWidget {
   const DrivePage({super.key, required this.drive});
 
-  final DriveService drive;
+  final DriveBase drive;
 
   @override
   State<DrivePage> createState() => _DrivePageState();
@@ -46,8 +48,6 @@ class _DrivePageState extends State<DrivePage> {
   // ---- "Suelta para subir": arrastre externo desde el explorador ----
   bool _externalDrag = false;
   final _scrollController = ScrollController();
-  // Subidas recientes (registro estilo Drive: tarjeta con barras).
-  final List<({String path, int size, DateTime at})> _recentUploads = [];
   // Copiar/pegar estilo explorador (Ctrl+C / Ctrl+V).
   List<String> _clipboardNames = const [];
 
@@ -124,12 +124,14 @@ class _DrivePageState extends State<DrivePage> {
   void _onChange() {
     if (!mounted) return;
     if (_lastPath.join('/') != widget.drive.path.join('/')) {
-      // Cambio de carpeta: limpia selección, ancla y claves de elementos.
+      // Cambio de carpeta: limpia selección, ancla, claves y RAM de imágenes
+      // (las miniaturas de la carpeta anterior ya no son visibles).
       _lastPath = List.of(widget.drive.path);
       _itemKeys.clear();
       _selected.clear();
       _selectMode = false;
       _anchorIndex = -1;
+      ImageMemory.clearRam();
     }
     setState(() {});
   }
@@ -316,12 +318,13 @@ class _DrivePageState extends State<DrivePage> {
     });
   }
 
-  /// Ejecuta una acción de la barra de selección reportando errores.
-  Future<void> _guarded(Future<void> Function() action) async {
+  /// Ejecuta una acción reportando errores; devuelve null si falló.
+  Future<T?> _guarded<T>(Future<T> Function() action) async {
     try {
-      await action();
+      return await action();
     } catch (e) {
       _snack('Error: $e', error: true);
+      return null;
     }
   }
 
@@ -342,120 +345,10 @@ class _DrivePageState extends State<DrivePage> {
           error: true);
       return;
     }
-    final saved = await widget.drive.uploadFromPaths(paths);
-    setState(() {
-      for (final p in paths.take(saved)) {
-        final f = File(p);
-        _recentUploads.insert(
-          0,
-          (
-            path: p,
-            size: f.existsSync() ? f.lengthSync() : 0,
-            at: DateTime.now(),
-          ),
-        );
-      }
-      if (_recentUploads.length > 12) {
-        _recentUploads.removeRange(12, _recentUploads.length);
-      }
-    });
+    final saved = await _guarded(
+        () => widget.drive.uploadFromPaths(paths));
+    if (saved == null) return; // el error ya se mostró
     _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"');
-  }
-
-  /// Tarjeta flotante estilo Drive con el registro de subidas.
-  Widget? get _recentUploadsPanel {
-    if (_recentUploads.isEmpty) return null;
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-          MediaQuery.sizeOf(context).width < 620 ? 14 : 24, 10,
-          MediaQuery.sizeOf(context).width < 620 ? 14 : 24, 0),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Material(
-          elevation: 10,
-          shadowColor: Colors.black.withValues(alpha: .25),
-          borderRadius: BorderRadius.circular(16),
-          color: scheme.surface,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420, maxHeight: 260),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.cloud_done_outlined,
-                          size: 18, color: scheme.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '${_recentUploads.length} subida${_recentUploads.length == 1 ? '' : 's'} completada${_recentUploads.length == 1 ? '' : 's'}',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Cerrar',
-                        onPressed: () => setState(_recentUploads.clear),
-                        icon: const Icon(Icons.close, size: 18),
-                      ),
-                    ],
-                  ),
-                ),
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: _recentUploads.length,
-                    itemBuilder: (context, i) {
-                      final u = _recentUploads[i];
-                      return ListTile(
-                        dense: true,
-                        minLeadingWidth: 0,
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.file(
-                            File(u.path),
-                            width: 40,
-                            height: 40,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Container(
-                              width: 40,
-                              height: 40,
-                              color: scheme.surfaceContainerHighest,
-                              child:
-                                  const Icon(Icons.image_outlined, size: 20),
-                            ),
-                          ),
-                        ),
-                        title: Text(
-                          u.path.split(Platform.pathSeparator).last,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          '${_sizeLabel(u.size)} · subida #${_recentUploads.length - i}',
-                          style: TextStyle(
-                              fontSize: 11.5,
-                              color: scheme.onSurfaceVariant),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   // ==================== Mensajes ====================
@@ -1001,8 +894,6 @@ class _DrivePageState extends State<DrivePage> {
                   child: _Breadcrumbs(drive: drive, onDropMove: _doMove),
                 ),
               ),
-            // ===== Subidas recientes (si hay) =====
-            ?_recentUploadsPanel,
             // ===== Accesos rápidos (solo raíz) =====
             if (drive.path.isEmpty &&
                 !drive.loading &&
@@ -1236,15 +1127,24 @@ class _DrivePageState extends State<DrivePage> {
                   () => _deleteItems(_selected.toList())),
             ),
           ),
-        // ===== Tarjeta FIJA de subidas recientes (arriba a la derecha) =====
-        Positioned(
-          top: 6,
-          right: hPad,
-          child: IgnorePointer(
-            ignoring: _recentUploads.isEmpty,
-            child: _recentUploadsPanel ?? const SizedBox.shrink(),
+        // ===== Overlay de operación en curso (carga global) =====
+        // ===== Carga NO bloqueante: subidas estilo Drive =====
+        // (las subidas usan su propio panel con progreso por archivo;
+        //  las demás operaciones muestran un spinner discreto, sin velo)
+        if (drive.busy != DriveBusy.none &&
+            drive.busy != DriveBusy.uploading)
+          Positioned(
+            top: 6,
+            left: hPad,
+            child: _BusyChip(label: drive.busyLabel),
           ),
-        ),
+        // ===== Panel de subidas estilo Drive (arriba a la derecha) =====
+        if (drive.uploadJobs.isNotEmpty)
+          Positioned(
+            top: 6,
+            right: hPad,
+            child: _UploadsCard(drive: drive),
+          ),
       ],
       ),
       ),
@@ -1459,7 +1359,7 @@ class _BarAction extends StatelessWidget {
 class _Breadcrumbs extends StatelessWidget {
   const _Breadcrumbs({required this.drive, required this.onDropMove});
 
-  final DriveService drive;
+  final DriveBase drive;
   final void Function(List<String> names, List<String> targetPath) onDropMove;
 
   @override
@@ -1582,7 +1482,7 @@ class _GridContent extends StatelessWidget {
     required this.scrollController,
   });
 
-  final DriveService drive;
+  final DriveBase drive;
   final bool compact;
   final Set<String> selected;
   final bool selectMode;
@@ -1661,7 +1561,7 @@ class _GridItem extends StatelessWidget {
   });
 
   final DriveItem item;
-  final DriveService drive;
+  final DriveBase drive;
   final bool isSelected;
   final bool selectMode;
   final VoidCallback onOpen;
@@ -2000,7 +1900,7 @@ class _ImageCard extends StatelessWidget {
   });
 
   final DriveItem item;
-  final DriveService drive;
+  final DriveBase drive;
   final VoidCallback onOpen;
   final VoidCallback onLongPress;
   final VoidCallback onRename;
@@ -2009,7 +1909,7 @@ class _ImageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final path = drive.absolutePathOf(item);
+    final src = drive.thumbSource(item, width: 480);
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
@@ -2026,12 +1926,11 @@ class _ImageCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.file(
-                      File(path),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const Center(
-                        child: Icon(Icons.broken_image_outlined, size: 32),
-                      ),
+                    _DriveThumb(
+                      source: src,
+                      isRemote: drive is DriveApiService,
+                      size: double.infinity,
+                      big: true,
                     ),
                     Positioned(
                       top: 6,
@@ -2156,7 +2055,7 @@ class _ListContent extends StatelessWidget {
     required this.scrollController,
   });
 
-  final DriveService drive;
+  final DriveBase drive;
   final bool compact;
   final Set<String> selected;
   final bool selectMode;
@@ -2261,7 +2160,7 @@ class _ListRow extends StatelessWidget {
   });
 
   final DriveItem item;
-  final DriveService drive;
+  final DriveBase drive;
   final bool compact;
   final bool isSelected;
   final bool selectMode;
@@ -2306,7 +2205,7 @@ class _ListRow extends StatelessWidget {
 
   Widget _row(ColorScheme scheme, BuildContext context,
       {bool hovering = false}) {
-    final path = drive.absolutePathOf(item);
+    final src = drive.thumbSource(item, width: 120);
     return InkWell(
       onTap: onTapSelect,
       onLongPress: onLongPress,
@@ -2343,13 +2242,10 @@ class _ListRow extends StatelessWidget {
                       )
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: Image.file(
-                          File(path),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const Icon(
-                            Icons.image_outlined,
-                            size: 22,
-                          ),
+                        child: _DriveThumb(
+                          source: src,
+                          isRemote: drive is DriveApiService,
+                          size: 40,
                         ),
                       ),
               ),
@@ -2451,7 +2347,7 @@ class _ImageViewerDialog extends StatefulWidget {
     required this.initialIndex,
   });
 
-  final DriveService drive;
+  final DriveBase drive;
   final List<DriveItem> images;
   final int initialIndex;
 
@@ -2465,12 +2361,91 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   void _move(int delta) {
     final next = (_index + delta) % widget.images.length;
     setState(() => _index = next < 0 ? next + widget.images.length : next);
+    _preloadNeighbors();
+    _loadFull();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Precarga las fotos vecinas para navegar sin esperas.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _preloadNeighbors();
+      _loadFull();
+    });
+  }
+
+  @override
+  void dispose() {
+    // Al cerrar el visor: fuera el original de RAM (queda en caché de disco).
+    final isRemote = widget.drive is DriveApiService;
+    if (isRemote) {
+      final api = widget.drive as DriveApiService;
+      ImageMemory.evict(api.absolutePathOf(widget.images[_index]));
+    } else {
+      PaintingBinding.instance.imageCache.clear();
+    }
+    super.dispose();
+  }
+
+  // ---- Original por chunks detrás del preview ----
+  File? _fullFile;
+  double _fullProgress = 0;
+  bool _fullLoading = false;
+  String _fullKey = '';
+
+  Future<void> _loadFull() async {
+    final item = widget.images[_index];
+    if (item.isFolder || widget.drive is! DriveApiService) return;
+    final api = widget.drive as DriveApiService;
+    final key = api.absolutePathOf(item);
+    if (_fullKey == key && _fullFile != null) return; // ya está
+    _fullKey = key;
+    _fullLoading = true;
+    _fullProgress = 0;
+    _fullFile = null;
+    if (mounted) setState(() {});
+    try {
+      final f = await api.fetchOriginalChunked(item, onProgress: (p) {
+        if (!mounted || key != _fullKey) return;
+        _fullProgress = p;
+        setState(() {});
+      });
+      if (!mounted || key != _fullKey) return;
+      setState(() {
+        _fullFile = f;
+        _fullLoading = false;
+      });
+    } catch (_) {
+      // El preview sigue siendo visible; el original es opcional.
+      if (mounted && key == _fullKey) {
+        setState(() => _fullLoading = false);
+      }
+    }
+  }
+
+  /// Baja a caché de red los previews (1600px) de la foto actual ±2.
+  void _preloadNeighbors() {
+    if (widget.drive is! DriveApiService) return;
+    final api = widget.drive as DriveApiService;
+    for (var d = -2; d <= 2; d++) {
+      final i = (_index + d) % widget.images.length;
+      if (i < 0) continue;
+      final item = widget.images[i];
+      if (item.isFolder) continue;
+      precacheImage(
+        NetworkImage(api.fullSource(item, previewWidth: 1600)),
+        context,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final item = widget.images[_index];
-    final path = widget.drive.absolutePathOf(item);
+    final isRemote = widget.drive is DriveApiService;
+    // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original.
+    final src = widget.drive.fullSource(item, previewWidth: 1600);
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(16),
@@ -2482,20 +2457,51 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
             child: InteractiveViewer(
               maxScale: 5,
               child: Center(
-                child: Image.file(
-                  File(path),
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, _, _) => const Center(
-                    child: Icon(
-                      Icons.broken_image_outlined,
-                      color: Colors.white70,
-                      size: 48,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // 1) Preview ligero: se ve AL INSTANTE.
+                    _DriveThumb(
+                      source: src,
+                      isRemote: isRemote,
+                      size: double.infinity,
+                      big: true,
+                      contain: true,
                     ),
-                  ),
+                    // 2) Original por chunks: aparece encima (nítido) al
+                    //    completar, con transición suave.
+                    if (_fullFile != null)
+                      Image.file(
+                        _fullFile!,
+                        fit: BoxFit.contain,
+                        frameBuilder: (c, child, frame, sync) =>
+                            AnimatedOpacity(
+                          opacity: frame == null ? 0 : 1,
+                          duration: const Duration(milliseconds: 250),
+                          child: child,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
           ),
+          // Progreso discreto de la descarga del original.
+          if (_fullLoading)
+            Positioned(
+              left: 40,
+              right: 40,
+              bottom: 14,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _fullProgress > 0 ? _fullProgress : null,
+                  minHeight: 4,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation(Colors.white70),
+                ),
+              ),
+            ),
           Positioned(
             top: 8,
             right: 8,
@@ -2562,6 +2568,276 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
           ],
         ],
       ),
+    );
+  }
+}
+
+// ===================== Subidas estilo Drive (progreso por archivo) =====================
+
+/// Chip discreto para operaciones que no son subida (mover, copiar, etc.).
+class _BusyChip extends StatelessWidget {
+  const _BusyChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: .2),
+      borderRadius: BorderRadius.circular(24),
+      color: scheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Panel flotante estilo Google Drive: cada archivo sube INDEPENDIENTE,
+/// con miniatura, barra de progreso y % — sin bloquear la pantalla.
+class _UploadsCard extends StatelessWidget {
+  const _UploadsCard({required this.drive});
+
+  final DriveBase drive;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final jobs = drive.uploadJobs;
+    final active = jobs.where((j) => j.status == 'uploading').length;
+    return Material(
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: .25),
+      borderRadius: BorderRadius.circular(16),
+      color: scheme.surface,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380, maxHeight: 340),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
+              child: Row(
+                children: [
+                  Icon(
+                    active > 0
+                        ? Icons.cloud_upload_outlined
+                        : Icons.cloud_done_outlined,
+                    size: 18,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      active > 0
+                          ? 'Subiendo $active archivo${active == 1 ? '' : 's'}…'
+                          : '${jobs.length} subida${jobs.length == 1 ? '' : 's'} completada${jobs.length == 1 ? '' : 's'}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  if (active == 0)
+                    IconButton(
+                      tooltip: 'Limpiar',
+                      onPressed: drive.clearFinishedUploads,
+                      icon: const Icon(Icons.close, size: 18),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: jobs.length,
+                itemBuilder: (context, i) {
+                  final job = jobs[i];
+                  final pct = job.total > 0
+                      ? (job.sent / job.total).clamp(0.0, 1.0)
+                      : null;
+                  return Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    child: Row(
+                      children: [
+                        _DriveThumb(
+                          source: job.thumb,
+                          isRemote: false, // miniatura del archivo LOCAL
+                          size: 42,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                job.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              if (job.status == 'uploading')
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: LinearProgressIndicator(
+                                          value: pct,
+                                          minHeight: 4,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      pct == null
+                                          ? '…'
+                                          : '${(pct * 100).toStringAsFixed(0)}%',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: scheme.primary,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else if (job.status == 'done')
+                                Row(
+                                  children: [
+                                    Icon(Icons.check_circle,
+                                        size: 14, color: scheme.primary),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      _sizeLabel(job.total),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else
+                                Expanded(
+                                  child: Text(
+                                    'Error: ${job.error ?? 'desconocido'}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.error,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Miniatura que resuelve local (File) o remota (Image.network) según el drive.
+/// Decodifica a baja resolución (cacheWidth/cacheHeight) para listar rápido.
+class _DriveThumb extends StatelessWidget {
+  const _DriveThumb({
+    required this.source,
+    required this.isRemote,
+    this.size = 40,
+    this.big = false,
+    this.contain = false,
+  });
+
+  final String source;
+  final bool isRemote;
+  final double size;
+  final bool big;
+  final bool contain;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final ImageErrorWidgetBuilder error = big
+        ? (_, _, _) => const Center(
+              child: Icon(Icons.broken_image_outlined, size: 40),
+            )
+        : (_, _, _) => Icon(
+              Icons.image_outlined,
+              size: size * .5,
+              color: scheme.onSurfaceVariant,
+            );
+    final fit = contain ? BoxFit.contain : BoxFit.cover;
+    // Resolución de decodificación: miniaturas pequeñas; visor usa todo.
+    final cachePx = big ? null : (size * dpr).round();
+    Widget image;
+    if (isRemote) {
+      image = Image.network(
+        source,
+        width: big ? null : size,
+        height: big ? null : size,
+        fit: fit,
+        cacheWidth: cachePx,
+        errorBuilder: error,
+        frameBuilder: (c, child, frame, sync) => frame == null
+            ? Center(
+                child: SizedBox(
+                  width: big ? 26 : size * .35,
+                  height: big ? 26 : size * .35,
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : child,
+      );
+    } else {
+      image = Image.file(
+        File(source),
+        width: big ? null : size,
+        height: big ? null : size,
+        fit: fit,
+        cacheWidth: cachePx,
+        errorBuilder: error,
+      );
+    }
+    if (big) return ClipRRect(borderRadius: BorderRadius.circular(13), child: image);
+    return Container(
+      width: size,
+      height: size,
+      color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+      child: image,
     );
   }
 }

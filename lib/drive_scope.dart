@@ -1,23 +1,23 @@
 import 'package:flutter/widgets.dart';
 
-import 'drive_service.dart';
+import 'drive_base.dart';
 
-/// Provee el [DriveService] único de la app a todo el árbol de widgets.
-class DriveScope extends InheritedNotifier<DriveService> {
+/// Provee el drive (local o remoto) único de la app a todo el árbol.
+class DriveScope extends InheritedNotifier<DriveBase> {
   const DriveScope({
     super.key,
-    required DriveService drive,
+    required DriveBase drive,
     required super.child,
   }) : super(notifier: drive);
 
-  static DriveService of(BuildContext context) {
+  static DriveBase of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<DriveScope>();
     assert(scope != null, 'DriveScope no encontrado en el árbol');
     return scope!.notifier!;
   }
 
   /// Igual que [of] pero null-safe (para saber si ya hay uno arriba).
-  static DriveService? maybeOf(BuildContext context) {
+  static DriveBase? maybeOf(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<DriveScope>();
     return scope?.notifier;
   }

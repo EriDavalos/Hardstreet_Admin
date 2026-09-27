@@ -1,12 +1,25 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
+import 'drive_api_service.dart';
+import 'drive_base.dart';
 import 'drive_scope.dart';
-import 'drive_service.dart';
+import 'image_memory.dart';
 import 'pages/admin_pages.dart';
+import 'pages/connection_page.dart';
 import 'pages/drive_page.dart';
 import 'pages/login_page.dart';
 import 'theme.dart';
+import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
+import 'widgets/force_update_dialog.dart';
+
+/// Versión de esta build — mantenla sincronizada con pubspec.yaml.
+const String kAppVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '1.0.0',
+);
 
 void main() {
   runApp(const HardStreetAdminApp());
@@ -24,8 +37,36 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   bool _loggedIn = false;
 
   /// Reutiliza un DriveScope heredado si existe (útil en tests);
-  /// si no, crea el servicio real de la app.
-  DriveService? _injectedDrive;
+  /// si no, crea el cliente del drive remoto (192.168.1.72:4000).
+  DriveBase? _injectedDrive;
+
+  @override
+  void initState() {
+    super.initState();
+    // Límites de RAM para imágenes + poda del caché de chunks en disco.
+    ImageMemory.configure();
+    ImageMemory.pruneDiskCache();
+  }
+
+  /// Al entrar al panel: valida versión y bloquea si es obsoleta.
+  Future<void> _onLogin() async {
+    final info = await VersionChecker(_ownedDrive.base).check();
+    final current = kAppVersion;
+    if (info != null && info.isOutdated(current)) {
+      final plat = Platform.isAndroid ? 'android' : 'windows';
+      if (!mounted) return;
+      await ForceUpdateDialog.show(
+        context,
+        currentVersion: current,
+        requiredVersion: info.minVersion,
+        notes: info.notes,
+        downloadUrl:
+            info.downloads[plat] ?? info.downloads.values.first,
+      );
+      return; // NO entra al panel
+    }
+    setState(() => _loggedIn = true);
+  }
 
   @override
   void didChangeDependencies() {
@@ -50,17 +91,25 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
                 onToggleTheme: () => setState(() => _dark = !_dark),
                 onLogout: () => setState(() => _loggedIn = false),
               )
-            : LoginPage(onLogin: () => setState(() => _loggedIn = true)),
+            : LoginPage(onLogin: _onLogin),
       ),
     );
   }
 
-  DriveService? _ownedDriveInstance;
-  DriveService get _ownedDrive => _ownedDriveInstance ??= DriveService();
+  DriveApiService? _ownedDriveInstance;
+  DriveApiService get _ownedDrive => _ownedDriveInstance ??= DriveApiService();
 }
 
 /// Índices de las secciones del panel.
-enum _Section { dashboard, drive, users, clients, settings, reports }
+enum _Section {
+  dashboard,
+  drive,
+  connection,
+  users,
+  clients,
+  settings,
+  reports,
+}
 
 class AdminHome extends StatefulWidget {
   const AdminHome({
@@ -82,7 +131,7 @@ class _AdminHomeState extends State<AdminHome> {
   _Section _section = _Section.drive;
   bool _sidebarOpen = false;
 
-  DriveService get _drive => DriveScope.of(context);
+  DriveBase get _drive => DriveScope.of(context);
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +147,11 @@ class _AdminHomeState extends State<AdminHome> {
         icon: Icons.folder_copy_outlined,
         label: 'Archivos',
         header: 'Operación',
+      ),
+      AdminDestination(
+        icon: Icons.lan_outlined,
+        label: 'Conexión',
+        header: AdminDestination.headerNone,
       ),
       AdminDestination(
         icon: Icons.people_alt_outlined,
@@ -124,6 +178,7 @@ class _AdminHomeState extends State<AdminHome> {
     final titles = {
       _Section.dashboard: 'Dashboard',
       _Section.drive: 'Archivos',
+      _Section.connection: 'Conexión',
       _Section.users: 'Usuarios',
       _Section.clients: 'Clientes',
       _Section.settings: 'Configuraciones',
@@ -138,17 +193,14 @@ class _AdminHomeState extends State<AdminHome> {
       case _Section.drive:
         body = DrivePage(drive: _drive);
         break;
+      case _Section.connection:
+        body = ConnectionPage(driveApi: _drive as DriveApiService);
+        break;
       case _Section.users:
-        body = ComingSoonPage(
-          title: 'Usuarios',
-          section: adminSections[0],
-        );
+        body = ComingSoonPage(title: 'Usuarios', section: adminSections[0]);
         break;
       case _Section.clients:
-        body = ComingSoonPage(
-          title: 'Clientes',
-          section: adminSections[1],
-        );
+        body = ComingSoonPage(title: 'Clientes', section: adminSections[1]);
         break;
       case _Section.settings:
         body = ComingSoonPage(
@@ -157,10 +209,7 @@ class _AdminHomeState extends State<AdminHome> {
         );
         break;
       case _Section.reports:
-        body = ComingSoonPage(
-          title: 'Reportes',
-          section: adminSections[3],
-        );
+        body = ComingSoonPage(title: 'Reportes', section: adminSections[3]);
         break;
     }
 
