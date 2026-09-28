@@ -1,7 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../app_platform.dart';
 
 /// Ventana OBLIGATORIA de actualización: no se puede cerrar ni desplegar
 /// detrás. Ofrece la descarga según el dispositivo (.exe / .apk).
@@ -46,7 +46,7 @@ class ForceUpdateDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isAndroid = Platform.isAndroid;
+    final isAndroid = isAndroidPlatform; // false en web
     return PopScope(
       canPop: false,
       child: Dialog(
@@ -102,12 +102,23 @@ class ForceUpdateDialog extends StatelessWidget {
               ],
               const SizedBox(height: 22),
               FilledButton.icon(
-                onPressed: () => launchUrl(Uri.parse(downloadUrl)),
+                onPressed: downloadUrl.isEmpty
+                    ? null
+                    : () =>
+                        launchUrl(Uri.parse(downloadUrl), mode: LaunchMode.externalApplication),
                 icon: const Icon(Icons.download_rounded),
                 label: Text(isAndroid
                     ? 'Descargar actualización (.apk)'
                     : 'Descargar actualización (.exe)'),
               ),
+              if (downloadUrl.isEmpty)
+                Text(
+                  'El servidor no publicó el enlace de descarga aún.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.error,
+                  ),
+                ),
               const SizedBox(height: 6),
               Text(
                 'Descarga e instala la nueva versión para volver a entrar.',

@@ -168,5 +168,36 @@ void main() {
       expect(res.errors, isEmpty);
       expect(drive.items, isEmpty);
     });
+
+    test('uploadFromPaths crea uploadJobs con conteo y estados correctos',
+        () async {
+      var notified = 0;
+      drive.addListener(() => notified++);
+
+      final saved = await drive
+          .uploadFromPaths([srcFile('a.jpg', [1]).path,
+                            srcFile('b.jpg', [2, 3]).path]);
+      expect(saved, 2);
+
+      // Hubo notificaciones en tiempo real (add, progreso y/o fin).
+      expect(notified, greaterThanOrEqualTo(2));
+      // Al terminar: 2 trabajos, ambos 'done' y con sent = total.
+      expect(drive.uploadJobs.length, 2);
+      expect(
+        drive.uploadJobs.every((j) => j.status == 'done'),
+        isTrue,
+        reason: 'todos los jobs deben terminar en done',
+      );
+      for (final j in drive.uploadJobs) {
+        expect(j.sent, j.total,
+            reason: 'el progreso de ${j.name} debe llegar al 100%');
+      }
+      final done =
+          drive.uploadJobs.where((j) => j.status == 'done').length;
+      final active =
+          drive.uploadJobs.where((j) => j.status == 'uploading').length;
+      expect(done, 2);
+      expect(active, 0);
+    });
   });
 }

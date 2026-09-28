@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permiso de INTERNET: la app se conecta al API del drive (192.168.x.x / DDNS). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- HTTP plano: el servidor usa http:// (sin TLS). Quitar al pasar a HTTPS. -->
     <application
-        android:label="hardstreet_admin"
+        android:usesCleartextTraffic="true"
+        android:label="Hardstreet Admin"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

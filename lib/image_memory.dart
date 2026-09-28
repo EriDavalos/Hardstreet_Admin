@@ -1,6 +1,8 @@
-import 'dart:io';
+import 'dart:io' if (dart.library.io) 'dart:io';
 
 import 'package:flutter/painting.dart';
+
+import 'app_platform.dart';
 
 /// Gestión de memoria para imágenes: liberación de caché y poda de disco.
 class ImageMemory {
@@ -31,7 +33,9 @@ class ImageMemory {
 
   /// Borra el caché de chunks del visor en disco (archivos .part incluidos),
   /// dejando solo los más recientes. Llamar al iniciar la app.
+  /// (Solo entornos nativos: en web no hay caché de disco ni dart:io.)
   static Future<void> pruneDiskCache({int keep = 40}) async {
+    if (kWeb) return;
     try {
       final dir = Directory(
         [Directory.systemTemp.path, 'hardstreet_cache']

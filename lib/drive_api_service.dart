@@ -6,25 +6,39 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'app_constants.dart';
 import 'drive_base.dart';
+import 'hs_api.dart';
 
 export 'drive_base.dart'
     show DriveItem, kImageExtensions, DriveConn, DriveBusy, DriveUploadJob;
 
 /// Cliente del drive remoto (Node/Express en 192.168.1.72:4000).
 /// Mantiene la MISMA interfaz que [DriveService] para que la UI no cambie.
+///
+/// AUTORIZACIÓN: todas las peticiones llevan `Apikey: <token de sesión>`.
+/// El servidor del drive verifica el token (mismo JWT_SECRET que el CRUD)
+/// y comprueba en la BD que el usuario tenga el permiso de la acción
+/// (ver/crear/editar/eliminar/descargar). Sin token el servidor puede
+/// rechazar la petición (según su configuración).
 class DriveApiService extends DriveBase {
   DriveApiService({String? baseUrl})
-    : base =
-          baseUrl ??
-          const String.fromEnvironment(
-            'DRIVE_API',
-            defaultValue: 'http://oriongo.ddns.net:4000',
-          ) {
+    : base = baseUrl ?? AppConstants.apiBase {
     refresh();
   }
 
   final String base;
+
+  /// Token de sesión actual (el mismo del login contra el CRUD).
+  static String get _apikey => HsSession.token ?? '';
+
+  /// Headers de autorización para peticiones JSON/multipart.
+  static Map<String, String> get _authHeaders => {
+    if (_apikey.isNotEmpty) 'Apikey': _apikey,
+  };
+
+  /// Query con el token para URLs de imagen (Image.network no manda headers).
+  static String get _apikeyQuery => _apikey.isEmpty ? '' : 'apikey=$_apikey';
 
   Uri _u(String p, [Map<String, String>? q]) =>
       Uri.parse('$base$p').replace(queryParameters: q);
@@ -41,22 +55,31 @@ class DriveApiService extends DriveBase {
   }
 
   /// Ruta URL de un archivo para previsualización (Image.network).
+  /// Lleva el token en la query (?apikey=): el servidor valida permisos.
   @override
-  String absolutePathOf(DriveItem item) =>
-      '$base/files/${[...path, item.name].join('/')}';
+  String absolutePathOf(DriveItem item) {
+    final q = _apikeyQuery;
+    return '$base/files/${[...path, item.name].join('/')}'
+        '${q.isEmpty ? '' : '?$q'}';
+  }
 
   /// Versión PREVIEW para el visor: 1600px (~400-800 KB en vez de 10 MB).
   @override
   String fullSource(DriveItem item, {int? previewWidth}) {
+    final q = _apikeyQuery;
+    final tail = q.isEmpty ? '' : '&$q';
     if (previewWidth == null) return absolutePathOf(item);
     return '$base/thumb/${[...path, item.name].join('/')}'
-        '?w=$previewWidth&q=80';
+        '?w=$previewWidth&q=80$tail';
   }
 
   /// Miniatura liviana generada por el servidor (JPEG pequeño, con caché).
   @override
-  String thumbSource(DriveItem item, {int width = 320}) =>
-      '$base/thumb/${[...path, item.name].join('/')}?w=$width';
+  String thumbSource(DriveItem item, {int width = 320}) {
+    final q = _apikeyQuery;
+    return '$base/thumb/${[...path, item.name].join('/')}'
+        '?w=$width${q.isEmpty ? '' : '&$q'}';
+  }
 
   @override
   Future<void> refresh() async {
@@ -65,7 +88,10 @@ class DriveApiService extends DriveBase {
     notifyListeners();
     try {
       final r = await http
-          .get(_u('/api/drive', {'path': path.join('/')}))
+          .get(
+            _u('/api/drive', {'path': path.join('/')}),
+            headers: _authHeaders,
+          )
           .timeout(const Duration(seconds: 8));
       if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
       final data = jsonDecode(r.body) as Map<String, dynamic>;
@@ -99,34 +125,96 @@ class DriveApiService extends DriveBase {
     }
   }
 
+  /// ¿Nombres ya existen en la carpeta actual del servidor?
+  @override
+  Future<List<String>> filterExisting(List<String> names) async {
+    if (names.isEmpty) return const [];
+    try {
+      final r = await _post('/api/check-duplicate', {
+        'path': path.join('/'),
+        'names': names,
+      });
+      return (r['duplicates'] as List? ?? []).cast<String>();
+    } catch (_) {
+      return const []; // si falla, dejamos subir (el server renombra solo)
+    }
+  }
+
   /// Sube cada archivo en su propia petición con progreso REAL por bytes.
   /// NO bloquea la UI: cada trabajo vive en [uploadJobs] (panel estilo Drive).
+  /// Hasta [kUploadParallel] archivos suben EN PARALELO y TODOS los trabajos
+  /// aparecen en el panel desde el inicio (no uno por uno).
+  /// Con [overwrite] borra primero el existente con el mismo nombre.
+  /// Los trabajos con `cancelled = true` se saltan o se abortan en vuelo.
   @override
-  Future<int> uploadFromPaths(List<String> sources) async {
+  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
     if (sources.isEmpty) return 0;
-    var saved = 0;
+    // 1. Registrar TODOS los trabajos primero: el panel muestra la lista
+    //    completa al 0% desde el primer frame.
+    final pending = <(DriveUploadJob, String, String)>[];
+    var i = 0;
+    for (final s in sources) {
+      final f = File(s);
+      if (!f.existsSync()) continue;
+      // Acepta rutas con / o \ mezclados (drop externo, file_selector…).
+      final fileName = s.split(RegExp(r'[\\/]')).last;
+      final job = DriveUploadJob(
+        id: 'u${DateTime.now().microsecondsSinceEpoch}-$i',
+        name: fileName,
+        thumb: s, // miniatura del archivo LOCAL mientras sube
+        total: f.lengthSync(),
+      );
+      i++;
+      addUploadJob(job);
+      pending.add((job, s, fileName));
+    }
+    if (pending.isEmpty) return 0;
+
+    // 2. Subir en paralelo con un pool de N trabajadores.
     final client = http.Client();
-    try {
-      for (final s in sources) {
-        final f = File(s);
-        if (!f.existsSync()) continue;
-        // Acepta rutas con / o \ mezclados (drop externo, file_selector…).
-        final fileName = s.split(RegExp(r'[\\/]')).last;
-        final job = DriveUploadJob(
-          id: '$s-${DateTime.now().microsecondsSinceEpoch}',
-          name: fileName,
-          thumb: s, // miniatura del archivo LOCAL mientras sube
-          total: f.lengthSync(),
-        );
-        addUploadJob(job);
+    var saved = 0;
+    var next = 0;
+    Future<void> worker() async {
+      while (next < pending.length) {
+        final (job, s, fileName) = pending[next++];
+        // Cancelado mientras esperaba en cola: se salta.
+        if (job.cancelled) {
+          job.status = 'cancelled';
+          job.error = 'Cancelado';
+          notifyUploadProgress();
+          continue;
+        }
         try {
+          if (overwrite) {
+            // Sobrescribir: elimina el existente y sube el nuevo.
+            try {
+              await _post('/api/delete', {
+                'path': path.join('/'),
+                'names': [fileName],
+              });
+            } catch (_) {/* si no existía, sigue */}
+          }
           await _uploadOne(client, job, s, fileName);
           finishUploadJob(job);
           saved++;
+          // La foto ya está en el servidor: muéstrala en la cuadrícula
+          // sin esperar a que termine el lote completo.
+          scheduleLiveRefresh();
         } catch (e) {
-          finishUploadJob(job, error: e.toString());
+          if (job.cancelled) {
+            job.status = 'cancelled';
+            job.error = 'Cancelado';
+            notifyUploadProgress();
+          } else {
+            finishUploadJob(job, error: e.toString());
+          }
         }
       }
+    }
+    try {
+      await Future.wait(
+        List.generate(kUploadParallel, (_) => worker()),
+      );
     } finally {
       client.close();
       await refresh();
@@ -142,6 +230,7 @@ class DriveApiService extends DriveBase {
     String fileName,
   ) async {
     final req = http.MultipartRequest('POST', _u('/api/upload'))
+      ..headers.addAll(_authHeaders)
       ..fields['path'] = path.join('/')
       ..files.add(
         await http.MultipartFile.fromPath(
@@ -155,6 +244,12 @@ class DriveApiService extends DriveBase {
     final counted = req.finalize().transform<List<int>>(
       StreamTransformer.fromHandlers(
         handleData: (chunk, sink) {
+          // Cancelación en vuelo: aborta el envío en el siguiente bloque.
+          if (job.cancelled) {
+            sink.addError(Exception('cancelado'));
+            sink.close();
+            return;
+          }
           job.sent += chunk.length;
           notifyUploadProgress();
           sink.add(chunk);
@@ -163,7 +258,8 @@ class DriveApiService extends DriveBase {
     );
 
     final streamed = http.StreamedRequest(req.method, req.url)
-      ..headers.addAll(req.headers);
+      ..headers.addAll(req.headers)
+      ..headers.addAll(_authHeaders);
     // Bombear el cuerpo mientras la petición está en vuelo.
     final pumping = streamed.sink.addStream(counted).then((_) {
       streamed.sink.close();
@@ -291,12 +387,16 @@ class DriveApiService extends DriveBase {
       final r = await http
           .post(
             _u('/api/zip'),
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              ..._authHeaders,
+            },
             body: jsonEncode({'path': path.join('/'), 'names': names}),
           )
           .timeout(const Duration(minutes: 5));
-      if (r.statusCode != 200)
+      if (r.statusCode != 200) {
         throw 'Error al generar el ZIP (${r.statusCode})';
+      }
       return r.bodyBytes;
     });
   }
@@ -329,9 +429,9 @@ class DriveApiService extends DriveBase {
     );
     final tmp = File('${local.path}.part');
 
-    // HEAD: tamaño y soporte de rangos
+    // HEAD: tamaño y soporte de rangos (con token: el servidor valida leer)
     final head = await http
-        .head(_u('/files/$rel'))
+        .head(_u('/files/$rel', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}))
         .timeout(const Duration(seconds: 10));
     final total = int.tryParse(head.headers['content-length'] ?? '') ?? 0;
     final lastModified = head.headers['last-modified'] ?? '';
@@ -395,7 +495,8 @@ class DriveApiService extends DriveBase {
           final start = i * segLen;
           final end = i == chunks - 1 ? total - 1 : start + segLen - 1;
           final req = http.Request('GET', Uri.parse(url))
-            ..headers['Range'] = 'bytes=$start-$end';
+            ..headers['Range'] = 'bytes=$start-$end'
+            ..headers.addAll(_authHeaders);
           final resp = await client
               .send(req)
               .timeout(const Duration(minutes: 10));
@@ -440,7 +541,8 @@ class DriveApiService extends DriveBase {
   ) async {
     final client = http.Client();
     try {
-      final req = http.Request('GET', Uri.parse(url));
+      final req = http.Request('GET', Uri.parse(url))
+        ..headers.addAll(_authHeaders);
       final resp = await client.send(req).timeout(const Duration(minutes: 10));
       if (resp.statusCode != 200) throw 'HTTP ${resp.statusCode}';
       final raf = await tmp.open(mode: FileMode.write);
@@ -499,7 +601,10 @@ class DriveApiService extends DriveBase {
         .post(
           _u(p),
           body: jsonEncode(body),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            ..._authHeaders,
+          },
         )
         .timeout(const Duration(seconds: 30));
     if (r.statusCode != 200) {

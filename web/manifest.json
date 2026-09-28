@@ -1,11 +1,11 @@
 {
-    "name": "hardstreet_admin",
-    "short_name": "hardstreet_admin",
+    "name": "Hardstreet Admin",
+    "short_name": "Hardstreet",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#2F6BFF",
+    "theme_color": "#2F6BFF",
+    "description": "Panel de administración Hardstreet con Drive de archivos.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

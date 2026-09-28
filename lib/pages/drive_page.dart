@@ -1,18 +1,170 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart'
-    show PointerDeviceKind, PointerDownEvent, PointerEvent;
+    show
+        GestureDisposition,
+        GestureMultiDragStartCallback,
+        MultiDragGestureRecognizer,
+        MultiDragPointerState,
+        PointerDeviceKind,
+        PointerDownEvent,
+        PointerEvent,
+        computeHitSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show HardwareKeyboard, KeyEvent, KeyDownEvent, LogicalKeyboardKey;
+    show HardwareKeyboard, HapticFeedback, KeyEvent, KeyDownEvent, LogicalKeyboardKey;
 
+import '../../app_constants.dart';
+import '../../app_platform.dart';
 import '../../drive_api_service.dart';
 import '../../drive_base.dart';
 import '../../drive_downloader.dart';
 import '../../image_memory.dart';
+import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
+import '../../widgets/confirm_dialog.dart';
+
+// ===================== Drag estilo Google Drive (móvil) =====================
+
+/// Estado por-dedo: espera la presión larga y SOLO arranca el arrastre si el
+/// dedo SE MUEVE (igual que Google Drive). Suelta sin mover → el tap/long-
+/// press normal del InkWell gana → SELECCIONA.
+///
+/// La variante oficial [LongPressDraggable] arranca el drag al cumplirse el
+/// delay AUNQUE el dedo esté quieto: eso "robaba" el gesto y la selección
+/// por presión larga nunca ocurría.
+class _PressMovePointerState extends MultiDragPointerState {
+  _PressMovePointerState(
+    super.initialPosition,
+    this.delay,
+    super.kind,
+    super.gestureSettings,
+  ) {
+    _timer = Timer(delay, _delayPassed);
+  }
+
+  final Duration delay;
+
+  Timer? _timer;
+  GestureMultiDragStartCallback? _starter;
+
+  /// El dedo se movió más allá del slop ANTES del delay → NO es drag:
+  /// se rechaza y el gesto queda libre (scroll del grid).
+  void _reject() {
+    _timer?.cancel();
+    _timer = null;
+    resolve(GestureDisposition.rejected);
+  }
+
+  /// Se cumplió el delay SIN salida del dedo: listo para arrastrar. Si el
+  /// reconocedor ya ganó la arena, arranca AHORA; si no, espera a que la
+  /// arena lo acepte (al primer movimiento relevante).
+  void _delayPassed() {
+    _timer = null;
+    final starter = _starter;
+    if (starter != null) {
+      _starter = null;
+      starter(initialPosition);
+    }
+    // Con _starter == null esperamos accepted() (ver abajo).
+  }
+
+  @override
+  void accepted(GestureMultiDragStartCallback starter) {
+    if (_timer == null) {
+      // Presión cumplida y arena ganada: iniciar el arrastre.
+      starter(initialPosition);
+    } else {
+      // Aún esperando el delay: guardar y arrancar en _delayPassed.
+      _starter = starter;
+    }
+  }
+
+  @override
+  void checkForResolutionAfterMove() {
+    if (pendingDelta == null) return;
+    final slop =
+        computeHitSlop(kind, gestureSettings).clamp(8.0, 24.0).toDouble();
+    if (_timer != null) {
+      // AÚN en la espera: movimiento grande = scroll intencional → rechazar.
+      if (pendingDelta!.distance > slop) _reject();
+      return;
+    }
+    // Presión cumplida (timer en null): CUALQUIER movimiento extra arranca
+    // el drag. pendingDelta acumula lo recorrido durante la presión.
+    if (pendingDelta!.distance > slop) {
+      resolve(GestureDisposition.accepted);
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _timer = null;
+    super.dispose();
+  }
+}
+
+/// Reconoce: mantener presionado [delay] y DESPUÉS mover el dedo para
+/// arrastrar. Reemplaza a LongPressDraggable en móvil.
+class PressMoveMultiDragGestureRecognizer
+    extends MultiDragGestureRecognizer {
+  PressMoveMultiDragGestureRecognizer({
+    super.debugOwner,
+    super.allowedButtonsFilter,
+    this.delay = const Duration(milliseconds: 350),
+  });
+
+  /// Duración de la presión antes de habilitar el arrastre.
+  final Duration delay;
+
+  @override
+  MultiDragPointerState createNewPointerState(PointerDownEvent event) {
+    return _PressMovePointerState(
+      event.position,
+      delay,
+      event.kind,
+      gestureSettings,
+    );
+  }
+
+  @override
+  String get debugDescription => 'press-and-move drag';
+}
+
+/// Envoltorio de arrastre para MÓVIL: presión larga SIN mover = selección
+/// (el onLongPress del InkWell ocurre normal); presión larga + mover dedo =
+/// arrastrar (mismo feedback que Draggable).
+/// Subclase de [Draggable] igual que lo hace [LongPressDraggable]: cambia
+/// SOLO el reconocedor de gestos.
+class PressMoveDraggable<T extends Object> extends Draggable<T> {
+  const PressMoveDraggable({
+    super.key,
+    required super.child,
+    required super.feedback,
+    required super.data,
+    this.delay = const Duration(milliseconds: 350),
+    super.childWhenDragging,
+    super.dragAnchorStrategy,
+  });
+
+  /// Duración de la presión antes de habilitar el arrastre.
+  final Duration delay;
+
+  @override
+  MultiDragGestureRecognizer createRecognizer(
+      GestureMultiDragStartCallback onStart) {
+    return PressMoveMultiDragGestureRecognizer(delay: delay)
+      ..onStart = (Offset position) {
+        final drag = onStart(position);
+        if (drag != null) HapticFeedback.selectionClick();
+        return drag;
+      };
+  }
+}
 
 /// Página "Archivos": drive estilo Google Drive con selección múltiple,
 /// arrastrar-y-soltar y operaciones en lote (mover, copiar, eliminar).
@@ -124,14 +276,21 @@ class _DrivePageState extends State<DrivePage> {
   void _onChange() {
     if (!mounted) return;
     if (_lastPath.join('/') != widget.drive.path.join('/')) {
-      // Cambio de carpeta: limpia selección, ancla, claves y RAM de imágenes
-      // (las miniaturas de la carpeta anterior ya no son visibles).
+      // Cambio de carpeta: limpia selección/ancla/claves y evicta SOLO las
+      // miniaturas de la carpeta anterior. (NO clearRam(): borrar toda la
+      // caché invalida también los previews en vuelo y al regresar se veía
+      // un buen rato de imágenes recargándose.)
+      if (widget.drive is DriveApiService) {
+        final api = widget.drive as DriveApiService;
+        for (final it in widget.drive.items) {
+          if (!it.isFolder) ImageMemory.evict(api.thumbSource(it));
+        }
+      }
       _lastPath = List.of(widget.drive.path);
       _itemKeys.clear();
       _selected.clear();
       _selectMode = false;
       _anchorIndex = -1;
-      ImageMemory.clearRam();
     }
     setState(() {});
   }
@@ -345,10 +504,138 @@ class _DrivePageState extends State<DrivePage> {
           error: true);
       return;
     }
+    await _startUpload(paths);
+  }
+
+  /// Flujo completo de subida: detecta duplicados → pregunta qué hacer →
+  /// sube (renombrando o sobrescribiendo) o cancela.
+  Future<void> _startUpload(List<String> paths) async {
+    // Nombres de los archivos a subir (acepta / o \ mezclados).
+    String nameOf(String p) => p.split(RegExp(r'[\\/]')).last;
+    List<String> dups;
+    try {
+      dups = await widget.drive
+          .filterExisting(paths.map(nameOf).toList());
+    } catch (_) {
+      dups = const [];
+    }
+    var overwrite = false;
+    if (dups.isNotEmpty) {
+      final action = await _askDuplicateAction(dups);
+      if (action == null) {
+        _snack('Subida cancelada');
+        return; // usuario canceló todo el lote
+      }
+      overwrite = action;
+    }
     final saved = await _guarded(
-        () => widget.drive.uploadFromPaths(paths));
+        () => widget.drive.uploadFromPaths(paths, overwrite: overwrite));
     if (saved == null) return; // el error ya se mostró
-    _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"');
+    if (saved > 0) {
+      _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"');
+    }
+  }
+
+  /// Modal: ¿renombrar, sobrescribir o cancelar los duplicados?
+  /// Devuelve true = sobrescribir, false = renombrar, null = cancelar.
+  Future<bool?> _askDuplicateAction(List<String> dups) {
+    return showGeneralDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'Duplicados',
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (ctx, _, _) {
+        final scheme = Theme.of(ctx).colorScheme;
+        final preview = dups.length > 3
+            ? '${dups.take(3).join(', ')} y ${dups.length - 3} más'
+            : dups.join(', ');
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(22)),
+              contentPadding:
+                  const EdgeInsets.fromLTRB(24, 24, 24, 12),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .10),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.copy_all_rounded,
+                        color: scheme.primary, size: 26),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    dups.length == 1
+                        ? 'El archivo ya existe'
+                        : '${dups.length} archivos ya existen',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(ctx)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    preview,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '¿Qué quieres hacer con los duplicados?',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.save_as_rounded, size: 17),
+                      label: const Text('Sobrescribir'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      icon: const Icon(Icons.auto_awesome_motion_rounded,
+                          size: 17),
+                      label: const Text('Mantener ambos (renombrar)'),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, null),
+                    child: const Text('Cancelar subida'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (ctx, anim, _, child) => FadeTransition(
+        opacity: anim,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: .92, end: 1).animate(
+              CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
+          child: child,
+        ),
+      ),
+    );
   }
 
   // ==================== Mensajes ====================
@@ -379,10 +666,11 @@ class _DrivePageState extends State<DrivePage> {
       );
       final files = await openFiles(acceptedTypeGroups: [typeGroup]);
       final paths = files.map((f) => f.path).toList();
-      final saved = await widget.drive.uploadFromPaths(paths);
-      _snack(saved == 0
-          ? 'No se seleccionaron imágenes'
-          : '$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'}');
+      if (paths.isEmpty) {
+        _snack('No se seleccionaron imágenes');
+        return;
+      }
+      await _startUpload(paths);
     } catch (e) {
       _snack('No se pudo subir: $e', error: true);
     }
@@ -423,80 +711,12 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> _deleteItems(List<String> names) async {
     if (names.isEmpty) return; // Supr sin selección: nada que hacer.
     final plural = names.length > 1;
-    final folder = widget.drive.locationLabel;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final scheme = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          icon: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: scheme.error.withValues(alpha: .10),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.delete_outline, color: scheme.error, size: 26),
-          ),
-          title: Text(plural
-              ? '¿Eliminar ${names.length} elementos?'
-              : '¿Eliminar "${names.first}"?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                plural
-                    ? 'Se eliminarán ${names.length} elementos de la carpeta actual. Esta acción no se puede deshacer.'
-                    : 'Se eliminará "${names.first}". Esta acción no se puede deshacer.',
-                style: Theme.of(ctx).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 12),
-              // Chip de carpeta origen, como en el diálogo de Drive.
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: .5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.folder_rounded,
-                        size: 16, color: scheme.primary),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        folder,
-                        style: TextStyle(
-                            fontSize: 12.5, color: scheme.onSurfaceVariant),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: scheme.error,
-              ),
-              onPressed: () => Navigator.pop(ctx, true),
-              icon: const Icon(Icons.delete_outline, size: 17),
-              label: const Text('Eliminar'),
-            ),
-          ],
-        );
-      },
+    // Confirmación moderna y compacta (con transición de entrada).
+    final ok = await confirmDelete(
+      context,
+      title: plural
+          ? '¿Eliminar ${names.length} elementos?'
+          : '¿Eliminar "${names.first}"?',
     );
     if (ok != true) return;
     final result = await widget.drive.deleteItems(names);
@@ -885,40 +1105,14 @@ class _DrivePageState extends State<DrivePage> {
               ),
             ),
             const SizedBox(height: 10),
-            // ===== Breadcrumbs (drop target para mover a esa carpeta) =====
-            if (drive.path.isNotEmpty)
+            // ===== Ruta actual (SOLO computadora: en el celular no se ve
+            // bien y sobra; allí basta el botón "Atrás") =====
+            if (!isCompact && drive.path.isNotEmpty)
               Padding(
                 padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: _Breadcrumbs(drive: drive, onDropMove: _doMove),
-                ),
-              ),
-            // ===== Accesos rápidos (solo raíz) =====
-            if (drive.path.isEmpty &&
-                !drive.loading &&
-                drive.visibleItems.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.fromLTRB(hPad, 12, hPad, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final f
-                          in drive.items.where((i) => i.isFolder).take(6))
-                        ActionChip(
-                          avatar: Icon(
-                            Icons.folder_rounded,
-                            size: 16,
-                            color: scheme.primary,
-                          ),
-                          label: Text(f.name),
-                          onPressed: () => widget.drive.openFolder(f.name),
-                        ),
-                    ],
-                  ),
                 ),
               ),
             // ===== Barra de estado =====
@@ -983,41 +1177,54 @@ class _DrivePageState extends State<DrivePage> {
                               actionLabel: 'Subir imágenes',
                               onAction: _upload,
                             )
-                          : (_grid
-                              ? _GridContent(
-                                  key: _contentKey,
-                                  drive: drive,
-                                  compact: isCompact,
-                                  selected: _selected,
-                                  selectMode: _selectMode,
-                                  onOpen: _onItemTap,
-                                  onLongPress: (item) =>
-                                      _enterSelectMode(item.name),
-                                  onToggleSelect: _toggleSelect,
-                                  onRename: _rename,
-                                  onDelete: _delete,
-                                  onDrop: _onItemDrop,
-                                  itemKeys: _itemKeys,
-                                  onTapSelect: _onCardTap,
-                                  scrollController: _scrollController,
-                                )
-                              : _ListContent(
-                                  key: _contentKey,
-                                  drive: drive,
-                                  compact: isCompact,
-                                  selected: _selected,
-                                  selectMode: _selectMode,
-                                  onOpen: _onItemTap,
-                                  onLongPress: (item) =>
-                                      _enterSelectMode(item.name),
-                                  onToggleSelect: _toggleSelect,
-                                  onRename: _rename,
-                                  onDelete: _delete,
-                                  onDrop: _onItemDrop,
-                                  itemKeys: _itemKeys,
-                                  onTapSelect: _onCardTap,
-                                  scrollController: _scrollController,
-                                )),
+                          : AnimatedSwitcher(
+                              // Transición suave al cambiar de carpeta (o de
+                              // vista): la anterior se desvanece mientras la
+                              // nueva entra — sin esperar "en blanco".
+                              // El GlobalKey vive AQUÍ (no en el contenido)
+                              // para no duplicarse durante la transición.
+                              key: _contentKey,
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeIn,
+                              child: KeyedSubtree(
+                                key: ValueKey(
+                                    'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}'),
+                                child: (_grid
+                                    ? _GridContent(
+                                        drive: drive,
+                                        compact: isCompact,
+                                        selected: _selected,
+                                        selectMode: _selectMode,
+                                        onOpen: _onItemTap,
+                                        onLongPress: (item) =>
+                                            _enterSelectMode(item.name),
+                                        onToggleSelect: _toggleSelect,
+                                        onRename: _rename,
+                                        onDelete: _delete,
+                                        onDrop: _onItemDrop,
+                                        itemKeys: _itemKeys,
+                                        onTapSelect: _onCardTap,
+                                        scrollController: _scrollController,
+                                      )
+                                    : _ListContent(
+                                        drive: drive,
+                                        compact: isCompact,
+                                        selected: _selected,
+                                        selectMode: _selectMode,
+                                        onOpen: _onItemTap,
+                                        onLongPress: (item) =>
+                                            _enterSelectMode(item.name),
+                                        onToggleSelect: _toggleSelect,
+                                        onRename: _rename,
+                                        onDelete: _delete,
+                                        onDrop: _onItemDrop,
+                                        itemKeys: _itemKeys,
+                                        onTapSelect: _onCardTap,
+                                        scrollController: _scrollController,
+                                      )),
+                              ),
+                            ),
             ),
           ],
         ),
@@ -1466,7 +1673,6 @@ class _Breadcrumbs extends StatelessWidget {
 
 class _GridContent extends StatelessWidget {
   const _GridContent({
-    super.key,
     required this.drive,
     required this.compact,
     required this.selected,
@@ -1520,20 +1726,24 @@ class _GridContent extends StatelessWidget {
             final item = items[i];
             final key = itemKeys.putIfAbsent(
                 item.name, () => GlobalKey(debugLabel: 'grid-${item.name}'));
-            return _GridItem(
-              key: key,
-              item: item,
-              drive: drive,
-              isSelected: selected.contains(item.name),
-              selectMode: selectMode,
-              onOpen: () => onOpen(item),
-              onLongPress: () => onLongPress(item),
-              onToggleSelect: () => onToggleSelect(item.name),
-              onRename: () => onRename(item),
-              onDelete: () => onDelete(item),
-              onDrop: (details) => onDrop(item, details),
-              onTapSelect: () => onTapSelect(item),
-              selectedNames: selected.toList(growable: false),
+            // Entrada escalonada estilo Google Drive (fade + slide).
+            return StaggeredItem(
+              index: i,
+              child: _GridItem(
+                key: key,
+                item: item,
+                drive: drive,
+                isSelected: selected.contains(item.name),
+                selectMode: selectMode,
+                onOpen: () => onOpen(item),
+                onLongPress: () => onLongPress(item),
+                onToggleSelect: () => onToggleSelect(item.name),
+                onRename: () => onRename(item),
+                onDelete: () => onDelete(item),
+                onDrop: (details) => onDrop(item, details),
+                onTapSelect: () => onTapSelect(item),
+                selectedNames: selected.toList(growable: false),
+              ),
             );
           },
         );
@@ -1578,24 +1788,46 @@ class _GridItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    return Draggable<Object>(
-      data: isSelected && selectedNames.length > 1
-          ? SelectionPayload(selectedNames)
-          : SelectionPayload([item.name]),
-      feedback: _DragFeedback(
-        label: item.name,
-        isFolder: item.isFolder,
-        count: isSelected && selectedNames.length > 1
-            ? selectedNames.length
-            : 1,
-      ),
-      childWhenDragging: Opacity(opacity: .45, child: _card(scheme, context)),
-      onDragStarted: () {
-        // Si arrastras un elemento seleccionado en modo selección,
-        // se arrastra toda la selección (el data ya lo decide).
-      },
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      child: DragTarget<Object>(
+    // En MÓVIL el arrastre exige presión larga (~350ms): así el scroll no
+    // mueve carpetas por accidente. En escritorio sigue siendo inmediato.
+    final Widget Function(Widget child) buildDraggable = useLongPressDrag
+        ? (child) => PressMoveDraggable<Object>(
+            delay: AppConstants.longPressDragDelay,
+            data: isSelected && selectedNames.length > 1
+                ? SelectionPayload(selectedNames)
+                : SelectionPayload([item.name]),
+            feedback: _DragFeedback(
+              label: item.name,
+              isFolder: item.isFolder,
+              count: isSelected && selectedNames.length > 1
+                  ? selectedNames.length
+                  : 1,
+            ),
+            childWhenDragging: Opacity(opacity: .45, child: child),
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            child: child,
+          )
+        : (child) => Draggable<Object>(
+            data: isSelected && selectedNames.length > 1
+                ? SelectionPayload(selectedNames)
+                : SelectionPayload([item.name]),
+            feedback: _DragFeedback(
+              label: item.name,
+              isFolder: item.isFolder,
+              count: isSelected && selectedNames.length > 1
+                  ? selectedNames.length
+                  : 1,
+            ),
+            childWhenDragging: Opacity(opacity: .45, child: child),
+            onDragStarted: () {
+              // Si arrastras un elemento seleccionado en modo selección,
+              // se arrastra toda la selección (el data ya lo decide).
+            },
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            child: child,
+          );
+    return buildDraggable(
+      DragTarget<Object>(
         onWillAcceptWithDetails: (details) =>
             canDrop && details.data is! DriveItem,
         onAcceptWithDetails: onDrop,
@@ -1622,6 +1854,15 @@ class _GridItem extends StatelessWidget {
               child: InkWell(
                 onTap: onTapSelect,
                 onLongPress: onLongPress,
+                // CLICK DERECHO: menú contextual (Abrir/Renombrar/Eliminar).
+                onSecondaryTapUp: (details) => _showDriveItemContextMenu(
+                  context,
+                  details.globalPosition,
+                  item: item,
+                  onOpen: onOpen,
+                  onRename: onRename,
+                  onDelete: onDelete,
+                ),
                 borderRadius: BorderRadius.circular(16),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
@@ -1818,6 +2059,15 @@ class _FolderCard extends StatelessWidget {
       child: InkWell(
         onTap: onOpen,
         onLongPress: onLongPress,
+        // CLICK DERECHO: menú contextual.
+        onSecondaryTapUp: (details) => _showDriveItemContextMenu(
+          context,
+          details.globalPosition,
+          item: item,
+          onOpen: onOpen,
+          onRename: onRename,
+          onDelete: onDelete,
+        ),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1915,6 +2165,15 @@ class _ImageCard extends StatelessWidget {
       child: InkWell(
         onTap: onOpen,
         onLongPress: onLongPress,
+        // CLICK DERECHO: menú contextual.
+        onSecondaryTapUp: (details) => _showDriveItemContextMenu(
+          context,
+          details.globalPosition,
+          item: item,
+          onOpen: onOpen,
+          onRename: onRename,
+          onDelete: onDelete,
+        ),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2006,6 +2265,67 @@ class _ItemMenu extends StatelessWidget {
   }
 }
 
+/// Menú contextual de un ítem del drive (CLICK DERECHO en escritorio:
+/// Abrir / Renombrar / Eliminar). [position] es en coordenadas globales.
+Future<void> _showDriveItemContextMenu(
+  BuildContext context,
+  Offset position, {
+  required DriveItem item,
+  required VoidCallback onOpen,
+  required VoidCallback onRename,
+  required VoidCallback onDelete,
+}) async {
+  final overlay =
+      Overlay.of(context).context.findRenderObject() as RenderBox?;
+  final action = await showMenu<String>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      position.dx,
+      position.dy,
+      overlay?.size.width ?? position.dx,
+      overlay?.size.height ?? position.dy,
+    ),
+    items: [
+      const PopupMenuItem(
+        value: 'open',
+        height: 40,
+        child: Row(children: [
+          Icon(Icons.open_in_new_rounded, size: 17),
+          SizedBox(width: 10),
+          Text('Abrir'),
+        ]),
+      ),
+      const PopupMenuItem(
+        value: 'rename',
+        height: 40,
+        child: Row(children: [
+          Icon(Icons.drive_file_rename_outline, size: 17),
+          SizedBox(width: 10),
+          Text('Renombrar'),
+        ]),
+      ),
+      const PopupMenuItem(
+        value: 'delete',
+        height: 40,
+        child: Row(children: [
+          Icon(Icons.delete_outline, size: 17),
+          SizedBox(width: 10),
+          Text('Eliminar'),
+        ]),
+      ),
+    ],
+  );
+  if (action == null || !context.mounted) return;
+  switch (action) {
+    case 'open':
+      onOpen();
+    case 'rename':
+      onRename();
+    case 'delete':
+      onDelete();
+  }
+}
+
 class _OverlayMenu extends StatelessWidget {
   const _OverlayMenu({required this.onRename, required this.onDelete});
 
@@ -2039,7 +2359,6 @@ class _OverlayMenu extends StatelessWidget {
 
 class _ListContent extends StatelessWidget {
   const _ListContent({
-    super.key,
     required this.drive,
     required this.compact,
     required this.selected,
@@ -2116,21 +2435,25 @@ class _ListContent extends StatelessWidget {
                 final item = items[i];
                 final key = itemKeys.putIfAbsent(
                     item.name, () => GlobalKey(debugLabel: 'row-${item.name}'));
-                return _ListRow(
-                  key: key,
-                  item: item,
-                  drive: drive,
-                  compact: compact,
-                  isSelected: selected.contains(item.name),
-                  selectMode: selectMode,
-                  onOpen: () => onOpen(item),
-                  onLongPress: () => onLongPress(item),
-                  onToggleSelect: () => onToggleSelect(item.name),
-                  onRename: () => onRename(item),
-                  onDelete: () => onDelete(item),
-                  onDrop: (details) => onDrop(item, details),
-                  onTapSelect: () => onTapSelect(item),
-                  selectedNames: selected.toList(growable: false),
+                // Entrada escalonada estilo Google Drive (fade + slide).
+                return StaggeredItem(
+                  index: i,
+                  child: _ListRow(
+                    key: key,
+                    item: item,
+                    drive: drive,
+                    compact: compact,
+                    isSelected: selected.contains(item.name),
+                    selectMode: selectMode,
+                    onOpen: () => onOpen(item),
+                    onLongPress: () => onLongPress(item),
+                    onToggleSelect: () => onToggleSelect(item.name),
+                    onRename: () => onRename(item),
+                    onDelete: () => onDelete(item),
+                    onDrop: (details) => onDrop(item, details),
+                    onTapSelect: () => onTapSelect(item),
+                    selectedNames: selected.toList(growable: false),
+                  ),
                 );
               },
             ),
@@ -2178,20 +2501,41 @@ class _ListRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    return Draggable<Object>(
-      data: isSelected && selectedNames.length > 1
-          ? SelectionPayload(selectedNames)
-          : SelectionPayload([item.name]),
-      feedback: _DragFeedback(
-        label: item.name,
-        isFolder: item.isFolder,
-        count: isSelected && selectedNames.length > 1
-            ? selectedNames.length
-            : 1,
-      ),
-      childWhenDragging: Opacity(opacity: .45, child: _row(scheme, context)),
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      child: DragTarget<Object>(
+    // En MÓVIL el arrastre exige presión larga (~350ms); en escritorio, inmediato.
+    final Widget Function(Widget child) buildDraggable = useLongPressDrag
+        ? (child) => PressMoveDraggable<Object>(
+            delay: AppConstants.longPressDragDelay,
+            data: isSelected && selectedNames.length > 1
+                ? SelectionPayload(selectedNames)
+                : SelectionPayload([item.name]),
+            feedback: _DragFeedback(
+              label: item.name,
+              isFolder: item.isFolder,
+              count: isSelected && selectedNames.length > 1
+                  ? selectedNames.length
+                  : 1,
+            ),
+            childWhenDragging: Opacity(opacity: .45, child: child),
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            child: child,
+          )
+        : (child) => Draggable<Object>(
+            data: isSelected && selectedNames.length > 1
+                ? SelectionPayload(selectedNames)
+                : SelectionPayload([item.name]),
+            feedback: _DragFeedback(
+              label: item.name,
+              isFolder: item.isFolder,
+              count: isSelected && selectedNames.length > 1
+                  ? selectedNames.length
+                  : 1,
+            ),
+            childWhenDragging: Opacity(opacity: .45, child: child),
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            child: child,
+          );
+    return buildDraggable(
+      DragTarget<Object>(
         onWillAcceptWithDetails: (details) =>
             canDrop && details.data is! DriveItem,
         onAcceptWithDetails: onDrop,
@@ -2209,6 +2553,15 @@ class _ListRow extends StatelessWidget {
     return InkWell(
       onTap: onTapSelect,
       onLongPress: onLongPress,
+      // CLICK DERECHO: menú contextual.
+      onSecondaryTapUp: (details) => _showDriveItemContextMenu(
+        context,
+        details.globalPosition,
+        item: item,
+        onOpen: onOpen,
+        onRename: onRename,
+        onDelete: onDelete,
+      ),
       hoverColor: scheme.primary.withValues(alpha: .07),
       highlightColor: scheme.primary.withValues(alpha: .10),
       child: AnimatedContainer(
@@ -2396,7 +2749,8 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
 
   Future<void> _loadFull() async {
     final item = widget.images[_index];
-    if (item.isFolder || widget.drive is! DriveApiService) return;
+    // El original por chunks usa File/caché de disco: solo en nativo.
+    if (kWeb || item.isFolder || widget.drive is! DriveApiService) return;
     final api = widget.drive as DriveApiService;
     final key = api.absolutePathOf(item);
     if (_fullKey == key && _fullFile != null) return; // ya está
@@ -2613,6 +2967,8 @@ class _BusyChip extends StatelessWidget {
 
 /// Panel flotante estilo Google Drive: cada archivo sube INDEPENDIENTE,
 /// con miniatura, barra de progreso y % — sin bloquear la pantalla.
+/// Escucha al drive DIRECTAMENTE (AnimatedBuilder sobre el ChangeNotifier)
+/// para refrescar en tiempo real con cada bloque de bytes que avanza.
 class _UploadsCard extends StatelessWidget {
   const _UploadsCard({required this.drive});
 
@@ -2620,10 +2976,28 @@ class _UploadsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: drive,
+      builder: (context, _) => _buildCard(context),
+    );
+  }
+
+  Widget _buildCard(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final jobs = drive.uploadJobs;
+    // Conteos SIEMPRE visibles: en carga / completadas / con error.
     final active = jobs.where((j) => j.status == 'uploading').length;
+    final done = jobs.where((j) => j.status == 'done').length;
+    final failed = jobs.where((j) => j.status == 'error').length;
+    // Progreso GLOBAL: bytes enviados vs. totales de los archivos en carga.
+    final totalBytes = jobs.fold<int>(
+        0, (a, j) => j.status == 'uploading' ? a + j.total : a);
+    final sentBytes = jobs.fold<int>(
+        0, (a, j) => j.status == 'uploading' ? a + j.sent : a);
+    final globalPct =
+        totalBytes > 0 ? (sentBytes / totalBytes).clamp(0.0, 1.0) : null;
     return Material(
+      key: const ValueKey('uploads_card'),
       elevation: 10,
       shadowColor: Colors.black.withValues(alpha: .25),
       borderRadius: BorderRadius.circular(16),
@@ -2641,23 +3015,58 @@ class _UploadsCard extends StatelessWidget {
                   Icon(
                     active > 0
                         ? Icons.cloud_upload_outlined
-                        : Icons.cloud_done_outlined,
+                        : failed > 0
+                            ? Icons.error_outline
+                            : Icons.cloud_done_outlined,
                     size: 18,
-                    color: scheme.primary,
+                    color: active == 0 && failed > 0
+                        ? scheme.error
+                        : scheme.primary,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      active > 0
-                          ? 'Subiendo $active archivo${active == 1 ? '' : 's'}…'
-                          : '${jobs.length} subida${jobs.length == 1 ? '' : 's'} completada${jobs.length == 1 ? '' : 's'}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          active > 0
+                              ? 'Subiendo ${jobs.length} '
+                                  '${jobs.length == 1 ? 'foto' : 'fotos'}…'
+                              : failed > 0
+                                  ? '$done completada${done == 1 ? '' : 's'} · '
+                                      '$failed con error${failed == 1 ? '' : 's'}'
+                                  : '${jobs.length} subida${jobs.length == 1 ? '' : 's'} '
+                                      'completada${jobs.length == 1 ? '' : 's'}',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        if (active > 0)
+                          Text(
+                            '$done completada${done == 1 ? '' : 's'}'
+                            '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  if (active == 0)
+                  if (active > 0)
+                    TextButton.icon(
+                      onPressed: drive.cancelAllUploads,
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.cancel_outlined, size: 15),
+                      label: const Text('Cancelar todo',
+                          style: TextStyle(fontSize: 12)),
+                    )
+                  else
                     IconButton(
                       tooltip: 'Limpiar',
                       onPressed: drive.clearFinishedUploads,
@@ -2666,99 +3075,45 @@ class _UploadsCard extends StatelessWidget {
                 ],
               ),
             ),
-            const Divider(height: 1),
-            Flexible(
+            // Barra de progreso GLOBAL (todos los archivos en carga).
+            if (active > 0 && globalPct != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: globalPct,
+                          minHeight: 4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${(globalPct * 100).toStringAsFixed(0)} %',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 1),            Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 itemCount: jobs.length,
                 itemBuilder: (context, i) {
                   final job = jobs[i];
-                  final pct = job.total > 0
-                      ? (job.sent / job.total).clamp(0.0, 1.0)
-                      : null;
-                  return Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    child: Row(
-                      children: [
-                        _DriveThumb(
-                          source: job.thumb,
-                          isRemote: false, // miniatura del archivo LOCAL
-                          size: 42,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                job.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              if (job.status == 'uploading')
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(4),
-                                        child: LinearProgressIndicator(
-                                          value: pct,
-                                          minHeight: 4,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      pct == null
-                                          ? '…'
-                                          : '${(pct * 100).toStringAsFixed(0)}%',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: scheme.primary,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              else if (job.status == 'done')
-                                Row(
-                                  children: [
-                                    Icon(Icons.check_circle,
-                                        size: 14, color: scheme.primary),
-                                    const SizedBox(width: 5),
-                                    Text(
-                                      _sizeLabel(job.total),
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: scheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              else
-                                Expanded(
-                                  child: Text(
-                                    'Error: ${job.error ?? 'desconocido'}',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: scheme.error,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                  return UploadJobTile(
+                    job: job,
+                    onCancel: job.status == 'uploading'
+                        ? () => drive.cancelUpload(job.id)
+                        : null,
                   );
                 },
               ),
@@ -2812,15 +3167,19 @@ class _DriveThumb extends StatelessWidget {
         fit: fit,
         cacheWidth: cachePx,
         errorBuilder: error,
-        frameBuilder: (c, child, frame, sync) => frame == null
-            ? Center(
-                child: SizedBox(
-                  width: big ? 26 : size * .35,
-                  height: big ? 26 : size * .35,
-                  child: const CircularProgressIndicator(strokeWidth: 2),
-                ),
-              )
-            : child,
+        frameBuilder: (c, child, frame, sync) {
+          // Ya venía del caché (sincrónico): mostrar directo, sin animar.
+          if (sync) return child;
+          // Aparición suave: visible SOLO cuando ya hay frame decodificado.
+          // (El target SIEMPRE es 1; antes quedaba en 0 y las fotos de red
+          // se veían invisibles hasta recargar con scroll.)
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
       );
     } else {
       image = Image.file(
@@ -2838,6 +3197,132 @@ class _DriveThumb extends StatelessWidget {
       height: size,
       color: scheme.surfaceContainerHighest.withValues(alpha: .5),
       child: image,
+    );
+  }
+}
+
+/// Tarjeta de un trabajo de subida (miniatura + nombre + progreso).
+/// PÚBLICA para poder probarla desde test/.
+class UploadJobTile extends StatelessWidget {
+  const UploadJobTile({super.key, required this.job, this.onCancel});
+
+  final DriveUploadJob job;
+
+  /// Si no es null, muestra el botón ✕ para cancelar esta subida.
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final pct = job.total > 0 ? (job.sent / job.total).clamp(0.0, 1.0) : null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Row(
+        children: [
+          _DriveThumb(
+            source: job.thumb,
+            isRemote: false, // miniatura del archivo LOCAL
+            size: 42,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  job.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (job.status == 'uploading')
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: pct,
+                            minHeight: 4,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        pct == null ? '…' : '${(pct * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      if (onCancel != null) ...[
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: IconButton(
+                            tooltip: 'Cancelar',
+                            padding: EdgeInsets.zero,
+                            iconSize: 14,
+                            onPressed: onCancel,
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ),
+                      ],
+                    ],
+                  )
+                else if (job.status == 'cancelled')
+                  Row(
+                    children: [
+                      Icon(Icons.cancel_outlined,
+                          size: 14, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Cancelada',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  )
+                else if (job.status == 'done')
+                  Row(
+                    children: [
+                      Icon(Icons.check_circle,
+                          size: 14, color: scheme.primary),
+                      const SizedBox(width: 5),
+                      Text(
+                        _sizeLabel(job.total),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Expanded(
+                    child: Text(
+                      'Error: ${job.error ?? 'desconocido'}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.error,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

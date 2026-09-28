@@ -12,6 +12,7 @@ class AdminShell extends StatelessWidget {
     required this.onSelect,
     required this.destinations,
     required this.body,
+    this.updateBanner,
     required this.dark,
     required this.onToggleTheme,
     required this.onToggleSidebar,
@@ -25,6 +26,9 @@ class AdminShell extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final List<AdminDestination> destinations;
   final Widget body;
+
+  /// Banner opcional de "actualización disponible" bajo la barra superior.
+  final Widget? updateBanner;
   final bool dark;
   final VoidCallback onToggleTheme;
   final VoidCallback onToggleSidebar;
@@ -40,7 +44,12 @@ class AdminShell extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: Stack(
+      // SafeArea: en MÓVIL el contenido empieza DEBAJO de la barra de
+      // notificaciones (antes la app dibujaba a pantalla completa y la
+      // top bar quedaba detrás del status bar).
+      body: SafeArea(
+        bottom: false,
+        child: Stack(
         children: [
           // ===== Contenido (siempre ocupa todo) =====
           Column(
@@ -54,7 +63,30 @@ class AdminShell extends StatelessWidget {
                 userMenu: userMenu,
               ),
               Divider(height: 1, color: Theme.of(context).dividerTheme.color),
-              Expanded(child: body),
+              ?updateBanner,
+              Expanded(
+                // Transición fluida al cambiar de módulo: el contenido
+                // anterior se desvanece mientras el nuevo entra deslizándose.
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 260),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, .02),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey(title),
+                    child: body,
+                  ),
+                ),
+              ),
             ],
           ),
           // ===== Scrim =====
@@ -178,6 +210,7 @@ class AdminShell extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }

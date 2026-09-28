@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../drive_api_service.dart';
 
@@ -19,19 +19,14 @@ class ConnectionPage extends StatefulWidget {
 class _ConnectionPageState extends State<ConnectionPage> {
   Timer? _timer;
 
-  // HTTP mínimo (dart:io) para el sondeo de salud.
+  // Sondeo de salud con package:http: funciona en web y nativo.
+  // (dart:io HttpClient lanza UnsupportedError en Chrome.)
   Future<({int statusCode, String body})> httpGet(
       String url, {required Duration timeout}) async {
-    final c = HttpClient()
-      ..connectionTimeout = timeout;
-    try {
-      final r = await c.getUrl(Uri.parse(url));
-      final resp = await r.close().timeout(timeout);
-      final body = await resp.transform(utf8.decoder).join();
-      return (statusCode: resp.statusCode, body: body);
-    } finally {
-      c.close();
-    }
+    final r = await http
+        .get(Uri.parse(url))
+        .timeout(timeout);
+    return (statusCode: r.statusCode, body: r.body);
   }
 
   Map<String, dynamic>? parseJson(String body) {

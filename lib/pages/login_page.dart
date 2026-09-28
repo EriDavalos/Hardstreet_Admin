@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../app_settings.dart';
+import '../hs_api.dart';
 import '../theme.dart';
 
-/// Pantalla de inicio de sesión (demostración).
-/// La autenticación real llegará cuando el backend de admin esté listo:
-/// por ahora cualquier credencial entra al panel.
+/// Pantalla de inicio de sesión REAL contra la API de Hardstreet
+/// (la misma que usa la web: POST /api/auth/login con header Bearer).
+/// Solo entran cuentas con rol Admin.
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onLogin});
 
@@ -15,13 +17,65 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
   bool _obscure = true;
   bool _remember = false;
+  bool _loading = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  void _toggleDark() {
+    final v = !AppSettings.instance.dark;
+    AppSettings.instance.setDark(v); // persiste (localStorage en web)
+    setState(() {});
+  }
 
   void _snack(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _submit() async {
+    if (_loading) return;
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (email.isEmpty || password.isEmpty) {
+      _snack('Escribe tu correo y contraseña');
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final user = await HsApi.login(email, password);
+      if (!mounted) return;
+      final role = (user['role'] ?? '').toString().toLowerCase();
+      if (role != 'admin') {
+        await HsApi.logout();
+        if (!mounted) return;
+        _snack('Esta cuenta no tiene acceso al panel de administración');
+        return;
+      }
+      // "Recordarme": persiste token+usuario (NUNCA la contraseña) y la app
+      // abrirá directo en el panel. Sin él, la sesión vive solo hasta cerrar.
+      await AppSettings.instance.saveSession(
+        remember: _remember,
+        token: HsSession.token,
+        user: HsSession.user,
+      );
+      widget.onLogin();
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (_) {
+      _snack('No se pudo iniciar sesión, intenta de nuevo');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -70,6 +124,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 24),
               TextField(
+                controller: _email,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
                 decoration: const InputDecoration(
@@ -79,9 +134,10 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 14),
               TextField(
+                controller: _password,
                 obscureText: _obscure,
                 autofillHints: const [AutofillHints.password],
-                onSubmitted: (_) => widget.onLogin(),
+                onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(
                   labelText: 'Contraseña',
                   prefixIcon: const Icon(Icons.lock_outline, size: 20),
@@ -141,15 +197,19 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: widget.onLogin,
-                child: const Text('Iniciar sesión'),
+                onPressed: _loading ? null : _submit,
+                child: _loading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Iniciar sesión'),
               ),
-              const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: widget.onLogin,
-                child: const Text('Ver el panel como invitado'),
-              ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 14),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -162,12 +222,12 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.science_outlined,
+                    Icon(Icons.verified_user_outlined,
                         size: 18, color: scheme.primary),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Modo demostración: la autenticación real estará disponible próximamente. Puedes entrar con cualquier dato.',
+                        'Autenticación contra la API de Hardstreet. Solo cuentas con rol Admin pueden entrar al panel.',
                         style: TextStyle(
                           fontSize: 12,
                           color: scheme.onSurfaceVariant,
@@ -212,6 +272,24 @@ class _LoginPageState extends State<LoginPage> {
               child: wide
                   ? _WideLayout(form: form)
                   : form,
+            ),
+          ),
+          // Botón de modo claro/oscuro: solo un icono en la esquina
+          // superior derecha. El cambio es GLOBAL (escuchado por la app).
+          Positioned(
+            top: 12,
+            right: 12,
+            child: IconButton.filledTonal(
+              tooltip: AppSettings.instance.dark
+                  ? 'Cambiar a modo claro'
+                  : 'Cambiar a modo oscuro',
+              onPressed: _toggleDark,
+              icon: Icon(
+                AppSettings.instance.dark
+                    ? Icons.light_mode_outlined
+                    : Icons.dark_mode_outlined,
+                size: 20,
+              ),
             ),
           ),
         ],
@@ -299,7 +377,7 @@ class _WideLayout extends StatelessWidget {
                             ),
                             const SizedBox(height: 10),
                             Text(
-                              'Tu drive de archivos y, próximamente,\nusuarios, clientes y configuraciones.',
+                              'Tu drive de archivos y la gestión de\nusuarios, roles, clientes y paquetes.',
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: .85),
                                 height: 1.4,
@@ -311,8 +389,8 @@ class _WideLayout extends StatelessWidget {
                                 'Drive de archivos con carpetas e imágenes'),
                             _feature(Icons.people_alt_outlined,
                                 'Gestión de usuarios y clientes'),
-                            _feature(Icons.settings_outlined,
-                                'Configuraciones y reportes'),
+                            _feature(Icons.admin_panel_settings_outlined,
+                                'Roles y permisos por módulo'),
                           ],
                         ),
                       ),

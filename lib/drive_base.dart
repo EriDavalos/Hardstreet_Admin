@@ -38,6 +38,10 @@ enum DriveConn { checking, online, offline }
 /// Operación en curso para los overlays de carga.
 enum DriveBusy { none, uploading, moving, copying, deleting, downloading }
 
+/// Cuántas subidas corren EN PARALELO (pool de trabajadores).
+/// El resto espera su turno en cola, pero TODAS se ven en el panel.
+const int kUploadParallel = 3;
+
 /// Trabajo de subida individual (panel estilo Drive, progreso por archivo).
 class DriveUploadJob {
   DriveUploadJob({
@@ -52,8 +56,12 @@ class DriveUploadJob {
   final String thumb; // ruta LOCAL del archivo fuente (miniatura)
   final int total; // bytes totales (0 = indeterminado)
   int sent = 0; // bytes enviados
-  String status = 'uploading'; // uploading | done | error
+  String status = 'uploading'; // uploading | done | error | cancelled
   String? error;
+
+  /// Marcado para cancelar: el pool lo salta (en cola) o aborta el envío
+  /// (en vuelo) en el siguiente bloque de bytes.
+  bool cancelled = false;
 }
 
 /// Contrato común del drive (local o servidor).
@@ -114,7 +122,9 @@ abstract class DriveBase extends ChangeNotifier {
     await refresh();
   }
 
-  Future<int> uploadFromPaths(List<String> sources);
+  /// Sube/copias los archivos. Con [overwrite] reemplaza los existentes
+  /// en vez de renombrarlos.
+  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false});
   Future<void> createFolder(String name);
   Future<void> rename(DriveItem item, String newName);
   Future<void> delete(DriveItem item);
@@ -175,6 +185,59 @@ abstract class DriveBase extends ChangeNotifier {
   void clearFinishedUploads() {
     uploadJobs.removeWhere((j) => j.status != 'uploading');
     notifyListeners();
+  }
+
+  // ---------- Cancelación de subidas ----------
+
+  /// Marca un trabajo como cancelado. El pool lo salta si aún no empieza,
+  /// o aborta el envío (cortando el stream) si está en vuelo.
+  void cancelUpload(String jobId) {
+    for (final j in uploadJobs) {
+      if (j.id == jobId && j.status == 'uploading') {
+        j.cancelled = true;
+        notifyListeners();
+        return;
+      }
+    }
+  }
+
+  /// Cancela TODAS las subidas activas (en cola o en vuelo).
+  void cancelAllUploads() {
+    var changed = false;
+    for (final j in uploadJobs) {
+      if (j.status == 'uploading' && !j.cancelled) {
+        j.cancelled = true;
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
+  /// ¿Nombres ya existen en la carpeta destino? Devuelve los que sí.
+  /// (El panel lo usa para preguntar: renombrar / sobrescribir / cancelar.)
+  Future<List<String>> filterExisting(List<String> names) async => const [];
+
+  // ---------- Refresco "en vivo" durante subidas ----------
+
+  Timer? _liveRefreshTimer;
+  DateTime _lastLiveRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Refresca el listado DURANTE una subida (máx. 1 vez cada 2 s y siempre
+  /// 2 s después de la última llamada): así cada foto aparece en la cuadrícula
+  /// apenas se guarda, sin esperar a que termine TODO el lote.
+  @protected
+  void scheduleLiveRefresh() {
+    final now = DateTime.now();
+    if (now.difference(_lastLiveRefreshAt) >= const Duration(seconds: 2)) {
+      _lastLiveRefreshAt = now;
+      refresh();
+      return;
+    }
+    _liveRefreshTimer ??= Timer(const Duration(seconds: 2), () {
+      _liveRefreshTimer = null;
+      _lastLiveRefreshAt = DateTime.now();
+      refresh();
+    });
   }
 
   String extOf(String name) {

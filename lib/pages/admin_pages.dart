@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/anim.dart';
 import '../widgets/common.dart';
 
 /// Ítems del menú de administración (aún no disponibles).
@@ -51,46 +52,48 @@ class ComingSoonPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.all(28),
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: .07),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: scheme.primary.withValues(alpha: .25)),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .14),
-                    shape: BoxShape.circle,
+          PopIn(
+            child: Container(
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .07),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: scheme.primary.withValues(alpha: .25)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .14),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      section?.icon ?? Icons.construction_rounded,
+                      color: scheme.primary,
+                      size: 34,
+                    ),
                   ),
-                  child: Icon(
-                    section?.icon ?? Icons.construction_rounded,
-                    color: scheme.primary,
-                    size: 34,
+                  const SizedBox(height: 14),
+                  Text(
+                    'Próximamente',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800),
                   ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Próximamente',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  section?.description ??
-                      'Módulo en desarrollo del panel de administración.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        height: 1.4,
-                      ),
-                ),
-              ],
+                  const SizedBox(height: 6),
+                  Text(
+                    section?.description ??
+                        'Módulo en desarrollo del panel de administración.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 20),
@@ -113,11 +116,14 @@ class ComingSoonPage extends StatelessWidget {
                 crossAxisSpacing: 12,
                 childAspectRatio: 1.5,
                 children: [
-                  for (final s in adminSections)
-                    SectionCard(
-                      icon: s.icon,
-                      title: s.title,
-                      description: s.description,
+                  for (var i = 0; i < adminSections.length; i++)
+                    StaggeredItem(
+                      index: i,
+                      child: SectionCard(
+                        icon: adminSections[i].icon,
+                        title: adminSections[i].title,
+                        description: adminSections[i].description,
+                      ),
                     ),
                 ],
               );
@@ -129,7 +135,7 @@ class ComingSoonPage extends StatelessWidget {
   }
 }
 
-/// Placeholder del Dashboard con métricas simuladas.
+/// Placeholder del Dashboard con métricas y contadores animados.
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
 
@@ -153,60 +159,77 @@ class DashboardPage extends StatelessWidget {
                 crossAxisSpacing: 12,
                 childAspectRatio: 1.9,
                 children: [
-                  _StatCard(
-                    icon: Icons.people_alt_rounded,
-                    label: 'Usuarios activos',
-                    value: '12',
-                    tint: scheme.primary,
+                  StaggeredItem(
+                    index: 0,
+                    child: _StatCard(
+                      icon: Icons.people_alt_rounded,
+                      label: 'Usuarios activos',
+                      value: '12',
+                      tint: scheme.primary,
+                    ),
                   ),
-                  _StatCard(
-                    icon: Icons.badge_rounded,
-                    label: 'Clientes',
-                    value: '48',
-                    tint: const Color(0xFF8B5CF6),
+                  StaggeredItem(
+                    index: 1,
+                    child: _StatCard(
+                      icon: Icons.badge_rounded,
+                      label: 'Clientes',
+                      value: '48',
+                      tint: const Color(0xFF8B5CF6),
+                    ),
                   ),
-                  _StatCard(
-                    icon: Icons.photo_library_rounded,
-                    label: 'Imágenes en el Drive',
-                    value: '—',
-                    tint: const Color(0xFF10B981),
+                  StaggeredItem(
+                    index: 2,
+                    child: _StatCard(
+                      icon: Icons.photo_library_rounded,
+                      label: 'Imágenes en el Drive',
+                      value: '—',
+                      tint: const Color(0xFF10B981),
+                    ),
                   ),
-                  _StatCard(
-                    icon: Icons.folder_rounded,
-                    label: 'Carpetas',
-                    value: '—',
-                    tint: const Color(0xFFF59E0B),
+                  StaggeredItem(
+                    index: 3,
+                    child: _StatCard(
+                      icon: Icons.folder_rounded,
+                      label: 'Carpetas',
+                      value: '—',
+                      tint: const Color(0xFFF59E0B),
+                    ),
                   ),
                 ],
               );
             },
           ),
           const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  Icon(Icons.insights_rounded,
-                      size: 40, color: scheme.onSurfaceVariant),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Métricas en camino',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Cuando los módulos de administración estén conectados, aquí verás actividad, crecimiento y reportes en tiempo real.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
-                  ),
-                ],
+          StaggeredItem(
+            index: 4,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    PopIn(
+                      child: Icon(Icons.insights_rounded,
+                          size: 40, color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Métricas en camino',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Cuando los módulos de administración estén conectados, aquí verás actividad, crecimiento y reportes en tiempo real.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -251,12 +274,21 @@ class _StatCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    value,
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.w800),
+                  // Contador animado: los números "corren" al entrar (0 → valor).
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 700),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, t, _) {
+                      final n = int.tryParse(value);
+                      return Text(
+                        n == null ? value : '${(n * t).round()}',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      );
+                    },
                   ),
                   Text(
                     label,

@@ -125,49 +125,101 @@ class DriveService extends DriveBase {
     }
   }
 
-  /// Copia archivos locales a la carpeta actual, uno por trabajo con
-  /// progreso (no bloquea la UI; usa el mismo panel que el modo remoto).
+  /// ¿Nombres ya existen en la carpeta local actual?
   @override
-  Future<int> uploadFromPaths(List<String> sources) async {
-    if (sources.isEmpty) return 0;
-    var saved = 0;
+  Future<List<String>> filterExisting(List<String> names) async {
     final dir = Directory(_absolute(path));
+    final existing = <String>[];
+    for (final n in names) {
+      if (File([dir.path, _sanitize(n)].join(Platform.pathSeparator))
+          .existsSync()) {
+        existing.add(n);
+      }
+    }
+    return existing;
+  }
+
+  /// Copia archivos locales a la carpeta actual con panel de progreso
+  /// (no bloquea la UI). Registra TODOS los trabajos primero — el panel
+  /// muestra la lista completa desde el inicio — y hasta [kUploadParallel]
+  /// copias corren en paralelo.
+  /// Con [overwrite] reemplaza el existente en vez de renombrar (foto (1)).
+  /// Los trabajos con `cancelled = true` se saltan.
+  @override
+  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
+    if (sources.isEmpty) return 0;
+    final dir = Directory(_absolute(path));
+    final pending = <(DriveUploadJob, File)>[];
+    var i = 0;
     for (final src in sources) {
       final f = File(src);
       if (!f.existsSync()) continue;
       // Acepta rutas con / o \ mezclados (drop externo, file_selector…).
       final fileName = src.split(RegExp(r'[\\/]')).last;
       final job = DriveUploadJob(
-        id: '$src-${DateTime.now().microsecondsSinceEpoch}',
+        id: 'u${DateTime.now().microsecondsSinceEpoch}-$i',
         name: fileName,
         thumb: src,
         total: f.lengthSync(),
       );
+      i++;
       addUploadJob(job);
-      try {
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-        // Normaliza separadores para extraer bien el nombre en cualquier OS.
-        var name = _sanitize(fileName);
-        var dest = File([dir.path, name].join(Platform.pathSeparator));
-        var i = 1;
-        final base = name.contains('.')
-            ? name.substring(0, name.lastIndexOf('.'))
-            : name;
-        final ext =
-            name.contains('.') ? name.substring(name.lastIndexOf('.')) : '';
-        while (dest.existsSync()) {
-          dest = File([dir.path, '$base ($i)$ext'].join(Platform.pathSeparator));
-          i++;
+      pending.add((job, f));
+    }
+    if (pending.isEmpty) return 0;
+
+    var saved = 0;
+    var next = 0;
+    final claimed = <String>{}; // destinos ya elegidos por otros workers
+    Future<void> worker() async {
+      while (next < pending.length) {
+        final (job, f) = pending[next++];
+        // Cancelado mientras esperaba en cola: se salta.
+        if (job.cancelled) {
+          job.status = 'cancelled';
+          job.error = 'Cancelado';
+          notifyUploadProgress();
+          continue;
         }
-        await f.copy(dest.path);
-        job.sent = job.total;
-        notifyUploadProgress();
-        finishUploadJob(job);
-        saved++;
-      } catch (e) {
-        finishUploadJob(job, error: e.toString());
+        try {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+          // Normaliza separadores para extraer bien el nombre en cualquier OS.
+          final clean = _sanitize(job.name);
+          final base = clean.contains('.')
+              ? clean.substring(0, clean.lastIndexOf('.'))
+              : clean;
+          final ext =
+              clean.contains('.') ? clean.substring(clean.lastIndexOf('.')) : '';
+          var name = clean;
+          if (!overwrite) {
+            var k = 1;
+            var dest = File([dir.path, name].join(Platform.pathSeparator));
+            // Evita colisión con existentes Y con otros workers en paralelo.
+            while (dest.existsSync() || claimed.contains(name)) {
+              name = '$base ($k)$ext';
+              k++;
+              dest = File([dir.path, name].join(Platform.pathSeparator));
+            }
+          }
+          claimed.add(name);
+          await f.copy([dir.path, name].join(Platform.pathSeparator));
+          job.sent = job.total;
+          notifyUploadProgress();
+          finishUploadJob(job);
+          saved++;
+          scheduleLiveRefresh();
+        } catch (e) {
+          if (job.cancelled) {
+            job.status = 'cancelled';
+            job.error = 'Cancelado';
+            notifyUploadProgress();
+          } else {
+            finishUploadJob(job, error: e.toString());
+          }
+        }
       }
     }
+    await Future.wait(List.generate(kUploadParallel, (_) => worker()));
     await refresh();
     return saved;
   }
