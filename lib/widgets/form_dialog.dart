@@ -50,8 +50,12 @@ class FormDialog extends StatelessWidget {
   /// saltar a un punto del formulario largo.
   final List<FormMenu>? menu;
 
-  /// Altura fija del contenido (para listas internas con scroll), p. ej.
-  /// el modal de permisos. Si es null, el diálogo mide lo que ocupa.
+  /// Altura FIJA del contenido: usar SOLO si algún hijo lo exige (p. ej. un
+  /// navegador de carpetas). NO combinar con ListView "viewport": el
+  /// contenido ya vive dentro de un SingleChildScrollView y un scrollable
+  /// anidado crashea el layout (!semantics.parentDataDirty). Para listas
+  /// usar shrinkWrap + NeverScrollableScrollPhysics. Si es null, el diálogo
+  /// mide lo que ocupa.
   final double? contentHeight;
 
   /// Widgets extra a la IZQUIERDA de Cancelar (p. ej. "Asignar del catálogo").
@@ -78,12 +82,19 @@ class FormDialog extends StatelessWidget {
     final screen = MediaQuery.sizeOf(context).width;
     final target = _targetWidth(screen);
     final hasMenu = (menu?.length ?? 0) > 1 && screen > 760;
+    // Márgenes COMPACTOS en móvil: más contenido visible, menos aire.
+    final compact = screen < 620;
 
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 12 : 40,
+        vertical: compact ? 18 : 24,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      titlePadding: const EdgeInsets.fromLTRB(20, 20, 8, 0),
-      contentPadding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+      titlePadding: EdgeInsets.fromLTRB(compact ? 14 : 20, compact ? 14 : 20, 8, 0),
+      contentPadding: EdgeInsets.fromLTRB(compact ? 14 : 24, 14, compact ? 14 : 24, 0),
+      actionsPadding:
+          EdgeInsets.fromLTRB(compact ? 14 : 24, 10, compact ? 14 : 24, compact ? 14 : 18),
       title: Row(
         children: [
           Container(

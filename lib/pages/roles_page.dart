@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
@@ -21,6 +22,14 @@ class _RolesPageState extends State<RolesPage> {
   String? _error;
   List<Map<String, dynamic>> _roles = const [];
   List<Map<String, dynamic>> _modules = const [];
+
+  /// Permisos del usuario logueado (módulo "Roles").
+  bool get _canCreate =>
+      HsAccess.instance.degraded || HsAccess.instance.can('Roles', 'create');
+  bool get _canUpdate =>
+      HsAccess.instance.degraded || HsAccess.instance.can('Roles', 'update');
+  bool get _canDelete =>
+      HsAccess.instance.degraded || HsAccess.instance.can('Roles', 'delete');
 
   @override
   void initState() {
@@ -129,21 +138,27 @@ class _RolesPageState extends State<RolesPage> {
       title: 'Roles',
       description:
           'Define a qué módulos puede entrar cada rol y qué acciones puede realizar.',
+      icon: Icons.admin_panel_settings_rounded,
+      stats: [
+        StatPill(icon: Icons.workspace_premium_outlined, label: '${_roles.length} roles'),
+        if (_modules.isNotEmpty)
+          StatPill(
+              icon: Icons.window_outlined, label: '${_modules.length} módulos'),
+      ],
       actions: [
-        FilledButton.icon(
-          onPressed: () => _openForm(),
-          icon: const Icon(Icons.add_moderator_outlined, size: 18),
-          label: const Text('Nuevo rol'),
-        ),
+        // "Crear" (create): sin el permiso, el botón no aparece.
+        if (_canCreate)
+          FilledButton.icon(
+            onPressed: () => _openForm(),
+            icon: const Icon(Icons.add_moderator_outlined, size: 18),
+            label: const Text('Nuevo rol'),
+          ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(48),
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const ListSkeleton(lines: 5)
           else if (_error != null)
             Card(
               child: Padding(
@@ -181,9 +196,10 @@ class _RolesPageState extends State<RolesPage> {
                       index: i,
                       child: _RoleTile(
                         role: _roles[i],
-                        onEdit: () => _openForm(_roles[i]),
-                        onPermissions: () => _openPermissions(_roles[i]),
-                        onDelete: () => _delete(_roles[i]),
+                        onEdit: _canUpdate ? () => _openForm(_roles[i]) : null,
+                        onPermissions:
+                            _canUpdate ? () => _openPermissions(_roles[i]) : null,
+                        onDelete: _canDelete ? () => _delete(_roles[i]) : null,
                       ),
                     ),
                   ],
@@ -205,9 +221,11 @@ class _RoleTile extends StatelessWidget {
   });
 
   final Map<String, dynamic> role;
-  final VoidCallback onEdit;
-  final VoidCallback onPermissions;
-  final VoidCallback onDelete;
+
+  /// null = el usuario no tiene el permiso → el botón NO se muestra.
+  final VoidCallback? onEdit;
+  final VoidCallback? onPermissions;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -259,23 +277,26 @@ class _RoleTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          FilledButton.tonalIcon(
-            onPressed: onPermissions,
-            icon: const Icon(Icons.tune, size: 16),
-            label: const Text('Acciones'),
-          ),
+          if (onPermissions != null)
+            FilledButton.tonalIcon(
+              onPressed: onPermissions,
+              icon: const Icon(Icons.tune, size: 16),
+              label: const Text('Acciones'),
+            ),
           const SizedBox(width: 4),
-          IconButton(
-            tooltip: 'Renombrar',
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined, size: 20),
-          ),
-          IconButton(
-            tooltip: 'Eliminar',
-            onPressed: onDelete,
-            icon: Icon(Icons.delete_outline,
-                size: 20, color: scheme.error.withValues(alpha: .8)),
-          ),
+          if (onEdit != null)
+            IconButton(
+              tooltip: 'Renombrar',
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 20),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: 'Eliminar',
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline,
+                  size: 20, color: scheme.error.withValues(alpha: .8)),
+            ),
         ],
       ),
     );
@@ -423,7 +444,18 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
           .map((e) => (e as Map).cast<String, dynamic>())
           .toList();
 
+  /// REGLA: "Ver" (read) es la puerta del módulo — al QUITARLO se limpian
+  /// también create/update/delete/download del módulo.
+  void _enforceReadRule(Set<String> sel) {
+    for (final key in List.of(sel)) {
+      final parts = key.split(':');
+      final readKey = '${parts[0]}:2';
+      if (!sel.contains(readKey)) sel.remove(key);
+    }
+  }
+
   void _toggleModule(Map<String, dynamic> module, bool? v) {
+    if (_saving) return;
     final keys =
         _actions(module).map((a) => _k(module['id'], a['id'])).toList();
     setState(() {
@@ -432,23 +464,28 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
       } else {
         _selected.removeAll(keys);
       }
+      _enforceReadRule(_selected);
     });
   }
 
   void _toggleAction(Map<String, dynamic> module, Map<String, dynamic> action,
       bool? v) {
+    if (_saving) return;
     setState(() {
       if (v ?? false) {
         _selected.add(_k(module['id'], action['id']));
       } else {
         _selected.remove(_k(module['id'], action['id']));
       }
+      _enforceReadRule(_selected);
     });
   }
 
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
+    // Regla de negocio ANTES de agrupar: sin "Ver" no hay más acciones.
+    _enforceReadRule(_selected);
     // Agrupa por moduleId: { moduleId, permissionIds: [] }
     final byModule = <int, List<int>>{};
     for (final key in _selected) {
@@ -491,48 +528,50 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
       title: name,
       subtitle: 'Asignación de acciones por módulo',
       maxWidth: 680,
-      // Altura adaptativa: en pantallas cortas el diálogo cabe completo.
-      contentHeight:
-          (MediaQuery.sizeOf(context).height * .5).clamp(260.0, 430.0),
+      // Sin contentHeight: la lista es plana (shrinkWrap) y mide lo que
+      // ocupa; el scroll del diálogo la desplaza si no cabe.
       saving: _saving,
       saveLabel: _selected.isEmpty ? 'Guardar' : 'Guardar ${_selected.length} permisos',
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
-        SizedBox(
-          height: 430,
-          child: widget.modules.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.window_outlined,
-                          size: 40, color: scheme.onSurfaceVariant),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'No hay módulos registrados en la base de datos',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Agrega módulos a la tabla "modules" para poder asignar acciones.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.separated(
-                  itemCount: widget.modules.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) =>
-                      _ModuleCard(module: widget.modules[i], state: this),
+        // LISTA PLANA con Column: NADA de ListView/shrinkWrap dentro de un
+        // AlertDialog — el viewport obliga al framework a calcular dimensions
+        // intrínsecas y crashea ("RenderShrinkWrappingViewport does not
+        // support returning intrinsic dimensions"). El FormDialog ya provee
+        // el ÚNICO scroll de la ventana.
+        if (widget.modules.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.window_outlined,
+                    size: 40, color: scheme.onSurfaceVariant),
+                const SizedBox(height: 12),
+                const Text(
+                  'No hay módulos registrados en la base de datos',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.w600),
                 ),
-        ),
+                const SizedBox(height: 4),
+                Text(
+                  'Agrega módulos a la tabla "modules" para poder asignar acciones.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else ...[
+          for (var i = 0; i < widget.modules.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            _ModuleCard(module: widget.modules[i], state: this),
+          ],
+        ],
       ],
     );
   }
@@ -590,7 +629,7 @@ class _ModuleCard extends StatelessWidget {
                   _Check.some => null,
                   _Check.none => false,
                 },
-                onChanged: (v) => state._toggleModule(module, v),
+                onChanged: state._saving ? null : (v) => state._toggleModule(module, v),
               ),
               Icon(Icons.window_outlined,
                   size: 18,

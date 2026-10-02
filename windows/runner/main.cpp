@@ -25,12 +25,22 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
+  // Tamaño INICIAL = área de trabajo completa (sin tapar la barra de
+  // tareas): la ventana abre maximizada en vez de 1280x720.
+  RECT work_area{};
+  if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0)) {
+    work_area = {0, 0, GetSystemMetrics(SM_CXSCREEN),
+                 GetSystemMetrics(SM_CYSCREEN)};
+  }
+  Win32Window::Point origin(0, 0);
+  Win32Window::Size size(work_area.right - work_area.left,
+                         work_area.bottom - work_area.top);
   if (!window.Create(L"Hardstreet Admin", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+  // Refuerzo maximizado (respeta la barra de tareas).
+  ::ShowWindow(window.GetHandle(), SW_MAXIMIZE);
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

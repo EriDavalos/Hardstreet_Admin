@@ -53,6 +53,10 @@ class HsMeta {
   }
 }
 
+/// Un módulo con sus acciones (respuesta de /api/admin/permission).
+/// `key` = modules.module (drive, users, rols...); `name` = modules.name.
+typedef HsModulePerms = ({String key, String name, Set<String> actions});
+
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
   final String message;
@@ -86,6 +90,11 @@ class HsSession {
     token = null;
     user = null;
   }
+
+  /// Ruta ACTUAL del drive dentro del panel (carpetas desde la raíz).
+  /// La escribe DrivePage al navegar; los diálogos la leen para cerrarse
+  /// solos si cambia la carpeta mientras están abiertos.
+  static List<String>? route;
 }
 
 class HsApi {
@@ -95,6 +104,11 @@ class HsApi {
   /// sesión ya establecida (token expirado/inválido, p. ej. al abrir la app
   /// con "Recordarme" después de días). La app debe regresar al login.
   static void Function()? onUnauthorized;
+
+  /// Callback global: se dispara cuando se guardan permisos de un rol
+  /// (RolesPage). El sidebar se recarga para aplicar los cambios AL INSTANTE
+  /// (módulos sin "Ver" se ocultan sin reiniciar la app).
+  static void Function()? onPermissionsChanged;
 
   /// Base del CRUD: backend de Vercel (AppConstants.crudApiBase).
   /// Independiente del drive (AppConstants.apiBase / DRIVE_API).
@@ -226,8 +240,11 @@ class HsApi {
   static Future<void> createRole(Map<String, dynamic> body) =>
       post('/api/admin/roles', body);
 
-  static Future<void> updateRole(Map<String, dynamic> body) =>
-      put('/api/admin/roles', body);
+  static Future<void> updateRole(Map<String, dynamic> body) async {
+    await put('/api/admin/roles', body);
+    // Guardar permisos puede cambiar qué módulos se ven: notificar al panel.
+    onPermissionsChanged?.call();
+  }
 
   static Future<void> deleteRole(int id) => delete('/api/admin/roles?id=$id');
 
@@ -249,6 +266,73 @@ class HsApi {
           m,
     ];
     return HsMeta(modules: modules, permissions: meta.permissions);
+  }
+
+  // ---------------- Catálogo de paquetes ----------------
+
+  /// Catálogo completo: [{ id, name, subtitle, description, price, currency,
+  /// tierId, tierName, tierNum, categoryId, categoryName, isExtern,
+  /// urlImage, serviceIds, serviceNames }]
+  static Future<List<Map<String, dynamic>>> adminPackages() async {
+    final data = await get('/api/admin/packages');
+    return ((data['packages'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  static Future<void> createPackage(Map<String, dynamic> body) =>
+      post('/api/admin/packages', body);
+
+  static Future<void> updatePackage(Map<String, dynamic> body) =>
+      put('/api/admin/packages', body);
+
+  static Future<void> deletePackage(int id) =>
+      delete('/api/admin/packages?id=$id');
+
+  /// Tiers del catálogo: [{ id, name, tier }]
+  static Future<List<Map<String, dynamic>>> tiers() async {
+    final data = await get('/api/tiers');
+    return ((data['tiers'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Categorías de paquetes: [{ id, name, icon }]
+  static Future<List<Map<String, dynamic>>> packageCategories() async {
+    final data = await get('/api/categories');
+    return ((data['categories'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Servicios disponibles para incluir en paquetes: [{ id, name, description, icon }]
+  static Future<List<Map<String, dynamic>>> services() async {
+    final data = await get('/api/services');
+    return ((data['services'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// MIS permisos (para el menú): GET /api/admin/permission (antes
+  /// "my-permissions"). Devuelve { isAdmin, modules: [{ key, name, actions }] }.
+  static Future<({bool isAdmin, List<HsModulePerms> modules})>
+      myPermissions() async {
+    final data = await get('/api/admin/permission') as Map? ?? const {};
+    final modules = <HsModulePerms>[];
+    for (final m in ((data['modules'] as List?) ?? const [])) {
+      if (m is! Map) continue;
+      final key = (m['key'] ?? '').toString().toLowerCase().trim();
+      final name = (m['name'] ?? '').toString().trim();
+      if (key.isEmpty && name.isEmpty) continue;
+      modules.add((
+        key: key,
+        name: name,
+        actions: ((m['actions'] as List?) ?? const [])
+            .map((a) => a.toString().toLowerCase())
+            .toSet(),
+      ));
+    }
+    return (isAdmin: data['isAdmin'] == true, modules: modules);
   }
 
   // ---------------- Clientes ----------------

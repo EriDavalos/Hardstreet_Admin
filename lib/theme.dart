@@ -59,19 +59,39 @@ class AppTheme {
         ),
       ),
       cardTheme: CardThemeData(
+        // DISEÑO PLANO: sin elevación ni sombras; solo borde y superficie.
         elevation: 0,
         color: isDark ? AppColors.cardDark : Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .35)),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
         ),
         margin: EdgeInsets.zero,
+      ),
+      // Botones y diálogos sin sombra (flat).
+      dialogTheme: DialogThemeData(
+        backgroundColor: isDark ? AppColors.cardDark : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
+        ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.brand,
           foregroundColor: Colors.white,
+          elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
@@ -111,11 +131,6 @@ class AppTheme {
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
-      ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: isDark ? AppColors.cardDark : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(

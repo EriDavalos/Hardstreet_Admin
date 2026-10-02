@@ -13,8 +13,8 @@ class AppVersionInfo {
   });
 
   factory AppVersionInfo.fromJson(Map<String, dynamic> j) => AppVersionInfo(
-    version: j['version']?.toString() ?? '1.0.1',
-    minVersion: j['minVersion']?.toString() ?? '1.0.1',
+    version: j['version']?.toString() ?? '1.0.2',
+    minVersion: j['minVersion']?.toString() ?? '1.0.2',
     notes: j['notes']?.toString() ?? '',
     downloads: ((j['downloads'] as Map<String, dynamic>? ?? {}).map(
       (k, v) => MapEntry(k.toString(), v.toString()),
@@ -54,7 +54,8 @@ int compareVersions(String a, String b) {
 class VersionChecker {
   VersionChecker(this.base);
 
-  final String base;  Future<AppVersionInfo?> check() async {
+  final String base;
+  Future<AppVersionInfo?> check() async {
     // En web NO existe dart:io (HttpClient lanza): usa null y no molesta.
     if (kWeb) return null;
     try {

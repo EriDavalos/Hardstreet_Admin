@@ -55,7 +55,6 @@ class AdminShell extends StatelessWidget {
           Column(
             children: [
               _TopBar(
-                title: title,
                 dark: dark,
                 isCompact: isCompact,
                 onToggleTheme: onToggleTheme,
@@ -323,7 +322,6 @@ class _NavItem extends StatelessWidget {
 
 class _TopBar extends StatelessWidget {
   const _TopBar({
-    required this.title,
     required this.dark,
     required this.isCompact,
     required this.onToggleTheme,
@@ -331,7 +329,6 @@ class _TopBar extends StatelessWidget {
     this.userMenu,
   });
 
-  final String title;
   final bool dark;
   final bool isCompact;
   final VoidCallback onToggleTheme;
@@ -350,16 +347,7 @@ class _TopBar extends StatelessWidget {
             onPressed: onToggleSidebar,
             icon: const Icon(Icons.menu),
           ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ),
+          const Spacer(),
           IconButton(
             tooltip: dark ? 'Modo claro' : 'Modo oscuro',
             onPressed: onToggleTheme,

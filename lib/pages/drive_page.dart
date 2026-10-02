@@ -23,6 +23,7 @@ import '../../drive_api_service.dart';
 import '../../drive_base.dart';
 import '../../drive_downloader.dart';
 import '../../image_memory.dart';
+import '../../theme.dart';
 import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
 import '../../widgets/confirm_dialog.dart';
@@ -40,6 +41,7 @@ class _PressMovePointerState extends MultiDragPointerState {
   _PressMovePointerState(
     super.initialPosition,
     this.delay,
+    this.onHoldSelect,
     super.kind,
     super.gestureSettings,
   ) {
@@ -48,8 +50,13 @@ class _PressMovePointerState extends MultiDragPointerState {
 
   final Duration delay;
 
+  /// Se dispara al cumplirse la presión (sin mover el dedo): marca el
+  /// elemento como SELECCIONADO antes de que el arrastre arranque.
+  final void Function()? onHoldSelect;
+
   Timer? _timer;
   GestureMultiDragStartCallback? _starter;
+  bool _disposed = false;
 
   /// El dedo se movió más allá del slop ANTES del delay → NO es drag:
   /// se rechaza y el gesto queda libre (scroll del grid).
@@ -59,24 +66,34 @@ class _PressMovePointerState extends MultiDragPointerState {
     resolve(GestureDisposition.rejected);
   }
 
-  /// Se cumplió el delay SIN salida del dedo: listo para arrastrar. Si el
-  /// reconocedor ya ganó la arena, arranca AHORA; si no, espera a que la
-  /// arena lo acepte (al primer movimiento relevante).
+  /// Se cumplió el delay SIN salida del dedo: SELECCIONA el elemento (mismo
+  /// efecto que la presión larga) y gana la arena de gestos; el arrastre
+  /// arranca en el siguiente frame, ya con la selección actualizada. Así:
+  /// sostener = seleccionar y quedar listo para arrastrar LA SELECCIÓN
+  /// (mover el dedo arrastra el grupo; soltar sin mover deja la selección).
   void _delayPassed() {
     _timer = null;
-    final starter = _starter;
-    if (starter != null) {
-      _starter = null;
-      starter(initialPosition);
-    }
-    // Con _starter == null esperamos accepted() (ver abajo).
+    onHoldSelect?.call();
+    // Gana la arena AHORA: el tap del InkWell queda rechazado (no desmarca
+    // lo recién seleccionado al soltar) y accepted() programa el arranque.
+    resolve(GestureDisposition.accepted);
   }
 
   @override
   void accepted(GestureMultiDragStartCallback starter) {
+    if (_disposed) return;
     if (_timer == null) {
-      // Presión cumplida y arena ganada: iniciar el arrastre.
-      starter(initialPosition);
+      // Presión cumplida: esperar UN frame para que el setState de la
+      // selección reconstruya el widget y el payload del drag incluya a
+      // TODO el grupo seleccionado (no solo el elemento presionado).
+      _starter = starter;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final s = _starter;
+        if (s != null && !_disposed) {
+          _starter = null;
+          s(initialPosition);
+        }
+      });
     } else {
       // Aún esperando el delay: guardar y arrancar en _delayPassed.
       _starter = starter;
@@ -102,6 +119,7 @@ class _PressMovePointerState extends MultiDragPointerState {
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _timer = null;
     super.dispose();
@@ -116,16 +134,21 @@ class PressMoveMultiDragGestureRecognizer
     super.debugOwner,
     super.allowedButtonsFilter,
     this.delay = const Duration(milliseconds: 350),
+    this.onHoldSelect,
   });
 
   /// Duración de la presión antes de habilitar el arrastre.
   final Duration delay;
+
+  /// Selección al cumplirse la presión (ver [_PressMovePointerState]).
+  final void Function()? onHoldSelect;
 
   @override
   MultiDragPointerState createNewPointerState(PointerDownEvent event) {
     return _PressMovePointerState(
       event.position,
       delay,
+      onHoldSelect,
       event.kind,
       gestureSettings,
     );
@@ -147,6 +170,7 @@ class PressMoveDraggable<T extends Object> extends Draggable<T> {
     required super.feedback,
     required super.data,
     this.delay = const Duration(milliseconds: 350),
+    this.onHoldSelect,
     super.childWhenDragging,
     super.dragAnchorStrategy,
   });
@@ -154,11 +178,17 @@ class PressMoveDraggable<T extends Object> extends Draggable<T> {
   /// Duración de la presión antes de habilitar el arrastre.
   final Duration delay;
 
+  /// Al cumplirse la presión se invoca UNA vez: selecciona el elemento
+  /// para que el arrastre lleve toda la selección.
+  final VoidCallback? onHoldSelect;
+
   @override
   MultiDragGestureRecognizer createRecognizer(
       GestureMultiDragStartCallback onStart) {
-    return PressMoveMultiDragGestureRecognizer(delay: delay)
-      ..onStart = (Offset position) {
+    return PressMoveMultiDragGestureRecognizer(
+      delay: delay,
+      onHoldSelect: onHoldSelect,
+    )..onStart = (Offset position) {
         final drag = onStart(position);
         if (drag != null) HapticFeedback.selectionClick();
         return drag;
@@ -863,6 +893,10 @@ class _DrivePageState extends State<DrivePage> {
 
   void _open(DriveItem item) {
     if (item.isFolder) {
+      // IGNORAR toques mientras la carpeta anterior SIGUE cargando: la
+      // cuadrícula aún muestra el listado anterior y un segundo toque
+      // reabría el MISMO elemento → "Mi Drive / X / X".
+      if (widget.drive.loading) return;
       _clearSelection();
       widget.drive.openFolder(item.name);
     } else {
@@ -984,7 +1018,16 @@ class _DrivePageState extends State<DrivePage> {
           contentBox.localToGlobal(Offset.zero, ancestor: stackBox);
     }
 
-    return DropTarget(
+    // Botón "atrás" del SISTEMA (Android): mientras no estemos en la raíz del
+    // drive, NO cierra la app — vuelve a la carpeta padre. En la raíz el
+    // sistema procede con normalidad (minimiza la app).
+    return PopScope(
+      canPop: drive.path.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        widget.drive.goUp();
+      },
+      child: DropTarget(
       onDragEntered: (_) {
         // Al arrastrar desde el explorador, sube la vista al inicio para
         // que se vea la zona de destino de inmediato.
@@ -1007,107 +1050,190 @@ class _DrivePageState extends State<DrivePage> {
       children: [
         Column(
           children: [
-            // ===== Header hero (barra fija con scroll interior) =====
+            // ===== Header hero: tarjeta plana con degradado sutil y
+            // círculos geométricos (mismo lenguaje visual que los módulos) ==
             Padding(
               padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Mi Drive',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .headlineSmall
-                                  ?.copyWith(fontWeight: FontWeight.w800),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              drive.locationLabel == 'Mi Drive'
-                                  ? 'Raíz del almacenamiento'
-                                  : drive.locationLabel,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                      color: scheme.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (isCompact) ...[
-                        _RoundAction(
-                          icon: Icons.create_new_folder_outlined,
-                          tooltip: 'Nueva carpeta',
-                          onTap: _newFolder,
-                        ),
-                        const SizedBox(width: 8),
-                        _RoundAction(
-                          icon: Icons.refresh,
-                          tooltip: 'Actualizar',
-                          onTap: drive.refresh,
-                        ),
-                      ],
+              child: Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(isCompact ? 18 : 22),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      scheme.primary.withValues(alpha: .08),
+                      scheme.primary.withValues(alpha: .015),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: drive.setSearch,
-                          decoration: const InputDecoration(
-                            hintText: 'Buscar en esta carpeta',
-                            prefixIcon: Icon(Icons.search, size: 20),
-                          ),
+                  border:
+                      Border.all(color: scheme.primary.withValues(alpha: .16)),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      right: -40,
+                      top: -52,
+                      child: Container(
+                        width: 150,
+                        height: 150,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: .05),
+                          shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Tooltip(
-                        message:
-                            _grid ? 'Vista de lista' : 'Vista de cuadrícula',
-                        child: IconButton.filledTonal(
-                          onPressed: () =>
-                              setState(() => _grid = !_grid),
-                          icon: Icon(
-                            _grid
-                                ? Icons.view_list_rounded
-                                : Icons.grid_view_rounded,
-                          ),
+                    ),
+                    Positioned(
+                      left: -46,
+                      bottom: -64,
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: .035),
+                          shape: BoxShape.circle,
                         ),
                       ),
-                      if (!isCompact) ...[
-                        const SizedBox(width: 10),
-                        OutlinedButton.icon(
-                          onPressed: _newFolder,
-                          icon: const Icon(
-                            Icons.create_new_folder_outlined,
-                            size: 18,
+                    ),
+                    Padding(
+                      padding: EdgeInsets.all(isCompact ? 16 : 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              PopIn(
+                                child: Container(
+                                  padding: const EdgeInsets.all(3.5),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: scheme.primary
+                                          .withValues(alpha: .28),
+                                    ),
+                                  ),
+                                  child: Container(
+                                    width: isCompact ? 48 : 54,
+                                    height: isCompact ? 48 : 54,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          AppColors.brand,
+                                          AppColors.brandDark
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      Icons.folder_copy_outlined,
+                                      color: Colors.white,
+                                      size: isCompact ? 24 : 26,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Mi Drive',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w800),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      drive.locationLabel == 'Mi Drive'
+                                          ? 'Raíz del almacenamiento'
+                                          : drive.locationLabel,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                              color: scheme.onSurfaceVariant),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (!isCompact) ...[
+                                const SizedBox(width: 16),
+                                OutlinedButton.icon(
+                                  onPressed: _newFolder,
+                                  icon: const Icon(
+                                    Icons.create_new_folder_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text('Nueva carpeta'),
+                                ),
+                                const SizedBox(width: 10),
+                                FilledButton.icon(
+                                  onPressed: _upload,
+                                  icon: const Icon(Icons.upload_file, size: 18),
+                                  label: const Text('Subir imágenes'),
+                                ),
+                              ] else ...[
+                                _RoundAction(
+                                  icon: Icons.create_new_folder_outlined,
+                                  tooltip: 'Nueva carpeta',
+                                  onTap: _newFolder,
+                                ),
+                                const SizedBox(width: 8),
+                                _RoundAction(
+                                  icon: Icons.refresh,
+                                  tooltip: 'Actualizar',
+                                  onTap: drive.refresh,
+                                ),
+                              ],
+                            ],
                           ),
-                          label: const Text('Nueva carpeta'),
-                        ),
-                        const SizedBox(width: 10),
-                        FilledButton.icon(
-                          onPressed: _upload,
-                          icon: const Icon(Icons.upload_file, size: 18),
-                          label: const Text('Subir imágenes'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _searchController,
+                                  onChanged: drive.setSearch,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Buscar en esta carpeta',
+                                    prefixIcon: Icon(Icons.search, size: 20),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Tooltip(
+                                message: _grid
+                                    ? 'Vista de lista'
+                                    : 'Vista de cuadrícula',
+                                child: IconButton.filledTonal(
+                                  onPressed: () =>
+                                      setState(() => _grid = !_grid),
+                                  icon: Icon(
+                                    _grid
+                                        ? Icons.view_list_rounded
+                                        : Icons.grid_view_rounded,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 10),
-            // ===== Ruta actual (SOLO computadora: en el celular no se ve
-            // bien y sobra; allí basta el botón "Atrás") =====
-            if (!isCompact && drive.path.isNotEmpty)
+            // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
+            // móvil, donde sirve para saltar a cualquier carpeta padre) =====
+            if (drive.path.isNotEmpty)
               Padding(
                 padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
                 child: Align(
@@ -1353,6 +1479,7 @@ class _DrivePageState extends State<DrivePage> {
             child: _UploadsCard(drive: drive),
           ),
       ],
+      ),
       ),
       ),
     );
@@ -1793,6 +1920,7 @@ class _GridItem extends StatelessWidget {
     final Widget Function(Widget child) buildDraggable = useLongPressDrag
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
+            onHoldSelect: onLongPress,
             data: isSelected && selectedNames.length > 1
                 ? SelectionPayload(selectedNames)
                 : SelectionPayload([item.name]),
@@ -1866,8 +1994,7 @@ class _GridItem extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
-                  decoration: BoxDecoration(
+                  curve: Curves.easeOutCubic,                  decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
                       color: isSelected
@@ -1882,20 +2009,8 @@ class _GridItem extends StatelessWidget {
                         : hovered
                             ? scheme.primary.withValues(alpha: .05)
                             : null,
-                    boxShadow: [
-                      if (isSelected)
-                        BoxShadow(
-                          color: scheme.primary.withValues(alpha: .30),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        )
-                      else if (hovered)
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: .14),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                    ],
+                    // Diseño PLANO: sin sombras; el estado se comunica con
+                    // borde y tinte de color.
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(13.5),
@@ -2505,6 +2620,7 @@ class _ListRow extends StatelessWidget {
     final Widget Function(Widget child) buildDraggable = useLongPressDrag
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
+            onHoldSelect: onLongPress,
             data: isSelected && selectedNames.length > 1
                 ? SelectionPayload(selectedNames)
                 : SelectionPayload([item.name]),

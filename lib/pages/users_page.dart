@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
@@ -115,12 +116,22 @@ class _UsersPageState extends State<UsersPage> {
       title: 'Usuarios',
       description:
           'Crea, actualiza y elimina cuentas del equipo, y asígnales su rol.',
+      icon: Icons.people_alt_rounded,
+      stats: [
+        StatPill(icon: Icons.person_outline, label: '${_users.length} usuarios'),
+        if (_roles.isNotEmpty)
+          StatPill(
+              icon: Icons.admin_panel_settings_outlined,
+              label: '${_roles.length} roles'),
+      ],
       actions: [
-        FilledButton.icon(
-          onPressed: () => _openForm(),
-          icon: const Icon(Icons.person_add_alt, size: 18),
-          label: const Text('Nuevo usuario'),
-        ),
+        // "Crear" (create): sin el permiso, el botón no aparece.
+        if (HsAccess.instance.degraded || HsAccess.instance.can('Usuarios', 'create'))
+          FilledButton.icon(
+            onPressed: () => _openForm(),
+            icon: const Icon(Icons.person_add_alt, size: 18),
+            label: const Text('Nuevo usuario'),
+          ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -140,10 +151,7 @@ class _UsersPageState extends State<UsersPage> {
           ),
           const SizedBox(height: 16),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(48),
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const ListSkeleton(lines: 5)
           else if (_error != null)
             Card(
               child: Padding(
@@ -183,8 +191,14 @@ class _UsersPageState extends State<UsersPage> {
                       index: i,
                       child: _UserTile(
                         user: _filtered[i],
-                        onEdit: () => _openForm(_filtered[i]),
-                        onDelete: () => _delete(_filtered[i]),
+                        onEdit: HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Usuarios', 'update')
+                            ? () => _openForm(_filtered[i])
+                            : null,
+                        onDelete: HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Usuarios', 'delete')
+                            ? () => _delete(_filtered[i])
+                            : null,
                       ),
                     ),
                   ],
@@ -205,8 +219,10 @@ class _UserTile extends StatelessWidget {
   });
 
   final Map<String, dynamic> user;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+
+  /// null = el usuario no tiene el permiso → el botón NO se muestra.
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -277,17 +293,19 @@ class _UserTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Editar y asignar rol',
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined, size: 20),
-          ),
-          IconButton(
-            tooltip: 'Eliminar',
-            onPressed: onDelete,
-            icon: Icon(Icons.delete_outline,
-                size: 20, color: scheme.error.withValues(alpha: .8)),
-          ),
+          if (onEdit != null)
+            IconButton(
+              tooltip: 'Editar y asignar rol',
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 20),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: 'Eliminar',
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline,
+                  size: 20, color: scheme.error.withValues(alpha: .8)),
+            ),
         ],
       ),
     );

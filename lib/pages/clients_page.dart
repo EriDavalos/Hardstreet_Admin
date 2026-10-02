@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
@@ -115,12 +116,21 @@ class _ClientsPageState extends State<ClientsPage> {
       title: 'Clientes',
       description:
           'Directorio de clientes (rol fijo "Client") y administración de sus paquetes.',
+      icon: Icons.badge_rounded,
+      stats: [
+        StatPill(icon: Icons.people_outline, label: '${_clients.length} clientes'),
+        StatPill(
+            icon: Icons.inventory_2_outlined,
+            label: '${_clients.fold<int>(0, (a, c) => a + ((c['packagesCount'] as num?)?.toInt() ?? 0))} paquetes asignados'),
+      ],
       actions: [
-        FilledButton.icon(
-          onPressed: () => _openForm(),
-          icon: const Icon(Icons.badge_outlined, size: 18),
-          label: const Text('Nuevo cliente'),
-        ),
+        // "Crear" (create): sin el permiso, el botón no aparece.
+        if (HsAccess.instance.degraded || HsAccess.instance.can('Clientes', 'create'))
+          FilledButton.icon(
+            onPressed: () => _openForm(),
+            icon: const Icon(Icons.badge_outlined, size: 18),
+            label: const Text('Nuevo cliente'),
+          ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -140,10 +150,7 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           const SizedBox(height: 16),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(48),
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const ListSkeleton(lines: 5)
           else if (_error != null)
             Card(
               child: Padding(
@@ -182,9 +189,18 @@ class _ClientsPageState extends State<ClientsPage> {
                       index: i,
                       child: _ClientTile(
                         client: _filtered[i],
-                        onEdit: () => _openForm(_filtered[i]),
-                        onPackages: () => _openPackages(_filtered[i]),
-                        onDelete: () => _delete(_filtered[i]),
+                        onEdit: HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Clientes', 'update')
+                            ? () => _openForm(_filtered[i])
+                            : null,
+                        onPackages: HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Clientes', 'update')
+                            ? () => _openPackages(_filtered[i])
+                            : null,
+                        onDelete: HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Clientes', 'delete')
+                            ? () => _delete(_filtered[i])
+                            : null,
                       ),
                     ),
                   ],
@@ -206,9 +222,11 @@ class _ClientTile extends StatelessWidget {
   });
 
   final Map<String, dynamic> client;
-  final VoidCallback onEdit;
-  final VoidCallback onPackages;
-  final VoidCallback onDelete;
+
+  /// null = el usuario no tiene el permiso → el botón NO se muestra.
+  final VoidCallback? onEdit;
+  final VoidCallback? onPackages;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -262,22 +280,25 @@ class _ClientTile extends StatelessWidget {
           // Chip de paquetes = atajo al modal de paquetes
           _PkgChip(count: pkgCount, onTap: onPackages),
           const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Paquetes',
-            onPressed: onPackages,
-            icon: const Icon(Icons.card_giftcard_outlined, size: 20),
-          ),
-          IconButton(
-            tooltip: 'Editar',
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined, size: 20),
-          ),
-          IconButton(
-            tooltip: 'Eliminar',
-            onPressed: onDelete,
-            icon: Icon(Icons.delete_outline,
-                size: 20, color: scheme.error.withValues(alpha: .8)),
-          ),
+          if (onPackages != null)
+            IconButton(
+              tooltip: 'Paquetes',
+              onPressed: onPackages,
+              icon: const Icon(Icons.card_giftcard_outlined, size: 20),
+            ),
+          if (onEdit != null)
+            IconButton(
+              tooltip: 'Editar',
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 20),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: 'Eliminar',
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline,
+                  size: 20, color: scheme.error.withValues(alpha: .8)),
+            ),
         ],
       ),
     );
