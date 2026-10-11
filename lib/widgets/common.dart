@@ -171,6 +171,7 @@ class PageContainer extends StatelessWidget {
     this.actions,
     this.icon,
     this.stats = const [],
+    this.expand = false,
   });
 
   final String title;
@@ -186,6 +187,11 @@ class PageContainer extends StatelessWidget {
 
   /// Datos de contexto: 1-3 píldoras (conteos, estado del módulo).
   final List<StatPill> stats;
+
+  /// true = el contenido LLENA el alto restante de la pantalla y la página NO
+  /// hace scroll: úsalo en módulos que deben caber exactos (p. ej. el
+  /// calendario de Agendas). El hijo debe adaptarse a una altura acotada.
+  final bool expand;
 
   /// Semente estable para variar el ángulo del degradado por módulo
   /// (deriva del texto: mismo módulo → mismo diseño siempre).
@@ -326,8 +332,27 @@ class PageContainer extends StatelessWidget {
       ),
     );
 
+    final padding =
+        EdgeInsets.fromLTRB(compact ? 16 : 24, 18, compact ? 16 : 24, 24);
+
+    // Modo "llenar pantalla": la página ocupa exactamente el alto disponible
+    // (sin scroll) y el contenido se estira en el espacio restante.
+    if (expand) {
+      return Padding(
+        padding: padding,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FadeSlideIn(child: hero),
+            const SizedBox(height: 18),
+            Expanded(child: FadeSlideIn(delayMs: 90, child: child)),
+          ],
+        ),
+      );
+    }
+
     return ListView(
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 18, compact ? 16 : 24, 24),
+      padding: padding,
       children: [
         FadeSlideIn(child: hero),
         const SizedBox(height: 20),

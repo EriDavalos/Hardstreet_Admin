@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../hs_access.dart';
 import '../hs_api.dart';
+import '../hs_format.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 
@@ -138,10 +139,11 @@ class ComingSoonPage extends StatelessWidget {
   }
 }
 
-/// DASHBOARD: página INICIAL del panel. Resumen real (usuarios, clientes y
-/// catálogo desde la API) + accesos rápidos a los módulos con permiso.
-/// `onNavigate('drive' | 'packages' | 'clients' | 'roles')` lo resuelve
-/// AdminHome para cambiar de sección (solo si el usuario puede verla).
+/// DASHBOARD: página INICIAL del panel. Resumen ORDENADO de la operación con
+/// todas las fuentes que ya tenemos (usuarios internos, clientes, catálogo y
+/// agendas) y accesos rápidos a los módulos con permiso.
+/// `onNavigate('drive' | 'agendas' | 'packages' | 'clients' | 'roles')` lo
+/// resuelve AdminHome para cambiar de sección (solo si puede verla).
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, this.onNavigate});
 
@@ -157,6 +159,7 @@ class _DashboardPageState extends State<DashboardPage> {
   List<Map<String, dynamic>> _users = const [];
   List<Map<String, dynamic>> _clients = const [];
   List<Map<String, dynamic>> _packages = const [];
+  List<Map<String, dynamic>> _agendas = const [];
 
   @override
   void initState() {
@@ -169,10 +172,11 @@ class _DashboardPageState extends State<DashboardPage> {
       _loading = true;
       _error = null;
     });
-    // Cada fuente falla en silencio: el dashboard muestra lo que pueda.
-    List<Map<String, dynamic>> users = const [];
-    List<Map<String, dynamic>> clients = const [];
-    List<Map<String, dynamic>> packages = const [];
+    // Cada fuente falla en silencio: el dashboard muestra todo lo que sí cargó.
+    var users = const <Map<String, dynamic>>[];
+    var clients = const <Map<String, dynamic>>[];
+    var packages = const <Map<String, dynamic>>[];
+    var agendas = const <Map<String, dynamic>>[];
     var failures = 0;
     try {
       users = await HsApi.adminUsers();
@@ -189,11 +193,17 @@ class _DashboardPageState extends State<DashboardPage> {
     } catch (_) {
       failures++;
     }
+    try {
+      agendas = await HsApi.agendas();
+    } catch (_) {
+      // Agendas es opcional: si falla, el resto del resumen sigue útil.
+    }
     if (!mounted) return;
     setState(() {
       _users = users;
       _clients = clients;
       _packages = packages;
+      _agendas = agendas;
       _error = failures >= 3
           ? 'No se pudo conectar con el servidor para cargar el resumen.'
           : null;
@@ -201,22 +211,27 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  String _money(num v) {
-    final s = v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2);
-    final parts = s.split('.');
-    final intPart = parts[0].replaceAllMapped(
-      RegExp(r'(\d)(?=(\d{3})+$)'),
-      (m) => '${m[1]},',
-    );
-    return 'MXN \$$intPart${parts.length > 1 ? '.${parts[1]}' : ''}';
+  bool _canSee(String module) =>
+      HsAccess.instance.degraded || HsAccess.instance.canSee(module);
+
+  /// Agendas futuras, ordenadas de la más próxima a la más lejana.
+  List<Map<String, dynamic>> get _upcomingAgendas {
+    final now = DateTime.now();
+    final out = _agendas.where((a) {
+      final d = hsParseDate(a['eventDate']);
+      return d != null && d.isAfter(now);
+    }).toList()
+      ..sort((a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}'));
+    return out;
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final compact = MediaQuery.sizeOf(context).width < 620;
-    final catalogValue = _packages.fold<num>(
-        0, (a, p) => a + ((p['price'] as num?) ?? 0));
+    final catalogValue =
+        _packages.fold<num>(0, (a, p) => a + ((p['price'] as num?) ?? 0));
+    final upcoming = _upcomingAgendas;
 
     return PageContainer(
       title: 'Dashboard',
@@ -238,173 +253,367 @@ class _DashboardPageState extends State<DashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (_error != null)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      Icon(Icons.cloud_off_outlined,
-                          size: 36, color: scheme.error),
-                      const SizedBox(height: 10),
-                      Text(_error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: _load,
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: const Text('Reintentar'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
+              _errorCard(scheme)
             else if (_loading)
-              const ListSkeleton(lines: 3, cardHeight: 92)
+              const ListSkeleton(lines: 3, cardHeight: 96)
             else ...[
-              // ===== Métricas =====
-              LayoutBuilder(builder: (context, box) {
-                final cols = box.maxWidth < 480
-                    ? 2
-                    : box.maxWidth < 760
-                        ? 2
-                        : 4;
-                return GridView.count(
-                  crossAxisCount: cols,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  // En 2 columnas (móvil) la tarjeta es más cuadrada.
-                  childAspectRatio: cols == 2 ? 1.55 : 1.9,
-                  children: [
-                    StaggeredItem(
-                      index: 0,
-                      child: _StatCard(
-                        icon: Icons.people_alt_rounded,
-                        label: 'Usuarios internos',
-                        value: '${_users.length}',
-                        tint: scheme.primary,
-                      ),
-                    ),
-                    StaggeredItem(
-                      index: 1,
-                      child: _StatCard(
-                        icon: Icons.badge_rounded,
-                        label: 'Clientes',
-                        value: '${_clients.length}',
-                        tint: const Color(0xFF8B5CF6),
-                      ),
-                    ),
-                    StaggeredItem(
-                      index: 2,
-                      child: _StatCard(
-                        icon: Icons.card_giftcard_rounded,
-                        label: 'Paquetes en catálogo',
-                        value: '${_packages.length}',
-                        tint: const Color(0xFF10B981),
-                      ),
-                    ),
-                    StaggeredItem(
-                      index: 3,
-                      child: _StatCard(
-                        icon: Icons.payments_rounded,
-                        label: 'Valor del catálogo',
-                        value: _money(catalogValue),
-                        tint: const Color(0xFFF59E0B),
-                      ),
-                    ),
-                  ],
-                );
-              }),
-              const SizedBox(height: 16),
-              // ===== Accesos rápidos (según permisos del usuario) =====
-              Text(
-                'Accesos rápidos',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
+              const _SectionHeader(
+                  icon: Icons.insights_outlined, label: 'Resumen general'),
               const SizedBox(height: 10),
-              LayoutBuilder(builder: (context, box) {
-                final shortcuts = <_Shortcut>[];
-                bool can(String module) =>
-                    HsAccess.instance.degraded ||
-                    HsAccess.instance.canSee(module);
-                if (can('Archivos')) {
-                  shortcuts.add(const _Shortcut(
-                      'Archivos', 'Organiza carpetas y fotos',
-                      Icons.folder_copy_outlined, 'drive'));
-                }
-                if (can('Clientes')) {
-                  shortcuts.add(const _Shortcut(
-                      'Clientes', 'Directorio y paquetes',
-                      Icons.badge_outlined, 'clients'));
-                }
-                if (can('Paquetes')) {
-                  shortcuts.add(const _Shortcut(
-                      'Paquetes', 'Diseña los paquetes de la web',
-                      Icons.card_giftcard_outlined, 'packages'));
-                }
-                if (can('Roles')) {
-                  shortcuts.add(const _Shortcut(
-                      'Roles', 'Permisos por módulo',
-                      Icons.admin_panel_settings_outlined, 'roles'));
-                }
-                final cols = box.maxWidth < 480 ? 2 : 4;
-                return GridView.count(
-                  crossAxisCount: cols,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: cols == 2 ? 1.35 : 1.9,
-                  children: [
-                    for (var i = 0; i < shortcuts.length; i++)
-                      StaggeredItem(
-                        index: i + 4,
-                        child: _ShortcutTile(
-                          shortcut: shortcuts[i],
-                          onTap: () => widget.onNavigate?.call(shortcuts[i].key),
-                        ),
-                      ),
-                  ],
-                );
-              }),
-              const SizedBox(height: 16),
-              // ===== Clientes recientes =====
+              _metrics(scheme, catalogValue, upcoming.length),
+              const SizedBox(height: 22),
+              const _SectionHeader(
+                  icon: Icons.event_available_outlined,
+                  label: 'Próximos eventos'),
+              const SizedBox(height: 10),
+              _upcomingCard(scheme, upcoming),
+              const SizedBox(height: 22),
+              const _SectionHeader(
+                  icon: Icons.bolt_outlined, label: 'Accesos rápidos'),
+              const SizedBox(height: 10),
+              _shortcuts(),
               if (_clients.isNotEmpty) ...[
-                Text(
-                  'Clientes recientes',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w800),
-                ),
+                const SizedBox(height: 22),
+                const _SectionHeader(
+                    icon: Icons.badge_outlined, label: 'Clientes recientes'),
                 const SizedBox(height: 10),
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      for (var i = 0;
-                          i < _clients.take(compact ? 3 : 5).length;
-                          i++) ...[
-                        if (i > 0)
-                          Divider(
-                              height: 1,
-                              color: Theme.of(context).dividerTheme.color),
-                        StaggeredItem(
-                          index: i + 8,
-                          child: _DashboardClientRow(
-                              client: _clients[i]),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
+                _recentClients(compact),
               ],
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _errorCard(ColorScheme scheme) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 36, color: scheme.error),
+              const SizedBox(height: 10),
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  /// Métricas clave: 2 columnas en móvil, hasta 5 en pantallas anchas.
+  Widget _metrics(ColorScheme scheme, num catalogValue, int upcomingCount) {
+    final metrics = <_Metric>[
+      _Metric('Usuarios internos', '${_users.length}',
+          Icons.people_alt_rounded, scheme.primary),
+      _Metric('Clientes', '${_clients.length}', Icons.badge_rounded,
+          const Color(0xFF8B5CF6)),
+      _Metric('Paquetes en catálogo', '${_packages.length}',
+          Icons.card_giftcard_rounded, const Color(0xFF10B981)),
+      _Metric('Valor del catálogo', hsMoney(catalogValue),
+          Icons.payments_rounded, const Color(0xFFF59E0B)),
+      _Metric('Agendas próximas', '$upcomingCount',
+          Icons.event_available_rounded, const Color(0xFF3B82F6)),
+    ];
+    return LayoutBuilder(builder: (context, box) {
+      final cols = box.maxWidth < 520
+          ? 2
+          : box.maxWidth < 900
+              ? 3
+              : metrics.length.clamp(3, 5);
+      return GridView.count(
+        crossAxisCount: cols,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: cols == 2 ? 1.5 : 2.0,
+        children: [
+          for (var i = 0; i < metrics.length; i++)
+            StaggeredItem(index: i, child: _MetricCard(metric: metrics[i])),
+        ],
+      );
+    });
+  }
+
+  Widget _upcomingCard(
+      ColorScheme scheme, List<Map<String, dynamic>> upcoming) {
+    if (upcoming.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Icon(Icons.event_busy_outlined,
+                  size: 26, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'No hay eventos próximos. Crea agendas desde los paquetes '
+                  'del cliente.',
+                  style:
+                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final shown = upcoming.take(4).toList();
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < shown.length; i++) ...[
+            if (i > 0)
+              Divider(height: 1, color: Theme.of(context).dividerColor),
+            StaggeredItem(index: i, child: _UpcomingRow(agenda: shown[i])),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _shortcuts() {
+    final shortcuts = <_Shortcut>[
+      if (_canSee('Archivos'))
+        const _Shortcut('Archivos', 'Carpetas y fotos',
+            Icons.folder_copy_outlined, 'drive'),
+      if (_canSee('Agendas'))
+        const _Shortcut('Agendas', 'Eventos agendados',
+            Icons.event_available_outlined, 'agendas'),
+      if (_canSee('Clientes'))
+        const _Shortcut('Clientes', 'Directorio y paquetes',
+            Icons.badge_outlined, 'clients'),
+      if (_canSee('Paquetes'))
+        const _Shortcut('Paquetes', 'Catálogo de la web',
+            Icons.card_giftcard_outlined, 'packages'),
+      if (_canSee('Roles'))
+        const _Shortcut('Roles', 'Permisos por módulo',
+            Icons.admin_panel_settings_outlined, 'roles'),
+    ];
+    if (shortcuts.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(builder: (context, box) {
+      final cols = box.maxWidth < 520 ? 2 : 4;
+      return GridView.count(
+        crossAxisCount: cols,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: cols == 2 ? 1.4 : 1.95,
+        children: [
+          for (var i = 0; i < shortcuts.length; i++)
+            StaggeredItem(
+              index: i,
+              child: _ShortcutTile(
+                shortcut: shortcuts[i],
+                onTap: () => widget.onNavigate?.call(shortcuts[i].key),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
+  Widget _recentClients(bool compact) {
+    final shown = _clients.take(compact ? 4 : 6).toList();
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < shown.length; i++) ...[
+            if (i > 0)
+              Divider(height: 1, color: Theme.of(context).dividerColor),
+            StaggeredItem(
+                index: i, child: _DashboardClientRow(client: shown[i])),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Encabezado de sección del dashboard.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: scheme.primary),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(fontWeight: FontWeight.w800),
+        ),
+      ],
+    );
+  }
+}
+
+/// Definición de una métrica del resumen.
+class _Metric {
+  const _Metric(this.label, this.value, this.icon, this.tint);
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color tint;
+}
+
+/// Tarjeta de métrica: icono tintado + valor grande y etiqueta.
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.metric});
+
+  final _Metric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: metric.tint.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(metric.icon, color: metric.tint, size: 20),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      metric.value,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 17),
+                    ),
+                  ),
+                  Text(
+                    metric.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fila de un próximo evento: fecha tintada, cliente y servicio · paquete.
+class _UpcomingRow extends StatelessWidget {
+  const _UpcomingRow({required this.agenda});
+
+  final Map<String, dynamic> agenda;
+
+  static const _palette = [
+    Color(0xFF8B5CF6),
+    Color(0xFF10B981),
+    Color(0xFFF59E0B),
+    Color(0xFF3B82F6),
+    Color(0xFFEF4444),
+    Color(0xFF14B8A6),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final date = hsParseDate(agenda['eventDate']);
+    final sid = (agenda['serviceId'] as num?)?.toInt();
+    final color =
+        sid == null ? scheme.primary : _palette[sid.abs() % _palette.length];
+    final client = (agenda['clientName'] ?? '').toString().trim();
+    final service = (agenda['serviceName'] ?? '').toString().trim();
+    final package = (agenda['packageName'] ?? '').toString().trim();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  date == null ? '--' : '${date.day}',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 15, color: color),
+                ),
+                Text(
+                  date == null ? '' : kHsMonths[date.month - 1].substring(0, 3),
+                  style: TextStyle(
+                      fontSize: 10, fontWeight: FontWeight.w700, color: color),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  client.isEmpty ? 'Sin cliente' : client,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 13.5),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (service.isNotEmpty) service,
+                    if (package.isNotEmpty) package,
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11.5, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          if (date != null)
+            Text(
+              hsTimeLabel(date),
+              style: TextStyle(
+                  fontWeight: FontWeight.w800, fontSize: 12.5, color: color),
+            ),
+        ],
       ),
     );
   }
@@ -413,6 +622,7 @@ class _DashboardPageState extends State<DashboardPage> {
 /// Definición de un acceso rápido del dashboard.
 class _Shortcut {
   const _Shortcut(this.label, this.sub, this.icon, this.key);
+
   final String label;
   final String sub;
   final IconData icon;
@@ -452,8 +662,8 @@ class _ShortcutTile extends StatelessWidget {
                   shortcut.sub,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  style:
+                      TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
                 ),
               ),
             ],
@@ -477,125 +687,63 @@ class _DashboardClientRow extends StatelessWidget {
         '${client['name'] ?? ''} ${client['lastname'] ?? ''}'.trim().trim();
     final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final pkgCount = (client['packagesCount'] as num?)?.toInt() ?? 0;
+    final email = (client['email'] ?? '').toString().trim();
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
           CircleAvatar(
-            radius: 16,
-            backgroundColor: const Color(0xFF8B5CF6).withValues(alpha: .14),
+            radius: 18,
+            backgroundColor: scheme.primaryContainer,
             child: Text(
               initial,
-              style: const TextStyle(
-                color: Color(0xFF8B5CF6),
+              style: TextStyle(
                 fontWeight: FontWeight.w800,
-                fontSize: 12.5,
+                fontSize: 14,
+                color: scheme.onPrimaryContainer,
               ),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              name.isEmpty ? (client['email'] ?? '').toString() : name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name.isEmpty ? 'Sin nombre' : name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 13.5),
+                ),
+                if (email.isNotEmpty)
+                  Text(
+                    email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  ),
+              ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: pkgCount > 0
-                  ? const Color(0xFF8B5CF6).withValues(alpha: .12)
-                  : scheme.surfaceContainerHighest.withValues(alpha: .7),
-              borderRadius: BorderRadius.circular(999),
+              color: scheme.primary.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              '$pkgCount paquete${pkgCount == 1 ? '' : 's'}',
+              '$pkgCount paq.',
               style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: pkgCount > 0
-                    ? const Color(0xFF8B5CF6)
-                    : scheme.onSurfaceVariant,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: scheme.primary,
               ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.tint,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color tint;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: .14),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: tint, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Contador animado: los números "corren" al entrar (0 → valor).
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 700),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, t, _) {
-                      final n = int.tryParse(value);
-                      return Text(
-                        n == null
-                            ? value
-                            : (n == 0
-                                ? value // valor no numérico (dinero): tal cual
-                                : '${(n * t).round()}'),
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      );
-                    },
-                  ),
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

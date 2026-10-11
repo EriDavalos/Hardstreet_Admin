@@ -14,6 +14,7 @@ import 'drive_base.dart';
 import 'drive_scope.dart';
 import 'image_memory.dart';
 import 'pages/admin_pages.dart';
+import 'pages/agendas_page.dart';
 import 'pages/clients_page.dart';
 import 'pages/connection_page.dart';
 import 'pages/drive_page.dart';
@@ -387,6 +388,7 @@ class _VersionErrorScreen extends StatelessWidget {
 enum _Section {
   dashboard,
   drive,
+  agendas,
   connection,
   users,
   roles,
@@ -438,6 +440,7 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.roles => _canSee('Roles'),
         _Section.clients => _canSee('Clientes'),
         _Section.packages => _canSee('Paquetes'),
+        _Section.agendas => _canSee('Agendas'),
         _Section.dashboard => _canSee('Dashboard'),
         _Section.drive => _canSee('Archivos'),
         _ => true,
@@ -498,6 +501,15 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.drive,
         'Archivos',
+      ),
+      (
+        const AdminDestination(
+          icon: Icons.event_available_outlined,
+          label: 'Agendas',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.agendas,
+        'Agendas',
       ),
       (
         const AdminDestination(
@@ -586,6 +598,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.roles: 'Roles',
       _Section.clients: 'Clientes',
       _Section.packages: 'Paquetes',
+      _Section.agendas: 'Agendas',
       _Section.settings: 'Configuraciones',
       _Section.reports: 'Reportes',
     };
@@ -599,6 +612,7 @@ class _AdminHomeState extends State<AdminHome> {
           onNavigate: (key) {
             final map = {
               'drive': _Section.drive,
+              'agendas': _Section.agendas,
               'clients': _Section.clients,
               'packages': _Section.packages,
               'roles': _Section.roles,
@@ -609,6 +623,7 @@ class _AdminHomeState extends State<AdminHome> {
               _Section.drive => _canSee('Archivos'),
               _Section.clients => _canSee('Clientes'),
               _Section.packages => _canSee('Paquetes'),
+              _Section.agendas => _canSee('Agendas'),
               _Section.roles => _canSee('Roles'),
               _ => false,
             };
@@ -633,6 +648,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.clients:
         body = const ClientsPage();
+        break;
+      case _Section.agendas:
+        body = const AgendasPage();
         break;
       case _Section.settings:
         body = ComingSoonPage(

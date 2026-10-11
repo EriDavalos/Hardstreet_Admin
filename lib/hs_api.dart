@@ -120,6 +120,11 @@ class HsApi {
     return b;
   }
 
+  /// Cliente HTTP de la app. Es inyectable: las pruebas lo reemplazan por
+  /// un `MockClient` para no tocar la red. En producción es el de
+  /// `package:http` (mismo comportamiento de siempre).
+  static http.Client client = http.Client();
+
   static Uri _u(String path, [Map<String, String>? query]) =>
       Uri.parse('$base$path').replace(queryParameters: query);
 
@@ -166,20 +171,20 @@ class HsApi {
   }
 
   static Future<dynamic> get(String path, {Map<String, String>? query}) =>
-      _run(() => http.get(_u(path, query), headers: _headers()), path: path);
+      _run(() => client.get(_u(path, query), headers: _headers()), path: path);
 
   static Future<dynamic> post(String path, Map<String, dynamic> body) => _run(
-        () => http.post(_u(path), headers: _headers(), body: jsonEncode(body)),
+        () => client.post(_u(path), headers: _headers(), body: jsonEncode(body)),
         path: path,
       );
 
   static Future<dynamic> put(String path, Map<String, dynamic> body) => _run(
-        () => http.put(_u(path), headers: _headers(), body: jsonEncode(body)),
+        () => client.put(_u(path), headers: _headers(), body: jsonEncode(body)),
         path: path,
       );
 
   static Future<dynamic> delete(String path) =>
-      _run(() => http.delete(_u(path), headers: _headers()), path: path);
+      _run(() => client.delete(_u(path), headers: _headers()), path: path);
 
   // ---------------- Auth ----------------
 
@@ -375,4 +380,76 @@ class HsApi {
         'userId': userId,
         'usersPackageId': usersPackageId,
       });
+
+  // ---------------- Abonos de paquete ----------------
+
+  /// Registros (abonos) de un paquete comprado o de TODOS los de un cliente:
+  /// `[{ id, purchasedPackageId, amount, description, created }]`.
+  static Future<List<Map<String, dynamic>>> packagePayments({
+    int? userId,
+    int? purchasedPackageId,
+  }) async {
+    final data = await get('/api/admin/package-payments', query: {
+      if (userId != null) 'userId': '$userId',
+      if (purchasedPackageId != null) 'purchasedPackageId': '$purchasedPackageId',
+    });
+    return ((data['payments'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Suma un abono al paquete y devuelve el nuevo total pagado.
+  static Future<num> addPackagePayment({
+    required int purchasedPackageId,
+    required num amount,
+    String description = '',
+  }) async {
+    final data = await post('/api/admin/package-payments', {
+      'purchasedPackageId': purchasedPackageId,
+      'amount': amount,
+      'description': description,
+    });
+    return (data is Map && data['paid'] is num) ? data['paid'] as num : 0;
+  }
+
+  /// Quita (baja lógica) un abono y devuelve el nuevo total pagado.
+  static Future<num> deletePackagePayment(int id) async {
+    final data = await delete('/api/admin/package-payments?id=$id');
+    return (data is Map && data['paid'] is num) ? data['paid'] as num : 0;
+  }
+
+  // ---------------- Agendas ----------------
+
+  /// Agendas de evento: todas, las de un cliente o las de un paquete comprado.
+  /// Cada una: `{ id, purchasedPackageId, userId, clientName, packageName,
+  /// serviceId, serviceName, eventDate, description }`.
+  static Future<List<Map<String, dynamic>>> agendas({
+    int? userId,
+    int? purchasedPackageId,
+    String? from,
+    String? to,
+  }) async {
+    final data = await get('/api/admin/agendas', query: {
+      if (userId != null) 'userId': '$userId',
+      if (purchasedPackageId != null) 'purchasedPackageId': '$purchasedPackageId',
+      'from': ?from,
+      'to': ?to,
+    });
+    return ((data['agendas'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Crea una agenda `{ purchasedPackageId, serviceId, eventDate, description }`.
+  /// `eventDate` viaja como `yyyy-MM-dd HH:mm:ss`.
+  static Future<void> createAgenda(Map<String, dynamic> body) =>
+      post('/api/admin/agendas', body);
+
+  /// Actualiza una agenda `{ id, serviceId?, eventDate?, description? }`.
+  static Future<void> updateAgenda(Map<String, dynamic> body) =>
+      put('/api/admin/agendas', body);
+
+  /// Baja lógica de una agenda.
+  static Future<void> deleteAgenda(int id) =>
+      delete('/api/admin/agendas?id=$id');
 }

@@ -206,16 +206,20 @@ class FormDialog extends StatelessWidget {
             ),
           ),
       ),
+      // Wrap responsivo: en diálogos angostos (móvil) los botones pasan a una
+      // segunda fila en vez de desbordar por la derecha.
       actions: [
-        Row(
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             ...?footer,
-            const Spacer(),
             TextButton(
               onPressed: saving ? null : onCancel,
               child: const Text('Cancelar'),
             ),
-            const SizedBox(width: 10),
             FilledButton.icon(
               onPressed: saving ? null : onSave,
               icon: saving
