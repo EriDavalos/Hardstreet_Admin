@@ -12,7 +12,7 @@ REM  Resultado:  build\installer\HardstreetAdmin-setup-<version>.exe
 REM ============================================================
 
 set VERSION=%1
-if "%VERSION%"=="" set VERSION=1.0.1
+if "%VERSION%"=="" set VERSION=1.0.3
 
 cd /d "%~dp0"
 
@@ -30,6 +30,7 @@ echo.
 echo [2/3] Empaquetando instalador (Inno Setup)...
 set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+if not exist "%ISCC%" set "ISCC=C:\Users\erida\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" (
     echo ERROR: Inno Setup 6 no encontrado. Instalalo con:
     echo     winget install JRSoftware.InnoSetup

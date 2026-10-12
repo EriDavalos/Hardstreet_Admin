@@ -150,7 +150,12 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // Conserva el estado maximizado: Flutter llama Show() tras el primer frame
+  // (SetNextFrameCallback). Si usaramos SW_SHOWNORMAL aqui, desmaximizaria
+  // la ventana que main.cpp maximizo con SW_MAXIMIZE y dejaria el tamano
+  // maximizado sin estar realmente maximizada. Con SW_SHOW se respeta el
+  // estado actual (maximizada o normal).
+  return ShowWindow(window_handle_, SW_SHOW);
 }
 
 // static

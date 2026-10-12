@@ -17,8 +17,15 @@ if ($Version -eq "") {
 }
 Write-Host "==> Compilando Hardstreet Admin v$Version ..." -ForegroundColor Cyan
 
-# ---------- 2. Build Windows (SP_VERSION congela la version en el exe) ----------
-flutter build windows --release --dart-define=SP_VERSION=$Version
+# ---------- 1b. Iconos SIEMPRE desde hs_icon.png (origen unico) ----------
+# Cubre Android (mipmap), Windows (app_icon.ico) e Inno Setup
+# (setup_icon.ico). Sin esto, un cambio en hs_icon.png no llega al build.
+Write-Host "`n==> Generando iconos desde hs_icon.png ..." -ForegroundColor Cyan
+node (Join-Path $root "tool\generate_icons.mjs")
+if ($LASTEXITCODE -ne 0) { throw "fallo al generar iconos (tool\generate_icons.mjs)" }
+
+# ---------- 2. Build Windows (--build-name congela la version en el exe) ----------
+flutter build windows --release --build-name=$Version
 if ($LASTEXITCODE -ne 0) { throw "flutter build windows fallo" }
 
 $release = Join-Path $root "build\windows\x64\runner\Release"

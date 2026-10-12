@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'app_constants.dart';
 import 'app_platform.dart';
@@ -323,11 +322,21 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       notes: info.notes,
       onDownload: () async {
         final plat = isAndroidPlatform ? 'android' : 'windows';
-        final url = info.downloads[plat] ?? info.downloads.values.first;
-        final uri = Uri.tryParse(url);
-        if (uri != null) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
+        final url = info.downloads[plat] ??
+            info.downloads.values.firstWhere((u) => u.isNotEmpty,
+                orElse: () => '');
+        // Mismo modal de actualización (descarga interna con barra de
+        // progreso + instalación); NO abre el navegador.
+        final ctx = _navKey.currentContext;
+        if (ctx == null || !ctx.mounted) return;
+        await ForceUpdateDialog.show(
+          ctx,
+          currentVersion: AppConstants.effectiveVersion,
+          requiredVersion: info.version,
+          notes: info.notes,
+          downloadUrl: url,
+          optional: true,
+        );
       },
       onClose: () => setState(() => _pendingUpdate = null),
     );

@@ -13,8 +13,8 @@ class AppVersionInfo {
   });
 
   factory AppVersionInfo.fromJson(Map<String, dynamic> j) => AppVersionInfo(
-    version: j['version']?.toString() ?? '1.0.2',
-    minVersion: j['minVersion']?.toString() ?? '1.0.2',
+    version: j['version']?.toString() ?? '1.0.3',
+    minVersion: j['minVersion']?.toString() ?? '1.0.3',
     notes: j['notes']?.toString() ?? '',
     downloads: ((j['downloads'] as Map<String, dynamic>? ?? {}).map(
       (k, v) => MapEntry(k.toString(), v.toString()),

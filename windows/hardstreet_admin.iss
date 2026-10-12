@@ -29,7 +29,7 @@ OutputBaseFilename=HardstreetAdmin-setup-{#MyAppVersion}
 ; límite de recursos del setup). Generado desde app_icon.ico sin el frame
 ; 256x256 sin comprimir.
 SetupIconFile=runner\resources\setup_icon.ico
-Compression=lzma2/max
+Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -56,8 +56,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
     Tasks: desktopicon
 
 [Run]
+; Instalación INTERACTIVA: casilla "Ejecutar" al final del asistente.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; \
     Flags: nowait postinstall skipifsilent
+; Instalación SILENCIOSA (auto-update desde la app con /SILENT): la app
+; se relanza sola al terminar, sin casilla ni asistente.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifnotsilent
 
 [UninstallDelete]
 ; Limpia cachés temporales propios de la app.

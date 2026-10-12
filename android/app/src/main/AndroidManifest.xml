@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Permiso de INTERNET: la app se conecta al API del drive (192.168.x.x / DDNS). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Permite que la app dispare la instalación de un .apk descargado
+         (actualizador interno: descarga el update y abre el instalador). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- HTTP plano: el servidor usa http:// (sin TLS). Quitar al pasar a HTTPS. -->
     <application
         android:usesCleartextTraffic="true"
@@ -34,6 +37,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- FileProvider para entregar el .apk descargado al instalador
+             del sistema como content:// (Android 7+ prohíbe file://). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
