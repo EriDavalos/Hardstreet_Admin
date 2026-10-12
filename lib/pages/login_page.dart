@@ -55,7 +55,7 @@ class _LoginPageState extends State<LoginPage> {
       final user = await HsApi.login(email, password);
       if (!mounted) return;
       final role = (user['role'] ?? '').toString().toLowerCase();
-      if (role != 'admin') {
+      if (role != 'admin' && role != 'colaborador') {
         await HsApi.logout();
         if (!mounted) return;
         _snack('Esta cuenta no tiene acceso al panel de administración');

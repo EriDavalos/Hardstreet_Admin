@@ -27,6 +27,23 @@ import '../../theme.dart';
 import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
 import '../../widgets/confirm_dialog.dart';
+import '../../widgets/drive_thumb.dart';
+
+// ============ Lecturas seguras del ScrollController compartido ============
+//
+// El AnimatedSwitcher del contenido mantiene un instante la carpeta/vista
+// ANTERIOR y la NUEVA a la vez, y ambas se enganchan al MISMO controlador.
+// Con dos scroll views adjuntos, `.offset` y `.animateTo` lanzan:
+//   ScrollController attached to multiple scroll views.
+// (justo "al cargar los targets" del drive). Estas lecturas devuelven 0 o
+// no hacen nada durante esos 220 ms de transición.
+extension SafeScrollX on ScrollController {
+  /// true si el controlador está en UN solo scroll view (o en ninguno).
+  bool get isSafe => positions.length <= 1;
+
+  /// Offset actual, o 0 cuando no se puede leer (transición en curso).
+  double get safeOffset => positions.length == 1 ? positions.single.pixels : 0;
+}
 
 // ===================== Drag estilo Google Drive (móvil) =====================
 
@@ -233,6 +250,19 @@ class _DrivePageState extends State<DrivePage> {
   // Copiar/pegar estilo explorador (Ctrl+C / Ctrl+V).
   List<String> _clipboardNames = const [];
 
+  // ---- Fotos recién subidas --------------------------------------------
+  // Copia LOCAL (ruta de origen) por nombre: la cuadrícula la muestra al
+  // instante mientras el servidor genera la miniatura, así la foto aparece
+  // "ahí mismo" y no como un recuadro vacío.
+  final Map<String, String> _localPreviews = {};
+  // Nombres que YA existían cuando empezó el lote de subida.
+  final Set<String> _preUploadNames = {};
+  // Entrada escalonada SOLO para el contenido con el que se abre la carpeta;
+  // lo que aparece después (una subida recién terminada) se muestra directo.
+  final Set<String> _seenNames = {};
+  final Set<String> _noEntrance = {};
+  bool _folderLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -321,9 +351,64 @@ class _DrivePageState extends State<DrivePage> {
       _selected.clear();
       _selectMode = false;
       _anchorIndex = -1;
+      _localPreviews.clear();
+      _preUploadNames.clear();
+      _seenNames.clear();
+      _noEntrance.clear();
+      _folderLoaded = false;
     }
+    _trackEntrance();
+    _registerLocalPreviews();
     setState(() {});
   }
+
+  /// Decide qué elementos llevan animación de entrada.
+  ///
+  /// El primer listado de cada carpeta entra escalonado (efecto de apertura).
+  /// Lo que aparece DESPUÉS —una foto recién subida— se muestra ya puesto,
+  /// sin fundido: la única animación que se ve es la de la imagen al bajar.
+  void _trackEntrance() {
+    final drive = widget.drive;
+    if (drive.loading) return;
+    final names = drive.visibleItems.map((i) => i.name);
+    if (!_folderLoaded) {
+      _seenNames.addAll(names);
+      _folderLoaded = true;
+      return;
+    }
+    // Todo lo que aparece DESPUÉS de la carga inicial (una foto recién subida)
+    // se muestra ya puesto: la única animación que se ve es la de la imagen al
+    // bajar del servidor.
+    for (final n in names) {
+      if (_seenNames.add(n)) _noEntrance.add(n);
+    }
+  }
+
+  /// Asocia a cada trabajo terminado la COPIA LOCAL de su archivo para que la
+  /// cuadrícula la pinte al instante. Solo si el nombre no existía antes de
+  /// subir: si el servidor lo renombró por colisión, simplemente no se usa
+  /// (nunca se muestra una foto bajo el nombre de otra).
+  void _registerLocalPreviews() {
+    for (final job in widget.drive.uploadJobs) {
+      if (job.status != 'done' || job.thumb.isEmpty) continue;
+      if (_preUploadNames.contains(job.name)) continue;
+      _localPreviews[job.name] = job.thumb;
+    }
+  }
+
+  /// Elementos del drive que están seleccionados (en orden de la cuadrícula).
+  List<DriveItem> _selectedItems() => widget.drive.items
+      .where((i) => _selected.contains(i.name))
+      .toList(growable: false);
+
+  /// Descarga la lista dada: 1 archivo suelto; varios (o carpetas) en ZIP.
+  Future<void> _downloadItems(List<DriveItem> items) => _guarded(() async {
+        await downloadDriveSelection(
+          context,
+          drive: widget.drive,
+          items: items,
+        );
+      });
 
   // ==================== Selección ====================
 
@@ -542,6 +627,11 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> _startUpload(List<String> paths) async {
     // Nombres de los archivos a subir (acepta / o \ mezclados).
     String nameOf(String p) => p.split(RegExp(r'[\\/]')).last;
+    // Lo que YA está en la carpeta: lo que suene igual no podrá asociarse a
+    // una miniatura local (podría ser otro archivo).
+    for (final it in widget.drive.items) {
+      _preUploadNames.add(it.name);
+    }
     List<String> dups;
     try {
       dups = await widget.drive
@@ -561,8 +651,16 @@ class _DrivePageState extends State<DrivePage> {
     final saved = await _guarded(
         () => widget.drive.uploadFromPaths(paths, overwrite: overwrite));
     if (saved == null) return; // el error ya se mostró
+    // Que las fotos recién subidas se vean YA con su copia local.
+    _registerLocalPreviews();
+    final pending = widget.drive.uploadJobs
+        .where((j) => j.status == 'error')
+        .length;
+    final errTail = pending > 0
+        ? ' · $pending con error (puedes resubirla${pending == 1 ? '' : 's'} desde el panel)'
+        : '';
     if (saved > 0) {
-      _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"');
+      _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"$errTail');
     }
   }
 
@@ -922,6 +1020,72 @@ class _DrivePageState extends State<DrivePage> {
 
   void _onItemTap(DriveItem item) => _onCardTap(item);
 
+  /// Menú contextual (CLIC DERECHO).
+  ///
+  /// * Un solo elemento: Abrir / Descargar / Renombrar / Eliminar.
+  /// * Varios seleccionados (clic derecho sobre uno de ellos): SOLO
+  ///   Descargar/Eliminar la SELECCIÓN — así no hay duda de sobre qué actúa.
+  Future<void> _openItemMenu(DriveItem item, Offset position) async {
+    final many = _selected.length > 1 && _selected.contains(item.name);
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    // Etiqueta flexible: los textos largos ("Descargar 12 seleccionadas") se
+    // recortan con puntos suspensivos en vez de desbordar el menú.
+    PopupMenuItem<String> entry(String value, IconData icon, String label) =>
+        PopupMenuItem<String>(
+          value: value,
+          height: 40,
+          child: Row(children: [
+            Icon(icon, size: 17),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(label,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          ]),
+        );
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay?.size.width ?? position.dx,
+        overlay?.size.height ?? position.dy,
+      ),
+      constraints: const BoxConstraints(minWidth: 210, maxWidth: 340),
+      items: many
+          ? [
+              entry('download-many', Icons.download_rounded,
+                  'Descargar ${_selected.length} seleccionadas'),
+              entry('delete-many', Icons.delete_outline,
+                  'Eliminar ${_selected.length} seleccionadas'),
+            ]
+          : [
+              entry('open', Icons.open_in_new_rounded, 'Abrir'),
+              entry('download', Icons.download_rounded, 'Descargar'),
+              entry('rename', Icons.drive_file_rename_outline, 'Renombrar'),
+              entry('delete', Icons.delete_outline, 'Eliminar'),
+            ],
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'open':
+        // Abrir de verdad: _onCardTap ignora el ratón (solo selecciona), así
+        // que el menú llama directo a la apertura.
+        _open(item);
+      case 'download':
+        _downloadItems([item]);
+      case 'rename':
+        _rename(item);
+      case 'delete':
+        _delete(item);
+      case 'download-many':
+        _downloadItems(_selectedItems());
+      case 'delete-many':
+        _deleteItems(_selected.toList());
+    }
+  }
+
   /// Soltó algo sobre un elemento (carpeta o imagen).
   void _onItemDrop(DriveItem target, DragTargetDetails<Object> details) {
     final payload = details.data;
@@ -1031,7 +1195,7 @@ class _DrivePageState extends State<DrivePage> {
       onDragEntered: (_) {
         // Al arrastrar desde el explorador, sube la vista al inicio para
         // que se vea la zona de destino de inmediato.
-        if (_scrollController.hasClients && _scrollController.offset > 0) {
+        if (_scrollController.isSafe && _scrollController.safeOffset > 0) {
           _scrollController.animateTo(
             0,
             duration: const Duration(milliseconds: 350),
@@ -1263,6 +1427,18 @@ class _DrivePageState extends State<DrivePage> {
                     ),
                   ],
                   const Spacer(),
+                  // Aviso discreto: si un refresco falló se conserva el listado
+                  // en pantalla, pero se dice que puede estar viejo (antes se
+                  // reemplazaba el directorio entero por "Error").
+                  if (drive.error != null) ...[
+                    _CountPill(
+                      icon: Icons.cloud_off_outlined,
+                      label: 'Sin conexión · reintentar',
+                      color: scheme.error,
+                      onTap: drive.refresh,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   if (!_selectMode && drive.visibleItems.isNotEmpty)
                     TextButton.icon(
                       onPressed: () {
@@ -1284,7 +1460,9 @@ class _DrivePageState extends State<DrivePage> {
             Expanded(
               child: drive.loading && drive.items.isEmpty
                   ? const Center(child: CircularProgressIndicator())
-                  : drive.error != null
+                  // El panel bloqueante solo cuando NO hay nada que mostrar:
+                  // si ya se ve una carpeta, se queda a la vista.
+                  : drive.error != null && drive.items.isEmpty
                       ? EmptyState(
                           icon: Icons.folder_off_outlined,
                           title: 'Error',
@@ -1331,6 +1509,11 @@ class _DrivePageState extends State<DrivePage> {
                                         onDrop: _onItemDrop,
                                         itemKeys: _itemKeys,
                                         onTapSelect: _onCardTap,
+                                        onContextMenu: _openItemMenu,
+                                        onDownload: (item) =>
+                                            _downloadItems([item]),
+                                        localPreviews: _localPreviews,
+                                        noEntrance: _noEntrance,
                                         scrollController: _scrollController,
                                       )
                                     : _ListContent(
@@ -1347,6 +1530,11 @@ class _DrivePageState extends State<DrivePage> {
                                         onDrop: _onItemDrop,
                                         itemKeys: _itemKeys,
                                         onTapSelect: _onCardTap,
+                                        onContextMenu: _openItemMenu,
+                                        onDownload: (item) =>
+                                            _downloadItems([item]),
+                                        localPreviews: _localPreviews,
+                                        noEntrance: _noEntrance,
                                         scrollController: _scrollController,
                                       )),
                               ),
@@ -1446,16 +1634,7 @@ class _DrivePageState extends State<DrivePage> {
                 final dest = await _pickDestination(move: false);
                 if (dest != null) await _copySelected(dest);
               }),
-              onDownload: () => _guarded(() async {
-                final items = widget.drive.items
-                    .where((i) => _selected.contains(i.name))
-                    .toList();
-                await downloadDriveSelection(
-                  context,
-                  drive: widget.drive,
-                  items: items,
-                );
-              }),
+              onDownload: () => _downloadItems(_selectedItems()),
               onDelete: () => _guarded(
                   () => _deleteItems(_selected.toList())),
             ),
@@ -1471,12 +1650,22 @@ class _DrivePageState extends State<DrivePage> {
             left: hPad,
             child: _BusyChip(label: drive.busyLabel),
           ),
-        // ===== Panel de subidas estilo Drive (arriba a la derecha) =====
-        if (drive.uploadJobs.isNotEmpty)
+        // ===== Panel de transferencias estilo Drive (arriba a la derecha):
+        // subidas y descargas en segundo plano con su progreso, sin bloquear
+        // la pantalla ni con una ventana modal. =====
+        if (drive.uploadJobs.isNotEmpty || drive.downloadJobs.isNotEmpty)
           Positioned(
             top: 6,
             right: hPad,
-            child: _UploadsCard(drive: drive),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (drive.uploadJobs.isNotEmpty) _UploadsCard(drive: drive),
+                if (drive.uploadJobs.isNotEmpty && drive.downloadJobs.isNotEmpty)
+                  const SizedBox(height: 10),
+                if (drive.downloadJobs.isNotEmpty) _DownloadsCard(drive: drive),
+              ],
+            ),
           ),
       ],
       ),
@@ -1516,15 +1705,26 @@ class _RoundAction extends StatelessWidget {
 
 /// Píldora de conteo para la barra de estado.
 class _CountPill extends StatelessWidget {
-  const _CountPill({required this.icon, required this.label});
+  const _CountPill({
+    required this.icon,
+    required this.label,
+    this.color,
+    this.onTap,
+  });
 
   final IconData icon;
   final String label;
 
+  /// Tinte del icono (por defecto, el primario del tema).
+  final Color? color;
+
+  /// Si no es null, la píldora es tocable (p. ej. para reintentar).
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
+    final pill = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: .5),
@@ -1532,7 +1732,8 @@ class _CountPill extends StatelessWidget {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: [            Icon(icon, size: 13, color: scheme.primary),
+        children: [
+          Icon(icon, size: 13, color: color ?? scheme.primary),
           const SizedBox(width: 5),
           Text(
             label,
@@ -1544,6 +1745,12 @@ class _CountPill extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (onTap == null) return pill;
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: pill,
     );
   }
 }
@@ -1812,6 +2019,10 @@ class _GridContent extends StatelessWidget {
     required this.onDrop,
     required this.itemKeys,
     required this.onTapSelect,
+    required this.onContextMenu,
+    required this.onDownload,
+    required this.localPreviews,
+    required this.noEntrance,
     required this.scrollController,
   });
 
@@ -1828,7 +2039,25 @@ class _GridContent extends StatelessWidget {
       onDrop;
   final Map<String, GlobalKey> itemKeys;
   final ValueChanged<DriveItem> onTapSelect;
+
+  /// Clic derecho: menú contextual del elemento (posición global).
+  final void Function(DriveItem item, Offset position) onContextMenu;
+  final ValueChanged<DriveItem> onDownload;
+
+  /// Copia local de las fotos recién subidas (nombre -> ruta), para pintarlas
+  /// al instante mientras el servidor prepara la miniatura.
+  final Map<String, String> localPreviews;
+
+  /// Nombres que NO deben animar su entrada (recién aparecidos por una subida).
+  final Set<String> noEntrance;
   final ScrollController scrollController;
+
+  /// ¿El usuario ya bajó? Las tarjetas que se construyen al desplazarse nacen
+  /// con animación; las que ya estaban a la vista al abrir la carpeta, no
+  /// (antes se animaba TODA la cuadrícula de golpe, que es justo lo que se
+  /// quiere evitar).
+  bool get _scrolledDown =>
+      scrollController.isSafe && scrollController.safeOffset > 8;
 
   @override
   Widget build(BuildContext context) {
@@ -1853,9 +2082,11 @@ class _GridContent extends StatelessWidget {
             final item = items[i];
             final key = itemKeys.putIfAbsent(
                 item.name, () => GlobalKey(debugLabel: 'grid-${item.name}'));
-            // Entrada escalonada estilo Google Drive (fade + slide).
-            return StaggeredItem(
-              index: i,
+            // Entrada al DESLIZAR: la tarjeta que aparece al bajar entra con
+            // fade + deslizamiento; lo ya visible (y una foto recién subida)
+            // se pinta directo.
+            return ScrollReveal(
+              animate: _scrolledDown && !noEntrance.contains(item.name),
               child: _GridItem(
                 key: key,
                 item: item,
@@ -1869,6 +2100,9 @@ class _GridContent extends StatelessWidget {
                 onDelete: () => onDelete(item),
                 onDrop: (details) => onDrop(item, details),
                 onTapSelect: () => onTapSelect(item),
+                onContextMenu: (pos) => onContextMenu(item, pos),
+                onDownload: () => onDownload(item),
+                localPreview: localPreviews[item.name],
                 selectedNames: selected.toList(growable: false),
               ),
             );
@@ -1894,6 +2128,9 @@ class _GridItem extends StatelessWidget {
     required this.onDelete,
     required this.onDrop,
     required this.onTapSelect,
+    required this.onContextMenu,
+    required this.onDownload,
+    this.localPreview,
     required this.selectedNames,
   });
 
@@ -1908,6 +2145,11 @@ class _GridItem extends StatelessWidget {
   final VoidCallback onDelete;
   final void Function(DragTargetDetails<Object> details) onDrop;
   final VoidCallback onTapSelect;
+  final void Function(Offset position) onContextMenu;
+  final VoidCallback onDownload;
+
+  /// Copia local del archivo si acaba de subirse (se ve al instante).
+  final String? localPreview;
   final List<String> selectedNames;
 
   @override
@@ -1982,15 +2224,9 @@ class _GridItem extends StatelessWidget {
               child: InkWell(
                 onTap: onTapSelect,
                 onLongPress: onLongPress,
-                // CLICK DERECHO: menú contextual (Abrir/Renombrar/Eliminar).
-                onSecondaryTapUp: (details) => _showDriveItemContextMenu(
-                  context,
-                  details.globalPosition,
-                  item: item,
-                  onOpen: onOpen,
-                  onRename: onRename,
-                  onDelete: onDelete,
-                ),
+                // CLICK DERECHO: menú contextual (Abrir/Descargar/…).
+                onSecondaryTapUp: (details) =>
+                    onContextMenu(details.globalPosition),
                 borderRadius: BorderRadius.circular(16),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
@@ -2021,6 +2257,8 @@ class _GridItem extends StatelessWidget {
                             onLongPress: onLongPress,
                             onRename: onRename,
                             onDelete: onDelete,
+                            onContextMenu: onContextMenu,
+                            onDownload: onDownload,
                           )
                         : _ImageCard(
                             item: item,
@@ -2029,6 +2267,9 @@ class _GridItem extends StatelessWidget {
                             onLongPress: onLongPress,
                             onRename: onRename,
                             onDelete: onDelete,
+                            onContextMenu: onContextMenu,
+                            onDownload: onDownload,
+                            localPreview: localPreview,
                           ),
                   ),
                 ),
@@ -2158,6 +2399,8 @@ class _FolderCard extends StatelessWidget {
     required this.onLongPress,
     required this.onRename,
     required this.onDelete,
+    required this.onContextMenu,
+    required this.onDownload,
   });
 
   final DriveItem item;
@@ -2165,6 +2408,8 @@ class _FolderCard extends StatelessWidget {
   final VoidCallback onLongPress;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final void Function(Offset position) onContextMenu;
+  final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -2175,14 +2420,8 @@ class _FolderCard extends StatelessWidget {
         onTap: onOpen,
         onLongPress: onLongPress,
         // CLICK DERECHO: menú contextual.
-        onSecondaryTapUp: (details) => _showDriveItemContextMenu(
-          context,
-          details.globalPosition,
-          item: item,
-          onOpen: onOpen,
-          onRename: onRename,
-          onDelete: onDelete,
-        ),
+        onSecondaryTapUp: (details) =>
+            onContextMenu(details.globalPosition),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2218,7 +2457,11 @@ class _FolderCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  _ItemMenu(onRename: onRename, onDelete: onDelete),
+                  _ItemMenu(
+                    onRename: onRename,
+                    onDelete: onDelete,
+                    onDownload: onDownload,
+                  ),
                 ],
               ),
             ),
@@ -2262,6 +2505,9 @@ class _ImageCard extends StatelessWidget {
     required this.onLongPress,
     required this.onRename,
     required this.onDelete,
+    required this.onContextMenu,
+    required this.onDownload,
+    this.localPreview,
   });
 
   final DriveItem item;
@@ -2270,6 +2516,9 @@ class _ImageCard extends StatelessWidget {
   final VoidCallback onLongPress;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final void Function(Offset position) onContextMenu;
+  final VoidCallback onDownload;
+  final String? localPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -2281,14 +2530,8 @@ class _ImageCard extends StatelessWidget {
         onTap: onOpen,
         onLongPress: onLongPress,
         // CLICK DERECHO: menú contextual.
-        onSecondaryTapUp: (details) => _showDriveItemContextMenu(
-          context,
-          details.globalPosition,
-          item: item,
-          onOpen: onOpen,
-          onRename: onRename,
-          onDelete: onDelete,
-        ),
+        onSecondaryTapUp: (details) =>
+            onContextMenu(details.globalPosition),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2300,9 +2543,10 @@ class _ImageCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    _DriveThumb(
+                    DriveThumb(
                       source: src,
                       isRemote: drive is DriveApiService,
+                      localPreview: localPreview,
                       size: double.infinity,
                       big: true,
                     ),
@@ -2312,6 +2556,7 @@ class _ImageCard extends StatelessWidget {
                       child: _OverlayMenu(
                         onRename: onRename,
                         onDelete: onDelete,
+                        onDownload: onDownload,
                       ),
                     ),
                   ],
@@ -2352,10 +2597,15 @@ class _ImageCard extends StatelessWidget {
 }
 
 class _ItemMenu extends StatelessWidget {
-  const _ItemMenu({required this.onRename, required this.onDelete});
+  const _ItemMenu({
+    required this.onRename,
+    required this.onDelete,
+    required this.onDownload,
+  });
 
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -2369,10 +2619,12 @@ class _ItemMenu extends StatelessWidget {
         color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
       onSelected: (v) {
+        if (v == 'download') onDownload();
         if (v == 'rename') onRename();
         if (v == 'delete') onDelete();
       },
       itemBuilder: (_) => const [
+        PopupMenuItem(value: 'download', child: Text('Descargar')),
         PopupMenuItem(value: 'rename', child: Text('Renombrar')),
         PopupMenuItem(value: 'delete', child: Text('Eliminar')),
       ],
@@ -2380,72 +2632,16 @@ class _ItemMenu extends StatelessWidget {
   }
 }
 
-/// Menú contextual de un ítem del drive (CLICK DERECHO en escritorio:
-/// Abrir / Renombrar / Eliminar). [position] es en coordenadas globales.
-Future<void> _showDriveItemContextMenu(
-  BuildContext context,
-  Offset position, {
-  required DriveItem item,
-  required VoidCallback onOpen,
-  required VoidCallback onRename,
-  required VoidCallback onDelete,
-}) async {
-  final overlay =
-      Overlay.of(context).context.findRenderObject() as RenderBox?;
-  final action = await showMenu<String>(
-    context: context,
-    position: RelativeRect.fromLTRB(
-      position.dx,
-      position.dy,
-      overlay?.size.width ?? position.dx,
-      overlay?.size.height ?? position.dy,
-    ),
-    items: [
-      const PopupMenuItem(
-        value: 'open',
-        height: 40,
-        child: Row(children: [
-          Icon(Icons.open_in_new_rounded, size: 17),
-          SizedBox(width: 10),
-          Text('Abrir'),
-        ]),
-      ),
-      const PopupMenuItem(
-        value: 'rename',
-        height: 40,
-        child: Row(children: [
-          Icon(Icons.drive_file_rename_outline, size: 17),
-          SizedBox(width: 10),
-          Text('Renombrar'),
-        ]),
-      ),
-      const PopupMenuItem(
-        value: 'delete',
-        height: 40,
-        child: Row(children: [
-          Icon(Icons.delete_outline, size: 17),
-          SizedBox(width: 10),
-          Text('Eliminar'),
-        ]),
-      ),
-    ],
-  );
-  if (action == null || !context.mounted) return;
-  switch (action) {
-    case 'open':
-      onOpen();
-    case 'rename':
-      onRename();
-    case 'delete':
-      onDelete();
-  }
-}
-
 class _OverlayMenu extends StatelessWidget {
-  const _OverlayMenu({required this.onRename, required this.onDelete});
+  const _OverlayMenu({
+    required this.onRename,
+    required this.onDelete,
+    required this.onDownload,
+  });
 
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -2458,10 +2654,12 @@ class _OverlayMenu extends StatelessWidget {
         splashRadius: 18,
         icon: const Icon(Icons.more_vert, size: 18, color: Colors.white),
         onSelected: (v) {
+          if (v == 'download') onDownload();
           if (v == 'rename') onRename();
           if (v == 'delete') onDelete();
         },
         itemBuilder: (_) => const [
+          PopupMenuItem(value: 'download', child: Text('Descargar')),
           PopupMenuItem(value: 'rename', child: Text('Renombrar')),
           PopupMenuItem(value: 'delete', child: Text('Eliminar')),
         ],
@@ -2486,6 +2684,10 @@ class _ListContent extends StatelessWidget {
     required this.onDrop,
     required this.itemKeys,
     required this.onTapSelect,
+    required this.onContextMenu,
+    required this.onDownload,
+    required this.localPreviews,
+    required this.noEntrance,
     required this.scrollController,
   });
 
@@ -2502,7 +2704,16 @@ class _ListContent extends StatelessWidget {
       onDrop;
   final Map<String, GlobalKey> itemKeys;
   final ValueChanged<DriveItem> onTapSelect;
+  final void Function(DriveItem item, Offset position) onContextMenu;
+  final ValueChanged<DriveItem> onDownload;
+  final Map<String, String> localPreviews;
+  final Set<String> noEntrance;
   final ScrollController scrollController;
+
+  /// Ver [_GridBody._scrolledDown]: las filas que aparecen al bajar animan su
+  /// entrada; las que ya estaban a la vista se pintan directas.
+  bool get _scrolledDown =>
+      scrollController.isSafe && scrollController.safeOffset > 8;
 
   @override
   Widget build(BuildContext context) {
@@ -2550,9 +2761,9 @@ class _ListContent extends StatelessWidget {
                 final item = items[i];
                 final key = itemKeys.putIfAbsent(
                     item.name, () => GlobalKey(debugLabel: 'row-${item.name}'));
-                // Entrada escalonada estilo Google Drive (fade + slide).
-                return StaggeredItem(
-                  index: i,
+                // Igual que en la cuadrícula: anima solo lo que llega al bajar.
+                return ScrollReveal(
+                  animate: _scrolledDown && !noEntrance.contains(item.name),
                   child: _ListRow(
                     key: key,
                     item: item,
@@ -2567,6 +2778,9 @@ class _ListContent extends StatelessWidget {
                     onDelete: () => onDelete(item),
                     onDrop: (details) => onDrop(item, details),
                     onTapSelect: () => onTapSelect(item),
+                    onContextMenu: (pos) => onContextMenu(item, pos),
+                    onDownload: () => onDownload(item),
+                    localPreview: localPreviews[item.name],
                     selectedNames: selected.toList(growable: false),
                   ),
                 );
@@ -2594,6 +2808,9 @@ class _ListRow extends StatelessWidget {
     required this.onDelete,
     required this.onDrop,
     required this.onTapSelect,
+    required this.onContextMenu,
+    required this.onDownload,
+    this.localPreview,
     required this.selectedNames,
   });
 
@@ -2609,6 +2826,9 @@ class _ListRow extends StatelessWidget {
   final VoidCallback onDelete;
   final void Function(DragTargetDetails<Object> details) onDrop;
   final VoidCallback onTapSelect;
+  final void Function(Offset position) onContextMenu;
+  final VoidCallback onDownload;
+  final String? localPreview;
   final List<String> selectedNames;
 
   @override
@@ -2670,14 +2890,7 @@ class _ListRow extends StatelessWidget {
       onTap: onTapSelect,
       onLongPress: onLongPress,
       // CLICK DERECHO: menú contextual.
-      onSecondaryTapUp: (details) => _showDriveItemContextMenu(
-        context,
-        details.globalPosition,
-        item: item,
-        onOpen: onOpen,
-        onRename: onRename,
-        onDelete: onDelete,
-      ),
+      onSecondaryTapUp: (details) => onContextMenu(details.globalPosition),
       hoverColor: scheme.primary.withValues(alpha: .07),
       highlightColor: scheme.primary.withValues(alpha: .10),
       child: AnimatedContainer(
@@ -2711,9 +2924,10 @@ class _ListRow extends StatelessWidget {
                       )
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: _DriveThumb(
+                        child: DriveThumb(
                           source: src,
                           isRemote: drive is DriveApiService,
+                          localPreview: localPreview,
                           size: 40,
                         ),
                       ),
@@ -2773,7 +2987,11 @@ class _ListRow extends StatelessWidget {
             ],
             SizedBox(
               width: 40,
-              child: _ItemMenu(onRename: onRename, onDelete: onDelete),
+              child: _ItemMenu(
+                onRename: onRename,
+                onDelete: onDelete,
+                onDownload: onDownload,
+              ),
             ),
           ],
         ),
@@ -2931,7 +3149,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                   fit: StackFit.expand,
                   children: [
                     // 1) Preview ligero: se ve AL INSTANTE.
-                    _DriveThumb(
+                    DriveThumb(
                       source: src,
                       isRemote: isRemote,
                       size: double.infinity,
@@ -3230,6 +3448,9 @@ class _UploadsCard extends StatelessWidget {
                     onCancel: job.status == 'uploading'
                         ? () => drive.cancelUpload(job.id)
                         : null,
+                    onRetry: job.status == 'error'
+                        ? () => drive.retryUpload(job.id)
+                        : null,
                   );
                 },
               ),
@@ -3241,91 +3462,23 @@ class _UploadsCard extends StatelessWidget {
   }
 }
 
-/// Miniatura que resuelve local (File) o remota (Image.network) según el drive.
-/// Decodifica a baja resolución (cacheWidth/cacheHeight) para listar rápido.
-class _DriveThumb extends StatelessWidget {
-  const _DriveThumb({
-    required this.source,
-    required this.isRemote,
-    this.size = 40,
-    this.big = false,
-    this.contain = false,
-  });
-
-  final String source;
-  final bool isRemote;
-  final double size;
-  final bool big;
-  final bool contain;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final ImageErrorWidgetBuilder error = big
-        ? (_, _, _) => const Center(
-              child: Icon(Icons.broken_image_outlined, size: 40),
-            )
-        : (_, _, _) => Icon(
-              Icons.image_outlined,
-              size: size * .5,
-              color: scheme.onSurfaceVariant,
-            );
-    final fit = contain ? BoxFit.contain : BoxFit.cover;
-    // Resolución de decodificación: miniaturas pequeñas; visor usa todo.
-    final cachePx = big ? null : (size * dpr).round();
-    Widget image;
-    if (isRemote) {
-      image = Image.network(
-        source,
-        width: big ? null : size,
-        height: big ? null : size,
-        fit: fit,
-        cacheWidth: cachePx,
-        errorBuilder: error,
-        frameBuilder: (c, child, frame, sync) {
-          // Ya venía del caché (sincrónico): mostrar directo, sin animar.
-          if (sync) return child;
-          // Aparición suave: visible SOLO cuando ya hay frame decodificado.
-          // (El target SIEMPRE es 1; antes quedaba en 0 y las fotos de red
-          // se veían invisibles hasta recargar con scroll.)
-          return AnimatedOpacity(
-            opacity: frame == null ? 0 : 1,
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeOut,
-            child: child,
-          );
-        },
-      );
-    } else {
-      image = Image.file(
-        File(source),
-        width: big ? null : size,
-        height: big ? null : size,
-        fit: fit,
-        cacheWidth: cachePx,
-        errorBuilder: error,
-      );
-    }
-    if (big) return ClipRRect(borderRadius: BorderRadius.circular(13), child: image);
-    return Container(
-      width: size,
-      height: size,
-      color: scheme.surfaceContainerHighest.withValues(alpha: .5),
-      child: image,
-    );
-  }
-}
-
 /// Tarjeta de un trabajo de subida (miniatura + nombre + progreso).
 /// PÚBLICA para poder probarla desde test/.
 class UploadJobTile extends StatelessWidget {
-  const UploadJobTile({super.key, required this.job, this.onCancel});
+  const UploadJobTile({
+    super.key,
+    required this.job,
+    this.onCancel,
+    this.onRetry,
+  });
 
   final DriveUploadJob job;
 
   /// Si no es null, muestra el botón ✕ para cancelar esta subida.
   final VoidCallback? onCancel;
+
+  /// Si no es null, muestra el botón "Resubir" cuando la subida falló.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -3335,7 +3488,7 @@ class UploadJobTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       child: Row(
         children: [
-          _DriveThumb(
+          DriveThumb(
             source: job.thumb,
             isRemote: false, // miniatura del archivo LOCAL
             size: 42,
@@ -3356,40 +3509,62 @@ class UploadJobTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 if (job.status == 'uploading')
-                  Row(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: pct,
-                            minHeight: 4,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: pct,
+                                minHeight: 4,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            pct == null
+                                ? '…'
+                                : '${(pct * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: scheme.primary,
+                            ),
+                          ),
+                          if (onCancel != null) ...[
+                            const SizedBox(width: 4),
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: IconButton(
+                                tooltip: 'Cancelar',
+                                padding: EdgeInsets.zero,
+                                iconSize: 14,
+                                onPressed: onCancel,
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      // Reintento automático en curso: se avisa para que no
+                      // parezca que la subida se quedó parada en 0 %.
+                      if (job.error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(
+                            job.error!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        pct == null ? '…' : '${(pct * 100).toStringAsFixed(0)}%',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: scheme.primary,
-                        ),
-                      ),
-                      if (onCancel != null) ...[
-                        const SizedBox(width: 4),
-                        SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: IconButton(
-                            tooltip: 'Cancelar',
-                            padding: EdgeInsets.zero,
-                            iconSize: 14,
-                            onPressed: onCancel,
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ),
-                      ],
                     ],
                   )
                 else if (job.status == 'cancelled')
@@ -3423,16 +3598,321 @@ class UploadJobTile extends StatelessWidget {
                     ],
                   )
                 else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Error: ${job.error ?? 'desconocido'}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.error,
+                          ),
+                        ),
+                      ),
+                      // Volver a intentar el archivo que falló, sin repetir
+                      // todo el lote.
+                      if (onRetry != null)
+                        TextButton.icon(
+                          onPressed: onRetry,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          icon: const Icon(Icons.refresh_rounded, size: 14),
+                          label: const Text(
+                            'Resubir',
+                            style: TextStyle(fontSize: 11.5),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Panel de DESCARGAS en segundo plano (arriba a la derecha, junto al de
+/// subidas). Escucha al drive directamente para refrescar el progreso real.
+class _DownloadsCard extends StatelessWidget {
+  const _DownloadsCard({required this.drive});
+
+  final DriveBase drive;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: drive,
+      builder: (context, _) => _buildCard(context),
+    );
+  }
+
+  Widget _buildCard(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final jobs = drive.downloadJobs;
+    final active = jobs.where((j) => j.status == 'downloading').length;
+    final done = jobs.where((j) => j.status == 'done').length;
+    final failed = jobs.where((j) => j.status == 'error').length;
+    final totalBytes = jobs.fold<int>(
+        0, (a, j) => j.status == 'downloading' ? a + j.total : a);
+    final gotBytes = jobs.fold<int>(
+        0, (a, j) => j.status == 'downloading' ? a + j.received : a);
+    final globalPct =
+        totalBytes > 0 ? (gotBytes / totalBytes).clamp(0.0, 1.0) : null;
+
+    return Material(
+      key: const ValueKey('downloads_card'),
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: .25),
+      borderRadius: BorderRadius.circular(16),
+      color: scheme.surface,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380, maxHeight: 340),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
+              child: Row(
+                children: [
+                  Icon(
+                    active > 0
+                        ? Icons.downloading_outlined
+                        : failed > 0
+                            ? Icons.error_outline
+                            : Icons.download_done_outlined,
+                    size: 18,
+                    color: active == 0 && failed > 0
+                        ? scheme.error
+                        : scheme.primary,
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Error: ${job.error ?? 'desconocido'}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.error,
+                      active > 0
+                          ? 'Descargando $active '
+                              '${active == 1 ? 'archivo' : 'archivos'}…'
+                          : failed > 0
+                              ? '$done lista${done == 1 ? '' : 's'} · '
+                                  '$failed con error${failed == 1 ? '' : 'es'}'
+                              : '$done descarga${done == 1 ? '' : 's'} '
+                                  'completada${done == 1 ? '' : 's'}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  if (active > 0)
+                    TextButton.icon(
+                      onPressed: () {
+                        for (final j in jobs) {
+                          drive.cancelDownload(j.id);
+                        }
+                      },
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.cancel_outlined, size: 15),
+                      label:
+                          const Text('Cancelar', style: TextStyle(fontSize: 12)),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Limpiar',
+                      onPressed: drive.clearFinishedDownloads,
+                      icon: const Icon(Icons.close, size: 18),
+                    ),
+                ],
+              ),
+            ),
+            if (active > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: globalPct,
+                          minHeight: 4,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Text(
+                      globalPct == null
+                          ? '…'
+                          : '${(globalPct * 100).toStringAsFixed(0)} %',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: jobs.length,
+                itemBuilder: (context, i) {
+                  final job = jobs[i];
+                  return DownloadJobTile(
+                    job: job,
+                    onCancel: job.status == 'downloading'
+                        ? () => drive.cancelDownload(job.id)
+                        : null,
+                    onRetry: job.status == 'error'
+                        ? () => retryDriveDownload(context, drive, job)
+                        : null,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Tarjeta de una descarga (nombre + barra de progreso). PÚBLICA para test/.
+class DownloadJobTile extends StatelessWidget {
+  const DownloadJobTile({
+    super.key,
+    required this.job,
+    this.onCancel,
+    this.onRetry,
+  });
+
+  final DriveDownloadJob job;
+
+  /// Si no es null, muestra ✕ para cancelar esta descarga.
+  final VoidCallback? onCancel;
+
+  /// Si no es null, muestra "Reintentar" cuando la descarga falló.
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final pct =
+        job.total > 0 ? (job.received / job.total).clamp(0.0, 1.0) : null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Row(
+        children: [
+          Icon(
+            job.name.toLowerCase().endsWith('.zip')
+                ? Icons.folder_zip_outlined
+                : Icons.image_outlined,
+            size: 26,
+            color: scheme.primary.withValues(alpha: .75),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  job.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (job.status == 'downloading')
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: pct,
+                            minHeight: 4,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        pct == null
+                            ? transferSizeLabel(job.received)
+                            : '${(pct * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      if (onCancel != null) ...[
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: IconButton(
+                            tooltip: 'Cancelar',
+                            padding: EdgeInsets.zero,
+                            iconSize: 14,
+                            onPressed: onCancel,
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ),
+                      ],
+                    ],
+                  )
+                else if (job.status == 'done')
+                  Row(
+                    children: [
+                      Icon(Icons.check_circle, size: 14, color: scheme.primary),
+                      const SizedBox(width: 5),
+                      Text(
+                        transferSizeLabel(job.received),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Error: ${job.error ?? 'desconocido'}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, color: scheme.error),
+                        ),
+                      ),
+                      if (onRetry != null)
+                        TextButton.icon(
+                          onPressed: onRetry,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          icon: const Icon(Icons.refresh_rounded, size: 14),
+                          label: const Text(
+                            'Reintentar',
+                            style: TextStyle(fontSize: 11.5),
+                          ),
+                        ),
+                    ],
                   ),
               ],
             ),

@@ -10,6 +10,9 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // flutter_local_notifications exige desugaring de la librería core
+        // (usa APIs de java.time que Android antiguo no trae).
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -48,6 +51,8 @@ dependencies {
     // FileProvider (androidx.core.content.FileProvider): lo usa MainActivity
     // para entregar el .apk de actualización al instalador del sistema.
     implementation("androidx.core:core-ktx:1.13.1")
+    // Requerido por flutter_local_notifications (ver compileOptions).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 flutter {

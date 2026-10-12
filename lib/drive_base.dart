@@ -40,7 +40,21 @@ enum DriveBusy { none, uploading, moving, copying, deleting, downloading }
 
 /// Cuántas subidas corren EN PARALELO (pool de trabajadores).
 /// El resto espera su turno en cola, pero TODAS se ven en el panel.
-const int kUploadParallel = 3;
+///
+/// Se mantiene BAJO (2) a propósito: subir varias fotos grandes a la vez
+/// por una conexión doméstica/DDNS satura el enlace y hace que algunas
+/// terminen en error. Con 2 en paralelo el lote es mucho más estable.
+const int kUploadParallel = 2;
+
+/// Intentos AUTOMÁTICOS por archivo antes de marcarlo con error
+/// (1 intento original + reintentos).
+const int kUploadAttempts = 3;
+
+/// Espera entre reintentos automáticos (creciente). El último valor se repite.
+const List<Duration> kUploadRetryDelays = [
+  Duration(milliseconds: 900),
+  Duration(milliseconds: 2500),
+];
 
 /// Trabajo de subida individual (panel estilo Drive, progreso por archivo).
 class DriveUploadJob {
@@ -62,6 +76,59 @@ class DriveUploadJob {
   /// Marcado para cancelar: el pool lo salta (en cola) o aborta el envío
   /// (en vuelo) en el siguiente bloque de bytes.
   bool cancelled = false;
+
+  /// Intentos ya realizados (incluye los reintentos automáticos).
+  int attempts = 0;
+
+  /// Vuelve a "en carga" para reintentar (automático o manual) manteniendo
+  /// el mismo trabajo: el panel no pierde la fila ni su miniatura local.
+  void restart() {
+    status = 'uploading';
+    error = null;
+    sent = 0;
+    cancelled = false;
+  }
+}
+
+/// Trabajo de DESCARGA individual (panel de transferencias, estilo Drive).
+///
+/// La descarga corre en segundo plano: la interfaz sigue libre y el panel
+/// muestra el progreso al lado de las subidas. Si falla, el panel ofrece
+/// reintentarla sin volver a elegir el destino.
+class DriveDownloadJob {
+  DriveDownloadJob({
+    required this.id,
+    required this.name,
+    required this.items,
+    this.targetPath,
+  });
+
+  final String id;
+
+  /// Nombre sugerido: el del archivo (1 sola imagen) o el del ZIP.
+  final String name;
+
+  /// Elementos que se descargan (se guardan para poder reintentar).
+  final List<DriveItem> items;
+
+  /// Destino elegido en el diálogo Guardar (nativo). En web es null: el
+  /// navegador guarda en su carpeta de descargas.
+  final String? targetPath;
+
+  int received = 0; // bytes recibidos
+  int total = 0; // bytes totales (0 = indeterminado)
+  String status = 'downloading'; // downloading | done | error
+  String? error;
+  bool cancelled = false;
+
+  /// Vuelve a "descargando" para reintentar (botón del panel).
+  void restart() {
+    status = 'downloading';
+    error = null;
+    received = 0;
+    total = 0;
+    cancelled = false;
+  }
 }
 
 /// Contrato común del drive (local o servidor).
@@ -77,12 +144,42 @@ abstract class DriveBase extends ChangeNotifier {
   @protected
   void updateItems(List<DriveItem> value) => _items = value;
 
+  /// Carpeta de la que proviene el listado que está en pantalla. La fija cada
+  /// refresco EXITOSO ("" = raíz).
+  String? loadedPath;
+
+  /// Etiqueta de la carpeta actual, tal como la usa [loadedPath].
+  String get pathLabel => path.join('/');
+
+  /// Falló el refresco de la carpeta actual (servidor caído, timeout…).
+  ///
+  /// Se guarda el error y se descarta el listado SOLO si lo que hay en pantalla
+  /// es de OTRA carpeta (no mostrar contenido que no corresponde). Si es la
+  /// misma, se conserva lo último bueno: una caída momentánea —típica mientras
+  /// se suben fotos y el enlace está saturado— no debe vaciar el directorio que
+  /// el usuario está viendo.
+  void failRefresh(String message) {
+    error = message;
+    conn = DriveConn.offline;
+    if (loadedPath != pathLabel) {
+      updateItems(const []);
+      loadedPath = null;
+    }
+    // Avisa por sí sola: la UI tiene que enterarse del aviso aunque el
+    // refresco que falló no llegue a su bloque finally.
+    notifyListeners();
+  }
+
   DriveConn conn = DriveConn.checking;
   DriveBusy busy = DriveBusy.none;
   String busyLabel = '';
 
   /// Subidas de la sesión (activas, terminadas y con error) — no bloquea la UI.
   final List<DriveUploadJob> uploadJobs = [];
+
+  /// Descargas de la sesión (activas, terminadas y con error) — también en
+  /// segundo plano: el panel de transferencias las muestra al lado.
+  final List<DriveDownloadJob> downloadJobs = [];
 
   bool get isReady => conn != DriveConn.checking;
   String get locationLabel =>
@@ -136,6 +233,10 @@ abstract class DriveBase extends ChangeNotifier {
   List<String> listFolders(List<String> rel);
   String absolutePathOf(DriveItem item);
 
+  /// Vuelve a subir el archivo de un trabajo que quedó en error (botón
+  /// "Resubir" del panel). Mantiene la misma fila del trabajo.
+  Future<void> retryUpload(String jobId);
+
   /// Fuente para miniaturas: versión liviana (remota) o ruta local.
   String thumbSource(DriveItem item, {int width = 320}) =>
       absolutePathOf(item);
@@ -182,8 +283,123 @@ abstract class DriveBase extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Busca un trabajo por id.
+  DriveUploadJob? uploadJobById(String jobId) {
+    for (final j in uploadJobs) {
+      if (j.id == jobId) return j;
+    }
+    return null;
+  }
+
+  /// Espera entre intentos de subida del mismo archivo. [attempt] es el
+  /// número de intentos YA fallidos (1 = falló el primero).
+  static Duration uploadRetryDelay(int attempt) {
+    final i = (attempt - 1).clamp(0, kUploadRetryDelays.length - 1);
+    return kUploadRetryDelays[i];
+  }
+
+  /// Sube/guarda un archivo con reintentos automáticos y espera creciente.
+  ///
+  /// [attempt] ejecuta UN intento completo (subir o copiar) y lanza excepción
+  /// si falla. Devuelve true si el archivo terminó guardado. Marca el trabajo
+  /// como 'done'/'error' y programa el refresco en vivo al terminar.
+  @protected
+  Future<bool> runUploadWithRetries(
+    DriveUploadJob job,
+    Future<void> Function() attempt,
+  ) async {
+    while (true) {
+      if (job.cancelled) {
+        job.status = 'cancelled';
+        job.error = 'Cancelado';
+        notifyUploadProgress();
+        return false;
+      }
+      job.attempts++;
+      try {
+        await attempt();
+        finishUploadJob(job);
+        // La foto ya está guardada: muéstrala en la cuadrícula sin esperar a
+        // que termine el lote completo.
+        scheduleLiveRefresh();
+        return true;
+      } catch (e) {
+        if (job.cancelled) {
+          job.status = 'cancelled';
+          job.error = 'Cancelado';
+          notifyUploadProgress();
+          return false;
+        }
+        if (job.attempts >= kUploadAttempts) {
+          finishUploadJob(job, error: e.toString());
+          return false;
+        }
+        // Falló pero aún hay margen: la fila sigue "en carga", vuelve a 0 %
+        // y muestra el motivo mientras espera para reintentar.
+        job.sent = 0;
+        job.error = 'Reintentando… ($e)';
+        notifyUploadProgress();
+        await Future<void>.delayed(uploadRetryDelay(job.attempts));
+      }
+    }
+  }
+
   void clearFinishedUploads() {
     uploadJobs.removeWhere((j) => j.status != 'uploading');
+    notifyListeners();
+  }
+
+  // ==================== Trabajos de descarga (segundo plano) ====================
+
+  /// Registra una descarga nueva (aparece YA en el panel, al 0 %).
+  DriveDownloadJob startDownload(
+    String name, {
+    required List<DriveItem> items,
+    String? targetPath,
+  }) {
+    final job = DriveDownloadJob(
+      id: 'd${DateTime.now().microsecondsSinceEpoch}',
+      name: name,
+      items: items,
+      targetPath: targetPath,
+    );
+    downloadJobs.insert(0, job);
+    if (downloadJobs.length > 30) {
+      downloadJobs.removeRange(30, downloadJobs.length);
+    }
+    notifyListeners();
+    return job;
+  }
+
+  /// Aviso de progreso de descarga (bytes recibidos).
+  void notifyDownloadProgress() => notifyListeners();
+
+  void finishDownloadJob(DriveDownloadJob job, {String? error}) {
+    job.status = error == null ? 'done' : 'error';
+    job.error = error;
+    if (error == null) job.received = job.total;
+    notifyListeners();
+  }
+
+  /// Deja un trabajo fallido listo para volver a intentarlo.
+  void restartDownloadJob(DriveDownloadJob job) {
+    job.restart();
+    notifyListeners();
+  }
+
+  /// Cancela una descarga en curso (se corta en el siguiente bloque recibido).
+  void cancelDownload(String jobId) {
+    for (final j in downloadJobs) {
+      if (j.id == jobId && j.status == 'downloading') {
+        j.cancelled = true;
+        notifyListeners();
+        return;
+      }
+    }
+  }
+
+  void clearFinishedDownloads() {
+    downloadJobs.removeWhere((j) => j.status != 'downloading');
     notifyListeners();
   }
 
@@ -222,18 +438,22 @@ abstract class DriveBase extends ChangeNotifier {
   Timer? _liveRefreshTimer;
   DateTime _lastLiveRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// Refresca el listado DURANTE una subida (máx. 1 vez cada 2 s y siempre
-  /// 2 s después de la última llamada): así cada foto aparece en la cuadrícula
-  /// apenas se guarda, sin esperar a que termine TODO el lote.
+  /// Refresca el listado DURANTE una subida (máx. 1 vez cada [_liveRefreshEvery]
+  /// y siempre [_liveRefreshEvery] después de la última llamada): así cada foto
+  /// aparece en la cuadrícula apenas se guarda, sin esperar a que termine TODO
+  /// el lote. El intervalo es corto para que la foto recién subida se vea ya,
+  /// pero agrupa las notificaciones para no inundar al servidor.
+  static const Duration _liveRefreshEvery = Duration(milliseconds: 600);
+
   @protected
   void scheduleLiveRefresh() {
     final now = DateTime.now();
-    if (now.difference(_lastLiveRefreshAt) >= const Duration(seconds: 2)) {
+    if (now.difference(_lastLiveRefreshAt) >= _liveRefreshEvery) {
       _lastLiveRefreshAt = now;
       refresh();
       return;
     }
-    _liveRefreshTimer ??= Timer(const Duration(seconds: 2), () {
+    _liveRefreshTimer ??= Timer(_liveRefreshEvery, () {
       _liveRefreshTimer = null;
       _lastLiveRefreshAt = DateTime.now();
       refresh();

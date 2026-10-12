@@ -102,9 +102,9 @@ class DriveService extends DriveBase {
       files.sort(byName);
       updateItems([...folders, ...files]);
       conn = DriveConn.online;
+      loadedPath = pathLabel;
     } catch (e) {
-      error = 'No se pudo leer la carpeta: $e';
-      conn = DriveConn.offline;
+      failRefresh('No se pudo leer la carpeta: $e');
     } finally {
       loading = false;
       notifyListeners();
@@ -148,7 +148,6 @@ class DriveService extends DriveBase {
   @override
   Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
     if (sources.isEmpty) return 0;
-    final dir = Directory(_absolute(path));
     final pending = <(DriveUploadJob, File)>[];
     var i = 0;
     for (final src in sources) {
@@ -181,47 +180,80 @@ class DriveService extends DriveBase {
           notifyUploadProgress();
           continue;
         }
-        try {
-          await Future<void>.delayed(const Duration(milliseconds: 1));
-          // Normaliza separadores para extraer bien el nombre en cualquier OS.
-          final clean = _sanitize(job.name);
-          final base = clean.contains('.')
-              ? clean.substring(0, clean.lastIndexOf('.'))
-              : clean;
-          final ext =
-              clean.contains('.') ? clean.substring(clean.lastIndexOf('.')) : '';
-          var name = clean;
-          if (!overwrite) {
-            var k = 1;
-            var dest = File([dir.path, name].join(Platform.pathSeparator));
-            // Evita colisión con existentes Y con otros workers en paralelo.
-            while (dest.existsSync() || claimed.contains(name)) {
-              name = '$base ($k)$ext';
-              k++;
-              dest = File([dir.path, name].join(Platform.pathSeparator));
-            }
-          }
-          claimed.add(name);
-          await f.copy([dir.path, name].join(Platform.pathSeparator));
-          job.sent = job.total;
-          notifyUploadProgress();
-          finishUploadJob(job);
-          saved++;
-          scheduleLiveRefresh();
-        } catch (e) {
-          if (job.cancelled) {
-            job.status = 'cancelled';
-            job.error = 'Cancelado';
-            notifyUploadProgress();
-          } else {
-            finishUploadJob(job, error: e.toString());
-          }
-        }
+        // Copia con reintentos automáticos: si un archivo falla (bloqueo
+        // momentáneo, disco ocupado…) se vuelve a intentar antes de darlo
+        // por perdido, en vez de dejarlo fallido sin más.
+        final ok = await runUploadWithRetries(
+          job,
+          () => _copyOne(job, f, overwrite: overwrite, claimed: claimed),
+        );
+        if (ok) saved++;
       }
     }
     await Future.wait(List.generate(kUploadParallel, (_) => worker()));
     await refresh();
     return saved;
+  }
+
+  /// Copia UN archivo a la carpeta actual resolviendo colisiones con los
+  /// existentes y con otros workers en paralelo. Devuelve el nombre final.
+  Future<String> _copyOne(
+    DriveUploadJob job,
+    File source, {
+    required bool overwrite,
+    required Set<String> claimed,
+  }) async {
+    final dir = Directory(_absolute(path));
+    // Normaliza separadores para extraer bien el nombre en cualquier OS.
+    final clean = _sanitize(job.name);
+    final base = clean.contains('.')
+        ? clean.substring(0, clean.lastIndexOf('.'))
+        : clean;
+    final ext =
+        clean.contains('.') ? clean.substring(clean.lastIndexOf('.')) : '';
+    var name = clean;
+    if (!overwrite) {
+      var k = 1;
+      var dest = File([dir.path, name].join(Platform.pathSeparator));
+      // Evita colisión con existentes Y con otros workers en paralelo.
+      while (dest.existsSync() || claimed.contains(name)) {
+        name = '$base ($k)$ext';
+        k++;
+        dest = File([dir.path, name].join(Platform.pathSeparator));
+      }
+    }
+    claimed.add(name);
+    final destPath = [dir.path, name].join(Platform.pathSeparator);
+    await source.copy(destPath);
+    // Verificación: el destino debe tener EXACTAMENTE el mismo tamaño.
+    final written = File(destPath).lengthSync();
+    if (written != source.lengthSync()) {
+      throw 'copia incompleta ($written de ${source.lengthSync()} bytes)';
+    }
+    job.sent = job.total;
+    notifyUploadProgress();
+    return name;
+  }
+
+  /// Resubir a mano un archivo que quedó con error (botón "Resubir").
+  @override
+  Future<void> retryUpload(String jobId) async {
+    final job = uploadJobById(jobId);
+    if (job == null || job.status == 'uploading') return;
+    final source = File(job.thumb);
+    if (!source.existsSync()) {
+      job.restart();
+      finishUploadJob(job, error: 'El archivo original ya no está disponible');
+      return;
+    }
+    job.restart();
+    job.attempts = 0;
+    notifyUploadProgress();
+    await runUploadWithRetries(
+      job,
+      () => _copyOne(job, source, overwrite: false, claimed: <String>{}),
+    );
+    await refresh();
   }
 
   /// Crea una subcarpeta en la ubicación actual.

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../hs_access.dart';
 import '../hs_api.dart';
+import '../service_icons.dart';
+import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
@@ -18,8 +20,6 @@ import '../widgets/form_dialog.dart';
 /// Paleta dorada de la marca (idéntica a la web: --gold, --gold-light).
 class _Gold {
   static const gold = Color(0xFFC9A96E);
-  static const goldLight = Color(0xFFF0D48A);
-  static const dark = Color(0xFF0B0E17); // fondo del flyer (web --bg)
 }
 
 /// Icono emoji de la categoría (mismo espíritu que la web).
@@ -381,7 +381,10 @@ class _WebPackageCardState extends State<_WebPackageCard> {
   Widget build(BuildContext context) {
     final pkg = widget.pkg;
     final tier = (pkg['tierName'] ?? '').toString();
-    final tierKey = tier.toLowerCase();
+    // Cada tier tiene su propio look (Premium = oro sobre negro,
+    // Gold = ámbar cálido, Basic = acero frío) para distinguirlo de un
+    // vistazo.
+    final look = HsTierLook.of(tier);
     final services = ((pkg['serviceNames'] as List?) ?? const [])
         .map((s) => s.toString())
         .where((s) => s.isNotEmpty)
@@ -389,7 +392,6 @@ class _WebPackageCardState extends State<_WebPackageCard> {
     final categoryName = (pkg['categoryName'] ?? '').toString();
     final price = (pkg['price'] as num?) ?? 0;
     final currency = (pkg['currency'] ?? 'MXN').toString();
-    final isPremium = tierKey == 'premium';
 
     final s = price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2);
     final parts = s.split('.');
@@ -413,13 +415,11 @@ class _WebPackageCardState extends State<_WebPackageCard> {
         child: Container(
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
-            color: _Gold.dark,
+            color: look.dark,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: isPremium
-                  ? _Gold.gold.withValues(alpha: .55)
-                  : _Gold.gold.withValues(alpha: .22),
-              width: isPremium ? 1.4 : 1,
+              color: look.accent.withValues(alpha: look.premium ? .55 : .22),
+              width: look.premium ? 1.4 : 1,
             ),
           ),
           child: Column(
@@ -432,7 +432,7 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                   gradient: LinearGradient(
                     colors: [
                       Colors.transparent,
-                      isPremium ? _Gold.goldLight : _Gold.gold,
+                      look.premium ? look.accentSoft : look.accent,
                       Colors.transparent,
                     ],
                   ),
@@ -448,21 +448,19 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            gradient: isPremium
-                                ? const LinearGradient(
-                                    colors: [_Gold.gold, _Gold.goldLight])
+                              horizontal: 10, vertical: 4),                          decoration: BoxDecoration(
+                            gradient: look.premium
+                                ? LinearGradient(
+                                    colors: [look.accent, look.accentSoft])
                                 : null,
-                            color: isPremium
+                            color: look.premium
                                 ? null
-                                : _Gold.gold.withValues(alpha: .12),
+                                : look.accent.withValues(alpha: .12),
                             borderRadius: BorderRadius.circular(6),
-                            border: isPremium
+                            border: look.premium
                                 ? null
                                 : Border.all(
-                                    color:
-                                        _Gold.gold.withValues(alpha: .35)),
+                                    color: look.accent.withValues(alpha: .35)),
                           ),
                           child: Text(
                             tier.toUpperCase(),
@@ -470,9 +468,8 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                               fontSize: 10,
                               letterSpacing: 2,
                               fontWeight: FontWeight.w800,
-                              color: isPremium
-                                  ? _Gold.dark
-                                  : _Gold.goldLight,
+                              color:
+                                  look.premium ? look.dark : look.accentSoft,
                             ),
                           ),
                         ),
@@ -504,7 +501,7 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                             fontSize: 10.5,
                             letterSpacing: 2.2,
                             fontWeight: FontWeight.w700,
-                            color: _Gold.gold.withValues(alpha: .85),
+                            color: look.accent.withValues(alpha: .85),
                           ),
                         ),
                       ],
@@ -574,7 +571,7 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                                 Icon(
                                   Icons.check_rounded,
                                   size: 15,
-                                  color: _Gold.gold,
+                                  color: look.accent,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -614,7 +611,7 @@ class _WebPackageCardState extends State<_WebPackageCard> {
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
                 decoration: BoxDecoration(
-                  color: _Gold.gold.withValues(alpha: .05),
+                  color: look.accent.withValues(alpha: .05),
                   border: Border(
                     top: BorderSide(
                       color: Colors.white.withValues(alpha: .07),
@@ -638,10 +635,10 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                           ),
                           Text(
                             priceLabel,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w800,
-                              color: _Gold.gold,
+                              color: look.accent,
                               fontFamily: 'serif',
                             ),
                           ),
@@ -660,9 +657,9 @@ class _WebPackageCardState extends State<_WebPackageCard> {
                     OutlinedButton.icon(
                       onPressed: canEdit ? widget.onEdit : null,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: _Gold.goldLight,
+                        foregroundColor: look.accentSoft,
                         side: BorderSide(
-                          color: _Gold.gold.withValues(
+                          color: look.accent.withValues(
                               alpha: canEdit ? .75 : .25),
                         ),
                         padding: const EdgeInsets.symmetric(
@@ -747,6 +744,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   bool _saving = false;
   String? _error;
 
+  /// Pestaña del diálogo: 0 = Datos, 1 = Servicios (como el administrador).
+  int _tab = 0;
+
   bool get _editing => widget.pkg != null;
 
   @override
@@ -787,16 +787,26 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   Future<void> _save() async {
     if (_saving) return;
     final name = _name.text.trim();
+    // Si falta algo de la pestaña Datos, se regresa a ella con el motivo.
     if (name.isEmpty) {
-      setState(() => _error = 'Escribe el nombre del paquete');
+      setState(() {
+        _tab = 0;
+        _error = 'Escribe el nombre del paquete';
+      });
       return;
     }
     if (_tierId == null) {
-      setState(() => _error = 'Selecciona el tier (Premium/Gold/Basic)');
+      setState(() {
+        _tab = 0;
+        _error = 'Selecciona el tier (Premium/Gold/Basic)';
+      });
       return;
     }
     if (_categoryId == null) {
-      setState(() => _error = 'Selecciona la categoría del paquete');
+      setState(() {
+        _tab = 0;
+        _error = 'Selecciona la categoría del paquete';
+      });
       return;
     }
     setState(() {
@@ -857,6 +867,34 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
+        // Pestañas HORIZONTALES (mismo lenguaje que el administrador del
+        // paquete): Datos y Servicios, con el contador de seleccionados.
+        Row(
+          children: [
+            Expanded(
+              child: _FormTabButton(
+                icon: Icons.tune_rounded,
+                label: 'Datos',
+                selected: _tab == 0,
+                onTap: () => setState(() => _tab = 0),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _FormTabButton(
+                icon: Icons.checklist_rtl,
+                label: 'Servicios',
+                badge: '${_serviceIds.length}',
+                selected: _tab == 1,
+                onTap: () => setState(() => _tab = 1),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (_tab == 1) ...[
+          _servicesSection(scheme),
+        ] else ...[
         FormSection(
           label: 'Datos del paquete',
           child: Column(
@@ -970,34 +1008,6 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
         ),
         const SizedBox(height: 16),
         FormSection(
-          label: 'Servicios incluidos',
-          child: widget.services.isEmpty
-              ? Text(
-                  'No hay servicios registrados en el catálogo.',
-                  style: TextStyle(
-                      fontSize: 12.5, color: scheme.onSurfaceVariant),
-                )
-              : Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final s in widget.services)
-                      _ServicePickChip(
-                        service: s,
-                        selected:
-                            _serviceIds.contains((s['id'] as num).toInt()),
-                        onToggle: () {
-                          setState(() {
-                            final id = (s['id'] as num).toInt();
-                            if (!_serviceIds.add(id)) _serviceIds.remove(id);
-                          });
-                        },
-                      ),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 16),
-        FormSection(
           label: 'Imagen para la web (opcional)',
           child: TextField(
             controller: _urlImage,
@@ -1007,63 +1017,206 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
             ),
           ),
         ),
+        ], // fin de la pestaña Datos
       ],
     );
   }
-}
 
-/// Chip clicable para elegir un servicio incluido en el paquete.
-class _ServicePickChip extends StatelessWidget {
-  const _ServicePickChip({
-    required this.service,
-    required this.selected,
-    required this.onToggle,
-  });
+  /// Contenido de la pestaña Servicios: lista ORGANIZADA como el
+  /// administrador del paquete (fila por servicio, con icono, nombre,
+  /// descripción y selección).
+  Widget _servicesSection(ColorScheme scheme) {
+    if (widget.services.isEmpty) {
+      return Text(
+        'No hay servicios registrados en el catálogo.',
+        style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+      );
+    }
+    return FormSection(
+      label: 'Servicios incluidos',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '${_serviceIds.length} de ${widget.services.length} seleccionados',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: .3,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Column (no ListView): el diálogo mide intrínsecos y un viewport
+          // shrink-wrap los rechaza.
+          for (final s in widget.services) _servicePickRow(s, scheme),
+        ],
+      ),
+    );
+  }
 
-  final Map<String, dynamic> service;
-  final bool selected;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final color = selected ? scheme.primary : scheme.onSurfaceVariant;
+  /// Fila de la lista de servicios de la pestaña (check + icono + textos).
+  Widget _servicePickRow(Map<String, dynamic> s, ColorScheme scheme) {
+    final id = (s['id'] as num).toInt();
+    final selected = _serviceIds.contains(id);
     return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onToggle,
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        setState(() {
+          if (!_serviceIds.add(id)) _serviceIds.remove(id);
+        });
+      },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
           color: selected
-              ? scheme.primary.withValues(alpha: .12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+              ? scheme.primary.withValues(alpha: .08)
+              : scheme.surfaceContainerHighest.withValues(alpha: .25),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected
-                ? scheme.primary.withValues(alpha: .55)
-                : scheme.outlineVariant.withValues(alpha: .6),
+                ? scheme.primary.withValues(alpha: .45)
+                : scheme.outlineVariant.withValues(alpha: .45),
           ),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
               selected
                   ? Icons.check_box_outlined
                   : Icons.check_box_outline_blank,
-              size: 16,
-              color: color,
+              size: 18,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
             ),
-            const SizedBox(width: 6),
-            Text(
-              (service['name'] ?? '').toString(),
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: color,
+            const SizedBox(width: 8),
+            Container(
+              width: 30,
+              height: 30,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(
+                serviceIconOf((s['icon'] ?? '').toString()),
+                size: 16,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    (s['name'] ?? 'Servicio').toString(),
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  if ((s['description'] ?? '').toString().trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        (s['description'] ?? '').toString(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.25,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Botón de pestaña del diálogo (Datos / Servicios): horizontal, compacto y
+/// a prueba de desbordes (escala si el ancho no alcanza).
+class _FormTabButton extends StatelessWidget {
+  const _FormTabButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.badge,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        height: 38,
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.brand.withValues(alpha: .12)
+              : scheme.surfaceContainerHighest.withValues(alpha: .30),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? AppColors.brand.withValues(alpha: .5)
+                : scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon,
+                    size: 16,
+                    color: selected
+                        ? AppColors.brand
+                        : scheme.onSurfaceVariant),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? AppColors.brand : scheme.onSurface,
+                  ),
+                ),
+                if (badge != null && badge != '0') ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: AppColors.brand.withValues(alpha: .15),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      badge!,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.brand,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

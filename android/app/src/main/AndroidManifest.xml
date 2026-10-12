@@ -4,6 +4,9 @@
     <!-- Permite que la app dispare la instalación de un .apk descargado
          (actualizador interno: descarga el update y abre el instalador). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Avisos de eventos (falta 1 semana / falta 1 día). Android 13+ exige
+         que el usuario conceda este permiso: la app lo pide al iniciar. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- HTTP plano: el servidor usa http:// (sin TLS). Quitar al pasar a HTTPS. -->
     <application
         android:usesCleartextTraffic="true"

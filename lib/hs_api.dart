@@ -310,13 +310,45 @@ class HsApi {
         .toList();
   }
 
-  /// Servicios disponibles para incluir en paquetes: [{ id, name, description, icon }]
+  /// Servicios disponibles para incluir en paquetes:
+  /// [{ id, name, description, icon, url }]
   static Future<List<Map<String, dynamic>>> services() async {
     final data = await get('/api/services');
     return ((data['services'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
   }
+
+  // ---------------- Servicios (catálogo, módulo "Servicios") ----------------
+
+  /// Catálogo completo para el módulo Servicios (incluye url).
+  static Future<List<Map<String, dynamic>>> adminServices() async {
+    final data = await get('/api/admin/services');
+    return ((data['services'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Crea un servicio { name, description?, icon?, url? }.
+  static Future<void> createService(Map<String, dynamic> body) =>
+      post('/api/admin/services', body);
+
+  /// Actualiza un servicio { id, ...campos }.
+  static Future<void> updateService(Map<String, dynamic> body) =>
+      put('/api/admin/services', body);
+
+  /// Baja lógica de un servicio.
+  static Future<void> deleteService(int id) =>
+      delete('/api/admin/services?id=$id');
+
+  /// Edita la liga base del Drive de un servicio. Se usa DESDE la pestaña
+  /// Servicios del paquete comprado del cliente (es opcional).
+  static Future<void> updateServiceUrl(int serviceId, String url) =>
+      post('/api/admin/package-progress', {
+        'action': 'actualizar-servicio-url',
+        'serviceId': serviceId,
+        'url': url,
+      });
 
   /// MIS permisos (para el menú): GET /api/admin/permission (antes
   /// "my-permissions"). Devuelve { isAdmin, modules: [{ key, name, actions }] }.
@@ -418,6 +450,84 @@ class HsApi {
     return (data is Map && data['paid'] is num) ? data['paid'] as num : 0;
   }
 
+  // -------- Administración del paquete del cliente --------
+
+  /// Todo lo que necesita el modal del paquete: servicios con su estado,
+  /// movimientos (abonos, inversiones, gastos, abonos externos), totales y si
+  /// el paquete se puede finalizar (con el motivo cuando no).
+  ///
+  /// Endpoint: GET /api/admin/package-progress
+  static Future<Map<String, dynamic>> packageProgress(
+      int purchasedPackageId) async {
+    final data = await get('/api/admin/package-progress',
+        query: {'purchasedPackageId': '$purchasedPackageId'});
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  /// Da por TERMINADO un servicio del paquete (estado Entregado + fecha).
+  static Future<void> completePackageService(int serviceId,
+          {String description = ''}) =>
+      post('/api/admin/package-progress', {
+        'action': 'completar-servicio',
+        'serviceId': serviceId,
+        if (description.isNotEmpty) 'description': description,
+      });
+
+  /// Reabre un servicio que ya estaba terminado.
+  static Future<void> reopenPackageService(int serviceId) =>
+      post('/api/admin/package-progress', {
+        'action': 'reabrir-servicio',
+        'serviceId': serviceId,
+      });
+
+  /// Cambia la descripción (avance) de un servicio.
+  static Future<void> updatePackageService(int serviceId,
+          {required String description}) =>
+      post('/api/admin/package-progress', {
+        'action': 'actualizar-servicio',
+        'serviceId': serviceId,
+        'description': description,
+      });
+
+  /// Registra un movimiento del paquete: `inversion`, `gasto` o `abono_externo`.
+  static Future<void> addPackageMovement({
+    required int purchasedPackageId,
+    required String kind,
+    required num amount,
+    String description = '',
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'movimiento',
+        'purchasedPackageId': purchasedPackageId,
+        'kind': kind,
+        'amount': amount,
+        'description': description,
+      });
+
+  /// Quita un movimiento o un abono del historial.
+  /// `source` = 'movement' (inversión/gasto/abono externo) o 'payment'.
+  static Future<void> deletePackageMovement(int id,
+          {String source = 'movement'}) =>
+      post('/api/admin/package-progress', {
+        'action': 'quitar-movimiento',
+        'movementId': id,
+        'source': source,
+      });
+
+  /// Finaliza el paquete (el backend valida servicios y pago completos).
+  static Future<void> finishClientPackage(int purchasedPackageId) =>
+      post('/api/admin/package-progress', {
+        'action': 'finalizar',
+        'purchasedPackageId': purchasedPackageId,
+      });
+
+  /// Reabre un paquete finalizado.
+  static Future<void> reopenClientPackage(int purchasedPackageId) =>
+      post('/api/admin/package-progress', {
+        'action': 'reabrir-paquete',
+        'purchasedPackageId': purchasedPackageId,
+      });
+
   // ---------------- Agendas ----------------
 
   /// Agendas de evento: todas, las de un cliente o las de un paquete comprado.
@@ -452,4 +562,24 @@ class HsApi {
   /// Baja lógica de una agenda.
   static Future<void> deleteAgenda(int id) =>
       delete('/api/admin/agendas?id=$id');
+
+  // ---------------- Avisos de eventos (recordatorios) ----------------
+
+  /// Mis avisos de eventos próximos (falta 1 semana / falta 1 día).
+  /// Cada uno: `{ id, scheduleId, kind, title, body, eventDate, isRead,
+  /// created }`. `kind` es '7d' (falta una semana) o '1d' (mañana).
+  static Future<List<Map<String, dynamic>>> reminders() async {
+    final data = await get('/api/reminders');
+    return ((data['reminders'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Marca UN aviso como leído.
+  static Future<void> markReminderRead(int id) =>
+      put('/api/reminders', {'id': id});
+
+  /// Marca TODOS mis avisos como leídos.
+  static Future<void> markAllRemindersRead() =>
+      put('/api/reminders', {'all': true});
 }

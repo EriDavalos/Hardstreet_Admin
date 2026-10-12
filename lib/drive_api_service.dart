@@ -11,7 +11,13 @@ import 'drive_base.dart';
 import 'hs_api.dart';
 
 export 'drive_base.dart'
-    show DriveItem, kImageExtensions, DriveConn, DriveBusy, DriveUploadJob;
+    show
+        DriveItem,
+        kImageExtensions,
+        DriveConn,
+        DriveBusy,
+        DriveUploadJob,
+        DriveDownloadJob;
 
 /// Cliente del drive remoto (Node/Express en 192.168.1.72:4000).
 /// Mantiene la MISMA interfaz que [DriveService] para que la UI no cambie.
@@ -115,10 +121,9 @@ class DriveApiService extends DriveBase {
       }
       updateItems([...folders, ...files]);
       conn = DriveConn.online;
+      loadedPath = pathLabel;
     } catch (e) {
-      error = 'No se pudo conectar con el servidor ($base): $e';
-      conn = DriveConn.offline;
-      updateItems(const []);
+      failRefresh('No se pudo conectar con el servidor ($base): $e');
     } finally {
       loading = false;
       notifyListeners();
@@ -184,7 +189,10 @@ class DriveApiService extends DriveBase {
           notifyUploadProgress();
           continue;
         }
-        try {
+        // Reintentos automáticos: una subida que se corta (enlace doméstico,
+        // timeout, servidor ocupado) se vuelve a intentar con espera creciente
+        // en vez de quedar perdida.
+        final ok = await runUploadWithRetries(job, () async {
           if (overwrite) {
             // Sobrescribir: elimina el existente y sube el nuevo.
             try {
@@ -195,20 +203,8 @@ class DriveApiService extends DriveBase {
             } catch (_) {/* si no existía, sigue */}
           }
           await _uploadOne(client, job, s, fileName);
-          finishUploadJob(job);
-          saved++;
-          // La foto ya está en el servidor: muéstrala en la cuadrícula
-          // sin esperar a que termine el lote completo.
-          scheduleLiveRefresh();
-        } catch (e) {
-          if (job.cancelled) {
-            job.status = 'cancelled';
-            job.error = 'Cancelado';
-            notifyUploadProgress();
-          } else {
-            finishUploadJob(job, error: e.toString());
-          }
-        }
+        });
+        if (ok) saved++;
       }
     }
     try {
@@ -285,6 +281,26 @@ class DriveApiService extends DriveBase {
     } catch (_) {
       await pumping.catchError((_) {});
       rethrow;
+    }
+  }
+
+  /// Resubir a mano un archivo que quedó con error (botón "Resubir").
+  @override
+  Future<void> retryUpload(String jobId) async {
+    final job = uploadJobById(jobId);
+    if (job == null || job.status == 'uploading') return;
+    job.restart();
+    job.attempts = 0;
+    notifyUploadProgress();
+    final client = http.Client();
+    try {
+      await runUploadWithRetries(
+        job,
+        () => _uploadOne(client, job, job.thumb, job.name),
+      );
+    } finally {
+      client.close();
+      await refresh();
     }
   }
 
@@ -382,23 +398,39 @@ class DriveApiService extends DriveBase {
   }
 
   /// Descarga la selección (1 archivo directo, varios/carpetas como ZIP).
-  Future<List<int>> downloadZip(List<String> names) {
-    return runBusy(DriveBusy.downloading, 'Preparando descarga…', () async {
-      final r = await http
-          .post(
-            _u('/api/zip'),
-            headers: {
-              'Content-Type': 'application/json',
-              ..._authHeaders,
-            },
-            body: jsonEncode({'path': path.join('/'), 'names': names}),
-          )
-          .timeout(const Duration(minutes: 5));
-      if (r.statusCode != 200) {
-        throw 'Error al generar el ZIP (${r.statusCode})';
+  ///
+  /// Va EN STREAMING: [onProgress] recibe los bytes recibidos y el total
+  /// (`total = 0` si el servidor no lo anuncia), para que el panel de
+  /// transferencias muestre el avance real de la descarga.
+  Future<List<int>> downloadZip(
+    List<String> names, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    final req = http.Request('POST', _u('/api/zip'))
+      ..headers.addAll({
+        'Content-Type': 'application/json',
+        ..._authHeaders,
+      })
+      ..body = jsonEncode({'path': path.join('/'), 'names': names});
+
+    final client = http.Client();
+    try {
+      final res = await client.send(req).timeout(const Duration(minutes: 10));
+      if (res.statusCode != 200) {
+        throw 'Error al generar el ZIP (${res.statusCode})';
       }
-      return r.bodyBytes;
-    });
+      final total = res.contentLength ?? 0;
+      final sink = BytesBuilder(copy: false);
+      var received = 0;
+      await for (final chunk in res.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        onProgress?.call(received, total);
+      }
+      return sink.takeBytes();
+    } finally {
+      client.close();
+    }
   }
 
   /// Descarga el ORIGINAL en paralelo por chunks (HTTP Range) a un archivo

@@ -199,5 +199,34 @@ void main() {
       expect(done, 2);
       expect(active, 0);
     });
+
+    test('retryUpload (Resubir) vuelve a subir un archivo que falló',
+        () async {
+      // Trabajo con error cuyo origen todavía no existe: la subida se cortó
+      // y el archivo original se perdió.
+      final missingPath = [srcBase, 'tarde.jpg'].join('/');
+      final job = DriveUploadJob(
+        id: 'j1',
+        name: 'tarde.jpg',
+        thumb: missingPath,
+        total: 3,
+      )
+        ..status = 'error'
+        ..error = 'conexión cortada';
+      drive.addUploadJob(job);
+
+      await drive.retryUpload('j1');
+      expect(job.status, 'error');
+      expect(job.error, contains('no está disponible'));
+      expect(drive.items.map((i) => i.name), isNot(contains('tarde.jpg')));
+
+      // El archivo original reaparece y el reintento lo sube de verdad.
+      File(missingPath).writeAsBytesSync([1, 2, 3]);
+      await drive.retryUpload('j1');
+
+      expect(job.status, 'done');
+      expect(job.sent, job.total);
+      expect(drive.items.map((i) => i.name), contains('tarde.jpg'));
+    });
   });
 }

@@ -1,0 +1,144 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/pages/services_page.dart';
+
+/// Catálogo falso con un servicio CON enlace de Drive y otro sin él.
+void _installMock({required List<Map<String, dynamic>> posts}) {
+  HsApi.client = MockClient((request) async {
+    final headers = {'content-type': 'application/json'};
+    final path = request.url.path;
+    if (path.endsWith('/api/admin/services')) {
+      if (request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'services': [
+              {
+                'id': 1,
+                'name': 'Cobertura en evento',
+                'description': 'Video y fotos del evento completo',
+                'icon': 'material:videocam',
+                'url': 'https://drive.google.com/drive/u/0/boda',
+              },
+              {
+                'id': 2,
+                'name': 'Álbum de fotos',
+                'description': 'Selección de imágenes',
+                'icon': 'icon/album.svg', // valor heredado de la web
+                'url': '',
+              },
+            ],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      posts.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
+      return http.Response(
+        jsonEncode({'ok': true}),
+        request.method == 'POST' ? 201 : 200,
+        headers: headers,
+      );
+    }
+    return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+  });
+}
+
+Future<void> _pumpPage(WidgetTester tester) async {
+  await tester.binding.setSurfaceSize(const Size(1200, 900));
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = const Size(1200, 900);
+  addTearDown(tester.view.reset);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  final previous = HsApi.client;
+  addTearDown(() => HsApi.client = previous);
+
+  await tester.pumpWidget(
+    const MaterialApp(home: Scaffold(body: ServicesPage())),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+Future<void> _tap(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.tap(finder, warnIfMissed: false);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+void main() {
+  testWidgets('lista servicios con icono, descripción y enlace del Drive',
+      (tester) async {
+    _installMock(posts: []);
+    await _pumpPage(tester);
+
+    expect(find.text('Cobertura en evento'), findsOneWidget);
+    expect(find.text('Video y fotos del evento completo'), findsOneWidget);
+    expect(find.text('Álbum de fotos'), findsOneWidget);
+    // La liga del Drive se ve (y la del servicio sin url, no).
+    expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
+    expect(find.text('1 con enlace'), findsOneWidget);
+  });
+
+  testWidgets('crear servicio manda nombre, icono, descripción y url',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    await _tap(tester, find.text('Nuevo servicio'));
+    // Botón del módulo + título del diálogo.
+    expect(find.text('Nuevo servicio'), findsNWidgets(2));
+    expect(find.text('Crear servicio'), findsOneWidget);
+
+    // Elegir un icono del selector y llenar los campos.
+    await _tap(tester, find.byIcon(Icons.music_note_outlined));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nombre del servicio'),
+      'Sesión previa',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Descripción'),
+      'Sesión fotográfica antes del evento',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'URL base del Drive'),
+      'https://drive.google.com/drive/u/0/sesion',
+    );
+    await _tap(tester, find.text('Crear servicio'));
+
+    final create = posts.where((p) => p['name'] == 'Sesión previa').toList();
+    expect(create, hasLength(1));
+    expect(create.first['icon'], 'material:music_note');
+    expect(create.first['description'], 'Sesión fotográfica antes del evento');
+    expect(create.first['url'], 'https://drive.google.com/drive/u/0/sesion');
+  });
+
+  testWidgets('editar servicio manda el id y solo los campos cambiados',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    // La tarjeta abre el diálogo de personalización con el nombre cargado.
+    await _tap(tester, find.text('Álbum de fotos'));
+    expect(find.text('Personalizar servicio'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nombre del servicio'),
+      'Álbum premium',
+    );
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final update = posts.where((p) => p['id'] == 2).toList();
+    expect(update, hasLength(1));
+    expect(update.first['name'], 'Álbum premium');
+  });
+}

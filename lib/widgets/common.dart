@@ -3,6 +3,96 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'anim.dart';
 
+/// Paleta dorada de la marca (idéntica a la web: --gold / --gold-light) y el
+/// fondo oscuro del "flyer" con el que se representan los paquetes.
+class HsGold {
+  HsGold._();
+
+  static const gold = Color(0xFFC9A96E);
+  static const goldLight = Color(0xFFF0D48A);
+  static const dark = Color(0xFF0B0E17);
+}
+
+/// Look diferenciado por TIER: cada paquete se pinta según su nivel
+/// (Premium = oro sobre negro, Gold = ámbar cálido, Basic = acero frío)
+/// para que se distinga de un vistazo en tarjetas, fichas y selectores.
+class HsTierLook {
+  const HsTierLook({
+    required this.accent,
+    required this.accentSoft,
+    required this.dark,
+    required this.gradient,
+    this.premium = false,
+  });
+
+  /// Acento principal (borde, precio, badges, barras).
+  final Color accent;
+
+  /// Acento claro, para degradados y texto sobre el flyer oscuro.
+  final Color accentSoft;
+
+  /// Fondo base oscuro del flyer.
+  final Color dark;
+
+  /// Degradado de fondo del flyer.
+  final Gradient gradient;
+
+  /// true solo para Premium (borde más marcado y Extras de brillo).
+  final bool premium;
+
+  static HsTierLook of(String tier) {
+    switch (tier.trim().toLowerCase()) {
+      case 'premium':
+        return const HsTierLook(
+          accent: Color(0xFFC9A96E),
+          accentSoft: Color(0xFFF0D48A),
+          dark: Color(0xFF0B0E17),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1E1708), Color(0xFF0B0E17)],
+          ),
+          premium: true,
+        );
+      case 'gold':
+        return const HsTierLook(
+          accent: Color(0xFFD9A441),
+          accentSoft: Color(0xFFF2C66B),
+          dark: Color(0xFF120E05),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1A1206), Color(0xFF0E0A03)],
+          ),
+        );
+      case 'basic':
+      default:
+        return const HsTierLook(
+          accent: Color(0xFF8FB0D4),
+          accentSoft: Color(0xFFB9D0E6),
+          dark: Color(0xFF0B111A),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF101A28), Color(0xFF0A0F17)],
+          ),
+        );
+    }
+  }
+}
+
+/// Emoji representativo de la categoría del paquete (mismo criterio que la
+/// web y el módulo Paquetes).
+String hsCategoryIcon(String name) {
+  final n = name.toLowerCase();
+  if (n.contains('boda')) return '💍';
+  if (n.contains('xv')) return '👑';
+  if (n.contains('bautizo')) return '🕊️';
+  if (n.contains('gradu')) return '🎓';
+  if (n.contains('comercial')) return '💼';
+  return '📷';
+}
+
 /// Tarjeta con icono, título, descripción y botón principal.
 class SectionCard extends StatelessWidget {
   const SectionCard({

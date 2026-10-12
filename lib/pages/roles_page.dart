@@ -276,14 +276,15 @@ class _RoleTile extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
+          // Botón de icono (como Renombrar/Eliminar): el rótulo "Acciones"
+          // ocupaba demasiado ancho en la lista.
           if (onPermissions != null)
-            FilledButton.tonalIcon(
+            IconButton(
+              tooltip: 'Acciones y permisos',
               onPressed: onPermissions,
-              icon: const Icon(Icons.tune, size: 16),
-              label: const Text('Acciones'),
+              icon: Icon(Icons.tune, size: 20, color: scheme.primary),
             ),
-          const SizedBox(width: 4),
           if (onEdit != null)
             IconButton(
               tooltip: 'Renombrar',

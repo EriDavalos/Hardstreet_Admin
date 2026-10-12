@@ -83,4 +83,32 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('uploads_card')), findsNothing);
   });
+
+  testWidgets('Fila con error: muestra el motivo y el botón Resubir',
+      (WidgetTester tester) async {
+    final job = DriveUploadJob(
+      id: 'j1',
+      name: 'falla.jpg',
+      thumb: '',
+      total: 100,
+    )
+      ..status = 'error'
+      ..error = 'HTTP 500';
+    var resubidas = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UploadJobTile(job: job, onRetry: () => resubidas++),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('HTTP 500'), findsOneWidget);
+    expect(find.text('Resubir'), findsOneWidget);
+
+    await tester.tap(find.text('Resubir'));
+    await tester.pump();
+    expect(resubidas, 1, reason: 'Resubir debe reintentar ese archivo');
+  });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'reminders_bell.dart';
 
 /// Shell de la app: sidebar flotante que se desliza sobre el contenido
 /// (no reduce el área visible), con scrim en móvil y desktop.
@@ -348,6 +349,8 @@ class _TopBar extends StatelessWidget {
             icon: const Icon(Icons.menu),
           ),
           const Spacer(),
+          // Avisos de eventos próximos (falta 1 semana / falta 1 día).
+          const RemindersBell(),
           IconButton(
             tooltip: dark ? 'Modo claro' : 'Modo oscuro',
             onPressed: onToggleTheme,

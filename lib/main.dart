@@ -20,7 +20,9 @@ import 'pages/drive_page.dart';
 import 'pages/login_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
+import 'pages/services_page.dart';
 import 'pages/users_page.dart';
+import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
@@ -133,6 +135,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       }
       // REVISIÓN DE VERSIÓN en CADA entrada (login o ya logueado):
       WidgetsBinding.instance.addPostFrameCallback((_) => _checkVersion());
+      // Sesión restaurada ("Recordarme"): los avisos también empiezan ya.
+      if (_sessionRestored) RemindersService.instance.start();
     });
     // Chequeo periódico mientras la app siga abierta (por si el servidor
     // publica una versión nueva en caliente). En web/tests se omite.
@@ -150,6 +154,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   void dispose() {
     AppSettings.instance.removeListener(_onSettingsChanged);
     _versionTimer?.cancel();
+    RemindersService.instance.stop();
     super.dispose();
   }
 
@@ -241,6 +246,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     if (!mounted || _forceUpdateShown) return; // NO entra al panel
     if (_versionError) return; // la ventana de reintento ya está visible
     setState(() => _loggedIn = true);
+    // Avisos de eventos próximos: empiezan a consultarse en segundo plano.
+    RemindersService.instance.start();
   }
 
   /// Cerrar sesión: descarta el token en el servidor y borra lo persistido
@@ -250,6 +257,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     await AppSettings.instance.clearSession();
     HsAccess.reset(); // el siguiente login recarga permisos desde cero
     _sessionRestored = false;
+    RemindersService.instance.reset(); // la campanita no recuerda avisos viejos
     if (mounted) setState(() => _loggedIn = false);
   }
 
@@ -403,6 +411,7 @@ enum _Section {
   roles,
   clients,
   packages,
+  services,
   settings,
   reports,
 }
@@ -567,6 +576,15 @@ class _AdminHomeState extends State<AdminHome> {
       ),
       (
         const AdminDestination(
+          icon: Icons.miscellaneous_services_outlined,
+          label: 'Servicios',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.services,
+        'Servicios',
+      ),
+      (
+        const AdminDestination(
           icon: Icons.settings_outlined,
           label: 'Configuraciones',
           header: AdminDestination.headerNone,
@@ -607,6 +625,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.roles: 'Roles',
       _Section.clients: 'Clientes',
       _Section.packages: 'Paquetes',
+      _Section.services: 'Servicios',
       _Section.agendas: 'Agendas',
       _Section.settings: 'Configuraciones',
       _Section.reports: 'Reportes',
@@ -654,6 +673,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.packages:
         body = const PackagesPage();
+        break;
+      case _Section.services:
+        body = const ServicesPage();
         break;
       case _Section.clients:
         body = const ClientsPage();

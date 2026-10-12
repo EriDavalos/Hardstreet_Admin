@@ -60,6 +60,61 @@ class StaggeredItem extends StatelessWidget {
   }
 }
 
+/// Entrada de una tarjeta que aparece AL DESLIZAR.
+///
+/// A diferencia de [StaggeredItem] (que anima TODA la cuadrícula al abrir la
+/// carpeta), esta se decide UNA vez, cuando la celda se construye:
+///
+/// * [animate] = true → la celda entra con fade + deslizamiento (es una que
+///   apareció al bajar por la lista).
+/// * [animate] = false → se pinta directa, sin animación (ya estaba a la
+///   vista al abrir la carpeta).
+///
+/// El valor se captura en el primer build: los rebuilds posteriores (selección,
+/// hover…) no vuelven a animar nada.
+class ScrollReveal extends StatefulWidget {
+  const ScrollReveal({
+    super.key,
+    required this.child,
+    this.animate = true,
+    this.distance = 14,
+    this.duration = const Duration(milliseconds: 320),
+  });
+
+  final Widget child;
+
+  /// Solo true cuando la celda nace DESPUÉS de que el usuario bajó.
+  final bool animate;
+  final double distance;
+  final Duration duration;
+
+  @override
+  State<ScrollReveal> createState() => _ScrollRevealState();
+}
+
+class _ScrollRevealState extends State<ScrollReveal> {
+  /// Se resuelve en el primer build (lazy `late`): no cambia en rebuilds.
+  late final bool _animate = widget.animate;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_animate) return widget.child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: widget.duration,
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) => Opacity(
+        opacity: t,
+        child: Transform.translate(
+          offset: Offset(0, (1 - t) * widget.distance),
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
 /// Entrada individual: fade + deslizamiento hacia arriba.
 /// Para títulos, tarjetas y secciones sueltas.
 class FadeSlideIn extends StatelessWidget {
