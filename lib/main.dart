@@ -9,14 +9,15 @@ import 'app_settings.dart';
 import 'drive_api_service.dart';
 import 'hs_access.dart';
 import 'hs_api.dart';
-import 'drive_base.dart';
 import 'drive_scope.dart';
 import 'image_memory.dart';
 import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
 import 'pages/clients_page.dart';
+import 'pages/client_dashboard_page.dart';
 import 'pages/connection_page.dart';
 import 'pages/drive_page.dart';
+import 'pages/finance_page.dart';
 import 'pages/login_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
@@ -27,6 +28,7 @@ import 'theme.dart';
 import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
 import 'widgets/force_update_dialog.dart';
+import 'widgets/wheel_fix.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -278,6 +280,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
         theme: AppTheme.light(),
         darkTheme: AppTheme.dark(),
         themeMode: AppSettings.instance.dark ? ThemeMode.dark : ThemeMode.light,
+        // Rueda del ratón: traduce deltas horizontales (drivers que mandan
+        // la rueda vertical en dx) a scroll vertical en TODOS los módulos.
+        scrollBehavior: const HsScrollBehavior(),
         title: AppConstants.appName,
         // SafeArea GLOBAL: ninguna pantalla (login, panel, errores) dibuja
         // detrás de la barra de notificaciones en Android.
@@ -404,8 +409,10 @@ class _VersionErrorScreen extends StatelessWidget {
 /// Índices de las secciones del panel.
 enum _Section {
   dashboard,
+  clientDashboard,
   drive,
   agendas,
+  finance,
   connection,
   users,
   roles,
@@ -459,7 +466,9 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.clients => _canSee('Clientes'),
         _Section.packages => _canSee('Paquetes'),
         _Section.agendas => _canSee('Agendas'),
+        _Section.finance => _canSee('Finanzas'),
         _Section.dashboard => _canSee('Dashboard'),
+        _Section.clientDashboard => _canSee('Dashboard Cliente'),
         _Section.drive => _canSee('Archivos'),
         _ => true,
       };
@@ -494,6 +503,13 @@ class _AdminHomeState extends State<AdminHome> {
   bool _canSee(String module) =>
       HsAccess.instance.degraded || HsAccess.instance.canSee(module);
 
+  /// Como [_canSee], pero además muestra los módulos que el backend TODAVÍA
+  /// no registra (migración pendiente): una función nueva no desaparece del
+  /// menú solo porque falte el SQL. En cuanto la BD los tiene, mandan los
+  /// permisos normales.
+  bool _showModule(String module) =>
+      _canSee(module) || !HsAccess.instance.knows(module);
+
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 720;
@@ -513,6 +529,15 @@ class _AdminHomeState extends State<AdminHome> {
       ),
       (
         const AdminDestination(
+          icon: Icons.workspace_premium_outlined,
+          label: 'Dashboard Cliente',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.clientDashboard,
+        'Dashboard Cliente',
+      ),
+      (
+        const AdminDestination(
           icon: Icons.folder_copy_outlined,
           label: 'Archivos',
           header: 'Operación',
@@ -528,6 +553,15 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.agendas,
         'Agendas',
+      ),
+      (
+        const AdminDestination(
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Finanzas',
+          header: 'Dinero',
+        ),
+        _Section.finance,
+        'Finanzas',
       ),
       (
         const AdminDestination(
@@ -604,7 +638,7 @@ class _AdminHomeState extends State<AdminHome> {
     };
     final destinations = [
       for (final (dest, _, module) in all)
-        if (module.isEmpty || _canSee(module))
+        if (module.isEmpty || _showModule(module))
           AdminDestination(
             icon: dest.icon,
             label: dest.label,
@@ -615,10 +649,11 @@ class _AdminHomeState extends State<AdminHome> {
     // Seleccionable → sección real (respetando los módulos ocultos).
     final visibleSections = [
       for (final (_, section, module) in all)
-        if (module.isEmpty || _canSee(module)) section,
+        if (module.isEmpty || _showModule(module)) section,
     ];
     final titles = {
       _Section.dashboard: 'Dashboard',
+      _Section.clientDashboard: 'Dashboard Cliente',
       _Section.drive: 'Archivos',
       _Section.connection: 'Conexión',
       _Section.users: 'Usuarios',
@@ -627,6 +662,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.packages: 'Paquetes',
       _Section.services: 'Servicios',
       _Section.agendas: 'Agendas',
+      _Section.finance: 'Finanzas',
       _Section.settings: 'Configuraciones',
       _Section.reports: 'Reportes',
     };
@@ -635,12 +671,14 @@ class _AdminHomeState extends State<AdminHome> {
     switch (_section) {
       case _Section.dashboard:
         body = DashboardPage(
+          drive: _drive,
           // Accesos rápidos del dashboard: cambian de sección si el usuario
           // tiene permiso de ver ese módulo.
           onNavigate: (key) {
             final map = {
               'drive': _Section.drive,
               'agendas': _Section.agendas,
+              'finance': _Section.finance,
               'clients': _Section.clients,
               'packages': _Section.packages,
               'roles': _Section.roles,
@@ -652,10 +690,25 @@ class _AdminHomeState extends State<AdminHome> {
               _Section.clients => _canSee('Clientes'),
               _Section.packages => _canSee('Paquetes'),
               _Section.agendas => _canSee('Agendas'),
+              _Section.finance => _canSee('Finanzas'),
               _Section.roles => _canSee('Roles'),
               _ => false,
             };
             if (visible) setState(() => _section = target);
+          },
+        );
+        break;
+      case _Section.clientDashboard:
+        body = ClientDashboardPage(
+          // "Entrar a mi Drive": si la liga del paquete apunta a ESTE drive,
+          // entra a esa carpeta y salta a la sección Archivos.
+          onOpenDrive: (segments) {
+            if (segments.isNotEmpty) {
+              _drive.path = List<String>.of(segments);
+            } else {
+              _drive.path = const [];
+            }
+            setState(() => _section = _Section.drive);
           },
         );
         break;
@@ -682,6 +735,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.agendas:
         body = const AgendasPage();
+        break;
+      case _Section.finance:
+        body = const FinancePage();
         break;
       case _Section.settings:
         body = ComingSoonPage(

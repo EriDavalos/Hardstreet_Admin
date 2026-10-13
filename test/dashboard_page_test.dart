@@ -61,6 +61,47 @@ void _installMockClient() {
         headers: headers,
       );
     }
+    // Finanzas del negocio (opcional): cuadros + serie de meses.
+    if (path.endsWith('/api/admin/finance')) {
+      return http.Response(
+        jsonEncode({
+          'currency': 'MXN',
+          'totals': {
+            'facturado': 30000,
+            'ganancias': 18000,
+            'porCobrar': 12000,
+            'disponible': 14950,
+            'ahorro': 3000,
+            'inversiones': 800,
+            'gastos': 2250,
+            'abonoExterno': 500,
+          },
+          'packages': const [],
+          'months': [
+            {
+              'month': '2026-09',
+              'label': 'sep',
+              'ganancias': 5000,
+              'gastos': 400,
+              'inversiones': 0,
+              'ahorro': 0,
+              'abonoExterno': 0,
+            },
+            {
+              'month': '2026-10',
+              'label': 'oct',
+              'ganancias': 13000,
+              'gastos': 1850,
+              'inversiones': 800,
+              'ahorro': 3000,
+              'abonoExterno': 500,
+            },
+          ],
+        }),
+        200,
+        headers: headers,
+      );
+    }
     if (path.endsWith('/api/admin/agendas')) {
       return http.Response(
         jsonEncode({
@@ -112,6 +153,18 @@ void main() {
     expect(find.text('Accesos rápidos'), findsOneWidget);
     expect(find.text('Clientes recientes'), findsOneWidget);
 
+    // Sección FINANZAS: cuadros horizontales + gráfica de los últimos meses.
+    expect(find.text('Finanzas'), findsNWidgets(2),
+        reason: 'encabezado de la sección + acceso rápido');
+    expect(find.text('GANANCIAS'), findsOneWidget);
+    expect(find.text('AHORRO'), findsOneWidget);
+    expect(find.text('Últimos 6 meses'), findsOneWidget);
+    // 'sep' solo puede venir de la gráfica; 'oct' también sale en la fecha del
+    // evento próximo, así que ahí sí pueden ser varios.
+    expect(find.text('sep'), findsOneWidget);
+    expect(find.text('oct'), findsWidgets);
+    expect(find.text('Ganancias'), findsOneWidget, reason: 'leyenda');
+
     // Métricas con los datos de la API.
     expect(find.text('2'), findsWidgets); // usuarios internos
     expect(find.text('Clientes'), findsWidgets); // métrica + acceso rápido
@@ -137,6 +190,11 @@ void main() {
     expect(find.text('Próximos eventos'), findsOneWidget);
     expect(find.text('Accesos rápidos'), findsOneWidget);
     expect(find.text('Carla Méndez'), findsWidgets);
+
+    // La sección financiera también cabe en el teléfono.
+    expect(find.text('Finanzas'), findsWidgets);
+    expect(find.text('GANANCIAS'), findsOneWidget);
+    expect(find.text('Últimos 6 meses'), findsOneWidget);
 
     expect(tester.takeException(), isNull);
   });

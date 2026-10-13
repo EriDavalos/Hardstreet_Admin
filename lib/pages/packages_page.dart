@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../hs_access.dart';
 import '../hs_api.dart';
+import '../hs_format.dart';
 import '../service_icons.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/service_form_dialog.dart';
 
 // ==================================================================
 // MÓDULO PAQUETES (antes "Catálogo"): los paquetes que la web muestra
@@ -744,6 +746,13 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   bool _saving = false;
   String? _error;
 
+  /// Catálogo de servicios EDITABLE desde el diálogo (se puede agregar uno
+  /// nuevo sin salir a la pestaña Servicios).
+  late List<Map<String, dynamic>> _services;
+
+  /// Filtro de la pestaña Servicios.
+  final TextEditingController _serviceQuery = TextEditingController();
+
   /// Pestaña del diálogo: 0 = Datos, 1 = Servicios (como el administrador).
   int _tab = 0;
 
@@ -772,6 +781,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
       final v = (id as num?)?.toInt();
       if (v != null) _serviceIds.add(v);
     }
+    _services = List.of(widget.services);
   }
 
   @override
@@ -781,7 +791,49 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     _description.dispose();
     _price.dispose();
     _urlImage.dispose();
+    _serviceQuery.dispose();
     super.dispose();
+  }
+
+  /// Abre el diálogo de NUEVO servicio y, al crearlo, refresca el catálogo y
+  /// deja seleccionado el servicio recién agregado.
+  Future<void> _addService() async {
+    final created = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const ServiceFormDialog(),
+    );
+    if (created != true || !mounted) return;
+    final before = _services.map((s) => (s['id'] as num).toInt()).toSet();
+    try {
+      final list = await HsApi.services();
+      if (!mounted) return;
+      setState(() {
+        _services = list;
+        for (final s in list) {
+          final id = (s['id'] as num).toInt();
+          if (!before.contains(id)) _serviceIds.add(id);
+        }
+      });
+    } catch (_) {
+      // Sin catálogo actualizado el diálogo sigue siendo utilizable.
+    }
+  }
+
+  String _tierName(int? id) {
+    if (id == null) return '';
+    for (final t in widget.tiers) {
+      if ((t['id'] as num).toInt() == id) return (t['name'] ?? '').toString();
+    }
+    return '';
+  }
+
+  String _categoryName(int? id) {
+    if (id == null) return '';
+    for (final c in widget.categories) {
+      if ((c['id'] as num).toInt() == id) return (c['name'] ?? '').toString();
+    }
+    return '';
   }
 
   Future<void> _save() async {
@@ -867,6 +919,10 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
+        // Vista previa EN VIVO del flyer del paquete (se actualiza al
+        // escribir): hace la personalización visual e intuitiva.
+        _previewCard(scheme),
+        const SizedBox(height: 14),
         // Pestañas HORIZONTALES (mismo lenguaje que el administrador del
         // paquete): Datos y Servicios, con el contador de seleccionados.
         Row(
@@ -902,6 +958,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
               TextField(
                 controller: _name,
                 autofocus: !_editing,
+                onChanged: (_) => setState(() {}),
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
                   labelText: 'Nombre',
@@ -911,6 +968,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
               const SizedBox(height: 12),
               TextField(
                 controller: _subtitle,
+                onChanged: (_) => setState(() {}),
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   labelText: 'Subtítulo (corto, para la tarjeta)',
@@ -936,6 +994,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
           label: 'Precio',
           child: TextField(
             controller: _price,
+            onChanged: (_) => setState(() {}),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(
               labelText: 'Precio (MXN)',
@@ -1022,90 +1081,249 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     );
   }
 
-  /// Contenido de la pestaña Servicios: lista ORGANIZADA como el
-  /// administrador del paquete (fila por servicio, con icono, nombre,
-  /// descripción y selección).
-  Widget _servicesSection(ColorScheme scheme) {
-    if (widget.services.isEmpty) {
-      return Text(
-        'No hay servicios registrados en el catálogo.',
-        style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
-      );
-    }
-    return FormSection(
-      label: 'Servicios incluidos',
+  /// Vista previa EN VIVO del paquete: refleja lo que se escribe en el
+  /// formulario (nombre, subtítulo, precio, clasificación y servicios).
+  Widget _previewCard(ColorScheme scheme) {
+    final name = _name.text.trim();
+    final subtitle = _subtitle.text.trim();
+    final price = num.tryParse(_price.text.replaceAll(',', '')) ?? 0;
+    final tier = _tierName(_tierId);
+    final category = _categoryName(_categoryId);
+    final soft = Colors.white.withValues(alpha: .55);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1C2433), Color(0xFF0F1420)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _Gold.gold.withValues(alpha: .45)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${_serviceIds.length} de ${widget.services.length} seleccionados',
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .3,
-              color: scheme.onSurfaceVariant,
-            ),
+          Row(
+            children: [
+              if (tier.isNotEmpty)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _Gold.gold.withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(999),
+                    border:
+                        Border.all(color: _Gold.gold.withValues(alpha: .5)),
+                  ),
+                  child: Text(
+                    tier.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: 1.3,
+                      fontWeight: FontWeight.w800,
+                      color: _Gold.gold,
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              Text(
+                price > 0 ? hsMoney(price) : 'Sin precio',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: _Gold.gold,
+                  fontFamily: 'serif',
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
-          // Column (no ListView): el diálogo mide intrínsecos y un viewport
-          // shrink-wrap los rechaza.
-          for (final s in widget.services) _servicePickRow(s, scheme),
+          Text(
+            name.isEmpty ? 'Nombre del paquete' : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: name.isEmpty ? soft : Colors.white,
+            ),
+          ),
+          if (subtitle.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12, color: Color(0xFFB9C2D0)),
+              ),
+            ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Icon(Icons.category_outlined, size: 13, color: soft),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  category.isEmpty ? 'Sin categoría' : category,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: soft),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Icon(Icons.checklist_rtl, size: 13, color: soft),
+              const SizedBox(width: 6),
+              Text(
+                '${_serviceIds.length} servicios',
+                style: TextStyle(
+                    fontSize: 11.5, fontWeight: FontWeight.w700, color: soft),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  /// Fila de la lista de servicios de la pestaña (check + icono + textos).
+  /// Contenido de la pestaña Servicios: buscador + AGREGAR servicio + lista
+  /// seleccionable. El "Agregar" crea un servicio del catálogo sin salir.
+  Widget _servicesSection(ColorScheme scheme) {
+    final q = _serviceQuery.text.trim().toLowerCase();
+    final list = q.isEmpty
+        ? _services
+        : _services.where((s) {
+            final hay =
+                '${s['name'] ?? ''} ${s['description'] ?? ''}'.toLowerCase();
+            return hay.contains(q);
+          }).toList();
+    return FormSection(
+      label: 'Servicios incluidos',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _serviceQuery,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'Buscar servicio…',
+                    prefixIcon: Icon(Icons.search, size: 20),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _addService,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Agregar'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${_serviceIds.length} de ${_services.length} seleccionados',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .3,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (_serviceIds.isNotEmpty)
+                TextButton(
+                  onPressed: () => setState(() => _serviceIds.clear()),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                  ),
+                  child: const Text('Limpiar',
+                      style: TextStyle(fontSize: 11.5)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_services.isEmpty)
+            Text(
+              'No hay servicios registrados. Usa "Agregar" para crear el '
+              'primero.',
+              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+            )
+          else if (list.isEmpty)
+            Text(
+              'Ningún servicio coincide con "$q".',
+              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+            )
+          else
+            // Column (no ListView): el diálogo mide intrínsecos y un viewport
+            // shrink-wrap los rechaza.
+            for (final s in list) _servicePickRow(s, scheme),
+        ],
+      ),
+    );
+  }
+
+  /// Fila de la lista de servicios de la pestaña: una tarjeta VISUAL con
+  /// icono, nombre, descripción y un check a la derecha.
   Widget _servicePickRow(Map<String, dynamic> s, ColorScheme scheme) {
     final id = (s['id'] as num).toInt();
     final selected = _serviceIds.contains(id);
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       onTap: () {
         setState(() {
           if (!_serviceIds.add(id)) _serviceIds.remove(id);
         });
       },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: selected
-              ? scheme.primary.withValues(alpha: .08)
+              ? AppColors.brand.withValues(alpha: .10)
               : scheme.surfaceContainerHighest.withValues(alpha: .25),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: selected
-                ? scheme.primary.withValues(alpha: .45)
+                ? AppColors.brand.withValues(alpha: .60)
                 : scheme.outlineVariant.withValues(alpha: .45),
+            width: selected ? 1.4 : 1,
           ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              selected
-                  ? Icons.check_box_outlined
-                  : Icons.check_box_outline_blank,
-              size: 18,
-              color: selected ? scheme.primary : scheme.onSurfaceVariant,
-            ),
-            const SizedBox(width: 8),
             Container(
-              width: 30,
-              height: 30,
+              width: 38,
+              height: 38,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: .10),
-                borderRadius: BorderRadius.circular(9),
+                color: (selected ? AppColors.brand : scheme.onSurfaceVariant)
+                    .withValues(alpha: selected ? .16 : .10),
+                borderRadius: BorderRadius.circular(11),
               ),
               child: Icon(
                 serviceIconOf((s['icon'] ?? '').toString()),
-                size: 16,
-                color: scheme.primary,
+                size: 19,
+                color: selected ? AppColors.brand : scheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1113,7 +1331,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                   Text(
                     (s['name'] ?? 'Servicio').toString(),
                     style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700),
+                        fontSize: 13, fontWeight: FontWeight.w800),
                   ),
                   if ((s['description'] ?? '').toString().trim().isNotEmpty)
                     Padding(
@@ -1131,6 +1349,23 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                     ),
                 ],
               ),
+            ),
+            const SizedBox(width: 8),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: selected ? AppColors.brand : Colors.transparent,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.brand : scheme.outlineVariant,
+                  width: 1.5,
+                ),
+              ),
+              child: selected
+                  ? const Icon(Icons.check, size: 15, color: Colors.white)
+                  : null,
             ),
           ],
         ),

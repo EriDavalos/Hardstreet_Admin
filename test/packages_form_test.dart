@@ -9,7 +9,27 @@ import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
 
 /// Catálogo falso para el módulo Paquetes (con tiers y categorías).
-void _installMock({required List<Map<String, dynamic>> posts}) {
+void _installMock({
+  required List<Map<String, dynamic>> posts,
+  List<Map<String, dynamic>>? services,
+}) {
+  final catalog = services ??
+      <Map<String, dynamic>>[
+        {
+          'id': 1,
+          'name': 'Cobertura',
+          'description': 'Todo el evento',
+          'icon': 'material:videocam',
+          'url': '',
+        },
+        {
+          'id': 2,
+          'name': 'Álbum',
+          'description': '100 fotos editadas',
+          'icon': 'material:photo_library',
+          'url': '',
+        },
+      ];
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -46,26 +66,20 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
         headers: headers,
       );
     }
+    if (path.endsWith('/api/admin/services') && request.method == 'POST') {
+      final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
+      catalog.add({
+        'id': catalog.length + 1,
+        'name': (body['name'] ?? '').toString(),
+        'description': (body['description'] ?? '').toString(),
+        'icon': (body['icon'] ?? '').toString(),
+        'url': '',
+      });
+      return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
+    }
     if (path.endsWith('/api/services')) {
       return http.Response(
-        jsonEncode({
-          'services': [
-            {
-              'id': 1,
-              'name': 'Cobertura',
-              'description': 'Todo el evento',
-              'icon': 'material:videocam',
-              'url': '',
-            },
-            {
-              'id': 2,
-              'name': 'Álbum',
-              'description': '100 fotos editadas',
-              'icon': 'material:photo_library',
-              'url': '',
-            },
-          ],
-        }),
+        jsonEncode({'services': catalog}),
         200,
         headers: headers,
       );
@@ -74,14 +88,15 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
   });
 }
 
-Future<void> _pumpPage(WidgetTester tester) async {
+Future<void> _pumpPage(WidgetTester tester,
+    {List<Map<String, dynamic>>? services}) async {
   await tester.binding.setSurfaceSize(const Size(1200, 900));
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = const Size(1200, 900);
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
-  _installMock(posts: []);
+  _installMock(posts: [], services: services);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -175,5 +190,43 @@ void main() {
     await _tap(tester, find.text('Crear paquete'));
 
     expect(find.text('Escribe el nombre del paquete'), findsOneWidget);
+  });
+
+  testWidgets('la vista previa refleja los datos y se puede AGREGAR un '
+      'servicio desde la pestaña Servicios', (tester) async {
+    final catalog = <Map<String, dynamic>>[
+      {
+        'id': 1,
+        'name': 'Cobertura',
+        'description': 'Todo el evento',
+        'icon': 'material:videocam',
+        'url': '',
+      },
+    ];
+    await _pumpPage(tester, services: catalog);
+    await _openForm(tester);
+
+    // La vista previa en vivo sigue el nombre que se escribe.
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nombre'),
+      'Boda Oro',
+    );
+    await tester.pump();
+    expect(find.text('Boda Oro'), findsNWidgets(2),
+        reason: 'campo del formulario + vista previa');
+
+    // Agregar un servicio nuevo sin salir de la personalización.
+    await _tap(tester, find.text('Servicios'));
+    await _tap(tester, find.text('Agregar'));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nombre del servicio'),
+      'Dron 4K',
+    );
+    await _tap(tester, find.text('Crear servicio'));
+
+    // El servicio entra al catálogo y queda seleccionado automáticamente.
+    expect(find.text('Dron 4K'), findsOneWidget);
+    expect(find.text('1 de 2 seleccionados'), findsOneWidget);
+    expect(catalog.any((s) => s['name'] == 'Dron 4K'), isTrue);
   });
 }

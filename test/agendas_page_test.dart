@@ -13,7 +13,7 @@ import 'package:hardstreet_admin/pages/agendas_page.dart';
 ///   (siempre visible en la semana por defecto, sin depender de la fecha).
 /// - día 20 a las 16:00, servicio "Sesión de fotos" (icono de cámara).
 /// - día 22 SIN hora (medianoche) -> fila de "todo el día" de la semana.
-void _installMockClient() {
+void _installMockClient({List<Map<String, dynamic>>? posts}) {
   final now = DateTime.now();
   String two(int n) => n.toString().padLeft(2, '0');
   String dayOf(DateTime d) => '${d.year}-${two(d.month)}-${two(d.day)}';
@@ -22,7 +22,14 @@ void _installMockClient() {
 
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
-    if (request.url.path.endsWith('/api/admin/agendas')) {
+    final path = request.url.path;
+
+    if (path.endsWith('/api/admin/agendas')) {
+      if (request.method == 'POST') {
+        posts?.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
+        return http.Response(jsonEncode({'ok': true, 'id': 9}), 201,
+            headers: headers);
+      }
       return http.Response(
         jsonEncode({
           'agendas': [
@@ -65,16 +72,95 @@ void _installMockClient() {
         headers: headers,
       );
     }
+
+    // ---- Datos del alta de evento (cliente → paquete → servicio) ----
+    if (path.endsWith('/api/admin/clients')) {
+      return http.Response(
+        jsonEncode({
+          'clients': [
+            {'id': 2, 'name': 'Ana', 'lastname': 'Ruiz', 'email': 'ana@hs.mx'},
+            {'id': 3, 'name': 'Luis', 'lastname': 'Gómez', 'email': 'luis@hs.mx'},
+          ]
+        }),
+        200,
+        headers: headers,
+      );
+    }
+    if (path.endsWith('/api/admin/client-packages')) {
+      final userId =
+          int.tryParse(request.url.queryParameters['userId'] ?? '') ?? 0;
+      return http.Response(
+        jsonEncode({
+          'purchasedPackages': userId == 2
+              ? [
+                  {
+                    'id': 10,
+                    'name': 'Paquete Aniversario',
+                    'price': 9000,
+                    'paid': 3000,
+                    'currency': 'MXN',
+                    'status': 'En proceso',
+                    'services': const [],
+                  },
+                ]
+              : const [],
+          'catalog': const [],
+        }),
+        200,
+        headers: headers,
+      );
+    }
+    if (path.endsWith('/api/admin/package-progress')) {
+      return http.Response(
+        jsonEncode({
+          'package': {
+            'id': 10,
+            'name': 'Paquete Aniversario',
+            'price': 9000,
+            'paid': 3000,
+            'balance': 6000,
+            'status': 'En proceso',
+            'statusId': 2,
+            'finished': false,
+          },
+          'services': [
+            {
+              'id': 1,
+              'serviceId': 5,
+              'name': 'Cobertura de estudio',
+              'description': '',
+              'status': 'Pendiente',
+              'statusId': 1,
+              'done': false,
+            },
+          ],
+          'movements': const [],
+          'totals': const {},
+          'canFinish': false,
+          'blockers': const [],
+        }),
+        200,
+        headers: headers,
+      );
+    }
+
     return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
   });
 }
 
-Future<void> _pumpAgendas(WidgetTester tester, Size size) async {
+Future<void> _pumpAgendas(WidgetTester tester, Size size,
+    {List<Map<String, dynamic>>? posts}) async {
   await tester.binding.setSurfaceSize(size);
+  // En pruebas, MediaQuery NO sigue al tamaño de la superficie: hay que
+  // declarar la vista para que la página vea la MISMA ventana que dibuja
+  // (si no, un móvil de 390 px se maqueta como si fuera ancho).
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = size;
+  addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
-  _installMockClient();
+  _installMockClient(posts: posts);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -191,11 +277,24 @@ void main() {
     expect(find.byKey(const ValueKey('agenda-calendar')), findsOneWidget);
     expect(find.text('Mis servicios'), findsNothing);
 
+    // La franja DESTACADA de próximos eventos también se ve en móvil.
+    expect(find.text('Próximos eventos'), findsOneWidget);
+
+    // El calendario sigue ocupando la altura RESTANTE (la franja de próximos
+    // eventos consume la parte superior, así que el umbral baja).
     final cal = tester.getRect(find.byKey(const ValueKey('agenda-calendar')));
     expect(cal.bottom, lessThanOrEqualTo(844));
-    expect(cal.height, greaterThan(300),
-        reason: 'El calendario ocupa la altura visible');
+    expect(cal.height, greaterThan(200),
+        reason: 'El calendario ocupa la altura restante');
     expect(tester.takeException(), isNull);
+
+    // El alta de evento vive en la barra del calendario (ícono +): el héroe
+    // no se estira y el calendario conserva su espacio.
+    expect(find.byTooltip('Nuevo evento'), findsOneWidget);
+    await _tapPump(tester, find.byTooltip('Nuevo evento'));
+    expect(find.text('Crear evento'), findsOneWidget);
+    await _tapPump(tester, find.text('Cancelar'));
+    expect(find.text('Crear evento'), findsNothing);
 
     // Abrir la hoja de filtros (buscador + mini-calendario + servicios).
     await _tapPump(tester, find.byTooltip('Filtros y calendario'));
@@ -213,7 +312,7 @@ void main() {
 
     final weekCal = tester.getRect(find.byKey(const ValueKey('agenda-calendar')));
     expect(weekCal.bottom, lessThanOrEqualTo(844));
-    expect(weekCal.height, greaterThan(300));
+    expect(weekCal.height, greaterThan(200));
     expect(tester.takeException(), isNull);
 
     // ‹ › navega la semana de verdad también en móvil.
@@ -235,5 +334,44 @@ void main() {
     final dialog = tester.getRect(find.byType(AlertDialog));
     expect(tester.getRect(close).center.dx, greaterThan(dialog.center.dx));
     expect(tester.getRect(close).top, lessThan(dialog.center.dy));
+  });
+
+  testWidgets(
+      'nuevo evento: se elige el cliente, su paquete y el servicio del paquete',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpAgendas(tester, const Size(1200, 900), posts: posts);
+
+    await _tapPump(tester, find.text('Nuevo evento'));
+    expect(find.text('Elige el cliente, su paquete y el servicio a agendar'),
+        findsOneWidget);
+
+    // 1) CLIENTE: sin él no hay paquetes que elegir.
+    expect(find.text('Elige el paquete'), findsNothing);
+    await _tapPump(tester, find.byKey(const ValueKey('agenda-client')));
+    await _tapPump(tester, find.text('Ana Ruiz').last);
+
+    // 2) PAQUETE del cliente (se cargan los suyos).
+    await _tapPump(tester, find.byKey(const ValueKey('agenda-package')));
+    await _tapPump(tester, find.text('Paquete Aniversario').last);
+
+    // 3) SERVICIO del paquete.
+    await _tapPump(tester, find.byKey(const ValueKey('agenda-service')));
+    await _tapPump(tester, find.text('Cobertura de estudio').last);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Descripción'),
+      'Prueba de evento',
+    );
+    await _tapPump(tester, find.text('Crear evento'));
+
+    expect(posts, hasLength(1));
+    expect(posts.first['purchasedPackageId'], 10);
+    expect(posts.first['serviceId'], 5);
+    expect(posts.first['description'], 'Prueba de evento');
+    expect(
+      posts.first['eventDate'],
+      matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
+    );
   });
 }

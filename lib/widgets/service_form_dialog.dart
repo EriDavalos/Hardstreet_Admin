@@ -1,0 +1,204 @@
+import 'package:flutter/material.dart';
+
+import '../hs_api.dart';
+import '../service_icons.dart';
+import '../theme.dart';
+import 'form_dialog.dart';
+
+/// Diálogo de alta/edición de un servicio del catálogo: icono seleccionable,
+/// nombre y descripción.
+///
+/// Es COMPARTIDO por el módulo Servicios y por la personalización de paquetes
+/// (donde se puede agregar un servicio sin salir del diálogo).
+class ServiceFormDialog extends StatefulWidget {
+  const ServiceFormDialog({super.key, this.service});
+
+  final Map<String, dynamic>? service;
+
+  @override
+  State<ServiceFormDialog> createState() => _ServiceFormDialogState();
+}
+
+class _ServiceFormDialogState extends State<ServiceFormDialog> {
+  late final TextEditingController _name;
+  late final TextEditingController _description;
+
+  /// Valor guardado del icono (`material:xxx` o la ruta heredada).
+  late String _icon;
+  bool _saving = false;
+  String? _error;
+
+  bool get _editing => widget.service != null;
+
+  String get _iconKey {
+    final v = _icon.trim();
+    return v.startsWith('material:') ? v.substring(9) : '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.service ?? const {};
+    _name = TextEditingController(text: (s['name'] ?? '').toString());
+    _description = TextEditingController(text: (s['description'] ?? '').toString());
+    _icon = (s['icon'] ?? '').toString();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Escribe el nombre del servicio');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final body = <String, dynamic>{
+      'name': name,
+      'description': _description.text.trim(),
+      'icon': _icon.trim(),
+    };
+    try {
+      if (_editing) {
+        await HsApi.updateService(
+            {'id': (widget.service!['id'] as num).toInt(), ...body});
+      } else {
+        await HsApi.createService(body);
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo guardar el servicio';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FormDialog(
+      icon: _editing
+          ? Icons.tune_rounded
+          : Icons.miscellaneous_services_outlined,
+      title: _editing ? 'Personalizar servicio' : 'Nuevo servicio',
+      subtitle: 'Se usa en el catálogo y en todos los paquetes que lo '
+          'incluyen.',
+      maxWidth: 520,
+      saving: _saving,
+      error: _error,
+      saveLabel: _editing ? 'Guardar cambios' : 'Crear servicio',
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        FormSection(
+          label: 'Icono',
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final e in kServiceIcons.entries)
+                _IconPickTile(
+                  icon: e.value,
+                  selected: _iconKey == e.key,
+                  onTap: () => setState(() => _icon = serviceIconValue(e.key)),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Nombre',
+          child: TextField(
+            controller: _name,
+            autofocus: !_editing,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Nombre del servicio',
+              prefixIcon: Icon(Icons.miscellaneous_services_outlined,
+                  size: 20),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Descripción',
+          child: TextField(
+            controller: _description,
+            minLines: 2,
+            maxLines: 3,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Descripción',
+              hintText: 'Ej. Cobertura completa del evento…',
+              alignLabelWithHint: true,
+              prefixIcon: Icon(Icons.notes, size: 20),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Casilla visual para elegir un icono del catálogo.
+class _IconPickTile extends StatelessWidget {
+  const _IconPickTile({
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.brand.withValues(alpha: .14)
+              : scheme.surfaceContainerHighest.withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? AppColors.brand.withValues(alpha: .75)
+                : scheme.outlineVariant.withValues(alpha: .5),
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 21,
+          color: selected ? AppColors.brand : scheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}

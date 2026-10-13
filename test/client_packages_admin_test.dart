@@ -165,7 +165,10 @@ void _installMockClient({required List<Map<String, dynamic>> posts}) {
             'abonado': 6000,
             'invertido': 800,
             'gastado': 0,
+            'ahorrado': 0,
             'abonoExterno': 0,
+            // Disponible = abonado (6000) - gastado (inversión 800).
+            'disponible': 5200,
           },
           'canFinish': false,
           'blockers': [
@@ -255,8 +258,7 @@ void main() {
     expect(find.text('Abonar'), findsNothing);
     await _tap(tester, find.text('Movimientos'));
     expect(find.text('Abonar'), findsOneWidget);
-    expect(find.text('Registrar inversión / gasto / abono externo'),
-        findsOneWidget);
+    expect(find.text('Registrar movimiento'), findsOneWidget);
   });
 
   testWidgets('ventana tipo teléfono: los controles se reacomodan sin '
@@ -283,8 +285,7 @@ void main() {
     await _tap(tester, find.text('Calendario'));
     await _tap(tester, find.text('Movimientos'));
     expect(find.text('Abonar'), findsOneWidget);
-    expect(find.text('Registrar inversión / gasto / abono externo'),
-        findsOneWidget);
+    expect(find.text('Registrar movimiento'), findsOneWidget);
   });
 
   testWidgets('el modal muestra el paquete VIGENTE con dinero, servicios y '
@@ -331,8 +332,7 @@ void main() {
     expect(find.text('Agendas (1)'), findsNothing);
     await _tap(tester, find.text('Movimientos'));
     expect(find.text('Abonar'), findsOneWidget);
-    expect(find.text('Registrar inversión / gasto / abono externo'),
-        findsOneWidget);
+    expect(find.text('Registrar movimiento'), findsOneWidget);
   });
 
   testWidgets('los demás paquetes se ven como detalle (solo lectura)',
@@ -370,32 +370,27 @@ void main() {
     expect(completar.first['description'], 'Entrega de la galería completa');
   });
 
-  testWidgets('el calendario usa días CÍRCULOS y el detalle muestra sus '
-      'eventos', (tester) async {
+  testWidgets('la pestaña Calendario lista TARJETAS de los eventos del '
+      'paquete (ya no un calendario)', (tester) async {
     await _pumpDialog(tester, posts: []);
 
     await _tap(tester, find.text('Calendario'));
 
-    // Mes visible + navegación + rejilla con los círculos de los días.
-    expect(find.byTooltip('Mes anterior'), findsOneWidget);
-    expect(find.byTooltip('Mes siguiente'), findsOneWidget);
-    expect(find.text('LUN'), findsOneWidget);
-    expect(find.text('Servicio terminado'), findsOneWidget); // leyenda
-
-    // Tocar el día 15 abre su detalle con la agenda del mock.
-    await _tap(tester, find.text('15'));
+    // Encabezado + acción de crear y la TARJETA del evento del mock.
+    expect(find.text('Eventos agendados'), findsOneWidget);
+    expect(find.text('Nueva agenda'), findsOneWidget);
     expect(find.textContaining('Ceremonia en el jardín'), findsOneWidget);
-    await _tap(tester, find.text('Cerrar'));
+    expect(find.textContaining('Cobertura en evento'), findsWidgets);
 
-    // El servicio terminado (hoy) se ve en el detalle de su día.
-    final today = DateTime.now().day;
-    if (today != 15) {
-      await _tap(tester, find.text('$today'));
-      expect(find.textContaining('Sesión previa'), findsOneWidget);
-      await _tap(tester, find.text('Cerrar'));
-    } else {
-      expect(find.textContaining('Sesión previa'), findsOneWidget);
-    }
+    // Ya NO hay rejilla de mes: nada de navegación ni leyenda.
+    expect(find.byTooltip('Mes anterior'), findsNothing);
+    expect(find.byTooltip('Mes siguiente'), findsNothing);
+    expect(find.text('Servicio terminado'), findsNothing);
+
+    // "Nueva agenda" abre el alta (sello: el botón de guardar del formulario).
+    await _tap(tester, find.text('Nueva agenda'));
+    expect(find.text('Crear agenda'), findsOneWidget);
+    await _tap(tester, find.byTooltip('Cerrar').last);
   });
 
   testWidgets('los movimientos listan abonos e inversiones con totales',
@@ -410,17 +405,21 @@ void main() {
     expect(find.textContaining('Renta de lente'), findsWidgets);
     expect(find.text('MXN \$800'), findsWidgets);
     expect(find.text('ABONO EXTERNO'), findsOneWidget);
+    // El rectángulo de "Abonado" ya no se repite aquí: la ficha lo muestra y
+    // esta pestaña enseña el DISPONIBLE (abonado - gastado).
+    expect(find.text('DISPONIBLE'), findsOneWidget);
+    expect(find.text('AHORRO'), findsOneWidget);
+    expect(find.text('ABONADO'), findsOneWidget,
+        reason: 'solo el de la ficha del paquete (columna izquierda)');
     // Abonar vive ahora en esta pestaña (ya no en la ficha).
     expect(find.text('Abonar'), findsOneWidget);
 
     // Registrar un movimiento del paquete actual.
-    await _tap(
-      tester,
-      find.text('Registrar inversión / gasto / abono externo'),
-    );
+    await _tap(tester, find.text('Registrar movimiento'));
     expect(find.text('Movimiento del paquete'), findsOneWidget);
     expect(find.text('Abono externo'), findsWidgets);
     expect(find.text('Gasto'), findsWidgets);
+    expect(find.text('Ahorro'), findsWidgets);
 
     // El campo de monto NO debe duplicar el "$" (icono + prefixText).
     final double$ = tester
@@ -428,6 +427,40 @@ void main() {
         .any((t) => (t.decoration?.prefixText ?? '').contains(r'$'));
     expect(double$, isFalse,
         reason: 'el signo de dinero solo puede venir del icono');
+  });
+
+  testWidgets('un ahorro por PORCENTAJE se calcula sobre el disponible',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Registrar movimiento'));
+
+    // El tipo AHORRO ofrece la base del cálculo (disponible = 6000 - 800),
+    // que coincide con la tarjeta DISPONIBLE de la pestaña.
+    await _tap(tester, find.text('Ahorro'));
+    expect(find.textContaining('Disponible del paquete'), findsOneWidget);
+    expect(find.text('MXN \$5,200'), findsNWidgets(2));
+
+    // Porcentaje: 10 % de 5200 = 520.
+    await _tap(tester, find.text('Porcentaje'));
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Porcentaje'),
+      '10',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Se ahorrarán'), findsOneWidget);
+    expect(find.text('MXN \$520'), findsOneWidget);
+
+    await _tap(tester, find.text('Registrar'));
+
+    final movs =
+        posts.where((p) => p['action'] == 'movimiento').toList();
+    expect(movs, hasLength(1));
+    expect(movs.first['kind'], 'ahorro');
+    expect(movs.first['amount'], 520);
+    expect(movs.first['description'], '10 % del disponible');
   });
 
   testWidgets('la pestaña Servicios muestra la liga del Drive y permite '

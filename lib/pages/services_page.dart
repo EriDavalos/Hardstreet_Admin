@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../hs_access.dart';
 import '../hs_api.dart';
@@ -8,14 +7,14 @@ import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
-import '../widgets/form_dialog.dart';
+import '../widgets/service_form_dialog.dart';
 
 // ==================================================================
 // MÓDULO SERVICIOS: el catálogo que se incluye en los paquetes.
 //   - Crear / editar / eliminar servicios (icono, nombre, descripción).
-//   - `url` opcional: la liga BASE del Drive afiliada al servicio. Aquí se
-//     consulta y se administra; también se puede editar desde la pestaña
-//     Servicios del paquete comprado del cliente.
+//   - La liga del Drive NO se administra aquí: `url` solo vive en el paquete
+//     COMPRADO del cliente (pestaña Servicios del paquete). Este catálogo es
+//     solo el listado de servicios disponibles.
 // Backend: /api/admin/services (permiso sobre el módulo "Servicios").
 // ==================================================================
 
@@ -76,7 +75,7 @@ class _ServicesPageState extends State<ServicesPage> {
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _ServiceFormDialog(service: service),
+      builder: (_) => ServiceFormDialog(service: service),
     );
     if (saved == true) _reload();
   }
@@ -106,8 +105,7 @@ class _ServicesPageState extends State<ServicesPage> {
     if (q.isEmpty) return _services;
     return _services.where((s) {
       final hay =
-          '${s['name'] ?? ''} ${s['description'] ?? ''} ${s['url'] ?? ''}'
-              .toLowerCase();
+          '${s['name'] ?? ''} ${s['description'] ?? ''}'.toLowerCase();
       return hay.contains(q);
     }).toList();
   }
@@ -115,19 +113,16 @@ class _ServicesPageState extends State<ServicesPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final withUrl =
-        _services.where((s) => (s['url'] ?? '').toString().trim().isNotEmpty);
     return PageContainer(
       title: 'Servicios',
       description:
           'Catálogo de servicios que se incluyen en los paquetes: icono, '
-          'nombre, descripción y la liga base del Drive (opcional).',
+          'nombre y descripción.',
       icon: Icons.miscellaneous_services_outlined,
       stats: [
         StatPill(
             icon: Icons.miscellaneous_services_outlined,
             label: '${_services.length} servicios'),
-        StatPill(icon: Icons.link, label: '${withUrl.length} con enlace'),
       ],
       actions: [
         // "Nuevo servicio" (create): sin el permiso, el botón no aparece.
@@ -145,7 +140,7 @@ class _ServicesPageState extends State<ServicesPage> {
           TextField(
             onChanged: (v) => setState(() => _query = v),
             decoration: InputDecoration(
-              hintText: 'Buscar por nombre, descripción o enlace…',
+              hintText: 'Buscar por nombre o descripción…',
               prefixIcon: const Icon(Icons.search, size: 20),
               suffixIcon: _query.isEmpty
                   ? null
@@ -236,8 +231,7 @@ class _ServicesPageState extends State<ServicesPage> {
   }
 }
 
-/// Tarjeta de servicio: icono, nombre, descripción y la liga del Drive
-/// (copiable con un toque).
+/// Tarjeta de servicio: icono, nombre y descripción.
 class _ServiceCard extends StatefulWidget {
   const _ServiceCard({
     required this.service,
@@ -260,22 +254,12 @@ class _ServiceCard extends StatefulWidget {
 class _ServiceCardState extends State<_ServiceCard> {
   bool _hover = false;
 
-  Future<void> _copyUrl(String url) async {
-    await Clipboard.setData(ClipboardData(text: url));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('Liga copiada')));
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final s = widget.service;
     final name = (s['name'] ?? '').toString();
     final description = (s['description'] ?? '').toString();
-    final url = (s['url'] ?? '').toString().trim();
-    final hasUrl = url.isNotEmpty;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -337,35 +321,6 @@ class _ServiceCardState extends State<_ServiceCard> {
                         ),
                       ),
                     ],
-                    if (hasUrl) ...[
-                      const SizedBox(height: 6),
-                      Tooltip(
-                        message: 'Copiar liga del Drive',
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(6),
-                          onTap: () => _copyUrl(url),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.link,
-                                  size: 13, color: AppColors.brand),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  url,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.brand,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -397,226 +352,3 @@ class _ServiceCardState extends State<_ServiceCard> {
   }
 }
 
-/// Diálogo de alta/edición de servicio: icono seleccionable, nombre,
-/// descripción y la URL base del Drive (opcional).
-class _ServiceFormDialog extends StatefulWidget {
-  const _ServiceFormDialog({this.service});
-
-  final Map<String, dynamic>? service;
-
-  @override
-  State<_ServiceFormDialog> createState() => _ServiceFormDialogState();
-}
-
-class _ServiceFormDialogState extends State<_ServiceFormDialog> {
-  late final TextEditingController _name;
-  late final TextEditingController _description;
-  late final TextEditingController _url;
-
-  /// Valor guardado del icono (`material:xxx` o la ruta heredada).
-  late String _icon;
-  bool _saving = false;
-  String? _error;
-
-  bool get _editing => widget.service != null;
-
-  String get _iconKey {
-    final v = _icon.trim();
-    return v.startsWith('material:') ? v.substring(9) : '';
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    final s = widget.service ?? const {};
-    _name = TextEditingController(text: (s['name'] ?? '').toString());
-    _description = TextEditingController(text: (s['description'] ?? '').toString());
-    _url = TextEditingController(text: (s['url'] ?? '').toString());
-    _icon = (s['icon'] ?? '').toString();
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _description.dispose();
-    _url.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_saving) return;
-    final name = _name.text.trim();
-    if (name.isEmpty) {
-      setState(() => _error = 'Escribe el nombre del servicio');
-      return;
-    }
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    final body = <String, dynamic>{
-      'name': name,
-      'description': _description.text.trim(),
-      'icon': _icon.trim(),
-      'url': _url.text.trim(),
-    };
-    try {
-      if (_editing) {
-        await HsApi.updateService(
-            {'id': (widget.service!['id'] as num).toInt(), ...body});
-      } else {
-        await HsApi.createService(body);
-      }
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
-    } on ApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.message;
-          _saving = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _error = 'No se pudo guardar el servicio';
-          _saving = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FormDialog(
-      icon: _editing
-          ? Icons.tune_rounded
-          : Icons.miscellaneous_services_outlined,
-      title: _editing ? 'Personalizar servicio' : 'Nuevo servicio',
-      subtitle: 'Se usa en el catálogo y en todos los paquetes que lo '
-          'incluyen.',
-      maxWidth: 520,
-      saving: _saving,
-      error: _error,
-      saveLabel: _editing ? 'Guardar cambios' : 'Crear servicio',
-      onCancel: () => Navigator.of(context).pop(false),
-      onSave: _save,
-      children: [
-        FormSection(
-          label: 'Icono',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final e in kServiceIcons.entries)
-                _IconPickTile(
-                  icon: e.value,
-                  selected: _iconKey == e.key,
-                  onTap: () => setState(() => _icon = serviceIconValue(e.key)),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        FormSection(
-          label: 'Nombre',
-          child: TextField(
-            controller: _name,
-            autofocus: !_editing,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Nombre del servicio',
-              prefixIcon: Icon(Icons.miscellaneous_services_outlined,
-                  size: 20),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        FormSection(
-          label: 'Descripción',
-          child: TextField(
-            controller: _description,
-            minLines: 2,
-            maxLines: 3,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Descripción',
-              hintText: 'Ej. Cobertura completa del evento…',
-              alignLabelWithHint: true,
-              prefixIcon: Icon(Icons.notes, size: 20),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        FormSection(
-          label: 'Carpeta del Drive (opcional)',
-          child: TextField(
-            controller: _url,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(
-              labelText: 'URL base del Drive',
-              hintText: 'https://drive.google.com/drive/…',
-              prefixIcon: Icon(Icons.link, size: 20),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'La liga se puede editar después desde la pestaña Servicios del '
-          'paquete comprado del cliente.',
-          style: TextStyle(
-            fontSize: 11,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Casilla visual para elegir un icono del catálogo.
-class _IconPickTile extends StatelessWidget {
-  const _IconPickTile({
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: '',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          width: 42,
-          height: 42,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected
-                ? AppColors.brand.withValues(alpha: .14)
-                : scheme.surfaceContainerHighest.withValues(alpha: .35),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected
-                  ? AppColors.brand.withValues(alpha: .75)
-                  : scheme.outlineVariant.withValues(alpha: .5),
-            ),
-          ),
-          child: Icon(
-            icon,
-            size: 21,
-            color: selected ? AppColors.brand : scheme.onSurfaceVariant,
-          ),
-        ),
-      ),
-    );
-  }
-}

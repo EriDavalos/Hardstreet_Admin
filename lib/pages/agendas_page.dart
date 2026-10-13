@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../widgets/anim.dart';
@@ -70,6 +71,19 @@ DateTime _weekStartOf(DateTime d) =>
 /// ¿La fecha trae HORA real (no es medianoche)? Las agendas sin hora se
 /// muestran en la fila de "todo el día" de la vista de semana.
 bool _isTimed(DateTime d) => !(d.hour == 0 && d.minute == 0);
+
+/// Cuenta regresiva legible de un evento próximo: "Hoy", "Mañana" o
+/// "En N días". Vacío cuando la fecha no se pudo leer.
+String _countdownLabel(DateTime? date) {
+  if (date == null) return '';
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(date.year, date.month, date.day);
+  final diff = day.difference(today).inDays;
+  if (diff <= 0) return 'Hoy';
+  if (diff == 1) return 'Mañana';
+  return 'En $diff días';
+}
 
 /// Módulo AGENDAS con la ESTRUCTURA de Google Calendar:
 /// - Barra superior: botón "Hoy", flechas de navegación, título del periodo y
@@ -330,6 +344,23 @@ class _AgendasPageState extends State<AgendasPage> {
     );
   }
 
+  /// ¿Puede crear eventos? (el backend siempre revalida el permiso).
+  bool get _canCreate =>
+      HsAccess.instance.degraded ||
+      HsAccess.instance.can('schedules', 'create') ||
+      HsAccess.instance.can('Agendas', 'create');
+
+  /// Alta de un evento desde el CALENDARIO: se elige el cliente, después el
+  /// paquete comprado de ese cliente y el servicio del paquete.
+  Future<void> _addEvent() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _NewAgendaDialog(),
+    );
+    if (saved == true) await _reload();
+  }
+
   /// Hoja inferior (móvil) con el panel lateral: buscador, mini-calendario y
   /// filtros por servicio, como el panel de Google Calendar.
   void _openPanelSheet() {
@@ -366,12 +397,27 @@ class _AgendasPageState extends State<AgendasPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return PageContainer(
+    // El ancho manda TODO el maquetado (panel lateral, vista por defecto y
+    // dónde vive "Nuevo evento"): se mide UNA sola vez, aquí.
+    return LayoutBuilder(builder: (context, page) {
+      final narrow = page.maxWidth < 860;
+      return PageContainer(
       title: 'Agendas',
       description: 'Eventos agendados por cliente, paquete y servicio, en '
           'vista de semana con horas o vista de mes.',
       icon: Icons.event_available_rounded,
       expand: true,
+      // En escritorio el alta va como botón con etiqueta en la cabecera; en
+      // móvil el héroe ya es alto, así que es el ícono "+" de la barra del
+      // calendario el que abre el alta (el calendario conserva su espacio).
+      actions: [
+        if (_canCreate && !narrow)
+          FilledButton.icon(
+            onPressed: _addEvent,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Nuevo evento'),
+          ),
+      ],
       stats: [
         StatPill(
             icon: Icons.event_note_outlined, label: '${_all.length} agendas'),
@@ -381,8 +427,7 @@ class _AgendasPageState extends State<AgendasPage> {
         StatPill(
             icon: Icons.upcoming_outlined, label: '$_upcomingCount próximas'),
       ],
-      child: LayoutBuilder(builder: (context, box) {
-        final narrow = box.maxWidth < 860;
+      child: Builder(builder: (context) {
         // 1 = semana, 0 = mes; sin elegir aún: semana en escritorio, mes angosto.
         final isWeek = _view != null ? _view == 1 : !narrow;
         _isWeek = isWeek;
@@ -390,6 +435,12 @@ class _AgendasPageState extends State<AgendasPage> {
         final main = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Franja DESTACADA de próximos eventos: siempre visible (escritorio
+            // y móvil), encima del calendario.
+            if (!_loading && _error == null && _all.isNotEmpty) ...[
+              _upcomingStrip(scheme),
+              const SizedBox(height: 10),
+            ],
             _toolbar(context, isWeek: isWeek, narrow: narrow),
             const SizedBox(height: 10),
             Expanded(child: _body(scheme, isWeek)),
@@ -415,11 +466,12 @@ class _AgendasPageState extends State<AgendasPage> {
           ],
         );
       }),
-    );
+      );
+    });
   }
 
   /// Barra superior tipo Google Calendar: Hoy · ‹ › · título del periodo ·
-  /// conmutador Semana/Mes (y botón de filtros en móvil).
+  /// conmutador Semana/Mes (y en móvil el alta + los filtros).
   Widget _toolbar(BuildContext context,
       {required bool isWeek, required bool narrow}) {
     final scheme = Theme.of(context).colorScheme;
@@ -501,6 +553,12 @@ class _AgendasPageState extends State<AgendasPage> {
         if (narrow) ...[
           const SizedBox(width: 2),
           IconButton(
+            tooltip: 'Nuevo evento',
+            onPressed: _canCreate ? _addEvent : null,
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.add_circle_outline_rounded),
+          ),
+          IconButton(
             tooltip: 'Filtros y calendario',
             onPressed: _openPanelSheet,
             visualDensity: VisualDensity.compact,
@@ -574,11 +632,96 @@ class _AgendasPageState extends State<AgendasPage> {
         ),
       );
 
+  /// Franja DESTACADA de próximos eventos: arriba del calendario, siempre
+  /// visible (escritorio y móvil), con la cuenta regresiva de cada uno.
+  /// Al tocar una tarjeta se abre su detalle.
+  Widget _upcomingStrip(ColorScheme scheme) {
+    final upcoming = _upcoming;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primary.withValues(alpha: .12),
+            scheme.primary.withValues(alpha: .03),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.primary.withValues(alpha: .35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.upcoming_outlined, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Próximos eventos',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
+                ),
+              ),
+              if (_upcomingCount > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$_upcomingCount',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (upcoming.isEmpty)
+            Text(
+              'Sin eventos próximos por ahora.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
+              child: Row(
+                children: [
+                  for (var i = 0; i < upcoming.length; i++)
+                    Padding(
+                      padding: EdgeInsets.only(
+                          right: i == upcoming.length - 1 ? 0 : 10),
+                      child: _UpcomingEventCard(
+                        agenda: upcoming[i],
+                        onTap: () {
+                          final d = _dateOf(upcoming[i]) ?? DateTime.now();
+                          _showDetail(d, [upcoming[i]]);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Panel lateral (columna en escritorio, hoja inferior en móvil):
-  /// buscador + mini-calendario + "Mis servicios" + próximos eventos.
+  /// buscador + mini-calendario + "Mis servicios".
   Widget _sidePanel(ColorScheme scheme, {VoidCallback? onPickDay}) {
     final services = _serviceSummary;
-    final upcoming = _upcoming;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -656,41 +799,6 @@ class _AgendasPageState extends State<AgendasPage> {
               onChanged: () => setState(() {
                 if (!_hidden.remove(s.key)) _hidden.add(s.key);
               }),
-            ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Icon(Icons.upcoming_outlined, size: 16, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Próximos eventos',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (upcoming.isEmpty)
-          Text(
-            'Sin eventos próximos por ahora.',
-            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-          )
-        else
-          for (var i = 0; i < upcoming.length; i++)
-            StaggeredItem(
-              index: i,
-              child: _EventTile(
-                agenda: upcoming[i],
-                showDate: true,
-                onTap: () {
-                  final d = _dateOf(upcoming[i]) ?? DateTime.now();
-                  _showDetail(d, [upcoming[i]]);
-                },
-              ),
             ),
       ],
     );
@@ -1958,27 +2066,22 @@ class _DayCellState extends State<_DayCell> {
 // TARJETA DE EVENTO (panel lateral) Y DETALLE
 // =====================================================================
 
-/// Tarjeta compacta de evento para el panel lateral ("Próximos eventos").
-class _EventTile extends StatelessWidget {
-  const _EventTile({
-    required this.agenda,
-    required this.onTap,
-    this.showDate = false,
-  });
+/// Iniciales de un nombre (avatar de las tarjetas de evento).
+String _initials(String name) {
+  final parts =
+      name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+  return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+}
+
+/// Tarjeta DESTACADA de un próximo evento (franja superior de Agendas): día,
+/// cuenta regresiva, cliente, servicio/paquete y hora.
+class _UpcomingEventCard extends StatelessWidget {
+  const _UpcomingEventCard({required this.agenda, required this.onTap});
 
   final Map<String, dynamic> agenda;
   final VoidCallback onTap;
-
-  /// true = muestra día/mes (próximos); false = hora (del día elegido).
-  final bool showDate;
-
-  static String initials(String name) {
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1988,27 +2091,51 @@ class _EventTile extends StatelessWidget {
     final client = (agenda['clientName'] ?? '').toString().trim();
     final package = (agenda['packageName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
+    final countdown = _countdownLabel(date);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
+        width: 238,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: scheme.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withValues(alpha: .30)),
+          border: Border.all(color: color.withValues(alpha: .40)),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: color.withValues(alpha: .14),
-              child: Text(
-                initials(client),
-                style: TextStyle(
-                    color: color, fontWeight: FontWeight.w800, fontSize: 12),
+            Container(
+              width: 46,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    date == null ? '--' : '${date.day}',
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: color),
+                  ),
+                  Text(
+                    date == null
+                        ? ''
+                        : kHsMonths[date.month - 1]
+                            .substring(0, 3)
+                            .toUpperCase(),
+                    style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: .3,
+                        color: color),
+                  ),
+                ],
               ),
             ),
             const SizedBox(width: 10),
@@ -2016,12 +2143,34 @@ class _EventTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    client.isEmpty ? 'Sin cliente' : client,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 13),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          client.isEmpty ? 'Sin cliente' : client,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 12.5),
+                        ),
+                      ),
+                      if (countdown.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: .16),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            countdown,
+                            style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                                color: color),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -2031,31 +2180,32 @@ class _EventTile extends StatelessWidget {
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                    style:
+                        TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Icon(Icons.schedule_rounded,
+                          size: 12, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          date == null
+                              ? 'Fecha por definir'
+                              : '${hsShortDate(date)} · ${hsTimeLabel(date)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  date == null
-                      ? '--'
-                      : (showDate ? hsShortDate(date) : hsTimeLabel(date)),
-                  style: TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 12.5, color: color),
-                ),
-                if (showDate && date != null)
-                  Text(
-                    hsTimeLabel(date),
-                    style: TextStyle(
-                        fontSize: 11, color: scheme.onSurfaceVariant),
-                  ),
-              ],
             ),
           ],
         ),
@@ -2153,7 +2303,7 @@ class _AgendaDetailBlock extends StatelessWidget {
                 radius: 15,
                 backgroundColor: color.withValues(alpha: .16),
                 child: Text(
-                  _EventTile.initials(client),
+                  _initials(client),
                   style: TextStyle(
                       color: color, fontWeight: FontWeight.w800, fontSize: 11.5),
                 ),
@@ -2190,6 +2340,542 @@ class _AgendaDetailBlock extends StatelessWidget {
           if (desc.isNotEmpty) detailRow(Icons.notes_outlined, 'Nota', desc),
         ],
       ),
+    );
+  }
+}
+
+// =====================================================================
+// NUEVO EVENTO DESDE EL CALENDARIO
+//
+// El evento siempre vive en el PAQUETE COMPRADO de un cliente, así que el
+// alta va en ese orden: CLIENTE → su PAQUETE → SERVICIO del paquete
+// (opcional) + fecha/hora + nota. Cada paso carga sus opciones del servidor
+// y, si algo falla, el error se muestra en el propio formulario.
+// =====================================================================
+
+/// Campo que elige UNA opción de una lista (cliente, paquete, servicio).
+/// Se ve como los campos del panel pero lo controla el estado del diálogo
+/// (no guarda selección propia): al cambiar el cliente, la lista de paquetes
+/// se vacía de verdad.
+class _PickerField extends StatelessWidget {
+  const _PickerField({
+    super.key,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+    this.enabled = true,
+    this.helper,
+    this.emptyMessage,
+  });
+
+  final String label;
+  final String hint;
+  final IconData icon;
+  final List<DropdownMenuItem<int>> options;
+
+  /// Valor elegido (0 = sin elegir).
+  final int selected;
+  final ValueChanged<int>? onChanged;
+  final bool enabled;
+  final String? helper;
+
+  /// Texto alternativo cuando la lista está vacía.
+  final String? emptyMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (options.isEmpty && emptyMessage != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                emptyMessage!,
+                style:
+                    TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return InputDecorator(
+      isEmpty: selected == 0,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, size: 20),
+        helperText: helper,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          isExpanded: true,
+          isDense: true,
+          value: selected == 0 ? null : selected,
+          hint: Text(hint),
+          items: options,
+          onChanged: !enabled
+              ? null
+              : (v) {
+                  if (v != null) onChanged?.call(v);
+                },
+        ),
+      ),
+    );
+  }
+}
+
+class _NewAgendaDialog extends StatefulWidget {
+  const _NewAgendaDialog();
+
+  @override
+  State<_NewAgendaDialog> createState() => _NewAgendaDialogState();
+}
+
+class _NewAgendaDialogState extends State<_NewAgendaDialog> {
+  final TextEditingController _desc = TextEditingController();
+
+  bool _loadingClients = true;
+  String? _clientsError;
+  List<Map<String, dynamic>> _clients = const [];
+
+  int _clientId = 0;
+  bool _loadingPackages = false;
+  List<Map<String, dynamic>> _packages = const [];
+
+  int _packageId = 0;
+  bool _loadingServices = false;
+  List<Map<String, dynamic>> _services = const [];
+
+  int _serviceId = 0;
+  late DateTime _dateTime;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _dateTime = DateTime(now.year, now.month, now.day, now.hour + 1);
+    _loadClients();
+  }
+
+  @override
+  void dispose() {
+    _desc.dispose();
+    super.dispose();
+  }
+
+  String _clientLabel(Map<String, dynamic> c) {
+    final full = '${c['name'] ?? ''} ${c['lastname'] ?? ''}'.trim();
+    if (full.isNotEmpty) return full;
+    final email = (c['email'] ?? '').toString().trim();
+    return email.isEmpty ? 'Cliente' : email;
+  }
+
+  static int _idOf(Map<String, dynamic> m) => (m['id'] as num?)?.toInt() ?? 0;
+
+  /// Id del SERVICIO del catálogo: el paquete comprado lo trae en `serviceId`
+  /// y solo cae a `id` cuando viene del listado del cliente.
+  static int _serviceIdOf(Map<String, dynamic> s) =>
+      ((s['serviceId'] ?? s['id']) as num?)?.toInt() ?? 0;
+
+  Future<void> _loadClients() async {
+    setState(() {
+      _loadingClients = true;
+      _clientsError = null;
+    });
+    try {
+      final data = await HsApi.clients();
+      if (!mounted) return;
+      setState(() {
+        _clients = data;
+        _loadingClients = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _clientsError = e.message;
+        _loadingClients = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _clientsError = 'No se pudieron cargar los clientes';
+        _loadingClients = false;
+      });
+    }
+  }
+
+  /// Al elegir cliente se descartan paquete y servicio (y se cargan los
+  /// paquetes comprados de ESE cliente).
+  Future<void> _pickClient(int id) async {
+    setState(() {
+      _clientId = id;
+      _packages = const [];
+      _packageId = 0;
+      _services = const [];
+      _serviceId = 0;
+      _loadingPackages = true;
+      _error = null;
+    });
+    try {
+      final data = await HsApi.clientPackages(id);
+      final pkgs = ((data['purchasedPackages'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _packages = pkgs;
+        _loadingPackages = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingPackages = false;
+        _error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingPackages = false;
+        _error = 'No se pudieron cargar los paquetes del cliente';
+      });
+    }
+  }
+
+  /// Al elegir paquete se cargan los servicios de ESE paquete comprado.
+  Future<void> _pickPackage(int id) async {
+    final pkg = _packages.firstWhere(
+      (p) => _idOf(p) == id,
+      orElse: () => const <String, dynamic>{},
+    );
+    setState(() {
+      _packageId = id;
+      _services = const [];
+      _serviceId = 0;
+      _loadingServices = true;
+      _error = null;
+    });
+    var services = const <Map<String, dynamic>>[];
+    try {
+      final data = await HsApi.packageProgress(id);
+      services = ((data['services'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    } catch (_) {
+      // Best effort: si el detalle no está disponible se usan los servicios
+      // que ya venían en el listado del cliente.
+    }
+    if (services.isEmpty) {
+      services = ((pkg['services'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    }
+    if (!mounted) return;
+    setState(() {
+      _services = services;
+      _loadingServices = false;
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dateTime,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    setState(() {
+      _dateTime = DateTime(picked.year, picked.month, picked.day,
+          _dateTime.hour, _dateTime.minute);
+    });
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_dateTime),
+    );
+    if (picked == null) return;
+    setState(() {
+      _dateTime = DateTime(_dateTime.year, _dateTime.month, _dateTime.day,
+          picked.hour, picked.minute);
+    });
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_clientId == 0) {
+      setState(() => _error = 'Elige el cliente del evento');
+      return;
+    }
+    if (_packageId == 0) {
+      setState(() => _error = 'Elige el paquete del cliente');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await HsApi.createAgenda({
+        'purchasedPackageId': _packageId,
+        'serviceId': _serviceId == 0 ? null : _serviceId,
+        'eventDate': hsDateTimeValue(_dateTime),
+        'description': _desc.text.trim(),
+      });
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo crear el evento';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  /// Fila táctil de fecha/hora (abre el selector del sistema).
+  Widget _slot({
+    required IconData icon,
+    required String label,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: _saving ? null : onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: InputDecorator(
+        decoration:
+            InputDecoration(labelText: label, prefixIcon: Icon(icon, size: 20)),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                value,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Icon(Icons.expand_more, size: 18, color: scheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final busyPackages = _loadingPackages;
+    final sinPaquetes = !_loadingPackages &&
+        _clientId != 0 &&
+        _packages.isEmpty;
+    return FormDialog(
+      icon: Icons.event_available_rounded,
+      title: 'Nuevo evento',
+      subtitle: 'Elige el cliente, su paquete y el servicio a agendar',
+      saving: _saving,
+      error: _error,
+      saveLabel: 'Crear evento',
+      maxWidth: 500,
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        if (_loadingClients)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+            ),
+          )
+        else if (_clientsError != null)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                _clientsError!,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _loadClients,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          )
+        else ...[
+          FormSection(
+            label: 'Cliente',
+            child: _PickerField(
+              key: const ValueKey('agenda-client'),
+              label: 'Cliente',
+              hint: 'Elige el cliente',
+              icon: Icons.person_outline,
+              selected: _clientId,
+              enabled: !_saving,
+              options: [
+                for (final c in _clients)
+                  DropdownMenuItem(
+                    value: _idOf(c),
+                    child: Text(
+                      _clientLabel(c),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              emptyMessage: _clients.isEmpty
+                  ? 'Todavía no hay clientes registrados.'
+                  : null,
+              onChanged: _pickClient,
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_clientId != 0) ...[
+            if (busyPackages)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: LinearProgressIndicator(minHeight: 3),
+              )
+            else
+              FormSection(
+                label: 'Paquete del cliente',
+                child: _PickerField(
+                  key: const ValueKey('agenda-package'),
+                  label: 'Paquete',
+                  hint: 'Elige el paquete',
+                  icon: Icons.inventory_2_outlined,
+                  selected: _packageId,
+                  enabled: !_saving,
+                  options: [
+                    for (final p in _packages)
+                      DropdownMenuItem(
+                        value: _idOf(p),
+                        child: Text(
+                          (p['name'] ?? 'Paquete').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  emptyMessage: sinPaquetes
+                      ? 'Este cliente no tiene paquetes comprados.'
+                      : null,
+                  onChanged: _pickPackage,
+                ),
+              ),
+            const SizedBox(height: 14),
+            if (_packageId != 0) ...[
+              if (_loadingServices)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: LinearProgressIndicator(minHeight: 3),
+                )
+              else
+                FormSection(
+                  label: 'Servicio del paquete',
+                  child: _PickerField(
+                    key: const ValueKey('agenda-service'),
+                    label: 'Servicio',
+                    hint: 'Elige el servicio',
+                    icon: Icons.design_services_outlined,
+                    selected: _serviceId,
+                    enabled: !_saving,
+                    helper: 'Opcional: déjalo en "Sin servicio específico" '
+                        'si el evento es general.',
+                    options: [
+                      const DropdownMenuItem(
+                        value: 0,
+                        child: Text('Sin servicio específico'),
+                      ),
+                      for (final s in _services)
+                        DropdownMenuItem(
+                          value: _serviceIdOf(s),
+                          child: Text(
+                            (s['name'] ?? 'Servicio').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) => setState(() => _serviceId = v),
+                  ),
+                ),
+              const SizedBox(height: 14),
+            ],
+          ],
+          FormSection(
+            label: 'Fecha y hora',
+            child: Row(
+              children: [
+                Expanded(
+                  child: _slot(
+                    icon: Icons.calendar_today_outlined,
+                    label: 'Fecha',
+                    value: hsShortDate(_dateTime),
+                    onTap: _pickDate,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _slot(
+                    icon: Icons.schedule_outlined,
+                    label: 'Hora',
+                    value: hsTimeLabel(_dateTime),
+                    onTap: _pickTime,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          FormSection(
+            label: 'Nota',
+            child: TextField(
+              controller: _desc,
+              minLines: 2,
+              maxLines: 3,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Descripción',
+                hintText: 'Ej. Ceremonia, entrega, sesión en el estudio…',
+                alignLabelWithHint: true,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

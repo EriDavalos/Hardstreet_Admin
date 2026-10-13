@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'drive_api_service.dart';
-import 'drive_base.dart';
 import 'drive_service.dart';
 import 'download_stub.dart'
     if (dart.library.html) 'download_web.dart';

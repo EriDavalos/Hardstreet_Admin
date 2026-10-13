@@ -113,6 +113,11 @@ class HsAccess {
     return perms[_norm(module)];
   }
 
+  /// ¿El backend CONOCE este módulo? (ya existe en la tabla `modules`).
+  /// Sirve para no esconder una función nueva cuando la migración del módulo
+  /// todavía no se aplicó; en modo degradado devuelve false.
+  bool knows(String module) => perms.containsKey(_norm(module));
+
   /// ¿El módulo aparece en el menú? (requiere "read"; admin incluido).
   bool canSee(String module) => _actionsOf(module)?.contains('read') ?? false;
 

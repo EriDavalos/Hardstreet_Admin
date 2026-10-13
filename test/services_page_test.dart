@@ -8,7 +8,8 @@ import 'package:http/testing.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/services_page.dart';
 
-/// Catálogo falso con un servicio CON enlace de Drive y otro sin él.
+/// Catálogo falso: los servicios aún traen `url` en la BD, pero la UI del
+/// catálogo NO debe mostrarla ni mandarla (vive solo en el paquete comprado).
 void _installMock({required List<Map<String, dynamic>> posts}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
@@ -74,7 +75,7 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('lista servicios con icono, descripción y enlace del Drive',
+  testWidgets('lista servicios con icono y descripción, SIN la liga del Drive',
       (tester) async {
     _installMock(posts: []);
     await _pumpPage(tester);
@@ -82,12 +83,15 @@ void main() {
     expect(find.text('Cobertura en evento'), findsOneWidget);
     expect(find.text('Video y fotos del evento completo'), findsOneWidget);
     expect(find.text('Álbum de fotos'), findsOneWidget);
-    // La liga del Drive se ve (y la del servicio sin url, no).
-    expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
-    expect(find.text('1 con enlace'), findsOneWidget);
+    // La liga del Drive NO aparece en el catálogo (se administra en el
+    // paquete comprado, no aquí).
+    expect(find.text('https://drive.google.com/drive/u/0/boda'),
+        findsNothing);
+    expect(find.text('1 con enlace'), findsNothing);
+    expect(find.textContaining('con enlace'), findsNothing);
   });
 
-  testWidgets('crear servicio manda nombre, icono, descripción y url',
+  testWidgets('crear servicio manda nombre, icono y descripción (sin url)',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
     _installMock(posts: posts);
@@ -108,17 +112,14 @@ void main() {
       find.widgetWithText(TextField, 'Descripción'),
       'Sesión fotográfica antes del evento',
     );
-    await tester.enterText(
-      find.widgetWithText(TextField, 'URL base del Drive'),
-      'https://drive.google.com/drive/u/0/sesion',
-    );
     await _tap(tester, find.text('Crear servicio'));
 
     final create = posts.where((p) => p['name'] == 'Sesión previa').toList();
     expect(create, hasLength(1));
     expect(create.first['icon'], 'material:music_note');
     expect(create.first['description'], 'Sesión fotográfica antes del evento');
-    expect(create.first['url'], 'https://drive.google.com/drive/u/0/sesion');
+    // El catálogo ya no pide la URL del Drive.
+    expect(create.first.containsKey('url'), isFalse);
   });
 
   testWidgets('editar servicio manda el id y solo los campos cambiados',

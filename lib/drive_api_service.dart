@@ -12,6 +12,7 @@ import 'hs_api.dart';
 
 export 'drive_base.dart'
     show
+        DriveBase,
         DriveItem,
         kImageExtensions,
         DriveConn,
@@ -85,6 +86,17 @@ class DriveApiService extends DriveBase {
     final q = _apikeyQuery;
     return '$base/thumb/${[...path, item.name].join('/')}'
         '?w=$width${q.isEmpty ? '' : '&$q'}';
+  }
+
+  /// Espacio total y ocupado del drive → GET /api/space.
+  /// { usedBytes, totalBytes, freeBytes, files, folders } (total/free pueden
+  /// ser null si el filesystem no expone statfs).
+  Future<Map<String, dynamic>> fetchSpace() async {
+    final r = await http
+        .get(_u('/api/space'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+    return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
   @override

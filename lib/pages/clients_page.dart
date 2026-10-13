@@ -216,6 +216,12 @@ class _ClientsPageState extends State<ClientsPage> {
   }
 }
 
+/// Tarjeta de un cliente del directorio.
+///
+/// TODA la tarjeta es interactiva: un clic (o un toque) en cualquier parte
+/// abre el ADMINISTRADOR DE PAQUETES del cliente (abonos, agendas,
+/// movimientos). El botón "Paquetes" sigue ahí para quien lo busca, pero ya
+/// no es el único camino.
 class _ClientTile extends StatelessWidget {
   const _ClientTile({
     required this.client,
@@ -236,70 +242,223 @@ class _ClientTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final name =
         '${client['name'] ?? ''} ${client['lastname'] ?? ''}'.trim().trim();
-    final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
+    final email = (client['email'] ?? '').toString().trim();
+    final number = (client['number'] ?? '').toString().trim();
+    final initial =
+        name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
+    final pkgCount = (client['packagesCount'] as num?)?.toInt() ?? 0;
+    final subtitle = [
+      if (email.isNotEmpty) email,
+      if (number.isNotEmpty) number,
+    ].join('  ·  ');
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    // En pantallas angostas los botones no caben junto al texto: se guardan
+    // en el menú "⋮" de la propia tarjeta.
+    return LayoutBuilder(builder: (context, box) {
+    final compact = box.maxWidth < 560;
+    final row = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: const Color(0xFF8B5CF6).withValues(alpha: .14),
-            child: Text(
-              initial,
-              style: const TextStyle(
-                color: Color(0xFF8B5CF6),
-                fontWeight: FontWeight.w800,
-                fontSize: 15,
+          // Avatar con inicial: aro tenue + tinte violeta del directorio.
+          Container(
+            padding: const EdgeInsets.all(2.5),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF8B5CF6).withValues(alpha: .10),
+              border: Border.all(
+                  color: const Color(0xFF8B5CF6).withValues(alpha: .28)),
+            ),
+            child: CircleAvatar(
+              radius: 19,
+              backgroundColor: const Color(0xFF8B5CF6).withValues(alpha: .16),
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Color(0xFF8B5CF6),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
               ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  name.isEmpty ? (client['email'] ?? '').toString() : name,
+                  name.isEmpty ? (email.isEmpty ? 'Sin nombre' : email) : name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 14),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  (client['email'] ?? '').toString(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: scheme.onSurfaceVariant,
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
+                ],
+                const SizedBox(height: 6),
+                // Sus paquetes, a la vista: es lo que se administra al
+                // tocar la tarjeta.
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _ClientChip(
+                      icon: Icons.card_giftcard_outlined,
+                      label: pkgCount == 1 ? '1 paquete' : '$pkgCount paquetes',
+                      tint: const Color(0xFF8B5CF6),
+                    ),
+                    if (onPackages != null)
+                      _ClientChip(
+                        icon: Icons.touch_app_outlined,
+                        label: 'Abrir',
+                        tint: scheme.primary,
+                      ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          // Único atajo a los paquetes del cliente: el botón con el ícono de
-          // paquete abre el modal donde se administran abonos y agendas.
-          if (onPackages != null)
-            IconButton(
-              tooltip: 'Paquetes',
-              onPressed: onPackages,
-              icon: const Icon(Icons.card_giftcard_outlined, size: 20),
+          const SizedBox(width: 6),
+          if (compact)
+            PopupMenuButton<String>(
+              tooltip: 'Acciones',
+              icon: Icon(Icons.more_vert_rounded,
+                  size: 20, color: scheme.onSurfaceVariant),
+              onSelected: (value) {
+                switch (value) {
+                  case 'paquetes':
+                    onPackages?.call();
+                  case 'editar':
+                    onEdit?.call();
+                  case 'eliminar':
+                    onDelete?.call();
+                }
+              },
+              itemBuilder: (context) => [
+                if (onPackages != null)
+                  const PopupMenuItem(
+                    value: 'paquetes',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.card_giftcard_outlined, size: 20),
+                      title: Text('Paquetes'),
+                    ),
+                  ),
+                if (onEdit != null)
+                  const PopupMenuItem(
+                    value: 'editar',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined, size: 20),
+                      title: Text('Editar'),
+                    ),
+                  ),
+                if (onDelete != null)
+                  PopupMenuItem(
+                    value: 'eliminar',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.delete_outline,
+                          size: 20, color: scheme.error),
+                      title: Text('Eliminar',
+                          style: TextStyle(color: scheme.error)),
+                    ),
+                  ),
+              ],
+            )
+          else ...[
+            // Los botones de siempre para abrir los paquetes del cliente.
+            if (onPackages != null)
+              IconButton(
+                tooltip: 'Paquetes',
+                onPressed: onPackages,
+                icon: const Icon(Icons.card_giftcard_outlined, size: 20),
+              ),
+            if (onEdit != null)
+              IconButton(
+                tooltip: 'Editar',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+              ),
+            if (onDelete != null)
+              IconButton(
+                tooltip: 'Eliminar',
+                onPressed: onDelete,
+                icon: Icon(Icons.delete_outline,
+                    size: 20, color: scheme.error.withValues(alpha: .8)),
+              ),
+            if (onPackages != null)
+              Icon(Icons.chevron_right_rounded,
+                  size: 20, color: scheme.onSurfaceVariant),
+          ],
+        ],
+      ),
+    );
+
+    // Sin permiso de administrar paquetes la tarjeta NO es clickeable (solo
+    // se ven las acciones permitidas).
+    if (onPackages == null) return row;
+    return Tooltip(
+      message: 'Abrir el administrador de paquetes',
+      waitDuration: const Duration(milliseconds: 700),
+      child: InkWell(onTap: onPackages, child: row),
+    );
+    });
+  }
+}
+
+/// Píldora diminuta de la tarjeta de cliente (paquetes / abrir).
+class _ClientChip extends StatelessWidget {
+  const _ClientChip({
+    required this.icon,
+    required this.label,
+    required this.tint,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: tint.withValues(alpha: .22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: tint),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                color: tint,
+              ),
             ),
-          if (onEdit != null)
-            IconButton(
-              tooltip: 'Editar',
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined, size: 20),
-            ),
-          if (onDelete != null)
-            IconButton(
-              tooltip: 'Eliminar',
-              onPressed: onDelete,
-              icon: Icon(Icons.delete_outline,
-                  size: 20, color: scheme.error.withValues(alpha: .8)),
-            ),
+          ),
         ],
       ),
     );
@@ -736,273 +895,6 @@ class _AbonarDialogState extends State<_AbonarDialog> {
   }
 }
 
-// ==================================================================
-// Agendas del paquete comprado: crear / editar / eliminar eventos
-// ==================================================================
-
-class _PackageAgendasDialog extends StatefulWidget {
-  const _PackageAgendasDialog({required this.package});
-
-  final Map<String, dynamic> package;
-
-  @override
-  State<_PackageAgendasDialog> createState() => _PackageAgendasDialogState();
-}
-
-class _PackageAgendasDialogState extends State<_PackageAgendasDialog> {
-  bool _loading = true;
-  String? _error;
-  List<Map<String, dynamic>> _agendas = const [];
-  List<Map<String, dynamic>> _services = const [];
-  bool _busy = false;
-
-  int get _packageId => (widget.package['id'] as num).toInt();
-
-  @override
-  void initState() {
-    super.initState();
-    _reload();
-  }
-
-  Future<void> _reload() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final agendas = await HsApi.agendas(purchasedPackageId: _packageId);
-      // Combo de servicios: los del paquete; si no tiene, el catálogo completo.
-      var services = ((widget.package['services'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
-          .toList();
-      if (services.isEmpty) {
-        try {
-          services = await HsApi.services();
-        } catch (_) {}
-      }
-      if (!mounted) return;
-      setState(() {
-        _agendas = agendas;
-        _services = services;
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'No se pudieron cargar las agendas';
-        _loading = false;
-      });
-    }
-  }
-
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  Future<void> _form([Map<String, dynamic>? agenda]) async {
-    final saved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _AgendaFormDialog(
-        purchasedPackageId: _packageId,
-        services: _services,
-        agenda: agenda,
-      ),
-    );
-    if (saved == true) await _reload();
-  }
-
-  Future<void> _delete(Map<String, dynamic> agenda) async {
-    final date = hsParseDate(agenda['eventDate']);
-    final ok = await confirmDelete(
-      context,
-      title: '¿Eliminar la agenda?',
-      message: date == null
-          ? 'Esta agenda se eliminará del paquete.'
-          : hsDateLabel(date),
-      confirmLabel: 'Eliminar',
-    );
-    if (!ok) return;
-    setState(() => _busy = true);
-    try {
-      await HsApi.deleteAgenda((agenda['id'] as num).toInt());
-      await _reload();
-    } on ApiException catch (e) {
-      _snack(e.message);
-    } catch (_) {
-      _snack('No se pudo eliminar la agenda');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return FormDialog(
-      icon: Icons.event_available_outlined,
-      title: 'Agendas · ${(widget.package['name'] ?? '').toString()}',
-      subtitle:
-          'Eventos agendados del paquete. Puedes crear varias por servicio.',
-      maxWidth: 620,
-      footer: [
-        if (!_loading && _error == null)
-          OutlinedButton.icon(
-            onPressed: _busy ? null : () => _form(),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Nueva agenda'),
-          ),
-      ],
-      onCancel: () => Navigator.of(context).pop(),
-      onSave: () => Navigator.of(context).pop(),
-      saveLabel: 'Listo',
-      children: [
-        if (_loading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 40),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            child: Column(
-              children: [
-                Text(_error!, textAlign: TextAlign.center),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _reload,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Reintentar'),
-                ),
-              ],
-            ),
-          )
-        else if (_agendas.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            child: Column(
-              children: [
-                Icon(Icons.event_busy_outlined,
-                    size: 40, color: scheme.onSurfaceVariant),
-                const SizedBox(height: 10),
-                const Text('Este paquete aún no tiene agendas'),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: _busy ? null : () => _form(),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Crear la primera'),
-                ),
-              ],
-            ),
-          )
-        else
-          for (final a in _agendas) _agendaTile(a, scheme),
-      ],
-    );
-  }
-
-  Widget _agendaTile(Map<String, dynamic> a, ColorScheme scheme) {
-    final date = hsParseDate(a['eventDate']);
-    final service = (a['serviceName'] ?? '').toString();
-    final desc = (a['description'] ?? '').toString();
-    final monthAbbr =
-        date == null ? '' : kHsMonths[date.month - 1].substring(0, 3);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .45)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 58,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF8B5CF6).withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  date == null ? '--' : '${date.day}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 18,
-                      color: Color(0xFF8B5CF6)),
-                ),
-                Text(
-                  monthAbbr,
-                  style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF8B5CF6)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  date == null
-                      ? 'Fecha por definir'
-                      : '${hsDateLabel(date)} · ${hsTimeLabel(date)}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 13),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  service.isEmpty ? 'Sin servicio específico' : service,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-                if (desc.isNotEmpty)
-                  Text(
-                    desc,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
-                  ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Editar',
-            visualDensity: VisualDensity.compact,
-            onPressed: _busy ? null : () => _form(a),
-            icon: const Icon(Icons.edit_outlined, size: 18),
-          ),
-          IconButton(
-            tooltip: 'Eliminar',
-            visualDensity: VisualDensity.compact,
-            onPressed: _busy ? null : () => _delete(a),
-            icon: Icon(Icons.delete_outline,
-                size: 18, color: scheme.error.withValues(alpha: .8)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Alta/edición de una agenda: fecha y hora + servicio + descripción.
 class _AgendaFormDialog extends StatefulWidget {
   const _AgendaFormDialog({
@@ -1240,15 +1132,16 @@ class _PickerField extends StatelessWidget {
 // Modal "Paquete del cliente": administración COMPLETA y visual
 //
 //   * El paquete VIGENTE (el que no está terminado) se administra:
-//     abonar, registrar inversión / gasto / abono externo, agendas,
-//     terminar cada servicio (con su descripción de cierre) y finalizar
+//     abonar, registrar inversión / gasto / ahorro / abono externo,
+//     agendas, terminar cada servicio (con su descripción de cierre) y
 //     el paquete (con validación de servicios y dinero completos).
 //   * Los demás paquetes del cliente se consultan como detalle
 //     (solo lectura) desde el mismo selector.
 //   * La vista se estructura en TRES pestañas:
 //       Servicios  · cada servicio con su estado y su cierre
 //       Calendario · el mes, con agendas y servicios terminados
-//       Movimientos· historial (abonos, inversiones, gastos, abonos ext.)
+//       Movimientos· historial (abonos, inversiones, gastos, ahorros,
+//                   abonos externos) + disponible del paquete
 // ==================================================================
 
 /// Colores de los movimientos y estados (se usan en todo el modal).
@@ -1257,19 +1150,22 @@ const Color _kAmber = Color(0xFFF59E0B);
 const Color _kViolet = Color(0xFF8B5CF6);
 const Color _kBlue = Color(0xFF3B82F6);
 const Color _kRed = Color(0xFFEF4444);
+const Color _kTeal = Color(0xFF14B8A6);
 
 /// Etiqueta / icono / color de cada tipo de movimiento.
 String _moveLabel(String kind) => switch (kind) {
       'abono' => 'Abono',
       'abono_externo' => 'Abono externo',
       'inversion' => 'Inversión',
+      'ahorro' => 'Ahorro',
       _ => 'Gasto',
     };
 
 IconData _moveIcon(String kind) => switch (kind) {
       'abono' => Icons.payments_outlined,
-      'abono_externo' => Icons.savings_outlined,
+      'abono_externo' => Icons.account_balance_wallet_outlined,
       'inversion' => Icons.trending_up,
+      'ahorro' => Icons.savings_rounded,
       _ => Icons.trending_down,
     };
 
@@ -1277,7 +1173,24 @@ Color _moveColor(String kind) => switch (kind) {
       'abono' => _kGreen,
       'abono_externo' => _kBlue,
       'inversion' => _kViolet,
+      'ahorro' => _kTeal,
       _ => _kRed,
+    };
+
+/// Tipos que ofrece el diálogo "Movimiento del paquete".
+const List<String> _kMovementKinds = [
+  'inversion',
+  'gasto',
+  'ahorro',
+  'abono_externo',
+];
+
+/// Descripción corta de cada tipo (tarjetas de selección del diálogo).
+String _moveHint(String kind) => switch (kind) {
+      'inversion' => 'Dinero que se mete al paquete',
+      'gasto' => 'Dinero que se gasta del paquete',
+      'ahorro' => 'Dinero que se aparta del disponible',
+      _ => 'Pago recibido fuera del paquete',
     };
 
 /// Administrador del paquete del cliente.
@@ -1314,9 +1227,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// 1 = detalle de administración. Al tocar una tarjeta se entra con
   /// animación; la flecha del encabezado regresa al selector.
   int _stage = 0;
-
-  /// Mes visible en la pestaña Calendario.
-  DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
 
   late final int _userId = (widget.client['id'] as num).toInt();
   late final String _name =
@@ -1476,6 +1386,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   Map<String, dynamic> get _totals =>
       ((_progress?['totals'] as Map?) ?? const {}).cast<String, dynamic>();
 
+  /// Dinero LIBRE del paquete: abonado menos gastado (gasto + inversión).
+  /// Es la base con la que se calcula el ahorro en porcentaje.
+  num get _disponible {
+    final fromBackend = _totals['disponible'];
+    if (fromBackend is num) return fromBackend;
+    final abonado = (_totals['abonado'] as num?) ?? 0;
+    final gastado = (_totals['gastado'] as num?) ?? 0;
+    final saldo = abonado - gastado;
+    return saldo < 0 ? 0 : saldo;
+  }
+
   List<String> get _blockers => (((_progress?['blockers'] as List?) ?? const []))
       .map((e) => e.toString())
       .toList();
@@ -1618,15 +1539,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (saved == true) await _reload(silent: true);
   }
 
-  Future<void> _manageAgendas(Map<String, dynamic> pkg) async {
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PackageAgendasDialog(package: pkg),
-    );
-    await _reload(silent: true);
-  }
-
   /// Termina un servicio del paquete pidiendo su descripción de cierre.
   Future<void> _completeService(Map<String, dynamic> svc) async {
     final note = await _askNote(
@@ -1711,14 +1623,19 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
-  /// Registra un movimiento (inversión, gasto o abono externo).
+  /// Registra un movimiento (inversión, gasto, ahorro o abono externo).
+  /// El ahorro acepta monto o porcentaje del DISPONIBLE (abonado - gastado).
   Future<void> _addMovement() async {
     final pkg = _selected;
     if (pkg == null) return;
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _MovementDialog(package: pkg),
+      builder: (_) => _MovementDialog(
+        package: pkg,
+        disponible: _disponible,
+        currency: (pkg['currency'] ?? 'MXN').toString(),
+      ),
     );
     if (saved == true) await _reload(silent: true);
   }
@@ -1937,49 +1854,79 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   }
 
   Widget _footer(ColorScheme scheme) {
+    final narrow = MediaQuery.sizeOf(context).width < 560;
+    final actions = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _busy || _loading ? null : _addFromCatalog,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Asignar del catálogo'),
+        ),
+        if (_selected != null && _canAdminister)
+          TextButton.icon(
+            onPressed: _busy ? null : () => _removeFromClient(_selected!),
+            icon: Icon(Icons.remove_circle_outline,
+                size: 18, color: scheme.error),
+            label:
+                Text('Quitar del cliente', style: TextStyle(color: scheme.error)),
+          ),
+      ],
+    );
+    final done = FilledButton(
+      onPressed: _busy ? null : () => Navigator.of(context).pop(),
+      child: const Text('Listo'),
+    );
+    final spinner = _busy
+        ? const Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        : const SizedBox.shrink();
+
+    // MÓVIL: botones apilados y a lo ancho (en pantallas angostas la fila
+    // comprimía "Asignar del catálogo" y "Listo" hasta hacerlos ilegibles).
+    if (narrow) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(18, 10, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            actions,
+            const SizedBox(height: 10),
+            if (_busy) ...[
+              const Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            done,
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 10, 14, 12),
       child: Row(
         children: [
           // Los botones de la izquierda pueden partirse en dos renglones en
           // ventanas angostas (antes desbordaban el modal).
-          Expanded(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _busy || _loading ? null : _addFromCatalog,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Asignar del catálogo'),
-                ),
-                if (_selected != null && _canAdminister)
-                  TextButton.icon(
-                    onPressed:
-                        _busy ? null : () => _removeFromClient(_selected!),
-                    icon: Icon(Icons.remove_circle_outline,
-                        size: 18, color: scheme.error),
-                    label: Text('Quitar del cliente',
-                        style: TextStyle(color: scheme.error)),
-                  ),
-              ],
-            ),
-          ),
+          Expanded(child: actions),
           const SizedBox(width: 8),
-          if (_busy)
-            const Padding(
-              padding: EdgeInsets.only(right: 12),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          FilledButton(
-            onPressed: _busy ? null : () => Navigator.of(context).pop(),
-            child: const Text('Listo'),
-          ),
+          if (_busy) spinner,
+          done,
         ],
       ),
     );
@@ -3029,375 +2976,119 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   // ---------- Pestaña: calendario ----------
 
-  /// Eventos del paquete por día: agendas y servicios terminados.
-  Map<String, List<_DayEvent>> _eventsByDay() {
-    final map = <String, List<_DayEvent>>{};
-    for (final a in _agendasOfSelected) {
-      final d = hsParseDate(a['eventDate']);
-      if (d == null) continue;
-      map.putIfAbsent(hsDateKey(d), () => []).add(
-            _DayEvent(
-              time: hsTimeLabel(d),
-              title: (a['description'] ?? '').toString().trim().isEmpty
-                  ? 'Agenda'
-                  : (a['description'] ?? '').toString(),
-              subtitle: (a['serviceName'] ?? '').toString(),
-              icon: Icons.event_available_outlined,
-              color: _kBlue,
-              timeOfDay: d,
-            ),
-          );
-    }
-    for (final s in _services) {
-      final d = hsParseDate(s['finishedAt']);
-      if (d == null) continue;
-      map.putIfAbsent(hsDateKey(d), () => []).add(
-            _DayEvent(
-              time: hsTimeLabel(d),
-              title: (s['name'] ?? 'Servicio').toString(),
-              subtitle: 'Servicio terminado',
-              icon: Icons.task_alt,
-              color: _kGreen,
-              timeOfDay: d,
-            ),
-          );
-    }
-    for (final list in map.values) {
-      list.sort((a, b) => a.timeOfDay.compareTo(b.timeOfDay));
-    }
-    return map;
-  }
-
+  /// Eventos agendados del paquete como TARJETAS (el mismo diseño del botón
+  /// "Agenda"), con los próximos primero. Se pueden crear, editar y eliminar.
   Widget _calendarTab(ColorScheme scheme) {
-    final events = _eventsByDay();
+    final agendas = _agendasOfSelected.toList()
+      ..sort((a, b) =>
+          '${a['eventDate'] ?? ''}'.compareTo('${b['eventDate'] ?? ''}'));
+    final now = DateTime.now();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
           child: Row(
             children: [
-              IconButton(
-                tooltip: 'Mes anterior',
-                onPressed: () => setState(() => _month =
-                    DateTime(_month.year, _month.month - 1)),
-                icon: const Icon(Icons.chevron_left),
-              ),
+              const Icon(Icons.event_available_outlined,
+                  size: 16, color: _kBlue),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '${kHsMonths[_month.month - 1]} ${_month.year}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 14.5),
+                  'Eventos agendados',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface,
+                  ),
                 ),
               ),
-              IconButton(
-                tooltip: 'Mes siguiente',
-                onPressed: () => setState(() => _month =
-                    DateTime(_month.year, _month.month + 1)),
-                icon: const Icon(Icons.chevron_right),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy || !_canAdminister
-                    ? null
-                    : () => _manageAgendas(_selected!),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Agenda'),
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
+              if (_canAdminister)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _newAgenda,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Nueva agenda'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
-              ),
             ],
           ),
         ),
         Expanded(
-          child: ListView(
-            primary: false,
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-            children: [
-              // Leyenda ARRIBA de la rejilla: siempre visible, sin empujar el
-              // calendario fuera de la vista.
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    const _MiniPill(
-                        icon: Icons.event_available_outlined,
-                        label: 'Agenda',
-                        color: _kBlue),
-                    const _MiniPill(
-                        icon: Icons.task_alt,
-                        label: 'Servicio terminado',
-                        color: _kGreen),
-                    Text(
-                      'Toca un día para ver su detalle',
-                      style: TextStyle(
-                          fontSize: 11.5, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
+          child: agendas.isEmpty
+              ? _emptyTab(
+                  scheme,
+                  Icons.event_busy_outlined,
+                  'Este paquete aún no tiene eventos agendados',
+                )
+              : ListView.builder(
+                  primary: false,
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  itemCount: agendas.length,
+                  itemBuilder: (context, i) {
+                    final a = agendas[i];
+                    final d = hsParseDate(a['eventDate']);
+                    final past = d != null && d.isBefore(now);
+                    return _AgendaEventCard(
+                      agenda: a,
+                      past: past,
+                      onEdit: _canAdminister ? () => _editAgenda(a) : null,
+                      onDelete: _canAdminister ? () => _deleteAgenda(a) : null,
+                    );
+                  },
                 ),
-              ),
-              _monthGrid(scheme, events),
-            ],
-          ),
         ),
       ],
     );
   }
 
-  /// Rejilla del mes con DÍAS CÍRCULOS: el mismo diseño del módulo Agendas
-  /// (círculo con el número, badge con el color e icono del evento y un
-  /// contador cuando ese día tiene más de uno).
-  Widget _monthGrid(ColorScheme scheme, Map<String, List<_DayEvent>> events) {
-    final first = DateTime(_month.year, _month.month, 1);
-    final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
-    // Lunes primero (DateTime.weekday: lunes = 1).
-    final leading = first.weekday - 1;
-    final rows = ((leading + daysInMonth + 6) ~/ 7);
-    final today = DateTime.now();
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: .22),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              for (final d in kHsWeekdays)
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(
-                      d.substring(0, 3).toUpperCase(),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: .4,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          for (var r = 0; r < rows; r++)
-            Row(
-              children: [
-                for (var c = 0; c < 7; c++)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(3),
-                      child: SizedBox(
-                        height: 56,
-                        child: _dayCell(
-                          scheme,
-                          events,
-                          r * 7 + c - leading + 1,
-                          daysInMonth,
-                          today,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// Celda circular: el número dentro del círculo y, si hay eventos, un
-  /// badge con el color e icono del primero (más el conteo si hay varios).
-  Widget _dayCell(
-    ColorScheme scheme,
-    Map<String, List<_DayEvent>> events,
-    int day,
-    int daysInMonth,
-    DateTime today,
-  ) {
-    if (day < 1 || day > daysInMonth) return const SizedBox.expand();
-    final date = DateTime(_month.year, _month.month, day);
-    final list = events[hsDateKey(date)] ?? const <_DayEvent>[];
-    final isToday = date.year == today.year &&
-        date.month == today.month &&
-        date.day == today.day;
-    final e = list.isEmpty ? null : list.first;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: list.isEmpty ? null : () => _showDay(date, list),
-      child: Center(
-        child: LayoutBuilder(builder: (context, box) {
-          // El círculo se adapta al ancho de la celda (nunca desborda).
-          double size = box.maxWidth - 6;
-          if (size > 50) size = 50;
-          if (size < 30) size = 30;
-          double badge = size * 0.40;
-          if (badge > 20) badge = 20;
-          if (badge < 13) badge = 13;
-          double fs = size * 0.36;
-          if (fs > 15) fs = 15;
-          if (fs < 10) fs = 10;
-
-          final Color fg;
-          final Color border;
-          final Color tint;
-          if (e != null) {
-            fg = e.color;
-            border = e.color.withValues(alpha: .45);
-            tint = e.color.withValues(alpha: .10);
-          } else {
-            fg = isToday ? AppColors.brand : scheme.onSurface;
-            border = isToday
-                ? AppColors.brand.withValues(alpha: .55)
-                : Colors.transparent;
-            tint = scheme.surface.withValues(alpha: .55);
-          }
-
-          return SizedBox(
-            width: size,
-            height: size,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: tint,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: border, width: 1.4),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    '$day',
-                    style: TextStyle(
-                      fontSize: fs,
-                      fontWeight: (e != null || isToday)
-                          ? FontWeight.w800
-                          : FontWeight.w600,
-                      color: fg,
-                    ),
-                  ),
-                ),
-                if (e != null)
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: Container(
-                      width: badge,
-                      height: badge,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            e.color,
-                            Color.lerp(e.color, Colors.white, .38) ?? e.color,
-                          ],
-                        ),
-                        border: Border.all(color: scheme.surface, width: 1.6),
-                        boxShadow: [
-                          BoxShadow(
-                            color: e.color.withValues(alpha: .45),
-                            blurRadius: 5,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child:
-                          Icon(e.icon, size: badge * .62, color: Colors.white),
-                    ),
-                  ),
-                if (list.length > 1)
-                  Positioned(
-                    top: 1,
-                    right: 2,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 3.5, vertical: .5),
-                      decoration: BoxDecoration(
-                        color: e!.color,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: scheme.surface, width: 1.2),
-                      ),
-                      child: Text(
-                        '${list.length}',
-                        style: const TextStyle(
-                          fontSize: 8,
-                          height: 1.15,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  Future<void> _showDay(DateTime date, List<_DayEvent> list) {
-    return showDialog<void>(
+  /// Crea una agenda del paquete en foco.
+  Future<void> _newAgenda() async {
+    final id = _selectedId;
+    if (id == null) return;
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(hsDateLabel(date)),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final e in list)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      Icon(e.icon, size: 18, color: e.color),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              e.title,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            Text(
-                              '${e.time}${e.subtitle.isEmpty ? '' : ' · ${e.subtitle}'}',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color:
-                                    Theme.of(ctx).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cerrar'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => _AgendaFormDialog(
+        purchasedPackageId: id,
+        services: _services,
       ),
+    );
+    if (saved == true) await _reload(silent: true);
+  }
+
+  /// Edita una agenda existente.
+  Future<void> _editAgenda(Map<String, dynamic> agenda) async {
+    final id = _selectedId;
+    if (id == null) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _AgendaFormDialog(
+        purchasedPackageId: id,
+        services: _services,
+        agenda: agenda,
+      ),
+    );
+    if (saved == true) await _reload(silent: true);
+  }
+
+  /// Elimina una agenda (con confirmación).
+  Future<void> _deleteAgenda(Map<String, dynamic> agenda) async {
+    final date = hsParseDate(agenda['eventDate']);
+    final ok = await confirmDelete(
+      context,
+      title: '¿Eliminar la agenda?',
+      message: date == null
+          ? 'Esta agenda se eliminará del paquete.'
+          : hsDateLabel(date),
+      confirmLabel: 'Eliminar',
+    );
+    if (ok != true) return;
+    await _run(
+      () => HsApi.deleteAgenda((agenda['id'] as num).toInt()),
+      ok: 'Agenda eliminada',
     );
   }
 
@@ -3414,72 +3105,76 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         if (_progress != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _MoneyTile(
-                    'Abonado',
-                    hsMoney((totals['abonado'] as num?) ?? 0, currency),
-                    _kGreen,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MoneyTile(
+            // Los cuadros del dinero van en UNA SOLA FILA (horizontal), con el
+            // mismo ancho entre sí: nada de unos encima de otros. El texto se
+            // encoge dentro de su cuadro si el panel es angosto.
+            child: _MoneyRow(
+              tiles: [
+                _MoneyTile('Disponible', hsMoney(_disponible, currency), _kGreen),
+                _MoneyTile('Ahorro',
+                    hsMoney((totals['ahorrado'] as num?) ?? 0, currency), _kTeal),
+                _MoneyTile(
                     'Abono externo',
                     hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
-                    _kBlue,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MoneyTile(
+                    _kBlue),
+                _MoneyTile(
                     'Invertido',
                     hsMoney((totals['invertido'] as num?) ?? 0, currency),
-                    _kViolet,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MoneyTile(
+                    _kViolet),
+                _MoneyTile(
                     'Gastado',
                     hsMoney((totals['gastado'] as num?) ?? 0, currency),
-                    _kRed,
-                  ),
-                ),
+                    _kRed),
               ],
             ),
           ),
         if (_canAdminister)
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                // Abonar vive aquí (ya no en la ficha): los abonos son un
-                // movimiento más del paquete.
-                FilledButton.tonalIcon(
-                  onPressed: _busy ? null : () => _abonar(_selected!),
-                  icon: const Icon(Icons.payments_outlined, size: 16),
-                  label: const Text('Abonar'),
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    textStyle:
-                        const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                  ),
+            child: () {
+              // MÓVIL: los botones de movimientos van apilados y a lo ancho
+              // (en una fila se veían todo junto y apretados).
+              final abonar = FilledButton.tonalIcon(
+                onPressed: _busy ? null : () => _abonar(_selected!),
+                icon: const Icon(Icons.payments_outlined, size: 16),
+                label: const Text('Abonar'),
+                style: FilledButton.styleFrom(
+                  visualDensity:
+                      MediaQuery.sizeOf(context).width < 560
+                          ? null
+                          : VisualDensity.compact,
+                  textStyle:
+                      const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
                 ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _addMovement,
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Registrar inversión / gasto / abono externo'),
-                  style: OutlinedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(fontSize: 12.5),
-                  ),
+              );
+              final registrar = OutlinedButton.icon(
+                onPressed: _busy ? null : _addMovement,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Registrar movimiento'),
+                style: OutlinedButton.styleFrom(
+                  visualDensity:
+                      MediaQuery.sizeOf(context).width < 560
+                          ? null
+                          : VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12.5),
                 ),
-              ],
-            ),
+              );
+              if (MediaQuery.sizeOf(context).width < 560) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    abonar,
+                    const SizedBox(height: 8),
+                    registrar,
+                  ],
+                );
+              }
+              return Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [abonar, registrar],
+              );
+            }(),
           ),
         Expanded(
           child: movements.isEmpty
@@ -3601,25 +3296,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       ),
     );
   }
-}
-
-/// Evento pintado en el calendario del paquete.
-class _DayEvent {
-  const _DayEvent({
-    required this.time,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-    required this.timeOfDay,
-  });
-
-  final String time;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
-  final DateTime timeOfDay;
 }
 
 /// Tarjeta "target" del selector de paquetes: lenguaje visual de la app
@@ -3931,6 +3607,128 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
   }
 }
 
+/// Tarjeta de un EVENTO agendado del paquete: el mismo diseño que usan el
+/// botón "Agenda" y la pestaña Calendario del administrador del paquete.
+/// [past] atenúa los eventos ya pasados y las acciones son opcionales
+/// (null = solo lectura).
+class _AgendaEventCard extends StatelessWidget {
+  const _AgendaEventCard({
+    required this.agenda,
+    this.onEdit,
+    this.onDelete,
+    this.past = false,
+  });
+
+  final Map<String, dynamic> agenda;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+  final bool past;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final date = hsParseDate(agenda['eventDate']);
+    final service = (agenda['serviceName'] ?? '').toString();
+    final desc = (agenda['description'] ?? '').toString();
+    final monthAbbr =
+        date == null ? '' : kHsMonths[date.month - 1].substring(0, 3);
+    final accent = past ? _kViolet.withValues(alpha: .55) : _kViolet;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest
+            .withValues(alpha: past ? .20 : .35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: past ? .25 : .45)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 58,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  date == null ? '--' : '${date.day}',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 18, color: accent),
+                ),
+                Text(
+                  monthAbbr,
+                  style: TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w700, color: accent),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        date == null
+                            ? 'Fecha por definir'
+                            : '${hsDateLabel(date)} · ${hsTimeLabel(date)}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13),
+                      ),
+                    ),
+                    if (past)
+                      const _MiniPill(
+                          icon: Icons.history,
+                          label: 'Pasado',
+                          color: _kViolet),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  service.isEmpty ? 'Sin servicio específico' : service,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                if (desc.isNotEmpty)
+                  Text(
+                    desc,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  ),
+              ],
+            ),
+          ),
+          if (onEdit != null)
+            IconButton(
+              tooltip: 'Editar',
+              visualDensity: VisualDensity.compact,
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: 'Eliminar',
+              visualDensity: VisualDensity.compact,
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline,
+                  size: 18, color: scheme.error.withValues(alpha: .8)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Botón de pestaña del modal (Servicios / Calendario / Movimientos).
 class _TabButton extends StatelessWidget {
   const _TabButton({
@@ -4097,7 +3895,34 @@ class _MiniPill extends StatelessWidget {
   }
 }
 
+/// Fila de cuadros de dinero: TODOS en una sola línea horizontal, con el
+/// mismo ancho entre sí (nada de unos encima de otros).
+class _MoneyRow extends StatelessWidget {
+  const _MoneyRow({required this.tiles});
+
+  final List<Widget> tiles;
+
+  @override
+  Widget build(BuildContext context) {
+    // IntrinsicHeight: todos los cuadros comparten la altura del más alto
+    // (el Row necesita altura acotada para poder estirarlos).
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < tiles.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            Expanded(child: tiles[i]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Caja compacta de un importe (Total / Abonado / Saldo / Gastado…).
+/// La etiqueta puede ir en DOS líneas ("ABONO / EXTERNO") y el monto se
+/// encoge dentro del ancho disponible: el cuadro nunca se desborda.
 class _MoneyTile extends StatelessWidget {
   const _MoneyTile(this.label, this.value, this.tint);
 
@@ -4109,7 +3934,7 @@ class _MoneyTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
         color: scheme.surface.withValues(alpha: .7),
         borderRadius: BorderRadius.circular(12),
@@ -4117,14 +3942,16 @@ class _MoneyTile extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             label.toUpperCase(),
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 9.5,
-              letterSpacing: .6,
+              fontSize: 9,
+              height: 1.15,
+              letterSpacing: .2,
               fontWeight: FontWeight.w800,
               color: scheme.onSurfaceVariant,
             ),
@@ -4136,7 +3963,7 @@ class _MoneyTile extends StatelessWidget {
             child: Text(
               value,
               style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 13.5, color: tint),
+                  fontWeight: FontWeight.w800, fontSize: 13, color: tint),
             ),
           ),
         ],
@@ -4185,13 +4012,24 @@ class _MiniStat extends StatelessWidget {
 
 // ==================================================================
 // Registrar un movimiento del paquete
-// (inversión / gasto / abono externo; el abono tiene su propio diálogo)
+// (inversión / gasto / ahorro / abono externo; el abono tiene su diálogo)
+//
+// El AHORRO se puede capturar como MONTO o como PORCENTAJE del disponible
+// (abonado - gastado): el diálogo calcula el monto equivalente en vivo.
 // ==================================================================
 
 class _MovementDialog extends StatefulWidget {
-  const _MovementDialog({required this.package});
+  const _MovementDialog({
+    required this.package,
+    this.disponible = 0,
+    this.currency = 'MXN',
+  });
 
   final Map<String, dynamic> package;
+
+  /// Dinero libre del paquete (base del ahorro en porcentaje).
+  final num disponible;
+  final String currency;
 
   @override
   State<_MovementDialog> createState() => _MovementDialogState();
@@ -4199,35 +4037,68 @@ class _MovementDialog extends StatefulWidget {
 
 class _MovementDialogState extends State<_MovementDialog> {
   String _kind = 'inversion';
+
+  /// Modo de captura del ahorro: monto fijo o porcentaje del disponible.
+  String _mode = 'monto';
+
   final TextEditingController _amount = TextEditingController();
+  final TextEditingController _percent = TextEditingController();
   final TextEditingController _concept = TextEditingController();
   bool _saving = false;
   String? _error;
 
+  bool get _isSavings => _kind == 'ahorro';
+  bool get _byPercent => _isSavings && _mode == 'porcentaje';
+
+  num get _percentValue =>
+      num.tryParse(_percent.text.replaceAll(',', '').trim()) ?? 0;
+
+  /// Monto que se enviará al backend: el capturado o, en ahorro por
+  /// porcentaje, el porcentaje aplicado al disponible (redondeado a centavos).
+  num get _resolvedAmount {
+    if (!_byPercent) {
+      return num.tryParse(_amount.text.replaceAll(',', '').trim()) ?? 0;
+    }
+    final value = widget.disponible * _percentValue / 100;
+    return (value * 100).roundToDouble() / 100;
+  }
+
   @override
   void dispose() {
     _amount.dispose();
+    _percent.dispose();
     _concept.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     if (_saving) return;
-    final amount = num.tryParse(_amount.text.replaceAll(',', '').trim());
-    if (amount == null || amount <= 0) {
-      setState(() => _error = 'Escribe un monto mayor a 0');
+    final amount = _resolvedAmount;
+    if (amount <= 0) {
+      setState(() => _error = _byPercent
+          ? 'El porcentaje debe dar un monto mayor a 0'
+          : 'Escribe un monto mayor a 0');
       return;
     }
     setState(() {
       _saving = true;
       _error = null;
     });
+    // El ahorro por porcentaje deja constancia del % aplicado en su
+    // concepto, para que el historial diga de dónde salió el monto.
+    final note = _concept.text.trim();
+    final description = _byPercent
+        ? [
+            if (note.isNotEmpty) note,
+            '${_clean(_percentValue)} % del disponible',
+          ].join(' · ')
+        : note;
     try {
       await HsApi.addPackageMovement(
         purchasedPackageId: (widget.package['id'] as num).toInt(),
         kind: _kind,
         amount: amount,
-        description: _concept.text.trim(),
+        description: description,
       );
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -4248,14 +4119,21 @@ class _MovementDialogState extends State<_MovementDialog> {
     }
   }
 
+  /// Número corto para textos: "10" en vez de "10.000000".
+  static String _clean(num v) =>
+      v == v.truncateToDouble() ? v.toStringAsFixed(0) : v.toString();
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final color = _moveColor(_kind);
+    final amount = _resolvedAmount;
     return FormDialog(
       icon: Icons.swap_vert,
       title: 'Movimiento del paquete',
       subtitle:
-          '${(widget.package['name'] ?? '').toString()} · inversión, gasto o abono externo',
+          '${(widget.package['name'] ?? '').toString()} · inversión, gasto, '
+          'ahorro o abono externo',
       saving: _saving,
       error: _error,
       saveLabel: 'Registrar',
@@ -4267,11 +4145,7 @@ class _MovementDialogState extends State<_MovementDialog> {
           label: 'Tipo de movimiento',
           child: Column(
             children: [
-              for (final kind in const [
-                'inversion',
-                'gasto',
-                'abono_externo',
-              ])
+              for (final kind in _kMovementKinds)
                 InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: _saving ? null : () => setState(() => _kind = kind),
@@ -4314,11 +4188,7 @@ class _MovementDialogState extends State<_MovementDialog> {
                                     fontSize: 13, fontWeight: FontWeight.w600),
                               ),
                               Text(
-                                switch (kind) {
-                                  'inversion' => 'Dinero que se mete al paquete',
-                                  'gasto' => 'Dinero que se gasta del paquete',
-                                  _ => 'Pago recibido fuera del paquete',
-                                },
+                                _moveHint(kind),
                                 style: TextStyle(
                                     fontSize: 11.5,
                                     color: scheme.onSurfaceVariant),
@@ -4334,18 +4204,121 @@ class _MovementDialogState extends State<_MovementDialog> {
           ),
         ),
         const SizedBox(height: 14),
-        FormSection(
-          label: 'Monto',
-          child: TextField(
-            controller: _amount,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Monto',
-              prefixIcon: Icon(Icons.attach_money, size: 20),
+        if (_isSavings) ...[
+          // Base del ahorro en porcentaje: el disponible del paquete.
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _kTeal.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _kTeal.withValues(alpha: .30)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.savings_rounded, size: 16, color: _kTeal),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Disponible del paquete (abonado - gastado)',
+                    style: TextStyle(
+                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                Text(
+                  hsMoney(widget.disponible, widget.currency),
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: _kTeal),
+                ),
+              ],
             ),
           ),
-        ),
+          const SizedBox(height: 12),
+          FormSection(
+            label: '¿Cómo se captura el ahorro?',
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              segments: const [
+                ButtonSegment(
+                  value: 'monto',
+                  icon: Icon(Icons.attach_money, size: 16),
+                  label: Text('Cantidad'),
+                ),
+                ButtonSegment(
+                  value: 'porcentaje',
+                  icon: Icon(Icons.percent, size: 16),
+                  label: Text('Porcentaje'),
+                ),
+              ],
+              selected: {_mode},
+              onSelectionChanged: _saving
+                  ? null
+                  : (s) => setState(() => _mode = s.first),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (_byPercent) ...[
+          FormSection(
+            label: 'Porcentaje del disponible',
+            child: TextField(
+              controller: _percent,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Porcentaje',
+                suffixText: '%',
+                prefixIcon: Icon(Icons.percent, size: 20),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.calculate_outlined, size: 16, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Se ahorrarán',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                Text(
+                  hsMoney(amount, widget.currency),
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w800, color: color),
+                ),
+              ],
+            ),
+          ),
+        ] else
+          FormSection(
+            label: 'Monto',
+            child: TextField(
+              controller: _amount,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Monto',
+                prefixIcon: Icon(Icons.attach_money, size: 20),
+              ),
+            ),
+          ),
         const SizedBox(height: 14),
         FormSection(
           label: 'Concepto',
@@ -4356,7 +4329,7 @@ class _MovementDialogState extends State<_MovementDialog> {
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Descripción',
-              hintText: 'Ej. Transporte, renta de equipo, pago del cliente…',
+              hintText: 'Ej. Transporte, renta de equipo, ahorro del mes…',
               alignLabelWithHint: true,
             ),
           ),

@@ -20,7 +20,6 @@ import 'package:flutter/services.dart'
 import '../../app_constants.dart';
 import '../../app_platform.dart';
 import '../../drive_api_service.dart';
-import '../../drive_base.dart';
 import '../../drive_downloader.dart';
 import '../../image_memory.dart';
 import '../../theme.dart';
@@ -249,6 +248,13 @@ class _DrivePageState extends State<DrivePage> {
   final _scrollController = ScrollController();
   // Copiar/pegar estilo explorador (Ctrl+C / Ctrl+V).
   List<String> _clipboardNames = const [];
+
+  // ---- Panel inferior de actividad ---------------------------------
+  // Avisos de operaciones (éxito en VERDE, error en ROJO) que viven en la
+  // ventanita inferior derecha junto a subidas y descargas. Se puede
+  // ocultar (minimizar) y se reabre solo cuando llega un aviso nuevo.
+  final List<_DriveNotice> _notices = [];
+  bool _panelOpen = true;
 
   // ---- Fotos recién subidas --------------------------------------------
   // Copia LOCAL (ruta de origen) por nombre: la cuadrícula la muestra al
@@ -768,15 +774,15 @@ class _DrivePageState extends State<DrivePage> {
 
   // ==================== Mensajes ====================
 
+  /// Aviso al PANEL inferior de actividad (verde = cumplió, rojo = error).
+  /// El panel se reabre solo si estaba oculto.
   void _snack(String message, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor:
-            error ? Theme.of(context).colorScheme.error : null,
-      ),
-    );
+    setState(() {
+      _notices.insert(0, _DriveNotice(message, error));
+      if (_notices.length > 40) _notices.removeLast();
+      _panelOpen = true;
+    });
   }
 
   void _showErrors(List<String> errors) {
@@ -1650,21 +1656,21 @@ class _DrivePageState extends State<DrivePage> {
             left: hPad,
             child: _BusyChip(label: drive.busyLabel),
           ),
-        // ===== Panel de transferencias estilo Drive (arriba a la derecha):
-        // subidas y descargas en segundo plano con su progreso, sin bloquear
-        // la pantalla ni con una ventana modal. =====
-        if (drive.uploadJobs.isNotEmpty || drive.downloadJobs.isNotEmpty)
+        // ===== Panel inferior de transferencias y avisos (ocultable) =====
+        // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
+        // una ventanita abajo a la derecha, con botón para minimizarla.
+        if (drive.uploadJobs.isNotEmpty ||
+            drive.downloadJobs.isNotEmpty ||
+            _notices.isNotEmpty)
           Positioned(
-            top: 6,
             right: hPad,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (drive.uploadJobs.isNotEmpty) _UploadsCard(drive: drive),
-                if (drive.uploadJobs.isNotEmpty && drive.downloadJobs.isNotEmpty)
-                  const SizedBox(height: 10),
-                if (drive.downloadJobs.isNotEmpty) _DownloadsCard(drive: drive),
-              ],
+            bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
+            child: _ActivityPanel(
+              open: _panelOpen,
+              drive: drive,
+              notices: _notices,
+              onToggle: () => setState(() => _panelOpen = !_panelOpen),
+              onClearNotices: () => setState(() => _notices.clear()),
             ),
           ),
       ],
@@ -3303,6 +3309,199 @@ class _BusyChip extends StatelessWidget {
 /// con miniatura, barra de progreso y % — sin bloquear la pantalla.
 /// Escucha al drive DIRECTAMENTE (AnimatedBuilder sobre el ChangeNotifier)
 /// para refrescar en tiempo real con cada bloque de bytes que avanza.
+/// Aviso del panel inferior de actividad: texto + si marcó error
+/// (rojo) o se cumplió (verde).
+class _DriveNotice {
+  _DriveNotice(this.text, this.error);
+  final String text;
+  final bool error;
+}
+
+/// Ventanita inferior derecha del Drive: transferencias (subidas y
+/// descargas) JUNTO CON los avisos de notificación (verde/rojo). Se puede
+/// ocultar (minimiza a una pastilla) y se reabre con un clic o solo al
+/// llegar un aviso nuevo.
+class _ActivityPanel extends StatelessWidget {
+  const _ActivityPanel({
+    required this.open,
+    required this.drive,
+    required this.notices,
+    required this.onToggle,
+    required this.onClearNotices,
+  });
+
+  final bool open;
+  final DriveBase drive;
+  final List<_DriveNotice> notices;
+  final VoidCallback onToggle;
+  final VoidCallback onClearNotices;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final uploads = drive.uploadJobs.length;
+    final downloads = drive.downloadJobs.length;
+
+    // ---- Oculta: pastilla compacta para volver a abrirla ----
+    if (!open) {
+      final parts = [
+        if (uploads > 0) '$uploads subida${uploads == 1 ? '' : 's'}',
+        if (downloads > 0) '$downloads descarga${downloads == 1 ? '' : 's'}',
+        if (notices.isNotEmpty)
+          '${notices.length} aviso${notices.length == 1 ? '' : 's'}',
+      ];
+      return Material(
+        key: const ValueKey('activity_pill'),
+        elevation: 10,
+        shadowColor: Colors.black.withValues(alpha: .25),
+        borderRadius: BorderRadius.circular(20),
+        color: scheme.surface,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onToggle,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.unfold_more_rounded,
+                    size: 15, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  parts.join(' · '),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final screenH = MediaQuery.sizeOf(context).height;
+    return Material(
+      key: const ValueKey('activity_panel'),
+      elevation: 12,
+      shadowColor: Colors.black.withValues(alpha: .30),
+      borderRadius: BorderRadius.circular(16),
+      color: scheme.surface,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 360, maxHeight: screenH * .5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ---- Encabezado: título + limpiar avisos + ocultar ----
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 6, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.notifications_outlined,
+                      size: 17, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Actividad',
+                      style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  if (notices.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Limpiar avisos',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onClearNotices,
+                      icon: const Icon(Icons.clear_all_rounded, size: 18),
+                    ),
+                  IconButton(
+                    tooltip: 'Ocultar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onToggle,
+                    icon: Icon(Icons.expand_more_rounded,
+                        size: 20, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Avisos PRIMERO: son lo más nuevo y el panel se abre
+                    // solito cuando llegan.
+                    if (notices.isNotEmpty) _noticesSection(scheme),
+                    if (notices.isNotEmpty &&
+                        (uploads > 0 || downloads > 0))
+                      const Divider(height: 16),
+                    if (uploads > 0)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+                        child: _UploadsCard(drive: drive),
+                      ),
+                    if (uploads > 0 && downloads > 0)
+                      const SizedBox(height: 10),
+                    if (downloads > 0)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+                        child: _DownloadsCard(drive: drive),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Lista de avisos: icono + texto, ROJO si falló, VERDE si se cumplió.
+  Widget _noticesSection(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < notices.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(
+                    notices[i].error
+                        ? Icons.error_outline
+                        : Icons.check_circle_outline,
+                    size: 15,
+                    color: notices[i].error ? scheme.error : Colors.green,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    notices[i].text,
+                    style: TextStyle(
+                      fontSize: 12.3,
+                      height: 1.35,
+                      color:
+                          notices[i].error ? scheme.error : scheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _UploadsCard extends StatelessWidget {
   const _UploadsCard({required this.drive});
 

@@ -350,6 +350,20 @@ class HsApi {
         'url': url,
       });
 
+  // ---------------- Cliente ----------------
+
+  /// MIS paquetes comprados → GET /api/my/packages.
+  /// Devuelve [{ id, name, subtitle, price, paid, currency, status:{name},
+  ///   package:{ tier:{name}, packageCategory:{name}, urlImage },
+  ///   services:[{ id, description, status:{name},
+  ///               service:{ name, icon, url } }] }]
+  static Future<List<Map<String, dynamic>>> myPackages() async {
+    final data = await get('/api/my/packages');
+    return ((data['purchasedPackages'] as List?) ?? const [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
   /// MIS permisos (para el menú): GET /api/admin/permission (antes
   /// "my-permissions"). Devuelve { isAdmin, modules: [{ key, name, actions }] }.
   static Future<({bool isAdmin, List<HsModulePerms> modules})>
@@ -453,8 +467,9 @@ class HsApi {
   // -------- Administración del paquete del cliente --------
 
   /// Todo lo que necesita el modal del paquete: servicios con su estado,
-  /// movimientos (abonos, inversiones, gastos, abonos externos), totales y si
-  /// el paquete se puede finalizar (con el motivo cuando no).
+  /// movimientos (abonos, inversiones, gastos, ahorros, abonos externos),
+  /// totales (incluye `disponible` = abonado - gastado) y si el paquete se
+  /// puede finalizar (con el motivo cuando no).
   ///
   /// Endpoint: GET /api/admin/package-progress
   static Future<Map<String, dynamic>> packageProgress(
@@ -489,7 +504,8 @@ class HsApi {
         'description': description,
       });
 
-  /// Registra un movimiento del paquete: `inversion`, `gasto` o `abono_externo`.
+  /// Registra un movimiento del paquete:
+  /// `inversion`, `gasto`, `ahorro` o `abono_externo`.
   static Future<void> addPackageMovement({
     required int purchasedPackageId,
     required String kind,
@@ -526,6 +542,36 @@ class HsApi {
       post('/api/admin/package-progress', {
         'action': 'reabrir-paquete',
         'purchasedPackageId': purchasedPackageId,
+      });
+
+  // ---------------- Finanzas (módulo "Finanzas") ----------------
+
+  /// Todo lo monetario del negocio, en una sola llamada:
+  /// `{ currency, totals, packages, months }`.
+  ///
+  /// - `totals`: ganancias (abonos cobrados), porCobrar, facturado,
+  ///   disponible, ahorro, inversiones, gastos y abonoExterno.
+  /// - `packages`: el dinero de CADA paquete activo, con su cliente.
+  /// - `months`: últimos 6 meses (ganancias vs. gastos/inversiones/ahorro).
+  ///
+  /// Endpoint: GET /api/admin/finance
+  static Future<Map<String, dynamic>> finance() async {
+    final data = await get('/api/admin/finance');
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  /// Destina un monto al AHORRO de un paquete comprado.
+  /// El porcentaje se calcula en la app sobre el `disponible` del paquete.
+  /// Endpoint: POST /api/admin/finance
+  static Future<void> addSavings({
+    required int purchasedPackageId,
+    required num amount,
+    String description = '',
+  }) =>
+      post('/api/admin/finance', {
+        'purchasedPackageId': purchasedPackageId,
+        'amount': amount,
+        'description': description,
       });
 
   // ---------------- Agendas ----------------
