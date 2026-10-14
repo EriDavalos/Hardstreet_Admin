@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paleta del widget "Próximos eventos".
+
+     IMPORTANTE: NO hay carpeta values-night. El widget NO sigue el modo del
+     sistema, sigue el modo de la APP (que se lo empuja por el canal
+     hardstreet/events_widget). Por eso el claro y el oscuro son colores con
+     NOMBRES DISTINTOS (…_dark) y el provider elige uno u otro en tiempo de
+     ejecución; así el tema del teléfono no pisa la elección del usuario.
+
+     Cada color es EXACTAMENTE el que usa AppTheme (lib/theme.dart) del lado
+     de la app: la tarjeta es cardColor, los textos onSurface/onSurfaceVariant,
+     el acento es el primary de la marca y las líneas son dividerColor.
+     La prueba test/event_widget_theme_test.dart compara estos valores con el
+     tema real de la app: si alguien cambia la paleta, el test lo avisa. -->
+<resources>
+
+    <!-- Tarjeta (cardColor del tema: blanca en claro, #1A2233 en oscuro) -->
+    <color name="event_widget_bg">#FFFFFF</color>
+    <color name="event_widget_bg_dark">#1A2233</color>
+    <!-- Borde: dividerColor (en oscuro, blanco al 8 % sobre la tarjeta) -->
+    <color name="event_widget_border">#E5EAF2</color>
+    <color name="event_widget_border_dark">#2C3443</color>
+
+    <!-- Acento de la marca (encabezado y rótulo de día): el MISMO primary del
+         tema, también en oscuro (la app no aclara su azul en modo oscuro). -->
+    <color name="event_widget_accent">#2F6BFF</color>
+    <color name="event_widget_accent_dark">#2F6BFF</color>
+
+    <!-- Textos (onSurface y onSurfaceVariant del tema) -->
+    <color name="event_widget_title">#1A1B21</color>
+    <color name="event_widget_title_dark">#E3E1E9</color>
+    <color name="event_widget_muted">#45464F</color>
+    <color name="event_widget_muted_dark">#C6C6D0</color>
+    <color name="event_widget_time">#2F6BFF</color>
+    <color name="event_widget_time_dark">#2F6BFF</color>
+
+    <!-- Líneas -->
+    <color name="event_widget_divider">#E5EAF2</color>
+    <color name="event_widget_divider_dark">#2C3443</color>
+
+    <!-- Pastilla con el número de eventos y botón "Agregar agenda":
+         la marca translúcida ya aplanada sobre la tarjeta (8 % en claro,
+         16 % en oscuro). -->
+    <color name="event_widget_badge">#EEF3FF</color>
+    <color name="event_widget_badge_dark">#1D2E54</color>
+    <color name="event_widget_add_bg">#EEF3FF</color>
+    <color name="event_widget_add_bg_dark">#1D2E54</color>
+</resources>

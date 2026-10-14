@@ -1,13 +1,17 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../app_platform.dart';
+import '../event_widget.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_toast.dart';
 
 /// Paleta estable por servicio: cada servicio conserva su color en toda la
 /// vista (calendario, panel lateral y modal de detalle).
@@ -129,6 +133,14 @@ class _AgendasPageState extends State<AgendasPage> {
   /// 1 = adelante, -1 = atrás: dirección de la animación de transición.
   int _slideDir = 1;
 
+  /// En MÓVIL la franja de "Próximos eventos" es un botón FIJO que se
+  /// expande/plega: aquí vive ese estado (en escritorio queda expandida).
+  bool _upcomingOpen = false;
+
+  /// Petición del widget nativo pendiente de abrir (se atiende cuando ya hay
+  /// agendas cargadas: antes no se sabe qué agenda es).
+  WidgetTap? _pendingTap;
+
   @override
   void initState() {
     super.initState();
@@ -136,7 +148,67 @@ class _AgendasPageState extends State<AgendasPage> {
     _anchor = now;
     _pickerMonth = DateTime(now.year, now.month);
     _selected = DateTime(now.year, now.month, now.day);
-    _reload();
+    // El widget nativo pide cosas: tocar un evento abre SU detalle y el botón
+    // "Agregar agenda" abre el alta.
+    UpcomingEventsWidget.requested.addListener(_onWidgetTap);
+    _reload().whenComplete(_flushTap);
+    // Arranque en frío: la petición pudo llegar ANTES de montar esta página.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _flushTap());
+  }
+
+  @override
+  void dispose() {
+    UpcomingEventsWidget.requested.removeListener(_onWidgetTap);
+    super.dispose();
+  }
+
+  /// Llegó (o ya estaba) una petición del widget: se guarda y se atiende.
+  ///
+  /// OJO: consumir la petición (dejarla en null) vuelve a notificar y este
+  /// método entra otra vez; la salida temprana de arriba evita pisarse.
+  void _onWidgetTap() {
+    final req = UpcomingEventsWidget.requested.value;
+    if (req == null) return;
+    _pendingTap = req;
+    _flushTap();
+  }
+
+  /// Atiende la petición pendiente (necesita las agendas ya cargadas).
+  void _flushTap() {
+    final req = _pendingTap;
+    if (req == null || _loading || !mounted) return;
+    _pendingTap = null;
+    // Ya se atendió: nadie más debe volver a abrirla.
+    if (identical(UpcomingEventsWidget.requested.value, req)) {
+      UpcomingEventsWidget.requested.value = null;
+    }
+    if (req.create) {
+      if (_canCreate) {
+        unawaited(_addEvent());
+      } else {
+        _snack('Tu rol no tiene permiso para agregar agendas');
+      }
+      return;
+    }
+    final id = req.agendaId;
+    // Sin id (p. ej. una fila de aviso) no hay detalle que abrir: ya se está
+    // en Agendas, que es lo que el usuario esperaba.
+    if (id <= 0) return;
+    final hits =
+        _all.where((a) => (a['id'] as num?)?.toInt() == id).toList();
+    if (hits.isEmpty) {
+      _snack('Esa agenda ya no está disponible');
+      return;
+    }
+    // Se navega el calendario hasta su día y se abre el DETALLE.
+    final day = _dateOf(hits.first) ?? DateTime.now();
+    setState(() {
+      _anchor = day;
+      _pickerMonth = DateTime(day.year, day.month);
+      _selected = DateTime(day.year, day.month, day.day);
+      _view = 0; // el mes del evento (donde se ve el día marcado)
+    });
+    _showDetail(day, hits);
   }
 
   Future<void> _reload() async {
@@ -151,6 +223,9 @@ class _AgendasPageState extends State<AgendasPage> {
         _all = agendas;
         _loading = false;
       });
+      // El widget nativo (inicio de Android / panel de Windows) se alimenta
+      // con las agendas MÁS frescas que tenemos aquí.
+      if (UpcomingEventsWidget.autoFeed) UpcomingEventsWidget.publish(agendas);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -164,6 +239,34 @@ class _AgendasPageState extends State<AgendasPage> {
         _loading = false;
       });
     }
+  }
+
+  /// Aviso neutro de la interfaz (el éxito/error lo avisa la capa de API
+  /// con el mensaje del backend).
+  void _snack(String msg) => HsToast.info(msg);
+
+  /// Acción del widget de "próximos eventos": en Android pide COLOCARLO en el
+  /// inicio; en Windows enciende/apaga el panel flotante del escritorio.
+  Future<void> _widgetAction() async {
+    if (isAndroidPlatform) {
+      final ok = await UpcomingEventsWidget.requestPin();
+      await UpcomingEventsWidget.publish(_all);
+      _snack(ok
+          ? 'Listo: coloca "Próximos eventos" donde quieras del inicio'
+          : 'Tu lanzador no lo coloca solo: búscalo en la lista de widgets');
+      return;
+    }
+    if (isWindowsPlatform) {
+      // Datos frescos ANTES de mostrar/ocultar el panel.
+      await UpcomingEventsWidget.publish(_all);
+      final show = !UpcomingEventsWidget.desktopVisible;
+      await UpcomingEventsWidget.setDesktopVisible(show);
+      _snack(show
+          ? 'Panel de eventos activado (esquina inferior derecha)'
+          : 'Panel de eventos oculto');
+      return;
+    }
+    _snack('Esta plataforma no tiene widget de eventos');
   }
 
   DateTime? _dateOf(Map<String, dynamic> a) => hsParseDate(a['eventDate']);
@@ -438,7 +541,7 @@ class _AgendasPageState extends State<AgendasPage> {
             // Franja DESTACADA de próximos eventos: siempre visible (escritorio
             // y móvil), encima del calendario.
             if (!_loading && _error == null && _all.isNotEmpty) ...[
-              _upcomingStrip(scheme),
+              _upcomingStrip(scheme, narrow: narrow),
               const SizedBox(height: 10),
             ],
             _toolbar(context, isWeek: isWeek, narrow: narrow),
@@ -635,10 +738,16 @@ class _AgendasPageState extends State<AgendasPage> {
   /// Franja DESTACADA de próximos eventos: arriba del calendario, siempre
   /// visible (escritorio y móvil), con la cuenta regresiva de cada uno.
   /// Al tocar una tarjeta se abre su detalle.
-  Widget _upcomingStrip(ColorScheme scheme) {
+  ///
+  /// En MÓVIL la franja se convierte en un botón FIJO con cabecera
+  /// plegable: al tocarla se expande la lista de eventos DENTRO del card
+  /// (en columna, con su propio scroll y altura acotada), para que las
+  /// tarjetas nunca se salgan del card ni aprieten el calendario.
+  Widget _upcomingStrip(ColorScheme scheme, {required bool narrow}) {
     final upcoming = _upcoming;
+    final open = !narrow || _upcomingOpen;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -654,65 +763,118 @@ class _AgendasPageState extends State<AgendasPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(Icons.upcoming_outlined, size: 16, color: scheme.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Próximos eventos',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
-                ),
-              ),
-              if (_upcomingCount > 0)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    '$_upcomingCount',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (upcoming.isEmpty)
-            Text(
-              'Sin eventos próximos por ahora.',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            )
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              clipBehavior: Clip.none,
+          InkWell(
+            onTap: narrow
+                ? () => setState(() => _upcomingOpen = !_upcomingOpen)
+                : null,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 children: [
-                  for (var i = 0; i < upcoming.length; i++)
-                    Padding(
-                      padding: EdgeInsets.only(
-                          right: i == upcoming.length - 1 ? 0 : 10),
-                      child: _UpcomingEventCard(
-                        agenda: upcoming[i],
-                        onTap: () {
-                          final d = _dateOf(upcoming[i]) ?? DateTime.now();
-                          _showDetail(d, [upcoming[i]]);
-                        },
+                  Icon(Icons.upcoming_outlined, size: 16, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Próximos eventos',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
+                    ),
+                  ),
+                  if (_upcomingCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(999),
                       ),
+                      child: Text(
+                        '$_upcomingCount',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  // Estos eventos también pueden vivir fuera de la app: widget
+                  // en el inicio de Android o panel flotante en Windows.
+                  if (UpcomingEventsWidget.supported)
+                    IconButton(
+                      tooltip: isAndroidPlatform
+                          ? 'Colocar el widget en el inicio'
+                          : 'Panel de eventos del escritorio',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _widgetAction,
+                      icon: const Icon(Icons.widgets_outlined, size: 18),
+                    ),
+                  // En móvil el header es el botón de expandir/plegar.
+                  if (narrow)
+                    AnimatedRotation(
+                      turns: open ? .5 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      child: Icon(Icons.expand_more, size: 22,
+                          color: scheme.onSurfaceVariant),
                     ),
                 ],
               ),
             ),
+          ),
+          if (!open) const SizedBox(height: 2),
+          if (open) ...[
+            const SizedBox(height: 8),
+            if (upcoming.isEmpty)
+              Text(
+                'Sin eventos próximos por ahora.',
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              )
+            else if (narrow)
+              // MÓVIL: los eventos en columna, DENTRO del card y con altura
+              // acotada (scroll propio) para que no desplacen el calendario.
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  primary: false,
+                  padding: EdgeInsets.zero,
+                  itemCount: upcoming.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, i) => _UpcomingEventCard(
+                    agenda: upcoming[i],
+                    full: true,
+                    onTap: () {
+                      final d = _dateOf(upcoming[i]) ?? DateTime.now();
+                      _showDetail(d, [upcoming[i]]);
+                    },
+                  ),
+                ),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < upcoming.length; i++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                            right: i == upcoming.length - 1 ? 0 : 10),
+                        child: _UpcomingEventCard(
+                          agenda: upcoming[i],
+                          onTap: () {
+                            final d = _dateOf(upcoming[i]) ?? DateTime.now();
+                            _showDetail(d, [upcoming[i]]);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -2078,10 +2240,18 @@ String _initials(String name) {
 /// Tarjeta DESTACADA de un próximo evento (franja superior de Agendas): día,
 /// cuenta regresiva, cliente, servicio/paquete y hora.
 class _UpcomingEventCard extends StatelessWidget {
-  const _UpcomingEventCard({required this.agenda, required this.onTap});
+  const _UpcomingEventCard({
+    required this.agenda,
+    required this.onTap,
+    this.full = false,
+  });
 
   final Map<String, dynamic> agenda;
   final VoidCallback onTap;
+
+  /// true = tarjeta a todo el ancho (lista vertical en móvil);
+  /// false = tarjeta fija de 238 px (tira horizontal de escritorio).
+  final bool full;
 
   @override
   Widget build(BuildContext context) {
@@ -2097,7 +2267,7 @@ class _UpcomingEventCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        width: 238,
+        width: full ? double.infinity : 238,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: scheme.surface,

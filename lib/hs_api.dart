@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
+import 'widgets/hs_toast.dart';
 
 /// Respuesta de GET /api/admin/meta.
 class HsMeta {
@@ -55,12 +56,29 @@ class HsMeta {
 
 /// Un módulo con sus acciones (respuesta de /api/admin/permission).
 /// `key` = modules.module (drive, users, rols...); `name` = modules.name.
-typedef HsModulePerms = ({String key, String name, Set<String> actions});
+///
+/// `order` y `categoryOrder` ordenan el menú (menor = arriba); `categoryName`
+/// es el encabezado del grupo (p. ej. "Operación") o null si el módulo va
+/// SUELTO (como Dashboard).
+typedef HsModulePerms = ({
+  String key,
+  String name,
+  Set<String> actions,
+  int? order,
+  String? categoryKey,
+  String? categoryName,
+  int? categoryOrder,
+});
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.details});
   final String message;
   final int? statusCode;
+
+  /// Detalle técnico que manda el backend (`details`): el motivo concreto del
+  /// error (qué permiso falta, qué campo está mal…). Se muestra como segunda
+  /// línea de la notificación roja.
+  final String? details;
 
   @override
   String toString() => message;
@@ -133,18 +151,32 @@ class HsApi {
         if (HsSession.isLogged) 'Authorization': 'Bearer ${HsSession.token}',
       };
 
+  /// Primer texto no vacío de la lista (`message`, luego `error`).
+  static String? _firstText(List<Object?> values) {
+    for (final v in values) {
+      final s = (v ?? '').toString().trim();
+      if (s.isNotEmpty) return s;
+    }
+    return null;
+  }
+
   static Future<dynamic> _run(
     Future<http.Response> Function() fn, {
     int timeout = 20,
     String path = '',
+    bool notify = false,
   }) async {
     late http.Response r;
     try {
       r = await fn().timeout(Duration(seconds: timeout));
     } on TimeoutException {
-      throw ApiException('El servidor tardó demasiado en responder');
+      const msg = 'El servidor tardó demasiado en responder';
+      if (notify) HsToast.error(msg);
+      throw ApiException(msg);
     } catch (e) {
-      throw ApiException('No hay conexión con el servidor ($base)');
+      final msg = 'No hay conexión con el servidor ($base)';
+      if (notify) HsToast.error(msg);
+      throw ApiException(msg);
     }
     dynamic body;
     try {
@@ -159,13 +191,22 @@ class HsApi {
         HsSession.clear();
         onUnauthorized?.call();
       }
-      final msg = (body is Map ? body['error'] : null)?.toString();
-      throw ApiException(
-        (msg == null || msg.isEmpty)
-            ? 'Error HTTP ${r.statusCode}'
-            : msg,
-        statusCode: r.statusCode,
-      );
+      final map = body is Map ? body : null;
+      // El backend manda { code, message, details }; `error` se acepta como
+      // respaldo para no romper con un backend viejo.
+      final msg = _firstText([map?['message'], map?['error']]) ??
+          'Error HTTP ${r.statusCode}';
+      final details = _firstText([map?['details']]);
+      if (notify) HsToast.error(msg, details: details);
+      throw ApiException(msg, statusCode: r.statusCode, details: details);
+    }
+    // ÉXITO: el backend describe la operación en `message` → aviso verde.
+    // Solo en las escrituras (crear/editar/eliminar), no en las lecturas.
+    if (notify && body is Map) {
+      final msg = _firstText([body['message']]);
+      if (msg != null) {
+        HsToast.success(msg, details: _firstText([body['details']]));
+      }
     }
     return body;
   }
@@ -173,24 +214,45 @@ class HsApi {
   static Future<dynamic> get(String path, {Map<String, String>? query}) =>
       _run(() => client.get(_u(path, query), headers: _headers()), path: path);
 
-  static Future<dynamic> post(String path, Map<String, dynamic> body) => _run(
+  /// Escritura. [notify] = true hace que el mensaje del backend salga en la
+  /// notificación lateral (verde al éxito, rojo al error).
+  static Future<dynamic> post(
+    String path,
+    Map<String, dynamic> body, {
+    bool notify = true,
+  }) =>
+      _run(
         () => client.post(_u(path), headers: _headers(), body: jsonEncode(body)),
         path: path,
+        notify: notify,
       );
 
-  static Future<dynamic> put(String path, Map<String, dynamic> body) => _run(
+  static Future<dynamic> put(
+    String path,
+    Map<String, dynamic> body, {
+    bool notify = true,
+  }) =>
+      _run(
         () => client.put(_u(path), headers: _headers(), body: jsonEncode(body)),
         path: path,
+        notify: notify,
       );
 
-  static Future<dynamic> delete(String path) =>
-      _run(() => client.delete(_u(path), headers: _headers()), path: path);
+  static Future<dynamic> delete(String path, {bool notify = true}) => _run(
+        () => client.delete(_u(path), headers: _headers()),
+        path: path,
+        notify: notify,
+      );
 
   // ---------------- Auth ----------------
 
   /// Login real contra /api/auth/login (la misma que usa la web).
   static Future<Map<String, dynamic>> login(String email, String password) async {
-    final data = await post('/api/auth/login', {'email': email, 'password': password});
+    // El login no es un "crear/editar/eliminar": su error se muestra en la
+    // propia pantalla, no como notificación lateral.
+    final data = await post('/api/auth/login',
+        {'email': email, 'password': password},
+        notify: false);
     HsSession.token = (data['token'] ?? '').toString();
     HsSession.user = (data['user'] as Map?)?.cast<String, dynamic>();
     if (!HsSession.isLogged) throw ApiException('El servidor no devolvió token');
@@ -199,7 +261,7 @@ class HsApi {
 
   static Future<void> logout() async {
     try {
-      await post('/api/auth/logout', {});
+      await post('/api/auth/logout', {}, notify: false);
     } catch (_) {
       // el logout del servidor es cortesía: el token se descarta igual
     }
@@ -263,9 +325,12 @@ class HsApi {
     final data = (await get('/api/admin/meta') as Map?) ?? const {};
     final meta = HsMeta.fromJson(data.cast<String, dynamic>());
     final catalog = meta.permissions;
+    // Compatibilidad: si un módulo llega SIN la clave `actions` (backend viejo
+    // que no filtra por módulo), hereda el catálogo completo. Si la clave SÍ
+    // existe pero viene vacía, se respeta: ese módulo no admite acciones.
     final modules = [
       for (final m in meta.modules)
-        if (((m['actions'] as List?) ?? const []).isEmpty && catalog.isNotEmpty)
+        if (!m.containsKey('actions') && catalog.isNotEmpty)
           {...m, 'actions': catalog}
         else
           m,
@@ -375,15 +440,55 @@ class HsApi {
       final key = (m['key'] ?? '').toString().toLowerCase().trim();
       final name = (m['name'] ?? '').toString().trim();
       if (key.isEmpty && name.isEmpty) continue;
+      int? asInt(Object? v) =>
+          v is int ? v : (v is num ? v.toInt() : int.tryParse('$v'));
+      String? asStr(Object? v) {
+        final s = (v ?? '').toString().trim();
+        return s.isEmpty ? null : s;
+      }
+
       modules.add((
         key: key,
         name: name,
         actions: ((m['actions'] as List?) ?? const [])
             .map((a) => a.toString().toLowerCase())
             .toSet(),
+        order: asInt(m['order']),
+        categoryKey: asStr(m['categoryKey']),
+        categoryName: asStr(m['categoryName']),
+        categoryOrder: asInt(m['categoryOrder']),
       ));
     }
     return (isAdmin: data['isAdmin'] == true, modules: modules);
+  }
+
+  /// Carpeta del Drive COMPARTIDA con el cliente del paquete (pestaña Drive
+  /// del administrador del paquete). `path` vacío deja de compartir.
+  static Future<void> setPackageDrivePath({
+    required int purchasedPackageId,
+    required String path,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'compartir-directorio',
+        'purchasedPackageId': purchasedPackageId,
+        'path': path,
+      });
+
+  /// Carpetas del Drive COMPARTIDAS con el usuario logueado.
+  ///
+  /// `isClient` = true cuando su drive debe limitarse a esas carpetas (los
+  /// paquetes comprados definen lo que ve). El Admin nunca se limita.
+  /// `paths` = [{ packageId, packageName, path }].
+  ///
+  /// Endpoint: GET /api/my/drive
+  static Future<({bool isClient, List<Map<String, dynamic>> paths})>
+      myDriveDirectories() async {
+    final data = (await get('/api/my/drive') as Map?) ?? const {};
+    final paths = ((data['paths'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    return (isClient: data['isClient'] == true, paths: paths);
   }
 
   // ---------------- Clientes ----------------
@@ -468,8 +573,8 @@ class HsApi {
 
   /// Todo lo que necesita el modal del paquete: servicios con su estado,
   /// movimientos (abonos, inversiones, gastos, ahorros, abonos externos),
-  /// totales (incluye `disponible` = abonado - gastado) y si el paquete se
-  /// puede finalizar (con el motivo cuando no).
+  /// totales (incluye `disponible` = abonado - gastado - ahorro +
+  /// abono externo) y si el paquete se puede finalizar (con el motivo si no).
   ///
   /// Endpoint: GET /api/admin/package-progress
   static Future<Map<String, dynamic>> packageProgress(
@@ -520,6 +625,26 @@ class HsApi {
         'description': description,
       });
 
+  /// Edita un movimiento o un abono del historial. Solo se permite mientras
+  /// el paquete NO esté finalizado (el backend lo vuelve a validar).
+  /// `source` = 'movement' (inversión/gasto/ahorro/abono externo) o
+  /// 'payment' (abono; en este caso `kind` se ignora).
+  static Future<void> editPackageMovement(
+    int id, {
+    String source = 'movement',
+    String? kind,
+    num? amount,
+    String? description,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'editar-movimiento',
+        'movementId': id,
+        'source': source,
+        'kind': ?kind,
+        'amount': ?amount,
+        'description': ?description,
+      });
+
   /// Quita un movimiento o un abono del historial.
   /// `source` = 'movement' (inversión/gasto/abono externo) o 'payment'.
   static Future<void> deletePackageMovement(int id,
@@ -547,12 +672,15 @@ class HsApi {
   // ---------------- Finanzas (módulo "Finanzas") ----------------
 
   /// Todo lo monetario del negocio, en una sola llamada:
-  /// `{ currency, totals, packages, months }`.
+  /// `{ currency, totals, packages, months, movements }`.
   ///
   /// - `totals`: ganancias (abonos cobrados), porCobrar, facturado,
-  ///   disponible, ahorro, inversiones, gastos y abonoExterno.
+  ///   disponible (abonado - gastado - ahorro + abono externo), ahorro,
+  ///   inversiones, gastos y abonoExterno.
   /// - `packages`: el dinero de CADA paquete activo, con su cliente.
   /// - `months`: últimos 6 meses (ganancias vs. gastos/inversiones/ahorro).
+  /// - `movements`: los movimientos INDIVIDUALES (con paquete y cliente) que
+  ///   la tabla de Finanzas usa para desglosar cada fila.
   ///
   /// Endpoint: GET /api/admin/finance
   static Future<Map<String, dynamic>> finance() async {
@@ -560,19 +688,40 @@ class HsApi {
     return (data as Map).cast<String, dynamic>();
   }
 
-  /// Destina un monto al AHORRO de un paquete comprado.
-  /// El porcentaje se calcula en la app sobre el `disponible` del paquete.
+  /// Registra un movimiento DESDE el módulo Finanzas:
+  /// `gasto`, `inversion`, `ahorro` o `abono_externo` (por defecto ahorro).
+  ///
+  /// SIN `purchasedPackageId` el movimiento es GENERAL (del negocio, sin
+  /// paquete): es lo que el módulo usa por defecto y no obliga a elegir
+  /// paquete. El porcentaje se calcula en la app sobre el `disponible`.
   /// Endpoint: POST /api/admin/finance
-  static Future<void> addSavings({
-    required int purchasedPackageId,
+  static Future<void> addFinanceMovement({
+    int? purchasedPackageId,
+    required String kind,
     required num amount,
     String description = '',
   }) =>
       post('/api/admin/finance', {
-        'purchasedPackageId': purchasedPackageId,
+        'purchasedPackageId': ?purchasedPackageId,
+        'kind': kind,
         'amount': amount,
         'description': description,
       });
+
+  /// Destina un monto al AHORRO. Sin paquete el ahorro es del NEGOCIO
+  /// (movimiento general); con paquete se aparta de ese paquete.
+  /// Atajo de [addFinanceMovement] con kind = 'ahorro'.
+  static Future<void> addSavings({
+    int? purchasedPackageId,
+    required num amount,
+    String description = '',
+  }) =>
+      addFinanceMovement(
+        purchasedPackageId: purchasedPackageId,
+        kind: 'ahorro',
+        amount: amount,
+        description: description,
+      );
 
   // ---------------- Agendas ----------------
 
@@ -627,5 +776,35 @@ class HsApi {
 
   /// Marca TODOS mis avisos como leídos.
   static Future<void> markAllRemindersRead() =>
-      put('/api/reminders', {'all': true});
+      put('/api/reminders', {'all': true}, notify: false);
+
+  // ---------------- Bitácora de actividad (logger) ----------------
+
+  /// Registro de quién creó, editó o eliminó cada cosa.
+  /// Cada entrada: `{ id, userId, userName, roleName, module, moduleName,
+  ///   action, entity, entityId, description, details, ip, created }`.
+  /// Endpoint: GET /api/admin/activity (permiso "Ver" sobre Actividad).
+  static Future<List<Map<String, dynamic>>> activity({
+    String? module,
+    String? action,
+    String? entity,
+    int? userId,
+    String? query,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final data = await get('/api/admin/activity', query: {
+      'module': ?module,
+      'action': ?action,
+      'entity': ?entity,
+      if (userId != null) 'userId': '$userId',
+      'q': ?query,
+      'limit': '$limit',
+      'offset': '$offset',
+    });
+    return ((data['entries'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
 }

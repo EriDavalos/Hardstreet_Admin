@@ -66,10 +66,20 @@ class FinanceKpiGrid extends StatelessWidget {
     super.key,
     required this.kpis,
     this.currency = 'MXN',
+    this.columns,
+    this.minForcedWidth = 400,
   });
 
   final List<FinanceKpi> kpis;
   final String currency;
+
+  /// Columnas EXACTAS deseadas (se respetan si el ancho lo permite). Sirve
+  /// para poner los cuadros en UNA fila en tableros donde el alto es crítico.
+  final int? columns;
+
+  /// Ancho mínimo para respetar [columns]; por debajo se usan las columnas
+  /// responsivas (2/3/4). Finanzas lo baja para caber en teléfonos angostos.
+  final double minForcedWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -77,15 +87,24 @@ class FinanceKpiGrid extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return LayoutBuilder(builder: (context, box) {
       final w = box.maxWidth;
-      final cols = w < 520
-          ? 2
-          : w < 900
-              ? 3
-              : 4;
+      final forced = columns;
+      final cols = (forced != null && w >= minForcedWidth)
+          ? math.min(forced, kpis.length)
+          : w < 520
+              ? 2
+              : w < 900
+                  ? 3
+                  : 4;
       // Ancho de cada cuadro: (total - separaciones) / columnas. El último de
       // cada fila queda alineado a la izquierda (no se estira de más).
       const gap = 10.0;
       final tileW = (w - gap * (cols - 1)) / cols;
+      // Cuadro ESTRECHO (teléfono, tablero): el icono a un lado solo deja ~30
+      // px de texto y todo queda recortado. En ese caso el contenido va en
+      // apilado (icono + etiqueta arriba, monto abajo) y sin la nota, que es
+      // la que más ancho pide. La nota vuelve cuando el cuadro es amplio.
+      final stacked = tileW < 210;
+      final withNote = !stacked && tileW >= 238;
       return Wrap(
         spacing: gap,
         runSpacing: gap,
@@ -94,73 +113,131 @@ class FinanceKpiGrid extends StatelessWidget {
             SizedBox(
               width: tileW,
               child: Container(
-                padding: const EdgeInsets.all(12),
+                padding: stacked
+                    ? const EdgeInsets.symmetric(horizontal: 8, vertical: 9)
+                    : const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: scheme.surface,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: k.tint.withValues(alpha: .28)),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: k.tint.withValues(alpha: .13),
-                        borderRadius: BorderRadius.circular(11),
-                      ),
-                      child: Icon(k.icon, size: 17, color: k.tint),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            k.label.toUpperCase(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              letterSpacing: .4,
-                              fontWeight: FontWeight.w800,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              hsMoney(k.amount, currency),
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                                color: k.tint,
-                              ),
-                            ),
-                          ),
-                          if (k.note != null && k.note!.isNotEmpty)
-                            Text(
-                              k.note!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                child: stacked
+                    ? _stacked(context, k)
+                    : _inline(context, k, withNote),
               ),
             ),
         ],
       );
     });
+  }
+
+  /// Cuadro APILADO: etiqueta con su icono en una línea y el monto debajo,
+  /// a todo el ancho del cuadro (nada queda cortado en pantallas angostas).
+  Widget _stacked(BuildContext context, FinanceKpi k) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Icon(k.icon, size: 13, color: k.tint),
+            const SizedBox(width: 5),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  k.label.toUpperCase(),
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    letterSpacing: .4,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            hsMoney(k.amount, currency),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: k.tint,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Cuadro en HORIZONTAL: icono a la izquierda, etiqueta/monto/nota a la
+  /// derecha (el de escritorio, donde hay ancho de sobra).
+  Widget _inline(BuildContext context, FinanceKpi k, bool withNote) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: k.tint.withValues(alpha: .13),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(k.icon, size: 17, color: k.tint),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                k.label.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  letterSpacing: .4,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  hsMoney(k.amount, currency),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: k.tint,
+                  ),
+                ),
+              ),
+              if (withNote && k.note != null && k.note!.isNotEmpty)
+                Text(
+                  k.note!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 

@@ -21,12 +21,24 @@ import '../../app_constants.dart';
 import '../../app_platform.dart';
 import '../../drive_api_service.dart';
 import '../../drive_downloader.dart';
+import '../../hs_access.dart';
 import '../../image_memory.dart';
 import '../../theme.dart';
 import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/drive_thumb.dart';
+import '../../widgets/hs_modal.dart';
+
+/// Permiso del módulo Archivos ("drive" en la BD) para el rol logueado.
+///
+/// El widget solo OCULTA lo que el rol no puede hacer: si no tiene `create` no
+/// hay "Nueva carpeta" ni "Subir imágenes"; sin `update` no hay renombrar ni
+/// mover; sin `delete` no hay eliminar; sin `download` no se puede sacar una
+/// imagen. En modo degradado (el backend no respondió) se muestra todo, igual
+/// que en el resto del panel, para no dejar la sección inservible.
+bool _driveCan(String action) =>
+    HsAccess.instance.degraded || HsAccess.instance.can('Archivos', action);
 
 // ============ Lecturas seguras del ScrollController compartido ============
 //
@@ -307,7 +319,9 @@ class _DrivePageState extends State<DrivePage> {
       });
       return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.delete && _selected.isNotEmpty) {
+    if (event.logicalKey == LogicalKeyboardKey.delete &&
+        _selected.isNotEmpty &&
+        _driveCan('delete')) {
       _deleteItems(_selected.toList());
       return true;
     }
@@ -321,7 +335,8 @@ class _DrivePageState extends State<DrivePage> {
     }
     if (event.logicalKey == LogicalKeyboardKey.keyV &&
         HardwareKeyboard.instance.isControlPressed &&
-        _clipboardNames.isNotEmpty) {
+        _clipboardNames.isNotEmpty &&
+        _driveCan('create')) {
       _pasteClipboard();
       return true;
     }
@@ -330,6 +345,10 @@ class _DrivePageState extends State<DrivePage> {
 
   /// Ctrl+V: pega lo copiado en la carpeta actual.
   Future<void> _pasteClipboard() async {
+    if (!_driveCan('create')) {
+      _snack('Tu rol no puede agregar archivos al Drive', error: true);
+      return;
+    }
     final names = List.of(_clipboardNames);
     final result = await widget.drive.copyItems(names, widget.drive.path);
     if (result.copied > 0) {
@@ -409,6 +428,12 @@ class _DrivePageState extends State<DrivePage> {
 
   /// Descarga la lista dada: 1 archivo suelto; varios (o carpetas) en ZIP.
   Future<void> _downloadItems(List<DriveItem> items) => _guarded(() async {
+        // Candado de respaldo: cualquier camino que se me escape en la UI
+        // (visor, menús, panel de descargas) queda cortado aquí.
+        if (!_driveCan('download')) {
+          _snack('Tu rol no puede descargar archivos del Drive', error: true);
+          return;
+        }
         await downloadDriveSelection(
           context,
           drive: widget.drive,
@@ -613,6 +638,10 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> _handleExternalDrop(DropDoneDetails details) async {
     _lastClickItem = null;
     setState(() => _externalDrag = false);
+    if (!_driveCan('create')) {
+      _snack('Tu rol no puede subir archivos al Drive', error: true);
+      return;
+    }
     final paths = details.files
         .where((f) => kImageExtensions.contains(
             f.name.contains('.')
@@ -867,12 +896,14 @@ class _DrivePageState extends State<DrivePage> {
     var current = List.of(drive.path);
     var confirmed = false;
 
-    await showDialog<void>(
+    await showHsModal<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final folders = drive.listFolders(current);
           final atRoot = current.isEmpty;
+          // En móvil el selector usa todo el alto disponible.
+          final phone = hsIsPhone(ctx);
           // Una carpeta no puede soltarse dentro de sí misma: si el destino
           // actual es una de las carpetas seleccionadas, bloquear confirmar.
           final isInvalid = _selected.contains(current.lastOrNull);
@@ -880,8 +911,8 @@ class _DrivePageState extends State<DrivePage> {
           return AlertDialog(
             title: Text(move ? 'Mover a...' : 'Copiar a...'),
             content: SizedBox(
-              width: 380,
-              height: 320,
+              width: phone ? double.infinity : 380,
+              height: phone ? double.infinity : 320,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1020,6 +1051,10 @@ class _DrivePageState extends State<DrivePage> {
         drive: widget.drive,
         images: images,
         initialIndex: index < 0 ? 0 : index,
+        // Descargar SIN salir del visor.
+        // Sin permiso de descarga el visor ni siquiera muestra el botón.
+        onDownload:
+            _driveCan('download') ? (item) => _downloadItems([item]) : null,
       ),
     );
   }
@@ -1059,21 +1094,29 @@ class _DrivePageState extends State<DrivePage> {
         overlay?.size.height ?? position.dy,
       ),
       constraints: const BoxConstraints(minWidth: 210, maxWidth: 340),
+      // Solo lo que el rol puede hacer: el menú no ofrece acciones que el
+      // backend rechazaría.
       items: many
           ? [
-              entry('download-many', Icons.download_rounded,
-                  'Descargar ${_selected.length} seleccionadas'),
-              entry('delete-many', Icons.delete_outline,
-                  'Eliminar ${_selected.length} seleccionadas'),
+              if (_driveCan('download'))
+                entry('download-many', Icons.download_rounded,
+                    'Descargar ${_selected.length} seleccionadas'),
+              if (_driveCan('delete'))
+                entry('delete-many', Icons.delete_outline,
+                    'Eliminar ${_selected.length} seleccionadas'),
             ]
           : [
               entry('open', Icons.open_in_new_rounded, 'Abrir'),
-              entry('download', Icons.download_rounded, 'Descargar'),
-              entry('rename', Icons.drive_file_rename_outline, 'Renombrar'),
-              entry('delete', Icons.delete_outline, 'Eliminar'),
+              if (_driveCan('download'))
+                entry('download', Icons.download_rounded, 'Descargar'),
+              if (_driveCan('update'))
+                entry('rename', Icons.drive_file_rename_outline, 'Renombrar'),
+              if (_driveCan('delete'))
+                entry('delete', Icons.delete_outline, 'Eliminar'),
             ],
     );
     if (action == null || !mounted) return;
+    if (!_mountedCanAct(action)) return;
     switch (action) {
       case 'open':
         // Abrir de verdad: _onCardTap ignora el ratón (solo selecciona), así
@@ -1092,6 +1135,21 @@ class _DrivePageState extends State<DrivePage> {
     }
   }
 
+  /// ¿El rol todavía puede ejecutar [action]? (doble comprobación al vuelo:
+  /// los permisos pueden recargarse mientras el menú está abierto).
+  bool _mountedCanAct(String action) {
+    final need = switch (action) {
+      'download' || 'download-many' => 'download',
+      'rename' => 'update',
+      'delete' || 'delete-many' => 'delete',
+      _ => null,
+    };
+    if (need == null) return true; // Abrir solo necesita poder ver.
+    if (_driveCan(need)) return true;
+    _snack('Tu rol no tiene permitido eso en el Drive', error: true);
+    return false;
+  }
+
   /// Soltó algo sobre un elemento (carpeta o imagen).
   void _onItemDrop(DriveItem target, DragTargetDetails<Object> details) {
     final payload = details.data;
@@ -1103,6 +1161,11 @@ class _DrivePageState extends State<DrivePage> {
     }
     if (!target.isFolder) {
       _snack('Solo puedes soltar sobre una carpeta', error: true);
+      return;
+    }
+    // Mover es editar: sin permiso, el arrastre no hace nada.
+    if (!_driveCan('update')) {
+      _snack('Tu rol no puede mover archivos del Drive', error: true);
       return;
     }
     // Excluir la propia carpeta destino de la selección.
@@ -1129,7 +1192,7 @@ class _DrivePageState extends State<DrivePage> {
     String? hint,
   }) {
     final controller = TextEditingController(text: initial);
-    return showDialog<String>(
+    return showHsModal<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
@@ -1332,29 +1395,36 @@ class _DrivePageState extends State<DrivePage> {
                                   ],
                                 ),
                               ),
+                              // Crear (carpeta/subir) solo con permiso: las
+                              // acciones que el rol no tiene NO se dibujan.
                               if (!isCompact) ...[
-                                const SizedBox(width: 16),
-                                OutlinedButton.icon(
-                                  onPressed: _newFolder,
-                                  icon: const Icon(
-                                    Icons.create_new_folder_outlined,
-                                    size: 18,
+                                if (_driveCan('create')) ...[
+                                  const SizedBox(width: 16),
+                                  OutlinedButton.icon(
+                                    onPressed: _newFolder,
+                                    icon: const Icon(
+                                      Icons.create_new_folder_outlined,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Nueva carpeta'),
                                   ),
-                                  label: const Text('Nueva carpeta'),
-                                ),
-                                const SizedBox(width: 10),
-                                FilledButton.icon(
-                                  onPressed: _upload,
-                                  icon: const Icon(Icons.upload_file, size: 18),
-                                  label: const Text('Subir imágenes'),
-                                ),
+                                  const SizedBox(width: 10),
+                                  FilledButton.icon(
+                                    onPressed: _upload,
+                                    icon:
+                                        const Icon(Icons.upload_file, size: 18),
+                                    label: const Text('Subir imágenes'),
+                                  ),
+                                ],
                               ] else ...[
-                                _RoundAction(
-                                  icon: Icons.create_new_folder_outlined,
-                                  tooltip: 'Nueva carpeta',
-                                  onTap: _newFolder,
-                                ),
-                                const SizedBox(width: 8),
+                                if (_driveCan('create')) ...[
+                                  _RoundAction(
+                                    icon: Icons.create_new_folder_outlined,
+                                    tooltip: 'Nueva carpeta',
+                                    onTap: _newFolder,
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
                                 _RoundAction(
                                   icon: Icons.refresh,
                                   tooltip: 'Actualizar',
@@ -1478,14 +1548,32 @@ class _DrivePageState extends State<DrivePage> {
                         )
                       : drive.visibleItems.isEmpty
                           ? EmptyState(
-                              icon: Icons.folder_open_rounded,
+                              icon: drive.scoped && drive.path.isEmpty
+                                  ? Icons.folder_off_outlined
+                                  : Icons.folder_open_rounded,
                               title: drive.search != null
                                   ? 'Sin resultados'
-                                  : 'Esta carpeta está vacía',
-                              message:
-                                  'Sube imágenes o crea una carpeta para organizar tu contenido.',
-                              actionLabel: 'Subir imágenes',
-                              onAction: _upload,
+                                  : drive.scoped && drive.path.isEmpty
+                                      ? 'Aún no se te comparte ninguna carpeta'
+                                      : 'Esta carpeta está vacía',
+                              message: drive.search != null
+                                  ? 'No hay coincidencias en esta carpeta.'
+                                  : drive.scoped && drive.path.isEmpty
+                                      ? 'Tu fotógrafo todavía no compartió carpetas '
+                                          'contigo. En cuanto las asigne a tus '
+                                          'paquetes, aparecerán aquí.'
+                                      : 'Sube imágenes o crea una carpeta para organizar tu contenido.',
+                              // Sin permiso de crear, la tarjeta vacía invita
+                              // pero no ofrece el botón.
+                              actionLabel: drive.scoped &&
+                                      drive.path.isEmpty ||
+                                      !_driveCan('create')
+                                  ? null
+                                  : 'Subir imágenes',
+                              onAction: drive.scoped && drive.path.isEmpty ||
+                                      !_driveCan('create')
+                                  ? null
+                                  : _upload,
                             )
                           : AnimatedSwitcher(
                               // Transición suave al cambiar de carpeta (o de
@@ -1849,26 +1937,31 @@ class _SelectionBar extends StatelessWidget {
                       child: const Text('Todos'),
                     ),
                     const SizedBox(width: 2),
-                    _BarAction(
-                      tooltip: 'Mover a...',
-                      icon: Icons.drive_file_move_outline,
-                      onPressed: onMove,
-                    ),
-                    _BarAction(
-                      tooltip: 'Copiar a...',
-                      icon: Icons.copy_all_outlined,
-                      onPressed: onCopy,
-                    ),
-                    _BarAction(
-                      tooltip: 'Descargar',
-                      icon: Icons.download_rounded,
-                      onPressed: onDownload,
-                    ),
-                    _BarAction(
-                      tooltip: 'Eliminar',
-                      icon: Icons.delete_outline,
-                      onPressed: onDelete,
-                    ),
+                    // Cada acción exige su permiso del módulo Archivos.
+                    if (_driveCan('update'))
+                      _BarAction(
+                        tooltip: 'Mover a...',
+                        icon: Icons.drive_file_move_outline,
+                        onPressed: onMove,
+                      ),
+                    if (_driveCan('create'))
+                      _BarAction(
+                        tooltip: 'Copiar a...',
+                        icon: Icons.copy_all_outlined,
+                        onPressed: onCopy,
+                      ),
+                    if (_driveCan('download'))
+                      _BarAction(
+                        tooltip: 'Descargar',
+                        icon: Icons.download_rounded,
+                        onPressed: onDownload,
+                      ),
+                    if (_driveCan('delete'))
+                      _BarAction(
+                        tooltip: 'Eliminar',
+                        icon: Icons.delete_outline,
+                        onPressed: onDelete,
+                      ),
                   ],
                 ),
               ),
@@ -2615,6 +2708,17 @@ class _ItemMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Solo las acciones que el rol tiene; si no queda ninguna, el botón de
+    // opciones ni siquiera se dibuja.
+    final items = <PopupMenuEntry<String>>[
+      if (_driveCan('download'))
+        const PopupMenuItem(value: 'download', child: Text('Descargar')),
+      if (_driveCan('update'))
+        const PopupMenuItem(value: 'rename', child: Text('Renombrar')),
+      if (_driveCan('delete'))
+        const PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
     return PopupMenuButton<String>(
       tooltip: 'Opciones',
       padding: EdgeInsets.zero,
@@ -2629,11 +2733,7 @@ class _ItemMenu extends StatelessWidget {
         if (v == 'rename') onRename();
         if (v == 'delete') onDelete();
       },
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'download', child: Text('Descargar')),
-        PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-        PopupMenuItem(value: 'delete', child: Text('Eliminar')),
-      ],
+      itemBuilder: (_) => items,
     );
   }
 }
@@ -2651,6 +2751,16 @@ class _OverlayMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Igual que arriba: sin permisos no hay menú que mostrar.
+    final items = <PopupMenuEntry<String>>[
+      if (_driveCan('download'))
+        const PopupMenuItem(value: 'download', child: Text('Descargar')),
+      if (_driveCan('update'))
+        const PopupMenuItem(value: 'rename', child: Text('Renombrar')),
+      if (_driveCan('delete'))
+        const PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
     return Material(
       color: Colors.black54,
       borderRadius: BorderRadius.circular(8),
@@ -2664,11 +2774,7 @@ class _OverlayMenu extends StatelessWidget {
           if (v == 'rename') onRename();
           if (v == 'delete') onDelete();
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'download', child: Text('Descargar')),
-          PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-          PopupMenuItem(value: 'delete', child: Text('Eliminar')),
-        ],
+        itemBuilder: (_) => items,
       ),
     );
   }
@@ -3038,11 +3144,16 @@ class _ImageViewerDialog extends StatefulWidget {
     required this.drive,
     required this.images,
     required this.initialIndex,
+    this.onDownload,
   });
 
   final DriveBase drive;
   final List<DriveItem> images;
   final int initialIndex;
+
+  /// Descarga la imagen que se está viendo (opcional: sin permiso no se
+  /// muestra el botón).
+  final Future<void> Function(DriveItem item)? onDownload;
 
   @override
   State<_ImageViewerDialog> createState() => _ImageViewerDialogState();
@@ -3051,16 +3162,29 @@ class _ImageViewerDialog extends StatefulWidget {
 class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   late int _index = widget.initialIndex;
 
+  /// Zoom del visor (los botones del borde derecho y el gesto lo comparten).
+  final TransformationController _zoom = TransformationController();
+
   void _move(int delta) {
     final next = (_index + delta) % widget.images.length;
     setState(() => _index = next < 0 ? next + widget.images.length : next);
+    _zoom.value = Matrix4.identity();
     _preloadNeighbors();
     _loadFull();
+  }
+
+  /// Acerca o aleja la imagen (mantiene el centro).
+  void _zoomBy(double factor) {
+    _zoom.value = _zoom.value.clone()
+      ..scaleByDouble(factor, factor, factor, 1);
   }
 
   @override
   void initState() {
     super.initState();
+    // Flechas/Esc SIN depender del foco: igual que los atajos de la propia
+    // página del Drive (así funciona aunque el foco esté en un botón).
+    HardwareKeyboard.instance.addHandler(_onKey);
     // Precarga las fotos vecinas para navegar sin esperas.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _preloadNeighbors();
@@ -3068,8 +3192,28 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     });
   }
 
+  /// Atajos del visor: ← → cambian de foto y Esc lo cierra.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.of(context).maybePop();
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _move(1);
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _move(-1);
+      return true;
+    }
+    return false;
+  }
+
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _zoom.dispose();
     // Al cerrar el visor: fuera el original de RAM (queda en caché de disco).
     final isRemote = widget.drive is DriveApiService;
     if (isRemote) {
@@ -3140,17 +3284,18 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     final isRemote = widget.drive is DriveApiService;
     // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original.
     final src = widget.drive.fullSource(item, previewWidth: 1600);
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(16),
+    final total = widget.images.length;
+    // Pantalla COMPLETA y sin bordes curvos: el visor es una superficie
+    // limpia sobre negro, con la info y las acciones encima de la foto.
+    return Dialog.fullscreen(
+      backgroundColor: Colors.black,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: InteractiveViewer(
-              maxScale: 5,
-              child: Center(
+              InteractiveViewer(
+                transformationController: _zoom,
+                maxScale: 6,
+                child: Center(
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -3161,6 +3306,8 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                       size: double.infinity,
                       big: true,
                       contain: true,
+                      // A pantalla completa NO se redondean las esquinas.
+                      rounded: false,
                     ),
                     // 2) Original por chunks: aparece encima (nítido) al
                     //    completar, con transición suave.
@@ -3179,7 +3326,6 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                 ),
               ),
             ),
-          ),
           // Progreso discreto de la descarga del original.
           if (_fullLoading)
             Positioned(
@@ -3196,71 +3342,151 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                 ),
               ),
             ),
+          // Barra superior: nombre, peso y posición + las acciones
+          // (descargar / cerrar) DENTRO del propio visor.
           Positioned(
-            top: 8,
-            right: 8,
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    item.name,
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 12),
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 8, 10, 12),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.black87, Colors.transparent],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Material(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            [
+                              if (_metaLabel(item).isNotEmpty)
+                                _metaLabel(item),
+                              if (total > 1) '${_index + 1} de $total',
+                            ].join(' · '),
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 11.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (widget.onDownload != null)
+                      _ViewerAction(
+                        icon: Icons.download_rounded,
+                        tooltip: 'Descargar',
+                        onTap: () => widget.onDownload!(item),
+                      ),
+                    const SizedBox(width: 8),
+                    _ViewerAction(
+                      icon: Icons.close_rounded,
+                      tooltip: 'Cerrar',
+                      onTap: () => Navigator.of(context).maybePop(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Zoom: además del gesto/rueda, botones explícitos.
+          Positioned(
+            right: 10,
+            bottom: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _ViewerAction(
+                  icon: Icons.add,
+                  tooltip: 'Acercar',
+                  onTap: () => _zoomBy(1.4),
+                ),
+                const SizedBox(height: 8),
+                _ViewerAction(
+                  icon: Icons.remove,
+                  tooltip: 'Alejar',
+                  onTap: () => _zoomBy(1 / 1.4),
+                ),
+                const SizedBox(height: 8),
+                _ViewerAction(
+                  icon: Icons.fit_screen_outlined,
+                  tooltip: 'Ajustar a la pantalla',
+                  onTap: () => _zoom.value = Matrix4.identity(),
                 ),
               ],
             ),
           ),
-          if (widget.images.length > 1) ...[
-            Positioned(
-              left: 8,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: Material(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(24),
-                  child: IconButton(
-                    icon:
-                        const Icon(Icons.chevron_left, color: Colors.white),
-                    onPressed: () => _move(-1),
+              if (widget.images.length > 1) ...[
+                Positioned(
+                  left: 10,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: _ViewerAction(
+                      icon: Icons.chevron_left,
+                      tooltip: 'Anterior',
+                      onTap: () => _move(-1),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            Positioned(
-              right: 8,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: Material(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(24),
-                  child: IconButton(
-                    icon:
-                        const Icon(Icons.chevron_right, color: Colors.white),
-                    onPressed: () => _move(1),
+                Positioned(
+                  right: 10,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: _ViewerAction(
+                      icon: Icons.chevron_right,
+                      tooltip: 'Siguiente',
+                      onTap: () => _move(1),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ],
         ],
+            ],
+          ),
+        );
+  }
+}
+
+/// Botón redondo semitransparente del visor de imágenes.
+class _ViewerAction extends StatelessWidget {
+  const _ViewerAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: .12),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: IconButton(
+        tooltip: tooltip,
+        iconSize: 20,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, color: Colors.white),
+        onPressed: onTap,
       ),
     );
   }

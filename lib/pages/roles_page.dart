@@ -72,12 +72,6 @@ class _RolesPageState extends State<RolesPage> {
     }
   }
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openForm([Map<String, dynamic>? role]) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -122,13 +116,10 @@ class _RolesPageState extends State<RolesPage> {
     if (!ok) return;
     try {
       await HsApi.deleteRole((role['id'] as num).toInt());
-      _snack('Rol eliminado');
-      _reload();
-    } on ApiException catch (e) {
-      _snack(e.message);
     } catch (_) {
-      _snack('No se pudo eliminar el rol');
+      // El backend ya avisó con la notificación roja.
     }
+    _reload();
   }
 
   @override
@@ -419,12 +410,6 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
   final Set<String> _selected = {};
   bool _saving = false;
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   @override
   void initState() {
     super.initState();
@@ -506,16 +491,9 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
       });
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } on ApiException catch (e) {
-      if (mounted) {
-        setState(() => _saving = false);
-        _snack(e.message);
-      }
     } catch (_) {
-      if (mounted) {
-        setState(() => _saving = false);
-        _snack('No se pudo guardar los permisos');
-      }
+      // El backend ya avisó con la notificación roja.
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -567,14 +545,41 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
               ],
             ),
           )
-        else ...[
-          for (var i = 0; i < widget.modules.length; i++) ...[
-            if (i > 0) const SizedBox(height: 10),
-            _ModuleCard(module: widget.modules[i], state: this),
-          ],
-        ],
+        else ..._buildModuleList(scheme),
       ],
     );
+  }
+
+  /// Módulos en orden, con el encabezado de su CATEGORÍA (Operación,
+  /// Administración…) cuando cambia. Los módulos sueltos (Dashboard) salen
+  /// sin encabezado. El backend ya entrega la lista ordenada y con SOLO las
+  /// acciones aplicables a cada módulo.
+  List<Widget> _buildModuleList(ColorScheme scheme) {
+    final out = <Widget>[];
+    String? prevCategory;
+    for (final module in widget.modules) {
+      final category =
+          (module['categoryName'] ?? '').toString().trim();
+      if (category.isNotEmpty && category != prevCategory) {
+        out.add(Padding(
+          padding: EdgeInsets.fromLTRB(4, out.isEmpty ? 0 : 16, 4, 6),
+          child: Text(
+            category.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.1,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ));
+        prevCategory = category;
+      } else if (out.isNotEmpty) {
+        out.add(const SizedBox(height: 10));
+      }
+      out.add(_ModuleCard(module: module, state: this));
+    }
+    return out;
   }
 }
 

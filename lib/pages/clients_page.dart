@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
+import '../drive_base.dart';
+import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
@@ -9,6 +11,19 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_modal.dart';
+import '../widgets/hs_toast.dart';
+
+/// Estilo COMPACTO de las acciones de un servicio (dentro del administrador
+/// de paquetes): en el celular los tres botones tienen que caber en UNA fila
+/// horizontal, así que el aire se reduce al mínimo (solo su padding interno).
+final ButtonStyle _kServiceAction = TextButton.styleFrom(
+  visualDensity: VisualDensity.compact,
+  padding: const EdgeInsets.symmetric(horizontal: 8),
+  minimumSize: const Size(0, 32),
+  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+);
 
 /// Módulo CLIENTES: usuarios con rol fijo "Client" (no se asigna rol).
 /// CRUD + modal especial que muestra y administra los paquetes del cliente.
@@ -58,12 +73,6 @@ class _ClientsPageState extends State<ClientsPage> {
     }
   }
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openForm([Map<String, dynamic>? client]) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -83,13 +92,10 @@ class _ClientsPageState extends State<ClientsPage> {
     if (!ok) return;
     try {
       await HsApi.deleteClient((client['id'] as num).toInt());
-      _snack('Cliente eliminado');
-      _reload();
-    } on ApiException catch (e) {
-      _snack(e.message);
     } catch (_) {
-      _snack('No se pudo eliminar el cliente');
+      // El backend ya avisó con la notificación roja.
     }
+    _reload();
   }
 
   Future<void> _openPackages(Map<String, dynamic> client) async {
@@ -1221,7 +1227,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   bool _loadingProgress = false;
 
   bool _busy = false;
-  int _tab = 0;
+  /// Pestaña activa del detalle. `null` = aún sin elegir: en ventana
+  /// angosta se abre con la ficha (presentación) y en escritorio con
+  /// Servicios. En escritorio no existe la pestaña 4 (la ficha vive en la
+  /// columna izquierda), así que se usa 0.
+  int? _tab;
+
+  int get _activeTab {
+    final narrow = MediaQuery.sizeOf(context).width < 1020;
+    final t = _tab ?? (narrow ? 4 : 0);
+    return !narrow && t == 4 ? 0 : t;
+  }
 
   /// Etapa del modal: 0 = tarjetas de los paquetes del cliente ("targets"),
   /// 1 = detalle de administración. Al tocar una tarjeta se entra con
@@ -1410,26 +1426,19 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   // ==================== Acciones ====================
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
+  void _snack(String msg) => HsToast.info(msg);
 
-  /// Ejecuta una operación con bloqueo, aviso de error y refresco del modal.
-  Future<bool> _run(Future<void> Function() op, {String? ok}) async {
+  /// Ejecuta una operación con bloqueo y refresco del modal. El aviso verde
+  /// (o rojo) lo pone la capa de API con el mensaje del backend.
+  Future<bool> _run(Future<void> Function() op) async {
     if (_busy) return false;
     setState(() => _busy = true);
     var okDone = false;
     try {
       await op();
       okDone = true;
-      if (ok != null) _snack(ok);
-    } on ApiException catch (e) {
-      _snack(e.message);
     } catch (_) {
-      _snack('No se pudo completar la operación');
+      // El backend ya avisó con la notificación correspondiente.
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1464,7 +1473,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       _snack('No hay paquetes en el catálogo');
       return;
     }
-    final picked = await showDialog<Map<String, dynamic>>(
+    final picked = await showHsModal<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => SimpleDialog(
         title: const Text('Asignar paquete del catálogo'),
@@ -1501,8 +1510,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
     if (picked == null) return;
     final id = (picked['id'] as num).toInt();
-    await _run(() => HsApi.addPackageFromCatalog(_userId, id),
-        ok: 'Paquete asignado');
+    await _run(() => HsApi.addPackageFromCatalog(_userId, id));
     // El paquete recién asignado pasa a ser el vigente: se abre solo, directo
     // al detalle (como si se hubiera tocado su tarjeta).
     final vigente = _vigenteId;
@@ -1526,8 +1534,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (ok != true) return;
     final link = (pkg['usersPackageId'] as num?)?.toInt();
     if (link == null) return;
-    await _run(() => HsApi.removeClientPackage(_userId, link),
-        ok: 'Paquete quitado');
+    await _run(() => HsApi.removeClientPackage(_userId, link));
   }
 
   Future<void> _abonar(Map<String, dynamic> pkg) async {
@@ -1555,7 +1562,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     await _run(
       () => HsApi.completePackageService((svc['id'] as num).toInt(),
           description: note),
-      ok: 'Servicio terminado',
     );
   }
 
@@ -1567,8 +1573,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     )) {
       return;
     }
-    await _run(() => HsApi.reopenPackageService((svc['id'] as num).toInt()),
-        ok: 'Servicio reabierto');
+    await _run(() => HsApi.reopenPackageService((svc['id'] as num).toInt()));
   }
 
   /// Cambia la descripción/avance de un servicio sin terminarlo.
@@ -1587,7 +1592,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     await _run(
       () => HsApi.updatePackageService((svc['id'] as num).toInt(),
           description: note),
-      ok: 'Servicio actualizado',
     );
   }
 
@@ -1619,7 +1623,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (url == null) return;
     await _run(
       () => HsApi.updateServiceUrl(serviceId, url.trim()),
-      ok: 'Enlace guardado',
     );
   }
 
@@ -1635,6 +1638,24 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         package: pkg,
         disponible: _disponible,
         currency: (pkg['currency'] ?? 'MXN').toString(),
+      ),
+    );
+    if (saved == true) await _reload(silent: true);
+  }
+
+  /// Edita un movimiento o un abono ya registrado. Solo el paquete VIGENTE
+  /// (no finalizado) permite editar: el backend también lo valida.
+  Future<void> _editMovement(Map<String, dynamic> m) async {
+    final pkg = _selected;
+    if (pkg == null) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _MovementDialog(
+        package: pkg,
+        disponible: _disponible,
+        currency: (pkg['currency'] ?? 'MXN').toString(),
+        movement: m,
       ),
     );
     if (saved == true) await _reload(silent: true);
@@ -1656,7 +1677,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       () => isPayment
           ? HsApi.deletePackagePayment(id)
           : HsApi.deletePackageMovement(id),
-      ok: 'Registro eliminado',
     );
   }
 
@@ -1676,8 +1696,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     )) {
       return;
     }
-    await _run(() => HsApi.finishClientPackage((pkg['id'] as num).toInt()),
-        ok: 'Paquete finalizado');
+    await _run(() => HsApi.finishClientPackage((pkg['id'] as num).toInt()));
   }
 
   Future<void> _reopenPackage() async {
@@ -1689,8 +1708,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     )) {
       return;
     }
-    await _run(() => HsApi.reopenClientPackage((pkg['id'] as num).toInt()),
-        ok: 'Paquete reabierto');
+    await _run(() => HsApi.reopenClientPackage((pkg['id'] as num).toInt()));
   }
 
   Future<bool> _confirm(String title, String message,
@@ -1746,15 +1764,22 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     final scheme = Theme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     final wide = size.width > 900;
+    // En MÓVIL el administrador de paquetes ocupa TODA la pantalla: entre
+    // pestañas, tarjetas y acciones necesita el espacio completo.
+    final phone = hsIsPhone(context);
     return Dialog(
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: wide ? 24 : 10,
-        vertical: wide ? 20 : 12,
-      ),
+      insetPadding: phone
+          ? EdgeInsets.zero
+          : EdgeInsets.symmetric(
+              horizontal: wide ? 24 : 10,
+              vertical: wide ? 20 : 12,
+            ),
       clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      shape: phone
+          ? const RoundedRectangleBorder()
+          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180),
+        constraints: BoxConstraints(maxWidth: phone ? double.infinity : 1180),
         child: LayoutBuilder(
           builder: (context, constraints) {
             // Alto FIJO: el alto disponible se toma del layout real (dentro
@@ -1762,16 +1787,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
             final available = constraints.maxHeight.isFinite
                 ? constraints.maxHeight
                 : size.height * .94;
-            final height = (available * .98).clamp(460.0, 920.0);
+            final height =
+                phone ? available : (available * .98).clamp(460.0, 920.0);
             return SizedBox(
-              width: 1180,
+              width: phone ? double.infinity : 1180,
               height: height,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _header(scheme),
                   Divider(height: 1, color: scheme.outlineVariant),
-                  Expanded(child: _body(scheme, height)),
+                  Expanded(child: _body(scheme)),
                   Divider(height: 1, color: scheme.outlineVariant),
                   _footer(scheme),
                 ],
@@ -1932,7 +1958,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
-  Widget _body(ColorScheme scheme, double height) {
+  Widget _body(ColorScheme scheme) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1967,23 +1993,19 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     } else {
       final twoColumns = MediaQuery.sizeOf(context).width >= 1020;
       if (!twoColumns) {
-        // Ventana angosta: ficha arriba (con su propio scroll), pestañas abajo.
+        // MÓVIL: la presentación del paquete YA NO ocupa media pantalla: se
+        // convierte en la pestaña "Paquete", junto con Servicios, Calendario,
+        // Movimientos y Drive. Arriba solo queda la tira para cambiar de
+        // paquete; si las cinco pestañas no caben, la fila hace scroll
+        // horizontal.
         content = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Flexible(
-              fit: FlexFit.loose,
-              child: ConstrainedBox(
-                constraints:
-                    BoxConstraints(maxHeight: (height * .5).clamp(240.0, 460.0)),
-                child: SingleChildScrollView(
-                  primary: false,
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                  child: _sidePanel(scheme),
-                ),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: _selectorSection(scheme),
             ),
-            _tabBar(scheme),
+            _tabBar(scheme, withFicha: true),
             Expanded(child: _tabContent(scheme)),
           ],
         );
@@ -2115,40 +2137,63 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   // ---------- Columna izquierda: ficha del paquete ----------
 
-  Widget _sidePanel(ColorScheme scheme) {
-    final pkg = _selected;
+  /// Tira para CAMBIAR de paquete del cliente (etiqueta + pestañas). En
+  /// móvil queda fija arriba, sobre la fila de pestañas de administración.
+  Widget _selectorSection(ColorScheme scheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _sectionLabel(scheme, 'Paquetes del cliente'),
         const SizedBox(height: 8),
         _selector(scheme),
-        if (pkg != null) ...[
-          const SizedBox(height: 14),
-          _cover(scheme, pkg),
+      ],
+    );
+  }
+
+  Widget _sidePanel(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _selectorSection(scheme),
+        _ficha(scheme),
+      ],
+    );
+  }
+
+  /// La presentación del paquete en foco: portada, dinero, avance y cierre.
+  /// En escritorio vive en la columna izquierda; en móvil es la pestaña
+  /// "Paquete" (junto con Servicios/Calendario/Movimientos/Drive) para que
+  /// no ocupe media pantalla.
+  Widget _ficha(ColorScheme scheme) {
+    final pkg = _selected;
+    if (pkg == null) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 14),
+        _cover(scheme, pkg),
+        const SizedBox(height: 10),
+        _money(scheme, pkg),
+        const SizedBox(height: 10),
+        _progressBars(scheme),
+        if (_blockers.isNotEmpty && _canAdminister) ...[
           const SizedBox(height: 10),
-          _money(scheme, pkg),
-          const SizedBox(height: 10),
-          _progressBars(scheme),
-          if (_blockers.isNotEmpty && _canAdminister) ...[
-            const SizedBox(height: 10),
-            _blockersBox(scheme),
-          ],
-          if (_progressError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Detalle ampliado no disponible: $_progressError',
-              style: TextStyle(fontSize: 11, color: scheme.error),
-            ),
-          ],
-          const SizedBox(height: 14),
-          // Abonar, Movimiento y Agendas viven en las pestañas de la
-          // derecha: en la ficha solo queda el botón de cierre.
-          if (_canAdminister)
-            _finishButton()
-          else
-            _readOnlyBox(scheme),
+          _blockersBox(scheme),
         ],
+        if (_progressError != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Detalle ampliado no disponible: $_progressError',
+            style: TextStyle(fontSize: 11, color: scheme.error),
+          ),
+        ],
+        const SizedBox(height: 14),
+        // Abonar, Movimiento y Agendas viven en las pestañas de la
+        // derecha: en la ficha solo queda el botón de cierre.
+        if (_canAdminister)
+          _finishButton()
+        else
+          _readOnlyBox(scheme),
       ],
     );
   }
@@ -2700,12 +2745,21 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   /// Pestañas en HORIZONTAL (una sola fila con el ancho repartido): nada de
   /// apilarlas en vertical, que solo ocupa espacio.
-  Widget _tabBar(ColorScheme scheme) {
-    final tabs = [
-      (icon: Icons.checklist_rtl, label: 'Servicios'),
-      (icon: Icons.calendar_month_outlined, label: 'Calendario'),
-      (icon: Icons.receipt_long_outlined, label: 'Movimientos'),
+  ///
+  /// Con [withFicha] se agrega la pestaña "Paquete" (la presentación del
+  /// paquete) usada en ventana angosta; si la fila no cabe en el ancho
+  /// disponible, se vuelve desplazable horizontalmente en vez de comprimir
+  /// las etiquetas hasta hacerlas ilegibles.
+  Widget _tabBar(ColorScheme scheme, {bool withFicha = false}) {
+    final tabs = <({IconData icon, String label, int value})>[
+      if (withFicha)
+        (icon: Icons.card_giftcard_outlined, label: 'Paquete', value: 4),
+      (icon: Icons.checklist_rtl, label: 'Servicios', value: 0),
+      (icon: Icons.calendar_month_outlined, label: 'Calendario', value: 1),
+      (icon: Icons.receipt_long_outlined, label: 'Movimientos', value: 2),
+      (icon: Icons.folder_shared_outlined, label: 'Drive', value: 3),
     ];
+    final active = _activeTab;
     final note = _finishedSelected
         ? 'Paquete terminado · consulta'
         : (!_canAdminister ? 'Paquete anterior · consulta' : null);
@@ -2714,21 +2768,51 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              for (var i = 0; i < tabs.length; i++) ...[
-                if (i > 0) const SizedBox(width: 8),
-                Expanded(
-                  child: _TabButton(
-                    icon: tabs[i].icon,
-                    label: tabs[i].label,
-                    selected: _tab == i,
-                    onTap: () => setState(() => _tab = i),
-                  ),
-                ),
-              ],
-            ],
-          ),
+          LayoutBuilder(builder: (context, box) {
+            Widget button(int i, {required bool flex}) {
+              final w = _TabButton(
+                icon: tabs[i].icon,
+                label: tabs[i].label,
+                selected: active == tabs[i].value,
+                onTap: () => setState(() => _tab = tabs[i].value),
+              );
+              return flex ? Expanded(child: w) : w;
+            }
+
+            const gap = 8.0;
+            // Ancho MÍNIMO razonable por pestaña (icono + texto + aire).
+            double needed() {
+              var total = 0.0;
+              for (final t in tabs) {
+                total += 46 + t.label.length * 7.4;
+              }
+              return total + gap * (tabs.length - 1);
+            }
+
+            if (box.maxWidth >= needed()) {
+              return Row(
+                children: [
+                  for (var i = 0; i < tabs.length; i++) ...[
+                    if (i > 0) const SizedBox(width: gap),
+                    button(i, flex: true),
+                  ],
+                ],
+              );
+            }
+            // No cabe: scroll horizontal con cada pestaña a su ancho natural.
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < tabs.length; i++) ...[
+                    if (i > 0) const SizedBox(width: gap),
+                    button(i, flex: false),
+                  ],
+                ],
+              ),
+            );
+          }),
           if (note != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -2750,14 +2834,412 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   }
 
   Widget _tabContent(ColorScheme scheme) {
-    switch (_tab) {
+    switch (_activeTab) {
+      case 4:
+        // Pestaña "Paquete" (solo en ventana angosta): la presentación.
+        return SingleChildScrollView(
+          primary: false,
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 16),
+          child: _ficha(scheme),
+        );
       case 0:
         return _servicesTab(scheme);
       case 1:
         return _calendarTab(scheme);
+      case 3:
+        return _driveTab(scheme);
       default:
         return _movementsTab(scheme);
     }
+  }
+
+  // ---------- Pestaña: carpeta compartida del Drive ----------
+
+  /// Carpeta del Drive COMPARTIDA con el cliente de ESTE paquete.
+  /// El cliente solo verá esta carpeta (y las de sus otros paquetes) en su
+  /// drive; es la forma de "compartir" una parte del Drive con él.
+  String get _drivePath {
+    final pkg = _progress?['package'];
+    if (pkg is! Map) return '';
+    return (pkg['drivePath'] ?? '').toString().trim();
+  }
+
+  /// Rutas del Drive compartidas en los DEMÁS paquetes del cliente (todas
+  /// menos la del paquete que se está editando en este momento).
+  List<String> _otherSharedPaths() {
+    final id = _selectedId;
+    final out = <String>[];
+    for (final p in _purchased) {
+      if ((p['id'] as num?)?.toInt() == id) continue;
+      final path = drivePathNormalize((p['drivePath'] ?? '').toString());
+      if (path.isNotEmpty) out.add(path);
+    }
+    return out;
+  }
+
+  /// La carpeta YA compartida con la que choca [path], o null si no choca.
+  ///
+  /// Compartir una carpeta que está dentro de otra ya compartida (o que la
+  /// contiene) no aporta nada: el cliente vería el mismo contenido dos veces.
+  String? _sharedConflict(String path) {
+    if (path.isEmpty) return null;
+    for (final other in _otherSharedPaths()) {
+      if (drivePathsOverlap(path, other)) return other;
+    }
+    return null;
+  }
+
+  /// Selector de carpeta del Drive (navega de verdad, sin mover la carpeta
+  /// que se está viendo en la sección Archivos).
+  Future<List<String>?> _pickDriveFolder() async {
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) {
+      _snack('El Drive no está disponible en esta pantalla');
+      return null;
+    }
+    var current = List<String>.of(drive.path);
+    List<String> folders = const [];
+    var loading = true;
+    String? error;
+    List<String>? picked;
+
+    Future<void> load(StateSetter setDialogState) async {
+      setDialogState(() {
+        loading = true;
+        error = null;
+      });
+      try {
+        final list = await drive.listChildFolders(current);
+        setDialogState(() {
+          folders = list;
+          loading = false;
+        });
+      } catch (e) {
+        setDialogState(() {
+          folders = const [];
+          error = '$e';
+          loading = false;
+        });
+      }
+    }
+
+    // Primera carpeta: se pide ANTES de abrir el diálogo (así ya aparece
+    // con contenido y no con un girador).
+    try {
+      folders = await drive.listChildFolders(current);
+      loading = false;
+    } catch (e) {
+      error = '$e';
+      loading = false;
+    }
+    if (!mounted) return null;
+
+    await showHsModal<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final scheme = Theme.of(ctx).colorScheme;
+          // En móvil el navegador de carpetas usa TODO el alto disponible.
+          final phone = hsIsPhone(ctx);
+          // ¿La carpeta abierta ya se solapa con alguna compartida del cliente?
+          final hereConflict = _sharedConflict(current.join('/'));
+          return AlertDialog(
+            title: const Text('¿Qué carpeta le compartes?'),
+            content: SizedBox(
+              width: phone ? double.infinity : 380,
+              height: phone ? double.infinity : 330,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      ['Mi Drive', ...current].join('  /  '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  if (hereConflict != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: scheme.error.withValues(alpha: .08),
+                        borderRadius: BorderRadius.circular(10),
+                        border:
+                            Border.all(color: scheme.error.withValues(alpha: .35)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.lock_outline,
+                              size: 16, color: scheme.error),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Ya compartiste «$hereConflict» en otro paquete de '
+                              'este cliente, y esta carpeta está dentro de '
+                              'aquella (o la contiene). Elige otra para no '
+                              'compartir dos veces lo mismo.',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                height: 1.3,
+                                color: scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : error != null
+                            ? Center(
+                                child: Text(
+                                  error!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      fontSize: 12.5, color: scheme.error),
+                                ),
+                              )
+                            : folders.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'Esta carpeta no tiene subcarpetas.\n'
+                                      'Puedes compartirla tal cual.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: scheme.onSurfaceVariant),
+                                    ),
+                                  )
+                                : ListView(
+                                    children: [
+                                      if (current.isNotEmpty)
+                                        ListTile(
+                                          dense: true,
+                                          leading:
+                                              const Icon(Icons.arrow_upward),
+                                          title: const Text('..'),
+                                          onTap: () {
+                                            current = current.sublist(
+                                                0, current.length - 1);
+                                            load(setDialogState);
+                                          },
+                                        ),
+                                      // Las carpetas que se solapan con lo ya
+                                      // compartido salen BLOQUEADAS: se ve por
+                                      // qué no se pueden usar.
+                                      for (final f in folders)
+                                        Builder(builder: (_) {
+                                          final child = drivePathNormalize(
+                                              [...current, f].join('/'));
+                                          final clash = _sharedConflict(child);
+                                          return ListTile(
+                                            dense: true,
+                                            enabled: clash == null,
+                                            leading: Icon(
+                                              clash == null
+                                                  ? Icons.folder_rounded
+                                                  : Icons.lock_outline,
+                                              color: clash == null
+                                                  ? scheme.primary
+                                                  : scheme.onSurfaceVariant,
+                                            ),
+                                            title: Text(f),
+                                            subtitle: clash == null
+                                                ? null
+                                                : Text(
+                                                    'Ya compartida en «$clash»',
+                                                    maxLines: 2,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: scheme.error,
+                                                    ),
+                                                  ),
+                                            onTap: clash == null
+                                                ? () {
+                                                    current = [...current, f];
+                                                    load(setDialogState);
+                                                  }
+                                                : null,
+                                          );
+                                        }),
+                                    ],
+                                  ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                // Sin carpeta elegida o con choque: no se puede compartir.
+                onPressed: current.isEmpty || hereConflict != null
+                    ? null
+                    : () {
+                        picked = List<String>.of(current);
+                        Navigator.pop(ctx);
+                      },
+                child: const Text('Compartir esta carpeta'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    return picked;
+  }
+
+  Future<void> _shareDriveFolder() async {
+    final id = _selectedId;
+    if (id == null) return;
+    final segments = await _pickDriveFolder();
+    if (segments == null || segments.isEmpty) return;
+    // Última revisión con los datos más frescos (el backend valida igual).
+    final clash = _sharedConflict(segments.join('/'));
+    if (clash != null) {
+      _snack('Esa carpeta se solapa con «$clash», que ya está compartida');
+      return;
+    }
+    await _run(
+      () => HsApi.setPackageDrivePath(
+        purchasedPackageId: id,
+        path: segments.join('/'),
+      ),
+    );
+  }
+
+  Future<void> _unshareDriveFolder() async {
+    final id = _selectedId;
+    if (id == null) return;
+    await _run(
+      () => HsApi.setPackageDrivePath(purchasedPackageId: id, path: ''),
+    );
+  }
+
+  Widget _driveTab(ColorScheme scheme) {
+    if (_loadingProgress) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final path = _drivePath;
+    final editable = _canAdminister && !_busy;
+    return ListView(
+      primary: false,
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .07),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scheme.primary.withValues(alpha: .22)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.folder_shared_outlined,
+                  size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Dale a este paquete UNA carpeta del Drive. El cliente verá '
+                  'en su Drive solo las carpetas compartidas de sus paquetes '
+                  '(y nada más).',
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .5)),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                path.isEmpty
+                    ? Icons.folder_off_outlined
+                    : Icons.folder_rounded,
+                color: path.isEmpty ? scheme.onSurfaceVariant : AppColors.brand,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      path.isEmpty ? 'Sin carpeta compartida' : path,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      path.isEmpty
+                          ? 'El cliente todavía no ve nada en su Drive.'
+                          : 'Carpeta compartida con el cliente de este paquete.',
+                      style: TextStyle(
+                          fontSize: 11.5, color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (editable) ...[
+          FilledButton.icon(
+            onPressed: _shareDriveFolder,
+            icon: const Icon(Icons.folder_open_outlined, size: 18),
+            label: Text(path.isEmpty
+                ? 'Elegir carpeta del Drive'
+                : 'Cambiar carpeta compartida'),
+          ),
+          if (path.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _unshareDriveFolder,
+              icon: const Icon(Icons.link_off, size: 18),
+              label: const Text('Dejar de compartir'),
+            ),
+          ],
+        ] else
+          Text(
+            path.isEmpty
+                ? 'Este paquete no comparte ninguna carpeta con el cliente.'
+                : 'Solo lectura: este paquete ya no se administra.',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+      ],
+    );
   }
 
   // ---------- Pestaña: servicios ----------
@@ -2904,64 +3386,58 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                       ),
                     if (_canAdminister)
                       Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Wrap(
-                          spacing: 4,
-                          children: [
-                            if (!done)
+                        padding: const EdgeInsets.only(top: 4),
+                        // UNA sola fila, siempre en horizontal: en el celular
+                        // los botones NO se apilan (se deslizan si no caben).
+                        // El aire entre ellos es el mínimo: solo su propio
+                        // padding interno, sin separadores extra.
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              if (!done)
+                                TextButton.icon(
+                                  onPressed:
+                                      _busy ? null : () => _completeService(s),
+                                  style: _kServiceAction,
+                                  icon: const Icon(Icons.task_alt, size: 15),
+                                  label: const Text('Completar servicio'),
+                                )
+                              else
+                                TextButton.icon(
+                                  onPressed:
+                                      _busy ? null : () => _reopenService(s),
+                                  style: _kServiceAction,
+                                  icon: const Icon(Icons.undo, size: 15),
+                                  label: const Text('Reabrir'),
+                                ),
                               TextButton.icon(
                                 onPressed:
-                                    _busy ? null : () => _completeService(s),
-                                style: TextButton.styleFrom(
-                                  visualDensity: VisualDensity.compact,
+                                    _busy ? null : () => _editServiceNote(s),
+                                style: _kServiceAction,
+                                icon: const Icon(Icons.edit_note, size: 16),
+                                label: Text(
+                                  (s['description'] ?? '')
+                                          .toString()
+                                          .trim()
+                                          .isEmpty
+                                      ? 'Añadir nota'
+                                      : 'Editar nota',
                                 ),
-                                icon: const Icon(Icons.task_alt, size: 15),
-                                label: const Text('Completar servicio',
-                                    style: TextStyle(fontSize: 12)),
-                              )
-                            else
+                              ),
                               TextButton.icon(
                                 onPressed:
-                                    _busy ? null : () => _reopenService(s),
-                                style: TextButton.styleFrom(
-                                  visualDensity: VisualDensity.compact,
+                                    _busy ? null : () => _editServiceUrl(s),
+                                style: _kServiceAction,
+                                icon: const Icon(Icons.link, size: 15),
+                                label: Text(
+                                  (s['url'] ?? '').toString().trim().isEmpty
+                                      ? 'Agregar enlace'
+                                      : 'Editar enlace',
                                 ),
-                                icon: const Icon(Icons.undo, size: 15),
-                                label: const Text('Reabrir',
-                                    style: TextStyle(fontSize: 12)),
                               ),
-                            TextButton.icon(
-                              onPressed:
-                                  _busy ? null : () => _editServiceNote(s),
-                              style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              icon: const Icon(Icons.edit_note, size: 16),
-                              label: Text(
-                                (s['description'] ?? '')
-                                        .toString()
-                                        .trim()
-                                        .isEmpty
-                                    ? 'Añadir nota'
-                                    : 'Editar nota',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            TextButton.icon(
-                              onPressed:
-                                  _busy ? null : () => _editServiceUrl(s),
-                              style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              icon: const Icon(Icons.link, size: 15),
-                              label: Text(
-                                (s['url'] ?? '').toString().trim().isEmpty
-                                    ? 'Agregar enlace'
-                                    : 'Editar enlace',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                   ],
@@ -3088,7 +3564,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (ok != true) return;
     await _run(
       () => HsApi.deleteAgenda((agenda['id'] as num).toInt()),
-      ok: 'Agenda eliminada',
     );
   }
 
@@ -3264,7 +3739,15 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               ],
             ),
           ),
-          if (_canAdminister)
+          if (_canAdminister) ...[
+            // Editar: solo mientras el paquete no esté finalizado.
+            IconButton(
+              tooltip: 'Editar registro',
+              visualDensity: VisualDensity.compact,
+              onPressed: _busy ? null : () => _editMovement(m),
+              icon: Icon(Icons.edit_outlined,
+                  size: 16, color: scheme.onSurfaceVariant),
+            ),
             IconButton(
               tooltip: 'Quitar registro',
               visualDensity: VisualDensity.compact,
@@ -3272,6 +3755,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               icon:
                   Icon(Icons.close, size: 16, color: scheme.error.withValues(alpha: .8)),
             ),
+          ],
         ],
       ),
     );
@@ -4023,6 +4507,7 @@ class _MovementDialog extends StatefulWidget {
     required this.package,
     this.disponible = 0,
     this.currency = 'MXN',
+    this.movement,
   });
 
   final Map<String, dynamic> package;
@@ -4031,12 +4516,16 @@ class _MovementDialog extends StatefulWidget {
   final num disponible;
   final String currency;
 
+  /// Movimiento/abono a EDITAR (null = registrar uno nuevo). Cuando viene,
+  /// el diálogo precarga sus datos y guarda con `editar-movimiento`.
+  final Map<String, dynamic>? movement;
+
   @override
   State<_MovementDialog> createState() => _MovementDialogState();
 }
 
 class _MovementDialogState extends State<_MovementDialog> {
-  String _kind = 'inversion';
+  late String _kind = _initialKind();
 
   /// Modo de captura del ahorro: monto fijo o porcentaje del disponible.
   String _mode = 'monto';
@@ -4046,6 +4535,33 @@ class _MovementDialogState extends State<_MovementDialog> {
   final TextEditingController _concept = TextEditingController();
   bool _saving = false;
   String? _error;
+
+  /// ¿Se está editando un registro existente?
+  bool get _editing => widget.movement != null;
+
+  /// Un ABONO vive en purchased_packages_payments (source 'payment'): solo se
+  /// le puede cambiar monto y concepto, no el tipo.
+  bool get _isPayment =>
+      (widget.movement?['source'] ?? 'movement').toString() == 'payment';
+
+  String _initialKind() {
+    final m = widget.movement;
+    if (m == null) return 'inversion';
+    if ((m['source'] ?? 'movement').toString() == 'payment') return 'abono';
+    final k = (m['kind'] ?? 'gasto').toString();
+    return _kMovementKinds.contains(k) ? k : 'gasto';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final m = widget.movement;
+    if (m != null) {
+      final amount = (m['amount'] as num?) ?? 0;
+      _amount.text = _clean(amount);
+      _concept.text = (m['description'] ?? '').toString();
+    }
+  }
 
   bool get _isSavings => _kind == 'ahorro';
   bool get _byPercent => _isSavings && _mode == 'porcentaje';
@@ -4094,12 +4610,23 @@ class _MovementDialogState extends State<_MovementDialog> {
           ].join(' · ')
         : note;
     try {
-      await HsApi.addPackageMovement(
-        purchasedPackageId: (widget.package['id'] as num).toInt(),
-        kind: _kind,
-        amount: amount,
-        description: description,
-      );
+      if (_editing) {
+        // El backend solo deja editar mientras el paquete no esté finalizado.
+        await HsApi.editPackageMovement(
+          (widget.movement!['id'] as num).toInt(),
+          source: _isPayment ? 'payment' : 'movement',
+          kind: _isPayment ? null : _kind,
+          amount: amount,
+          description: description,
+        );
+      } else {
+        await HsApi.addPackageMovement(
+          purchasedPackageId: (widget.package['id'] as num).toInt(),
+          kind: _kind,
+          amount: amount,
+          description: description,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {
@@ -4128,20 +4655,55 @@ class _MovementDialogState extends State<_MovementDialog> {
     final scheme = Theme.of(context).colorScheme;
     final color = _moveColor(_kind);
     final amount = _resolvedAmount;
+    // Un abono edita solo monto y concepto (su tipo lo define la tabla de
+    // pagos); el resto sí puede cambiar de tipo.
+    final showKinds = !_isPayment;
     return FormDialog(
-      icon: Icons.swap_vert,
-      title: 'Movimiento del paquete',
-      subtitle:
-          '${(widget.package['name'] ?? '').toString()} · inversión, gasto, '
-          'ahorro o abono externo',
+      icon: _editing ? Icons.edit_outlined : Icons.swap_vert,
+      title: _editing
+          ? (_isPayment ? 'Editar abono' : 'Editar movimiento')
+          : 'Movimiento del paquete',
+      subtitle: _editing
+          ? 'Solo mientras el paquete no esté finalizado · '
+              '${_moveLabel(_kind)}'
+          : '${(widget.package['name'] ?? '').toString()} · inversión, gasto, '
+              'ahorro o abono externo',
       saving: _saving,
       error: _error,
-      saveLabel: 'Registrar',
+      saveLabel: _editing ? 'Guardar cambios' : 'Registrar',
       maxWidth: 460,
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
-        FormSection(
+        if (!showKinds) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _moveColor('abono').withValues(alpha: .10),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: _moveColor('abono').withValues(alpha: .45)),
+            ),
+            child: Row(
+              children: [
+                Icon(_moveIcon('abono'), size: 17, color: _moveColor('abono')),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Este registro es un abono: se descontará del saldo del '
+                    'paquete al guardar.',
+                    style: TextStyle(
+                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        !showKinds
+            ? const SizedBox.shrink()
+            : FormSection(
           label: 'Tipo de movimiento',
           child: Column(
             children: [
@@ -4219,7 +4781,8 @@ class _MovementDialogState extends State<_MovementDialog> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Disponible del paquete (abonado - gastado)',
+                    'Disponible del paquete (abonado - gastado - ahorro + '
+                    'abono externo)',
                     style: TextStyle(
                         fontSize: 11.5, color: scheme.onSurfaceVariant),
                   ),

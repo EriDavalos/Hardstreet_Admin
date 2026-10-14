@@ -5,11 +5,24 @@ import 'package:archive/archive.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
+import 'app_platform.dart';
 import 'drive_api_service.dart';
 import 'drive_service.dart';
 import 'download_stub.dart'
     if (dart.library.html) 'download_web.dart';
+
+/// Canal nativo (Android) que deja el archivo en la carpeta de DESCARGAS del
+/// dispositivo. En Android no hay diálogo "Guardar como": file_selector no lo
+/// implementa (lanzaba `UnimplementedError: getSavePath()`), así que la app
+/// guarda en Descargas y avisa dónde quedó.
+const MethodChannel _downloadsChannel = MethodChannel('hardstreet/downloads');
+
+/// ¿Hay que preguntar el destino con el diálogo del sistema?
+/// En Android NO: se guarda directo en Descargas (y así lo espera el usuario).
+bool get needsSaveDialog => !kIsWeb && !isAndroidPlatform;
 
 /// Descarga la selección EN SEGUNDO PLANO.
 ///
@@ -29,9 +42,10 @@ Future<void> downloadDriveSelection(
   final suggested =
       single ? items.first.name : zipSuggestedName(drive.locationLabel);
 
-  // 1. Destino (solo nativo; en web decide el navegador).
+  // 1. Destino (solo escritorio; en web decide el navegador y en Android la
+  //    carpeta de Descargas del sistema).
   String? targetPath;
-  if (!kIsWeb) {
+  if (needsSaveDialog) {
     final location = await getSaveLocation(suggestedName: suggested);
     if (location == null) return; // el usuario canceló
     targetPath = location.path;
@@ -77,18 +91,27 @@ Future<void> _runDownloadJob(
     if (job.cancelled) throw 'Cancelado';
     if (bytes.isEmpty) throw 'No hay nada que descargar';
 
+    // Dónde quedó, para poder decirlo (en Android es una carpeta del sistema).
+    String? savedTo;
     if (kIsWeb) {
       triggerBrowserDownload(bytes, job.name);
     } else if (job.targetPath != null) {
       await File(job.targetPath!).writeAsBytes(bytes);
+    } else if (isAndroidPlatform) {
+      savedTo = await saveToAndroidDownloads(bytes, job.name);
+      if (savedTo == null) throw 'No se pudo guardar en Descargas';
+    } else {
+      throw 'No se pudo determinar el destino de la descarga';
     }
     drive.finishDownloadJob(job);
     if (!kIsWeb) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            'Descargado: ${job.name} '
-            '(${(bytes.length / 1024).toStringAsFixed(0)} KB)',
+            savedTo == null
+                ? 'Descargado: ${job.name} '
+                    '(${(bytes.length / 1024).toStringAsFixed(0)} KB)'
+                : 'Descargado en $savedTo',
           ),
         ),
       );
@@ -98,6 +121,37 @@ Future<void> _runDownloadJob(
     messenger.showSnackBar(
       SnackBar(content: Text('No se pudo descargar "${job.name}": $e')),
     );
+  }
+}
+
+/// Deja la descarga en la carpeta pública de DESCARGAS del dispositivo
+/// (Android) y devuelve una etiqueta legible del destino ("Descargas/x.zip"),
+/// o null si no se pudo.
+///
+/// Los bytes se pasan por un archivo TEMPORAL: el canal nativo copia ese
+/// archivo (no se copian megabytes de memoria a memoria por el canal) y el
+/// temporal se borra siempre, salga bien o mal.
+/// Público para poder verificarlo en test/. [tempDir] permite fijar el
+/// directorio temporal (en pruebas, sin depender del plugin de plataforma).
+Future<String?> saveToAndroidDownloads(
+  List<int> bytes,
+  String name, {
+  String? tempDir,
+}) async {
+  final dir = tempDir ?? (await getTemporaryDirectory()).path;
+  final tmp = File('$dir${Platform.pathSeparator}$name');
+  await tmp.writeAsBytes(bytes, flush: true);
+  try {
+    return await _downloadsChannel.invokeMethod<String>('save', {
+      'path': tmp.path,
+      'name': name,
+    });
+  } finally {
+    try {
+      if (await tmp.exists()) await tmp.delete();
+    } catch (_) {
+      // El temporal se queda: no es motivo para reportar una descarga fallida.
+    }
   }
 }
 

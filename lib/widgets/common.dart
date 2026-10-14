@@ -384,10 +384,15 @@ class PageContainer extends StatelessWidget {
                         ],
                       ),
                     ),
-                    // En escritorio las acciones van a la derecha del título.
+                    // En escritorio las acciones van a la derecha del título,
+                    // con aire ENTRE ellas (en celular horizontal los dos
+                    // botones de Finanzas quedaban pegados, sin separación).
                     if (!compact && hasActions) ...[
                       const SizedBox(width: 16),
-                      ...?actions,
+                      for (var i = 0; i < actions!.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 8),
+                        actions![i],
+                      ],
                     ],
                   ],
                 ),
@@ -403,16 +408,57 @@ class PageContainer extends StatelessWidget {
                     ],
                   ),
                 ],
-                // En móvil las acciones bajan a fila propia, a LO ANCHO.
+                // En móvil las acciones bajan a fila propia, a LO ANCHO. Si
+                // no cabe una al lado de la otra (etiquetas largas, como en
+                // Finanzas), cada botón va en su propia línea a todo ancho:
+                // mejor una pila legible que etiquetas recortadas.
                 if (compact && hasActions) ...[
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      for (final a in actions!) ...[
-                        Expanded(child: a),
-                        if (a != actions!.last) const SizedBox(width: 10),
-                      ],
-                    ],
+                  // En teléfono el padding por defecto de los botones (24 px
+                  // por lado) se come el ancho y las etiquetas quedan a
+                  // medias: aquí van con menos holgura horizontal.
+                  Theme(
+                    data: Theme.of(context).copyWith(
+                      filledButtonTheme: FilledButtonThemeData(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                      outlinedButtonTheme: OutlinedButtonThemeData(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                      textButtonTheme: TextButtonThemeData(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                      ),
+                    ),
+                    child: LayoutBuilder(builder: (context, box) {
+                      final n = actions!.length;
+                      final each = (box.maxWidth - 10 * (n - 1)) / n;
+                      if (each < 230) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final a in actions!) ...[
+                              a,
+                              if (a != actions!.last)
+                                const SizedBox(height: 10),
+                            ],
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          for (final a in actions!) ...[
+                            Expanded(child: a),
+                            if (a != actions!.last) const SizedBox(width: 10),
+                          ],
+                        ],
+                      );
+                    }),
                   ),
                 ],
               ],

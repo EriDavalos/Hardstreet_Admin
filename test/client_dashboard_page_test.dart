@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Dos paquetes comprados: uno con liga de drive PROPIA y otra externa.
 void _installMock({List<Map<String, dynamic>>? packages}) {
@@ -105,7 +106,11 @@ Future<void> _pumpPage(WidgetTester tester,
   final previous = HsApi.client;
   addTearDown(() => HsApi.client = previous);
 
+  // Con HsToastHost, los avisos laterales ("Enlace copiado") se pintan como
+  // en la app real.
   await tester.pumpWidget(MaterialApp(
+    builder: (context, child) =>
+        HsToastHost(child: child ?? const SizedBox.shrink()),
     home: Scaffold(
       body: ClientDashboardPage(onOpenDrive: onOpenDrive),
     ),
@@ -145,7 +150,7 @@ void main() {
 
     // Secciones clave y acceso al Drive (la primera liga es del drive propio).
     expect(find.text('Lo que hemos cumplido'), findsOneWidget);
-    expect(find.text('Mi carpeta del Drive'), findsOneWidget);
+    expect(find.text('Mi Drive compartido'), findsOneWidget);
     expect(find.text('Entrar a mi Drive'), findsOneWidget);
     expect(find.text('Copiar enlace del Drive'), findsNothing,
         reason: 'la PRIMERA liga es propia → botón "Entrar"');

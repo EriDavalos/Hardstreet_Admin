@@ -103,12 +103,6 @@ class _PackagesPageState extends State<PackagesPage> {
     }
   }
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openForm([Map<String, dynamic>? pkg]) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -134,13 +128,10 @@ class _PackagesPageState extends State<PackagesPage> {
     if (!ok) return;
     try {
       await HsApi.deletePackage((pkg['id'] as num).toInt());
-      _snack('Paquete eliminado');
-      _reload();
-    } on ApiException catch (e) {
-      _snack(e.message);
     } catch (_) {
-      _snack('No se pudo eliminar el paquete');
+      // El backend ya avisó con la notificación roja.
     }
+    _reload();
   }
 
   List<Map<String, dynamic>> get _filtered {

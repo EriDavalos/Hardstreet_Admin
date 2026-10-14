@@ -32,6 +32,30 @@ const List<String> kImageExtensions = [
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
 ];
 
+/// Normaliza una ruta del Drive: separador siempre `/`, sin barras al
+/// principio ni al final y sin `.` ni `..` (los usuarios escriben de todo).
+String drivePathNormalize(String path) => path
+    .replaceAll('\\', '/')
+    .split('/')
+    .map((s) => s.trim())
+    .where((s) => s.isNotEmpty && s != '.' && s != '..')
+    .join('/');
+
+/// ¿Dos carpetas del Drive se SOLAPAN? (son la misma, o una está dentro de la
+/// otra).
+///
+/// Se usa para no compartirle al cliente carpetas redundantes: si ya tiene
+/// compartida `ReynaCoot`, compartirle `ReynaCoot/SesionPrevia` no agrega nada
+/// (vería el mismo contenido dos veces) y al revés tampoco. El backend aplica
+/// esta misma regla; aquí se adelanta para no ofrecer lo que va a fallar.
+bool drivePathsOverlap(String a, String b) {
+  final x = drivePathNormalize(a);
+  final y = drivePathNormalize(b);
+  if (x.isEmpty || y.isEmpty) return false;
+  if (x == y) return true;
+  return x.startsWith('$y/') || y.startsWith('$x/');
+}
+
 /// Estados de conexión con el servidor del drive.
 enum DriveConn { checking, online, offline }
 
@@ -140,9 +164,75 @@ abstract class DriveBase extends ChangeNotifier {
   List<DriveItem> _items = const [];
   List<DriveItem> get items => _items;
 
+  // ---------- Alcance COMPARTIDO (drive del cliente) ----------
+  ///
+  /// Cuando el usuario es un CLIENTE, su drive se limita a las carpetas que
+  /// el estudio le comparte en sus paquetes comprados:
+  ///   * en la RAÍZ solo se ven esas carpetas (nada más);
+  ///   * dentro de una de ellas se navega con normalidad.
+  ///
+  /// [scoped] = false (equipo del estudio) muestra el drive completo.
+  bool scoped = false;
+
+  /// Nombres de las carpetas RAÍZ compartidas con este usuario.
+  List<String> sharedRoots = const [];
+
+  /// ¿La carpeta actual (o la raíz) está dentro de lo compartido?
+  bool get insideSharedRoots =>
+      !scoped || (path.isNotEmpty && sharedRoots.contains(path.first));
+
+  /// Listado filtrado por el alcance compartido.
+  @protected
+  List<DriveItem> applySharedScope(List<DriveItem> value) {
+    if (!scoped) return value;
+    if (path.isEmpty) {
+      final allowed = sharedRoots.toSet();
+      return value
+          .where((i) => i.isFolder && allowed.contains(i.name))
+          .toList(growable: false);
+    }
+    return insideSharedRoots ? value : const <DriveItem>[];
+  }
+
   /// Para las implementaciones: reemplaza el listado actual.
   @protected
-  void updateItems(List<DriveItem> value) => _items = value;
+  void updateItems(List<DriveItem> value) {
+    _items = applySharedScope(value);
+  }
+
+  /// Fija el alcance compartido del cliente y refresca si cambió.
+  ///
+  /// [roots] son carpetas raíz (se conserva el primer nivel de cada ruta).
+  /// Con [isClient] = false el drive vuelve a mostrarse completo.
+  Future<void> setSharedRoots(
+    List<String> roots, {
+    required bool isClient,
+  }) async {
+    final clean = <String>[];
+    for (final r in roots) {
+      final first = drivePathNormalize(r).split('/').firstOrNull;
+      if (first != null && first.isNotEmpty && !clean.contains(first)) {
+        clean.add(first);
+      }
+    }
+    if (scoped == isClient && _sameList(sharedRoots, clean)) return;
+    scoped = isClient;
+    sharedRoots = clean;
+    // Fuera de lo compartido: se regresa a la raíz.
+    if (path.isNotEmpty && !sharedRoots.contains(path.first)) {
+      path = const [];
+      setSearch(null);
+    }
+    await refresh();
+  }
+
+  static bool _sameList(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   /// Carpeta de la que proviene el listado que está en pantalla. La fija cada
   /// refresco EXITOSO ("" = raíz).
@@ -200,13 +290,27 @@ abstract class DriveBase extends ChangeNotifier {
 
   // ---------- Operaciones ----------
   Future<void> refresh();
+
+  /// ¿Se puede abrir esa carpeta con el alcance compartido actual?
+  /// En la raíz de un drive compartido solo se abren las carpetas
+  /// COMPARTIDAS (nada de la raíz completa).
+  bool canOpenFolderNamed(String name) =>
+      !scoped || path.isNotEmpty || sharedRoots.contains(name);
+
   Future<void> openFolder(String name) async {
+    if (!canOpenFolderNamed(name)) return;
     path = [...path, name];
     setSearch(null);
     await refresh();
   }
 
   Future<void> openPath(List<String> segments) async {
+    // Fuera de lo compartido no se entra: se queda en la raíz (donde solo
+    // se ven las carpetas compartidas).
+    if (scoped && segments.isNotEmpty && !sharedRoots.contains(segments.first)) {
+      if (path.isEmpty) return;
+      segments = const [];
+    }
     path = List.of(segments);
     setSearch(null);
     await refresh();
@@ -231,6 +335,14 @@ abstract class DriveBase extends ChangeNotifier {
       List<String> names, List<String> targetPath);
   Future<({int deleted, List<String> errors})> deleteItems(List<String> names);
   List<String> listFolders(List<String> rel);
+
+  /// Subcarpetas DIRECTAS de [rel] sin mover la carpeta que se está viendo
+  /// (lo usa el selector de carpeta del administrador del paquete).
+  /// Por defecto devuelve las carpetas del listado ya cargado; las
+  /// implementaciones remotas lo consultan al servidor.
+  Future<List<String>> listChildFolders(List<String> rel) async =>
+      items.where((i) => i.isFolder).map((i) => i.name).toList(growable: false);
+
   String absolutePathOf(DriveItem item);
 
   /// Vuelve a subir el archivo de un trabajo que quedó en error (botón

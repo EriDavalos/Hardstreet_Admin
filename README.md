@@ -10,10 +10,11 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Paquetes** | ✅ Catálogo estilo flyer (tier, categoría, servicios, imagen); el formulario tiene pestañas Datos / Servicios, vista previa en vivo y permite AGREGAR servicios sin salir |
 | **Servicios** | ✅ Catálogo con icono, nombre, descripción y liga del Drive (opcional) |
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
-| **Finanzas** | ✅ Ganancias, inversiones, gastos y ahorro (con gráfica por mes y "abonar al ahorro") |
+| **Finanzas** | ✅ Tabla con el dinero de cada paquete y de cada tipo de movimiento (se expande), gráfica por mes y registro de movimientos |
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
 | **Agendas** | ✅ Calendario de eventos con franja de próximos eventos y **alta de eventos** eligiendo cliente → su paquete → servicio |
-| Dashboard, Configuraciones, Reportes | 🚧 Próximamente |
+| **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
+| Conexión, Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
 
@@ -27,7 +28,7 @@ Al abrir un cliente se administran sus paquetes en un solo modal:
 - **Derecha — la administración**: pestañas de Servicios (con la liga base
   del Drive de cada servicio, copiable y editable), Calendario (las TARJETAS
   de los eventos agendados del paquete: crear, editar y eliminar, con los
-  próximos primero) y Movimientos.
+  próximos primero), Movimientos y **Drive** (la carpeta compartida).
 
 El **directorio de clientes** también es interactivo: toda la tarjeta (nombre,
 correo, teléfono y el número de paquetes) abre el administrador de paquetes al
@@ -38,40 +39,88 @@ En ventanas angostas (menos de 1020 px de ancho, p. ej. un teléfono) la ficha
 queda arriba y las pestañas abajo; la ficha, el precio y el pie del modal se
 reacomodan en vez de recortar contenido.
 
+### Carpeta compartida (pestaña Drive)
+
+Cada paquete del cliente puede **compartir UNA carpeta del Drive**:
+
+- El botón abre un **selector que navega el Drive de verdad** (sin mover la
+  carpeta que estás viendo en el módulo Archivos) y la carpeta elegida queda
+  guardada en el paquete (`purchased_packages.drive_path`).
+- El **Drive del cliente** muestra SOLO las carpetas compartidas de sus
+  paquetes: si a un paquete le compartes `ReynaCoot` y a otro `Cliente`, en
+  su Drive aparecen esas dos carpetas y **nada más**.
+- Sin carpeta asignada, el cliente ve su Drive vacío con el aviso "Aún no se
+  te comparte ninguna carpeta".
+- El equipo del estudio (rol Admin, u otro rol con permiso de Archivos) sigue
+  viendo el Drive completo: el alcance solo aplica al cliente.
+
 ### Movimientos y ahorro
 
 La pestaña **Movimientos** concentra el dinero del paquete:
 
-- Arriba, las tarjetas de control: **Disponible** (abonado − gastado, ya no
-  repite el abonado que muestra la ficha), **Ahorro**, **Abono externo**,
-  **Invertido** y **Gastado**. Se reacomodan solas (2, 3 o 4 por fila) según
-  el ancho.
+- Arriba, las tarjetas de control: **Disponible**, **Ahorro**, **Abono
+  externo**, **Invertido** y **Gastado**. Se reacomodan solas (2, 3 o 4 por
+  fila) según el ancho.
 - **Abonar** (tabla de abonos: mantiene el total pagado) y **Registrar
   movimiento**: inversión, gasto, **ahorro** o abono externo.
 - El **ahorro** se captura como cantidad o como **porcentaje del disponible**,
   que además deja constancia del % aplicado en su concepto.
-- Estos movimientos son informativos: no tocan el total abonado ni el saldo
-  del paquete (eso lo hacen los abonos).
+- **Disponible = abonado − gastado − ahorro + abono externo**: el ahorro se
+  APARTA del disponible y el abono externo (dinero que entra por fuera) se le
+  SUMA, igual que en el módulo Finanzas.
+- **Editar un registro**: cada movimiento y cada abono tiene su botón de
+  edición (mientras el paquete NO esté finalizado). Se puede cambiar el tipo,
+  el monto y el concepto; un paquete terminado es solo de consulta y el
+  backend rechaza la edición.
+- Los movimientos propios no tocan el total abonado ni el saldo del paquete
+  (eso lo hacen los abonos).
+
+## Dashboard
+
+En ventanas anchas (≥ 1000 px) el Dashboard es un **tablero que NO scrollea**:
+la página llena la pantalla y reparte todo en tres columnas de tarjetas
+compactas (resumen + finanzas, eventos y clientes, distribución + accesos
+rápidos). Cada columna scrollea por dentro solo si su contenido no cabe. En
+pantallas angostas se mantiene el acomodo en una columna con scroll.
 
 ## Módulo Finanzas
 
 Todo lo monetario del negocio en una sola vista (`/api/admin/finance`,
-permiso sobre el módulo "Finanzas"):
+permiso sobre el módulo "Finanzas"), pensada para NO bajar con el scroll:
 
-- **Resumen del dinero**: cuadros horizontales con ganancias (abonos
-  cobrados), por cobrar, disponible, ahorro, inversiones, gastos y abono
-  externo.
-- **Gráfica de los últimos 6 meses**: lo que ENTRÓ contra lo que SALIÓ
-  (gastos, inversión, ahorro y abono externo), con su leyenda.
-- **Ahorro**: el total apartado y **Abonar al ahorro**, que destina dinero de
-  UN paquete por cantidad o por porcentaje del disponible.
-- **Por paquete**: el dinero de cada paquete activo con su cliente.
+- Arriba, la tira de **totales** en cuadros horizontales. El primero es
+  **Ganado**, que es el **Disponible** de los datos (abonado − gastado −
+  ahorro + abono externo): el dinero que de verdad queda.
+- Debajo, **una TABLA** ("Dinero por paquete y movimiento") con las columnas
+  Concepto · Monto · Ahorro · Salidas:
+  - **Fila por PAQUETE**: al expandirla muestra su desglose (cobrado, por
+    cobrar, ganado/disponible, ahorro, gastos, inversión y abono externo),
+    sus movimientos y sus acciones (**Abonar al ahorro** / **Agregar
+    movimiento**).
+  - **Fila por TIPO de movimiento** (Abonos, Gastos, Inversiones, Ahorro,
+    Abonos externos): al expandirla se desglosa registro por registro, con su
+    concepto, paquete/cliente, fecha y monto.
+  - **Fila GENERAL (sin paquete)**: el dinero del NEGOCIO que no pertenece a
+    ningún paquete, con su desglose y sus movimientos.
+- **Agregar movimiento** y **Abonar al ahorro** son DOS acciones separadas en
+  la cabecera (la segunda lleva el verde del ahorro).
+- **Agregar movimiento**: registra gasto, inversión, ahorro o abono externo
+  sin salir de Finanzas. El paquete es **opcional** — viene en "General (todo
+  el negocio)", así que ya no hay que elegir paquete; solo se elige si quieres
+  atribuir el movimiento a un paquete del cliente. El ahorro admite porcentaje
+  del disponible (del paquete elegido o, en general, del negocio).
+- **Gráfica de los últimos 6 meses**: lo que ENTRÓ contra lo que SALIÓ, en la
+  columna lateral.
+- En escritorio la tabla y la gráfica van lado a lado (solo la tabla scrollea
+  por dentro); en pantallas angostas todo vive en una sola zona con scroll.
 
 El **Dashboard** añade esa misma información en versión compacta (cuadros +
 gráfica) y un acceso rápido al módulo. Todo es *best effort*: si el usuario no
 tiene permiso o no hay conexión, el resto del dashboard sigue viéndose.
 
-Requiere la migración `Hardstreet-DB/2026-10-14_modulo_finanzas.sql`, que
+Requiere la migración `Hardstreet-DB/2026-10-15_movimientos_generales_y_carpeta_compartida.sql`
+(movimientos sin paquete + `drive_path`) y la de
+`Hardstreet-DB/2026-10-14_modulo_finanzas.sql`, que
 registra el módulo y copia los permisos de "Clientes" a los roles que ya los
 tienen. El rol **Admin pasa siempre**, así que el módulo funciona aunque la
 migración aún no se aplique (y el menú no lo esconde: si el backend todavía no
@@ -113,10 +162,21 @@ sobre el módulo "Servicios"):
 ## Módulo Archivos (Drive)
 
 - Carpetas anidadas (`ReynaCoot/SesionPrevia/Fiesta/...`), navegación por breadcrumbs.
+- **Alcance del CLIENTE**: si el usuario es un cliente, el módulo muestra solo
+  las carpetas que se le comparten en sus paquetes (ver "Carpeta compartida");
+  el equipo del estudio ve el Drive completo.
 - Sube varias imágenes a la vez desde el selector nativo del sistema.
 - Vista de cuadrícula con miniaturas o vista de lista (nombre, fecha, tamaño).
 - Buscar dentro de la carpeta, renombrar, eliminar, crear carpetas.
-- Visor de imágenes con zoom y navegación entre imágenes de la carpeta.
+- **Visor de imágenes a PANTALLA COMPLETA** (sin bordes curvos), con la
+  información del archivo y su posición ("3 de 12") encima de la foto,
+  botones de zoom, **Descargar** sin salir del visor, navegación con las
+  flechas del teclado (← →) y cierre con Esc.
+- **Descargas**: en escritorio se elige el destino con el diálogo del sistema;
+  en **Android** no existe ese diálogo (`file_selector` no implementa
+  `getSavePath()`, de ahí el `UnimplementedError`), así que el archivo (o el
+  ZIP de una selección/carpeta) se deja en la carpeta **Descargas** del
+  dispositivo con `MediaStore` y la app avisa dónde quedó.
 - Si un refresco de fondo falla (servidor ocupado mientras subes fotos), el
   listado se queda a la vista y solo aparece el aviso “Sin conexión ·
   reintentar”: el directorio no se vacía ni cambia por un fallo pasajero.
@@ -124,6 +184,49 @@ sobre el módulo "Servicios"):
 Las imágenes se guardan en carpetas reales del sistema dentro de
 `Documentos/HardStreetDrive` (multiplataforma: Windows, macOS, Linux). Puedes
 abrir esa carpeta con el explorador de archivos y verás la misma estructura.
+
+## Widget de "próximos eventos"
+
+Los eventos agendados también se pueden tener fuera de la app. La app —que es
+la que tiene la sesión y los datos— calcula los próximos eventos y los EMPUJA
+al widget nativo por el canal `hardstreet/events_widget` (el widget nunca
+consulta la API por su cuenta).
+
+- **Android** — widget de la pantalla de inicio (`EventWidgetProvider`):
+  encabezado, contador, botón **Agregar agenda** y TODA la agenda que viene
+  agrupada por día (lista desplazable dentro del widget). Se alimenta desde el
+  servicio de avisos (refresco cada 5 min) y desde el módulo Agendas. En la
+  franja "Próximos eventos" de Agendas hay un botón para **colocarlo en el
+  inicio** (Android 8+ pide la confirmación del lanzador).
+- **Windows** — panel flotante del escritorio (esquina inferior derecha,
+  siempre visible, con esquinas redondeadas): se puede arrastrar y su botón
+  **+** hace lo mismo que el de Android. Se enciende y apaga con el mismo botón
+  de la franja (la preferencia se guarda con `shared_preferences`).
+- **Colores y toques**: el widget se pinta con la MISMA paleta del tema de la
+  app (tarjeta = `cardColor`, textos = `onSurface`/`onSurfaceVariant`, acento =
+  `primary`), en claro y en oscuro; una prueba compara la paleta nativa
+  (`colors.xml` y `event_widget.cpp`) con `AppTheme` para que no se separen.
+  **Tocar un evento abre el detalle de ESA agenda** en la app, y el botón **+
+  (Agregar agenda), que solo aparece si el rol tiene "Crear" en Agendas,
+  abre el alta de evento** (el widget no navega: le pasa el toque a la app).
+
+## Arranque
+
+La app abre con una animación de marca (fondo del tema activo, la marca que
+entra con rebote, el nombre y una barra fina) y después un fundido cruzado
+hacia el login o el panel: la MISMA en Windows y en Android. En Android oscuro,
+además, la ventana nativa ya usa el fondo del arranque (`#0C111C`) para que no
+haya un destello blanco antes del primer frame.
+
+## Actualizaciones internas (Android)
+
+El actualizador descarga el APK y lo entrega al instalador del sistema por
+`FileProvider`. El APK se descarga en el caché NORMAL de la app
+(`getTemporaryDirectory()`), que es el que declara `res/xml/file_paths.xml`:
+antes se usaba `Directory.systemTemp`, que en Android apunta a `code_cache` y
+provocaba *"Failed to find configured root that contains …"*. Además
+`MainActivity` copia el archivo al caché si llegara a quedar fuera de las
+rutas declaradas, así que la instalación ya no puede fallar por eso.
 
 ## Ejecutar
 

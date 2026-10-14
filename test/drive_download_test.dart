@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hardstreet_admin/drive_api_service.dart';
@@ -162,6 +163,40 @@ void main() {
 
       drive.clearFinishedDownloads();
       expect(drive.downloadJobs, isEmpty);
+    });
+  });
+
+  group('descarga en Android (sin diálogo "Guardar como")', () {
+    test('deja el archivo temporal con los bytes y pide guardarlo', () async {
+      final dir = await Directory.systemTemp.createTemp('hs_downloads_test');
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+
+      final calls = <MethodCall>[];
+      const channel = MethodChannel('hardstreet/downloads');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        // El lado nativo COPIA ese archivo: aquí se comprueba que existe y que
+        // lleva los bytes correctos (nada de pasar megabytes por el canal).
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        final bytes = File(args['path'] as String).readAsBytesSync();
+        expect(bytes, equals(_png));
+        return 'Descargas/foto.png';
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
+          .defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null));
+
+      final where = await saveToAndroidDownloads(_png, 'foto.png',
+          tempDir: dir.path);
+
+      expect(calls.single.method, 'save');
+      expect((calls.single.arguments as Map)['name'], 'foto.png');
+      expect(where, 'Descargas/foto.png');
+      // El temporal se borra SIEMPRE: no quedan copias por ahí.
+      expect(File('${dir.path}/foto.png').existsSync(), isFalse);
     });
   });
 }

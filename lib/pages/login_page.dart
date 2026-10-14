@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../app_settings.dart';
+import '../event_widget.dart';
 import '../hs_api.dart';
 import '../theme.dart';
+import '../widgets/brand_badge.dart';
+import '../widgets/hs_toast.dart';
 
 /// Pantalla de inicio de sesión REAL contra la API de Hardstreet
 /// (la misma que usa la web: POST /api/auth/login con header Bearer).
@@ -33,14 +36,15 @@ class _LoginPageState extends State<LoginPage> {
   void _toggleDark() {
     final v = !AppSettings.instance.dark;
     AppSettings.instance.setDark(v); // persiste (localStorage en web)
+    // El widget de eventos vive FUERA de la app: se le recuerda el modo nuevo
+    // para que se repinte igual que ella.
+    UpcomingEventsWidget.refresh();
     setState(() {});
   }
 
-  void _snack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
-  }
+  /// El login no es un alta/edición/baja: su error se avisa aquí (rojo), no
+  /// con la notificación automática del cliente de API.
+  void _snack(String message) => HsToast.error(message);
 
   Future<void> _submit() async {
     if (_loading) return;
@@ -55,7 +59,7 @@ class _LoginPageState extends State<LoginPage> {
       final user = await HsApi.login(email, password);
       if (!mounted) return;
       final role = (user['role'] ?? '').toString().toLowerCase();
-      if (role != 'admin' && role != 'colaborador') {
+      if (role != 'admin' && role != 'colaborador' && role != 'cliente' && role != 'empleado') {
         await HsApi.logout();
         if (!mounted) return;
         _snack('Esta cuenta no tiene acceso al panel de administración');
@@ -94,8 +98,8 @@ class _LoginPageState extends State<LoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (!wide) ...[
-                Align(
-                  child: _BrandBadge(size: 56, radius: 16),
+                const Align(
+                  child: BrandBadge(size: 56, radius: 16),
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -351,7 +355,7 @@ class _WideLayout extends StatelessWidget {
                           children: [
                             const Row(
                               children: [
-                                _BrandBadge(size: 44, radius: 12),
+                                BrandBadge(size: 44, radius: 12),
                                 SizedBox(width: 12),
                                 Text(
                                   'HardStreet',
@@ -438,33 +442,3 @@ class _WideLayout extends StatelessWidget {
   }
 }
 
-class _BrandBadge extends StatelessWidget {
-  const _BrandBadge({required this.size, required this.radius});
-
-  final double size;
-  final double radius;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.brand, AppColors.brandDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.brand.withValues(alpha: .35),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Icon(Icons.apartment_rounded, color: Colors.white, size: size * .58),
-    );
-  }
-}

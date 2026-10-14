@@ -26,6 +26,7 @@ class DriveThumb extends StatefulWidget {
     this.size = 40,
     this.big = false,
     this.contain = false,
+    this.rounded = true,
   });
 
   /// URL (drive remoto) o ruta absoluta (drive local) de la miniatura.
@@ -44,6 +45,10 @@ class DriveThumb extends StatefulWidget {
 
   /// true = la imagen se ajusta sin recortar (visor).
   final bool contain;
+
+  /// true = esquinas redondeadas (tarjetas). El VISOR la pone en false: la
+  /// foto se ve a pantalla completa, sin bordes curvos.
+  final bool rounded;
 
   /// Reintentos automáticos de descarga antes de darla por fallida.
   static const int maxRetries = 3;
@@ -214,6 +219,7 @@ class _DriveThumbState extends State<DriveThumb> {
     );
 
     if (widget.big) {
+      if (!widget.rounded) return content;
       return ClipRRect(borderRadius: BorderRadius.circular(13), child: content);
     }
     return Container(

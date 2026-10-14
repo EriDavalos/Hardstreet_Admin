@@ -471,6 +471,12 @@ class DriveService extends DriveBase {
     return names;
   }
 
+  /// Subcarpetas directas de [rel] en disco (selector de carpeta del
+  /// administrador del paquete), sin mover la carpeta que se está viendo.
+  @override
+  Future<List<String>> listChildFolders(List<String> rel) async =>
+      listFolders(rel);
+
   /// Ruta absoluta de un archivo/carpeta para previsualizarlo.
   @override
   String absolutePathOf(DriveItem item) => _absolute([...path, item.name]);

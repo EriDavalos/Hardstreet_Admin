@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:io' if (dart.library.io) 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'app_platform.dart';
 
@@ -70,10 +71,19 @@ class AppUpdater {
 
   /// Carpeta donde viven las descargas: dentro del caché temporal propio
   /// (la desinstalación de Windows ya limpia hardstreet_cache).
+  ///
+  /// En Android NO se usa `Directory.systemTemp`: la VM de Dart lo resuelve
+  /// a `/data/data/<pkg>/code_cache`, que el FileProvider del instalador no
+  /// expone (de ahí el "Failed to find configured root that contains ...").
+  /// `getTemporaryDirectory()` devuelve el caché normal de la app, que sí
+  /// está declarado en `res/xml/file_paths.xml` (etiqueta `cache-path`).
   static Future<Directory> updatesDir() async {
+    final base = isAndroidPlatform
+        ? await getTemporaryDirectory()
+        : Directory.systemTemp;
     final dir = Directory(
       [
-        Directory.systemTemp.path,
+        base.path,
         'hardstreet_cache',
         'updates',
       ].join(Platform.pathSeparator),

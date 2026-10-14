@@ -7,6 +7,7 @@ import '../hs_format.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
+import '../widgets/hs_toast.dart';
 
 // ==================================================================
 // DASHBOARD CLIENTE (módulo "Dashboard Cliente"): lo que el CLIENTE ve
@@ -39,6 +40,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   List<Map<String, dynamic>> _packages = const [];
   int _selectedId = 0;
 
+  /// Carpetas del Drive COMPARTIDAS con el cliente: la unión de las carpetas
+  /// que el estudio le asignó a cada uno de sus paquetes comprados.
+  List<Map<String, dynamic>> _sharedPaths = const [];
+
   @override
   void initState() {
     super.initState();
@@ -52,9 +57,18 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     });
     try {
       final packages = await HsApi.myPackages();
+      // Las carpetas compartidas son un extra: si fallan, la vista sigue.
+      var shared = const <Map<String, dynamic>>[];
+      try {
+        final info = await HsApi.myDriveDirectories();
+        shared = info.paths;
+      } catch (_) {
+        // Sin backend nuevo: se muestran las ligas de los servicios.
+      }
       if (!mounted) return;
       setState(() {
         _packages = packages;
+        _sharedPaths = shared;
         if (_selectedId == 0 && packages.isNotEmpty) {
           _selectedId = (packages.first['id'] as num? ?? 0).toInt();
         }
@@ -154,11 +168,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
 
   Future<void> _copy(String url) async {
     // Aviso INMEDIATO (el portapapeles es cortesía y no debe retrasar el UI).
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Enlace copiado')));
-    }
+    if (mounted) HsToast.info('Enlace copiado');
     await Clipboard.setData(ClipboardData(text: url));
   }
 
@@ -169,6 +179,16 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     } else {
       _copy(url);
     }
+  }
+
+  /// Abre en el drive (sección Archivos) la carpeta compartida de un paquete.
+  void _openShared(String path) {
+    final segments = path
+        .split('/')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    widget.onOpenDrive?.call(segments);
   }
 
   @override
@@ -183,8 +203,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     return PageContainer(
       title: 'Mi paquete',
       description:
-          'Avance de tus paquetes: lo que ya cumplimos y el acceso a tu '
-          'carpeta del Drive.',
+          'Avance de tus paquetes: lo que ya cumplimos y las carpetas del '
+          'Drive compartidas contigo.',
       icon: Icons.workspace_premium_outlined,
       stats: [
         if (_packages.isNotEmpty)
@@ -269,7 +289,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               _progressCard(scheme, services, done, inProgress),
             ],
             const SizedBox(height: 18),
-            _header(scheme, Icons.folder_copy_outlined, 'Mi carpeta del Drive'),
+            _header(scheme, Icons.folder_copy_outlined, 'Mi Drive compartido'),
             const SizedBox(height: 10),
             _driveCard(scheme),
           ],
@@ -557,10 +577,13 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     );
   }
 
-  /// Acceso al Drive del paquete: botón principal + liga por servicio.
+  /// Acceso al Drive del paquete:
+  ///   1. las carpetas COMPARTIDAS con el cliente (lo que ve en su drive),
+  ///   2. y las ligas de los servicios del paquete (si las hay).
   Widget _driveCard(ColorScheme scheme) {
     final links = _driveLinks;
-    if (links.isEmpty) {
+    final shared = _sharedPaths;
+    if (shared.isEmpty && links.isEmpty) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(18),
@@ -571,8 +594,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Aún no se asigna la carpeta del Drive a tu paquete. '
-                  'Tu fotógrafo la vincula desde la pestaña Servicios del '
+                  'Aún no se te comparte ninguna carpeta del Drive. Tu '
+                  'fotógrafo la asigna al paquete desde el administrador del '
                   'paquete y aquí aparecerá tu acceso directo.',
                   style: TextStyle(
                       fontSize: 12.5, height: 1.4, color: scheme.onSurfaceVariant),
@@ -583,24 +606,78 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         ),
       );
     }
-    final firstOwn = ownDrivePathOf(links.first.$2) != null;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-            child: FilledButton.icon(
-              onPressed: () => _openLink(links.first.$2),
-              icon: Icon(firstOwn ? Icons.folder_open_outlined : Icons.link,
-                  size: 18),
-              label: Text(firstOwn ? 'Entrar a mi Drive' : 'Copiar enlace del Drive'),
+          if (shared.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: FilledButton.icon(
+                onPressed: () =>
+                    _openShared((shared.first['path'] ?? '').toString()),
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: const Text('Entrar a mi Drive'),
+              ),
             ),
-          ),
-          if (links.length > 1) ...[
-            const SizedBox(height: 4),
-            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Text(
+                shared.length == 1
+                    ? 'Carpeta compartida contigo'
+                    : '${shared.length} carpetas compartidas contigo',
+                style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurfaceVariant),
+              ),
+            ),
+            for (final s in shared)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.folder_shared_outlined,
+                    size: 18, color: scheme.primary),
+                title: Text(
+                  (s['packageName'] ?? '').toString().isEmpty
+                      ? 'Carpeta compartida'
+                      : (s['packageName'] ?? '').toString(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  (s['path'] ?? '').toString(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11, color: scheme.onSurfaceVariant),
+                ),
+                trailing: TextButton(
+                  onPressed: () => _openShared((s['path'] ?? '').toString()),
+                  child: const Text('Abrir'),
+                ),
+              ),
+          ],
+          if (links.isNotEmpty) ...[
+            if (shared.isNotEmpty)
+              const Divider(height: 1)
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: FilledButton.icon(
+                  onPressed: () => _openLink(links.first.$2),
+                  icon: Icon(
+                      ownDrivePathOf(links.first.$2) != null
+                          ? Icons.folder_open_outlined
+                          : Icons.link,
+                      size: 18),
+                  label: Text(ownDrivePathOf(links.first.$2) != null
+                      ? 'Entrar a mi Drive'
+                      : 'Copiar enlace del Drive'),
+                ),
+              ),
             for (final (name, url) in links) ...[
               ListTile(
                 dense: true,

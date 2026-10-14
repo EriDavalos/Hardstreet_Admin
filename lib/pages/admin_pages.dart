@@ -267,78 +267,311 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final compact = MediaQuery.sizeOf(context).width < 620;
+    final size = MediaQuery.sizeOf(context);
+    final compact = size.width < 620;
+    // TABLERO sin scroll: en ventanas anchas todo el resumen cabe en la vista
+    // (tres columnas en tarjetas compactas). En pantallas angostas se usa el
+    // acomodo en una columna con scroll, que es lo único que cabe.
+    final wide = size.width >= 1000;
     final catalogValue =
         _packages.fold<num>(0, (a, p) => a + ((p['price'] as num?) ?? 0));
     final upcoming = _upcomingAgendas;
 
     return PageContainer(
       title: 'Dashboard',
-      description: 'Resumen general de la operación.',
+      description: wide
+          ? 'Todo el resumen en una sola vista, sin bajar.'
+          : 'Resumen general de la operación.',
       icon: Icons.space_dashboard_rounded,
-      stats: [
-        StatPill(
-            icon: Icons.people_alt_outlined,
-            label: '${_users.length} usuarios internos'),
-        StatPill(
-            icon: Icons.badge_outlined, label: '${_clients.length} clientes'),
-        StatPill(
-            icon: Icons.card_giftcard_outlined,
-            label: '${_packages.length} paquetes'),
-      ],
+      expand: wide,
+      // En el tablero los conteos ya viven en la tira de métricas: repetirlos
+      // en el encabezado solo robaba alto (y obligaba a bajar).
+      stats: wide
+          ? const <StatPill>[]
+          : [
+              StatPill(
+                  icon: Icons.people_alt_outlined,
+                  label: '${_users.length} usuarios internos'),
+              StatPill(
+                  icon: Icons.badge_outlined, label: '${_clients.length} clientes'),
+              StatPill(
+                  icon: Icons.card_giftcard_outlined,
+                  label: '${_packages.length} paquetes'),
+            ],
       child: RefreshIndicator(
         onRefresh: _load,
+        child: _error != null
+            ? _errorCard(scheme)
+            : _loading
+                ? const ListSkeleton(lines: 3, cardHeight: 96)
+                : wide
+                    ? _board(scheme, catalogValue, upcoming)
+                    : _scrollSections(scheme, catalogValue, upcoming, compact),
+      ),
+    );
+  }
+
+  /// Acomodo en UNA columna con scroll (pantallas angostas): el de siempre.
+  Widget _scrollSections(
+      ColorScheme scheme, num catalogValue, List<Map<String, dynamic>> upcoming, bool compact) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _SectionHeader(
+            icon: Icons.insights_outlined, label: 'Resumen general'),
+        const SizedBox(height: 10),
+        _metrics(scheme, catalogValue, upcoming.length),
+        if (_finance != null) ...[
+          const SizedBox(height: 22),
+          const _SectionHeader(
+              icon: Icons.account_balance_wallet_outlined, label: 'Finanzas'),
+          const SizedBox(height: 10),
+          _financeSection(scheme, _finance!),
+        ],
+        const SizedBox(height: 22),
+        const _SectionHeader(
+            icon: Icons.bar_chart_rounded, label: 'Distribución'),
+        const SizedBox(height: 10),
+        _charts(scheme),
+        if (_space != null) ...[
+          const SizedBox(height: 12),
+          _spaceCard(scheme, _space!),
+        ],
+        const SizedBox(height: 22),
+        const _SectionHeader(
+            icon: Icons.event_available_outlined, label: 'Próximos eventos'),
+        const SizedBox(height: 10),
+        _upcomingCard(scheme, upcoming),
+        const SizedBox(height: 22),
+        const _SectionHeader(icon: Icons.bolt_outlined, label: 'Accesos rápidos'),
+        const SizedBox(height: 10),
+        _shortcuts(),
+        if (_clients.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          const _SectionHeader(
+              icon: Icons.badge_outlined, label: 'Clientes recientes'),
+          const SizedBox(height: 10),
+          _recentClients(compact),
+        ],
+      ],
+    );
+  }
+
+  // ------------------- Tablero sin scroll (escritorio) -------------------
+
+  /// Tres columnas que llenan el alto disponible: la página NO scrollea y, si
+  /// una columna tiene más contenido del que cabe, scrollea SOLO ella.
+  Widget _board(
+      ColorScheme scheme, num catalogValue, List<Map<String, dynamic>> upcoming) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 4,
+          child: _boardColumn([
+            _panel(
+              icon: Icons.insights_outlined,
+              label: 'Resumen general',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _metricStrip(scheme, catalogValue, upcoming.length),
+                  if (_space != null) ...[
+                    const SizedBox(height: 8),
+                    _spaceLine(scheme, _space!),
+                  ],
+                ],
+              ),
+            ),
+            if (_finance != null) ...[
+              const SizedBox(height: 10),
+              _panel(
+                icon: Icons.account_balance_wallet_outlined,
+                label: 'Finanzas',
+                child: _financeSection(scheme, _finance!,
+                    bare: true, chartHeight: 84),
+              ),
+            ],
+          ]),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 3,
+          child: _boardColumn([
+            _panel(
+              icon: Icons.event_available_outlined,
+              label: 'Próximos eventos',
+              child: _upcomingRows(scheme, upcoming),
+            ),
+            if (_clients.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _panel(
+                icon: Icons.badge_outlined,
+                label: 'Clientes recientes',
+                child: _clientRows(),
+              ),
+            ],
+          ]),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 3,
+          child: _boardColumn([
+            _panel(
+              icon: Icons.bar_chart_rounded,
+              label: 'Distribución',
+              child: _charts(scheme, bare: true),
+            ),
+            const SizedBox(height: 10),
+            _panel(
+              icon: Icons.bolt_outlined,
+              label: 'Accesos rápidos',
+              child: _shortcuts(dense: true),
+            ),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  /// Una columna del tablero: si su contenido no cabe, scrollea por dentro.
+  Widget _boardColumn(List<Widget> children) => SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      );
+
+  /// Tarjeta del tablero: encabezado de sección + contenido compacto.
+  Widget _panel({
+    required IconData icon,
+    required String label,
+    required Widget child,
+  }) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_error != null)
-              _errorCard(scheme)
-            else if (_loading)
-              const ListSkeleton(lines: 3, cardHeight: 96)
-            else ...[
-              const _SectionHeader(
-                  icon: Icons.insights_outlined, label: 'Resumen general'),
-              const SizedBox(height: 10),
-              _metrics(scheme, catalogValue, upcoming.length),
-              if (_finance != null) ...[
-                const SizedBox(height: 22),
-                const _SectionHeader(
-                    icon: Icons.account_balance_wallet_outlined,
-                    label: 'Finanzas'),
-                const SizedBox(height: 10),
-                _financeSection(scheme, _finance!),
-              ],
-              const SizedBox(height: 22),
-              const _SectionHeader(
-                  icon: Icons.bar_chart_rounded, label: 'Distribución'),
-              const SizedBox(height: 10),
-              _charts(scheme),
-              if (_space != null) ...[
-                const SizedBox(height: 12),
-                _spaceCard(scheme, _space!),
-              ],
-              const SizedBox(height: 22),
-              const _SectionHeader(
-                  icon: Icons.event_available_outlined,
-                  label: 'Próximos eventos'),
-              const SizedBox(height: 10),
-              _upcomingCard(scheme, upcoming),
-              const SizedBox(height: 22),
-              const _SectionHeader(
-                  icon: Icons.bolt_outlined, label: 'Accesos rápidos'),
-              const SizedBox(height: 10),
-              _shortcuts(),
-              if (_clients.isNotEmpty) ...[
-                const SizedBox(height: 22),
-                const _SectionHeader(
-                    icon: Icons.badge_outlined, label: 'Clientes recientes'),
-                const SizedBox(height: 10),
-                _recentClients(compact),
-              ],
-            ],
+            _SectionHeader(icon: icon, label: label),
+            const SizedBox(height: 8),
+            child,
           ],
         ),
       ),
+    );
+  }
+
+  /// Tira de métricas COMPACTA (una sola línea de tarjetas bajas): cabe sin
+  /// obligar a bajar en el tablero.
+  Widget _metricStrip(ColorScheme scheme, num catalogValue, int upcomingCount) {
+    final metrics = <_Metric>[
+      _Metric('Usuarios internos', '${_users.length}',
+          Icons.people_alt_rounded, scheme.primary),
+      _Metric('Clientes', '${_clients.length}', Icons.badge_rounded,
+          const Color(0xFF8B5CF6)),
+      _Metric('En catálogo', '${_packages.length}',
+          Icons.card_giftcard_rounded, const Color(0xFF10B981)),
+      _Metric('Valor del catálogo', hsMoney(catalogValue),
+          Icons.payments_rounded, const Color(0xFFF59E0B)),
+      _Metric('Agendas próximas', '$upcomingCount',
+          Icons.event_available_rounded, const Color(0xFF3B82F6)),
+    ];
+    return LayoutBuilder(builder: (context, box) {
+      final w = box.maxWidth;
+      final cols = w < 380
+          ? 2
+          : w < 620
+              ? 3
+              : 5;
+      const gap = 8.0;
+      final tileW = (w - gap * (cols - 1)) / cols;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (var i = 0; i < metrics.length; i++)
+            SizedBox(
+              width: tileW,
+              child: StaggeredItem(
+                index: i,
+                child: _MiniMetricCard(metric: metrics[i]),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
+  /// Eventos próximos SIN la tarjeta exterior (el tablero ya es una tarjeta).
+  /// Van AGRUPADOS POR DÍA: arriba la fecha y debajo los eventos de ese día
+  /// (un mismo día puede tener dos o más).
+  Widget _upcomingRows(ColorScheme scheme, List<Map<String, dynamic>> upcoming) {
+    if (upcoming.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'No hay eventos próximos. Crea agendas desde los paquetes del '
+          'cliente.',
+          style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+        ),
+      );
+    }
+    final shown = upcoming.take(6).toList();
+    final groups = _groupedByDay(shown);
+    var index = 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final g in groups) ...[
+          StaggeredItem(
+            index: index++,
+            child: _UpcomingDayHeader(label: g.label),
+          ),
+          for (var i = 0; i < g.agendas.length; i++) ...[
+            StaggeredItem(
+              index: index++,
+              child: _UpcomingRow(agenda: g.agendas[i]),
+            ),
+            if (!(g == groups.last && i == g.agendas.length - 1))
+              Divider(
+                height: 1,
+                indent: 14,
+                color: Theme.of(context).dividerColor,
+              ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  /// Agrupa los eventos (ya ordenados por fecha) por DÍA, con su etiqueta
+  /// ("HOY · 16 OCT", "MAÑANA · 17 OCT", "VIE 18 OCT").
+  List<_UpcomingGroup> _groupedByDay(List<Map<String, dynamic>> agendas) {
+    final groups = <_UpcomingGroup>[];
+    for (final a in agendas) {
+      final date = hsParseDate(a['eventDate']);
+      final label = date == null ? 'SIN FECHA' : hsDayLabel(date);
+      if (groups.isEmpty || groups.last.label != label) {
+        groups.add(_UpcomingGroup(label, []));
+      }
+      groups.last.agendas.add(a);
+    }
+    return groups;
+  }
+
+  /// Clientes recientes SIN la tarjeta exterior.
+  Widget _clientRows() {
+    final shown = _clients.take(5).toList();
+    return Column(
+      children: [
+        for (var i = 0; i < shown.length; i++) ...[
+          if (i > 0) Divider(height: 1, color: Theme.of(context).dividerColor),
+          StaggeredItem(
+              index: i, child: _DashboardClientRow(client: shown[i])),
+        ],
+      ],
     );
   }
 
@@ -398,13 +631,22 @@ class _DashboardPageState extends State<DashboardPage> {
 
   /// FINANZAS del negocio: el dinero en cuadros horizontales + la gráfica de
   /// los últimos meses (lo que entró contra lo que salió).
-  Widget _financeSection(ColorScheme scheme, FinanceData f) {
+  /// [bare] = sin tarjeta propia (el tablero ya pinta una).
+  Widget _financeSection(
+    ColorScheme scheme,
+    FinanceData f, {
+    bool bare = false,
+    double chartHeight = 130,
+  }) {
     final t = f.totals;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         FinanceKpiGrid(
           currency: f.currency,
+          // En el tablero (sin tarjeta propia) los cuadros van en UNA fila:
+          // el alto es lo escaso y así no obliga a bajar.
+          columns: bare ? 4 : null,
           kpis: [
             FinanceKpi(
               label: 'Ganancias',
@@ -412,12 +654,6 @@ class _DashboardPageState extends State<DashboardPage> {
               icon: Icons.payments_outlined,
               tint: FinanceColors.green,
               note: 'Abonos cobrados',
-            ),
-            FinanceKpi(
-              label: 'Por cobrar',
-              amount: t.porCobrar,
-              icon: Icons.hourglass_bottom_rounded,
-              tint: FinanceColors.amber,
             ),
             FinanceKpi(
               label: 'Disponible',
@@ -441,61 +677,59 @@ class _DashboardPageState extends State<DashboardPage> {
           ],
         ),
         const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.show_chart_rounded,
-                        size: 18, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Últimos 6 meses',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    Text(
-                      'Entró vs. salió',
-                      style: TextStyle(
-                          fontSize: 11, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                FinanceMonthBars(months: f.months, height: 130),
-                const SizedBox(height: 14),
-                const FinanceLegend(),
-              ],
-            ),
-          ),
-        ),
+        _chartBox(scheme, f, chartHeight, bare: bare),
       ],
+    );
+  }
+
+  Widget _chartBox(ColorScheme scheme, FinanceData f, double height,
+      {required bool bare}) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.show_chart_rounded, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Últimos 6 meses',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            Text(
+              'Entró vs. salió',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        FinanceMonthBars(months: f.months, height: height),
+        const SizedBox(height: 12),
+        const FinanceLegend(),
+      ],
+    );
+    if (bare) return content;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: content,
+      ),
     );
   }
 
   /// Gráficas compactas (sin exceso): donut de paquetes por PLAN y
   /// barras de los paquetes más caros del catálogo.
-  Widget _charts(ColorScheme scheme) {
+  Widget _charts(ColorScheme scheme, {bool bare = false}) {
     return LayoutBuilder(builder: (context, box) {
-      final donut = Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: _TierDonut(packages: _packages),
-        ),
-      );
-      final bars = Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: _PriceBars(packages: _packages),
-        ),
-      );
+      Widget wrap(Widget child) => bare
+          ? Padding(padding: const EdgeInsets.all(4), child: child)
+          : Card(child: Padding(padding: const EdgeInsets.all(16), child: child));
+      final donut = wrap(_TierDonut(packages: _packages));
+      final bars = wrap(_PriceBars(packages: _packages));
       if (box.maxWidth < 720) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -511,6 +745,55 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       );
     });
+  }
+
+  /// Espacio del drive en UNA línea (versión de tablero de [_spaceCard]).
+  Widget _spaceLine(ColorScheme scheme, Map<String, dynamic> space) {
+    final used = (space['usedBytes'] as num?) ?? 0;
+    final total = space['totalBytes'] as num?;
+    final files = (space['files'] as num?) ?? 0;
+    final folders = (space['folders'] as num?) ?? 0;
+    final pct =
+        (total != null && total > 0) ? (used / total).clamp(0.0, 1.0) : null;
+    const green = Color(0xFF10B981);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: green.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: green.withValues(alpha: .22)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.storage_outlined, size: 15, color: green),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              '${_fmtBytes(used)}${total != null ? ' de ${_fmtBytes(total)}' : ''}'
+              ' · $files archivos · $folders carpetas',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+          ),
+          if (pct != null) ...[
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 54,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 6,
+                  color: green,
+                  backgroundColor: green.withValues(alpha: .16),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   /// Formato legible de bytes (B / KB / MB / GB).
@@ -612,21 +895,37 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     final shown = upcoming.take(4).toList();
+    final groups = _groupedByDay(shown);
+    var index = 0;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (var i = 0; i < shown.length; i++) ...[
-            if (i > 0)
-              Divider(height: 1, color: Theme.of(context).dividerColor),
-            StaggeredItem(index: i, child: _UpcomingRow(agenda: shown[i])),
+          for (final g in groups) ...[
+            StaggeredItem(
+              index: index++,
+              child: _UpcomingDayHeader(label: g.label),
+            ),
+            for (var i = 0; i < g.agendas.length; i++) ...[
+              StaggeredItem(
+                index: index++,
+                child: _UpcomingRow(agenda: g.agendas[i]),
+              ),
+              if (!(g == groups.last && i == g.agendas.length - 1))
+                Divider(
+                  height: 1,
+                  indent: 14,
+                  color: Theme.of(context).dividerColor,
+                ),
+            ],
           ],
         ],
       ),
     );
   }
 
-  Widget _shortcuts() {
+  Widget _shortcuts({bool dense = false}) {
     final shortcuts = <_Shortcut>[
       if (_canSee('Archivos'))
         const _Shortcut('Archivos', 'Carpetas y fotos',
@@ -649,14 +948,20 @@ class _DashboardPageState extends State<DashboardPage> {
     ];
     if (shortcuts.isEmpty) return const SizedBox.shrink();
     return LayoutBuilder(builder: (context, box) {
-      final cols = box.maxWidth < 520 ? 2 : 4;
+      // En el tablero los accesos van COMPACTOS (3 por fila) para no comer
+      // alto; en el acomodo con scroll se quedan como siempre.
+      final cols = dense
+          ? (box.maxWidth < 300 ? 2 : 3)
+          : (box.maxWidth < 520 ? 2 : 4);
       return GridView.count(
         crossAxisCount: cols,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
-        childAspectRatio: cols == 2 ? 1.4 : 1.95,
+        childAspectRatio: dense
+            ? (cols == 2 ? 1.35 : 1.05)
+            : (cols == 2 ? 1.4 : 1.95),
         children: [
           for (var i = 0; i < shortcuts.length; i++)
             StaggeredItem(
@@ -703,12 +1008,21 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: scheme.primary),
         const SizedBox(width: 8),
-        Text(
-          label,
-          style: Theme.of(context)
-              .textTheme
-              .titleMedium
-              ?.copyWith(fontWeight: FontWeight.w800),
+        // El encabezado puede estar en una columna angosta del tablero: el
+        // texto se adapta al ancho disponible en vez de desbordar la tarjeta.
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
         ),
       ],
     );
@@ -779,7 +1093,125 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
-/// Fila de un próximo evento: fecha tintada, cliente y servicio · paquete.
+/// Métrica COMPACTA del tablero (una línea, alto fijo): así la tira de
+/// indicadores no obliga a bajar en el dashboard.
+class _MiniMetricCard extends StatelessWidget {
+  const _MiniMetricCard({required this.metric});
+
+  final _Metric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: metric.tint.withValues(alpha: .26)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: metric.tint.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(metric.icon, color: metric.tint, size: 14),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    metric.value,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: metric.tint,
+                    ),
+                  ),
+                ),
+                Text(
+                  metric.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 9.5, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}/// Día de un grupo de eventos próximos (etiqueta + sus agendas).
+class _UpcomingGroup {
+  const _UpcomingGroup(this.label, this.agendas);
+
+  /// Etiqueta del día: `HOY · 16 OCT`, `MAÑANA · 17 OCT`, `VIE 18 OCT`.
+  final String label;
+  final List<Map<String, dynamic>> agendas;
+}
+
+/// Encabezado de FECHA sobre un grupo de eventos del mismo día.
+class _UpcomingDayHeader extends StatelessWidget {
+  const _UpcomingDayHeader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isToday = label.startsWith('HOY');
+    final color = isToday ? scheme.primary : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
+      child: Row(
+        children: [
+          Icon(Icons.calendar_today_rounded, size: 11, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                letterSpacing: .6,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: .45),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fila de un próximo evento: hora tintada, cliente y servicio · paquete.
+/// La FECHA vive en el encabezado del día ([_UpcomingDayHeader]); aquí va la
+/// hora, que es lo que importa al leer los eventos de ese día.
+
 class _UpcomingRow extends StatelessWidget {
   const _UpcomingRow({required this.agenda});
 
@@ -806,29 +1238,21 @@ class _UpcomingRow extends StatelessWidget {
     final package = (agenda['packageName'] ?? '').toString().trim();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       child: Row(
         children: [
           Container(
             width: 46,
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            alignment: Alignment.center,
             decoration: BoxDecoration(
               color: color.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(11),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: Column(
-              children: [
-                Text(
-                  date == null ? '--' : '${date.day}',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 15, color: color),
-                ),
-                Text(
-                  date == null ? '' : kHsMonths[date.month - 1].substring(0, 3),
-                  style: TextStyle(
-                      fontSize: 10, fontWeight: FontWeight.w700, color: color),
-                ),
-              ],
+            child: Text(
+              date == null ? '--:--' : hsTimeLabel(date),
+              style: TextStyle(
+                  fontWeight: FontWeight.w800, fontSize: 11.5, color: color),
             ),
           ),
           const SizedBox(width: 12),
@@ -857,12 +1281,6 @@ class _UpcomingRow extends StatelessWidget {
               ],
             ),
           ),
-          if (date != null)
-            Text(
-              hsTimeLabel(date),
-              style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 12.5, color: color),
-            ),
         ],
       ),
     );

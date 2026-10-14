@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hardstreet Admin</string>
+
+    <!-- Widget de inicio: "Próximos eventos". -->
+    <string name="event_widget_header">Próximos eventos</string>
+    <string name="event_widget_empty">Sin eventos próximos</string>
+    <!-- Botón del encabezado del widget: abre el alta de evento en la app. -->
+    <string name="event_widget_add">Agregar agenda</string>
+    <string name="event_widget_description">Toda la agenda que viene, agrupada por día, siempre a la vista.</string>
+    <plurals name="event_widget_count">
+        <item quantity="one">%d evento</item>
+        <item quantity="other">%d eventos</item>
+    </plurals>
+</resources>

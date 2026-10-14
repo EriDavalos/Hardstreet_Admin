@@ -396,6 +396,30 @@ class DriveApiService extends DriveBase {
     });
   }
 
+  /// Subcarpetas DIRECTAS de [rel] consultadas al servidor, SIN mover el
+  /// estado del drive (la carpeta que el usuario está viendo no cambia).
+  /// Lo usa el selector de carpeta del administrador del paquete.
+  @override
+  Future<List<String>> listChildFolders(List<String> rel) async {
+    try {
+      final r = await http
+          .get(
+            _u('/api/drive', {'path': rel.join('/')}),
+            headers: _authHeaders,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      final raw = (data['folders'] as List?) ?? const [];
+      return [
+        for (final e in raw)
+          if (e is Map && e['isFolder'] == true) e['name']?.toString() ?? '',
+      ].where((n) => n.isNotEmpty).toList(growable: false);
+    } catch (e) {
+      throw 'No se pudo abrir la carpeta: $e';
+    }
+  }
+
   /// El backend no expone carpetas por HTTP para el selector: derivo la lista
   /// navegando con /api/drive de cada subcarpeta visible en la raíz pedida.
   @override

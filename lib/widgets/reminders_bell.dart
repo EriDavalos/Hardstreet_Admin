@@ -3,12 +3,58 @@ import 'package:flutter/material.dart';
 import '../reminders_service.dart';
 
 /// Campanita de la top bar: muestra el conteo de avisos SIN LEER como badge.
-/// Al tocarla abre un panel con los avisos de eventos próximos (falta una
-/// semana / falta un día) y permite marcarlos como leídos.
+/// Al tocarla abre (y al tocar de nuevo cierra) un PANEL FIJO anclado
+/// debajo de la campanita —igual que la franja de "Próximos eventos" de
+/// Agendas— en vez de un diálogo modal que tapa toda la pantalla.
 ///
 /// Se suscribe a [RemindersService.instance] y se repinta sola.
-class RemindersBell extends StatelessWidget {
+class RemindersBell extends StatefulWidget {
   const RemindersBell({super.key});
+
+  @override
+  State<RemindersBell> createState() => _RemindersBellState();
+}
+
+class _RemindersBellState extends State<RemindersBell> {
+  OverlayEntry? _entry;
+
+  bool get _open => _entry != null;
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_open) {
+      _close();
+    } else {
+      _show();
+    }
+  }
+
+  void _close() {
+    _entry?.remove();
+    _entry = null;
+    if (mounted) setState(() {});
+  }
+
+  void _show() {
+    // Al abrir, refresca por si hay avisos nuevos desde el último polling.
+    RemindersService.instance.refresh();
+    final entry = OverlayEntry(
+      // PANEL FIJO: anclado bajo la top bar, esquina derecha (junto a la
+      // campanita), sin tapar el contenido de la pantalla.
+      builder: (_) => _BellOverlay(
+        onDismiss: _close,
+        child: _RemindersPanel(onClose: _close),
+      ),
+    );
+    _entry = entry;
+    Overlay.of(context, rootOverlay: true).insert(entry);
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,88 +64,123 @@ class RemindersBell extends StatelessWidget {
       builder: (context, _) {
         final unread = service.unread;
         return IconButton(
-          tooltip: unread > 0
-              ? 'Avisos ($unread sin leer)'
-              : 'Avisos de eventos',
-          onPressed: () => _showPanel(context),
-          icon: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(
-                unread > 0
-                    ? Icons.notifications
-                    : Icons.notifications_outlined,
-              ),
-              if (unread > 0)
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        width: 1.5,
+          tooltip: _open
+              ? 'Cerrar avisos'
+              : unread > 0
+                  ? 'Avisos ($unread sin leer)'
+                  : 'Avisos de eventos',
+          isSelected: _open,
+          onPressed: _toggle,
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  _open || unread > 0
+                      ? Icons.notifications
+                      : Icons.notifications_outlined,
+                ),
+                if (unread > 0)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          width: 1.5,
+                        ),
                       ),
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      unread > 9 ? '9+' : '$unread',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        height: 1.2,
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        unread > 9 ? '9+' : '$unread',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          height: 1.2,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
+              ],
+            ),
         );
       },
     );
   }
+}
 
-  void _showPanel(BuildContext context) {
-    // Al abrir, refresca por si hay avisos nuevos desde el último polling.
-    RemindersService.instance.refresh();
-    showDialog<void>(
-      context: context,
-      builder: (_) => const _RemindersDialog(),
+/// Capa del panel: bloquea los taps de FUERA (barrier transparente) para
+/// cerrarlo, sin cubrir el panel mismo.
+class _BellOverlay extends StatelessWidget {
+  const _BellOverlay({required this.onDismiss, required this.child});
+
+  final VoidCallback onDismiss;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onDismiss,
+            child: const SizedBox.expand(),
+          ),
+        ),
+        // Anclado bajo la top bar (60 px) a la derecha, con margen.
+        Positioned(
+          top: 66,
+          right: 12,
+          child: child,
+        ),
+      ],
     );
   }
 }
 
-class _RemindersDialog extends StatelessWidget {
-  const _RemindersDialog();
+/// Panel FIJO de avisos: se expande/plega bajo la campanita con la misma
+/// anatomía que los demás paneles del panel (cabecera + lista scrollable).
+class _RemindersPanel extends StatelessWidget {
+  const _RemindersPanel({required this.onClose});
+
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final service = RemindersService.instance;
-    return Dialog(
+    final scheme = Theme.of(context).colorScheme;
+    final screen = MediaQuery.sizeOf(context);
+    return Material(
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: .30),
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
+        constraints: BoxConstraints(
+          maxWidth: 360,
+          maxHeight: (screen.height * .55).clamp(220.0, 480.0),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          // UN solo listener para TODO el diálogo: si solo la lista escuchaba
-          // al servicio, el header (con "Marcar leídos") se quedaba obsoleto
-          // tras marcar todo: el botón no desaparecía con 0 sin leer.
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
           child: AnimatedBuilder(
             animation: service,
             builder: (context, _) => Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _PanelHeader(service: service),
-                const SizedBox(height: 8),
+                _PanelHeader(service: service, onClose: onClose),
+                const SizedBox(height: 6),
                 Flexible(child: _buildList(context, service)),
               ],
             ),
@@ -131,9 +212,10 @@ class _RemindersDialog extends StatelessWidget {
 }
 
 class _PanelHeader extends StatelessWidget {
-  const _PanelHeader({required this.service});
+  const _PanelHeader({required this.service, required this.onClose});
 
   final RemindersService service;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -163,7 +245,7 @@ class _PanelHeader extends StatelessWidget {
           IconButton(
             tooltip: 'Cerrar',
             visualDensity: VisualDensity.compact,
-            onPressed: () => Navigator.of(context).maybePop(),
+            onPressed: onClose,
             icon: const Icon(Icons.close, size: 18),
           ),
         ],

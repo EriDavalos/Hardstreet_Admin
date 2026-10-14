@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget de inicio "Próximos eventos".
+
+     Es una COLECCIÓN (ListView) respaldada por EventWidgetService: así se
+     pueden mostrar TODOS los eventos próximos de la agenda y el usuario puede
+     desplazarse dentro del widget (RemoteViews normal no admite listas
+     dinámicas; RemoteViewsService sí).
+
+     Diseño = el de la app: tarjeta plana, encabezado con acento de la marca,
+     contador de eventos, el botón "Agregar agenda" (solo cuando el rol puede
+     crear agendas) y, por debajo, el listado AGRUPADO POR DÍA (cada fecha es
+     un rótulo "HOY · 16 OCT" que solo aparece en el primer evento del día).
+     Los colores los ajusta EventWidgetTheme en tiempo de ejecución según el
+     MODO DE LA APP (claro/oscuro), no el del sistema.
+
+     Dos toques distintos: el botón "+" abre el alta de evento y cada fila
+     abre el DETALLE de esa agenda (los PendingIntent los arma el provider). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/event_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/event_widget_bg"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/app_name"
+            android:src="@mipmap/ic_launcher" />
+
+        <TextView
+            android:id="@+id/event_widget_header"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="9dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/event_widget_header"
+            android:textColor="@color/event_widget_accent"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/event_widget_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/event_widget_badge"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp"
+            android:textColor="@color/event_widget_accent"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <!-- Botón "Agregar agenda": se muestra solo si el rol del usuario
+             tiene "Crear" en Agendas (el provider decide y lo esconde). -->
+        <ImageView
+            android:id="@+id/event_widget_add"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/event_widget_add_bg"
+            android:contentDescription="@string/event_widget_add"
+            android:padding="6dp"
+            android:src="@drawable/ic_event_widget_add"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/event_widget_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="10dp"
+        android:background="@color/event_widget_divider" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/event_widget_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:scrollbarStyle="outsideOverlay"
+            android:scrollbars="vertical" />
+
+        <TextView
+            android:id="@+id/event_widget_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="@string/event_widget_empty"
+            android:textColor="@color/event_widget_muted"
+            android:textSize="13sp" />
+    </FrameLayout>
+</LinearLayout>

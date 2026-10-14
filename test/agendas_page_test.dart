@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/event_widget.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/agendas_page.dart';
+import 'package:hardstreet_admin/widgets/form_dialog.dart';
 
 /// Instala un cliente HTTP falso con TRES agendas:
 /// - el LUNES de la semana actual a las 14:30, "Cliente Test"
@@ -331,9 +333,13 @@ void main() {
     expect(find.text('Detalle de la agenda'), findsOneWidget);
     final close = find.byTooltip('Cerrar');
     expect(close, findsOneWidget);
-    final dialog = tester.getRect(find.byType(AlertDialog));
-    expect(tester.getRect(close).center.dx, greaterThan(dialog.center.dx));
-    expect(tester.getRect(close).top, lessThan(dialog.center.dy));
+    // En móvil el modal es de PANTALLA COMPLETA: ya no hay cuadro flotante, la
+    // superficie ocupa todo (390x844) y el cierre sigue arriba a la derecha.
+    expect(find.byType(AlertDialog), findsNothing,
+        reason: 'el detalle en móvil no es un diálogo flotante');
+    expect(tester.getRect(find.byType(FormDialog)).size, const Size(390, 844));
+    expect(tester.getRect(close).center.dx, greaterThan(390 / 2));
+    expect(tester.getRect(close).top, lessThan(844 / 2));
   });
 
   testWidgets(
@@ -373,5 +379,57 @@ void main() {
       posts.first['eventDate'],
       matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
     );
+  });
+
+  testWidgets(
+      'widget nativo (Android/Windows): tocar un evento abre SU detalle',
+      (tester) async {
+    await _pumpAgendas(tester, const Size(1200, 900));
+
+    // El widget no navega: AVISA qué se tocó y la app decide. id 2 = la agenda
+    // de "Otra Clienta" ("Sesión de fotos").
+    UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 2);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Detalle de la agenda'), findsOneWidget);
+    expect(find.textContaining('Otra Clienta'), findsWidgets);
+    expect(find.textContaining('Sesión de fotos'), findsWidgets);
+    // La petición queda CONSUMIDA: no se vuelve a abrir sola.
+    expect(UpcomingEventsWidget.requested.value, isNull);
+
+    await _tapPump(tester, find.byTooltip('Cerrar'));
+    expect(find.text('Detalle de la agenda'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('widget nativo: el botón "Agregar agenda" abre el ALTA',
+      (tester) async {
+    await _pumpAgendas(tester, const Size(1200, 900));
+
+    UpcomingEventsWidget.requested.value = const WidgetTap(create: true);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Crear evento'), findsOneWidget);
+    expect(find.text('Elige el cliente, su paquete y el servicio a agendar'),
+        findsOneWidget);
+    expect(UpcomingEventsWidget.requested.value, isNull);
+
+    await _tapPump(tester, find.text('Cancelar'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'widget nativo: una agenda que ya no existe avisa y no rompe nada',
+      (tester) async {
+    await _pumpAgendas(tester, const Size(1200, 900));
+
+    UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 999);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Detalle de la agenda'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

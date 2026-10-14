@@ -6,6 +6,7 @@
 //   FinanceData.totals    ganancias, por cobrar, disponible, ahorro…
 //   FinanceData.packages  el dinero de cada paquete activo
 //   FinanceData.months    serie de los últimos meses (para la gráfica)
+//   FinanceData.movements los registros individuales (para DESGLOSAR la tabla)
 //
 // Todo dato que falte viene en cero: la UI nunca revienta por un backend
 // viejo o a medias.
@@ -33,7 +34,9 @@ class FinanceTotals {
   /// Falta por cobrar (saldo de los paquetes).
   final num porCobrar;
 
-  /// Dinero libre: ganancias - gastado (gasto + inversión).
+  /// GANANCIA REAL / dinero libre: ganancias - gastado (gasto + inversión)
+  /// - ahorro + abono externo. El ahorro se APARTA y el abono externo entra
+  /// por fuera, igual que en el administrador del paquete.
   final num disponible;
 
   /// Apartado en el ahorro.
@@ -57,6 +60,44 @@ class FinanceTotals {
         gastos: _num(json['gastos'] ?? json['gastado']),
         abonoExterno: _num(json['abonoExterno']),
       );
+}
+
+/// Dinero registrado SIN paquete: gastos, inversiones, ahorro y abonos
+/// externos del NEGOCIO (los movimientos generales del módulo Finanzas).
+class FinanceGeneral {
+  const FinanceGeneral({
+    this.gastos = 0,
+    this.inversiones = 0,
+    this.ahorro = 0,
+    this.abonoExterno = 0,
+    this.neto = 0,
+  });
+
+  final num gastos;
+  final num inversiones;
+  final num ahorro;
+  final num abonoExterno;
+
+  /// Efecto neto en el dinero del negocio: abonos externos − gastado −
+  /// ahorro (puede ser negativo).
+  final num neto;
+
+  /// Todo lo que salió: gastos + inversión.
+  num get salidas => gastos + inversiones;
+
+  bool get isEmpty =>
+      gastos == 0 && inversiones == 0 && ahorro == 0 && abonoExterno == 0;
+
+  factory FinanceGeneral.fromJson(Map<String, dynamic> json) {
+    num n(Object? v) => v is num ? v : 0;
+    return FinanceGeneral(
+      gastos: n(json['gastos']),
+      inversiones: n(json['inversiones']),
+      ahorro: n(json['ahorro']),
+      abonoExterno: n(json['abonoExterno']),
+      neto: n(json['neto']),
+    );
+  }
 }
 
 /// Dinero de UN paquete activo (con su cliente).
@@ -89,6 +130,9 @@ class FinancePackage {
 
   /// Etiqueta corta para los selectores: "Boda - Premium · Ana Ruiz".
   String get label => clientName.isEmpty ? name : '$name · $clientName';
+
+  /// Todo lo que SALIÓ del paquete: gastos + inversión.
+  num get salidas => gastos + inversiones;
 
   factory FinancePackage.fromJson(Map<String, dynamic> json) {
     num n(Object? v) => v is num ? v : 0;
@@ -156,19 +200,82 @@ class FinanceMonth {
   }
 }
 
+/// Un movimiento INDIVIDUAL del negocio (para desglosar la tabla).
+/// Los abonos llegan con [kind] = `abono`.
+class FinanceMovement {
+  const FinanceMovement({
+    required this.id,
+    required this.kind,
+    this.packageId = 0,
+    this.packageName = '',
+    this.clientName = '',
+    this.amount = 0,
+    this.description = '',
+    this.created = '',
+  });
+
+  final int id;
+  final String kind;
+
+  /// 0 = movimiento GENERAL (del negocio, sin paquete).
+  final int packageId;
+  final String packageName;
+  final String clientName;
+  final num amount;
+  final String description;
+
+  /// Fecha tal cual la manda la API (`yyyy-MM-ddTHH:mm:ss`).
+  final String created;
+
+  factory FinanceMovement.fromJson(Map<String, dynamic> json) {
+    num n(Object? v) => v is num ? v : 0;
+    return FinanceMovement(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      kind: (json['kind'] ?? 'gasto').toString(),
+      packageId: (json['packageId'] as num?)?.toInt() ?? 0,
+      packageName: (json['packageName'] ?? '').toString(),
+      clientName: (json['clientName'] ?? '').toString(),
+      amount: n(json['amount']),
+      description: (json['description'] ?? '').toString(),
+      created: (json['created'] ?? '').toString(),
+    );
+  }
+}
+
 /// Respuesta completa de /api/admin/finance.
 class FinanceData {
   const FinanceData({
     this.currency = 'MXN',
     this.totals = const FinanceTotals(),
+    this.general = const FinanceGeneral(),
     this.packages = const [],
     this.months = const [],
+    this.movements = const [],
   });
 
   final String currency;
   final FinanceTotals totals;
+
+  /// Movimientos GENERALES (sin paquete): el dinero del negocio que no se
+  /// atribuye a ningún paquete del cliente.
+  final FinanceGeneral general;
   final List<FinancePackage> packages;
   final List<FinanceMonth> months;
+  final List<FinanceMovement> movements;
+
+  /// Los movimientos de UN paquete (los más recientes primero).
+  List<FinanceMovement> movementsOf(int packageId) =>
+      movements.where((m) => m.packageId == packageId).toList(growable: false);
+
+  /// Los movimientos GENERALES (los que no pertenecen a ningún paquete).
+  List<FinanceMovement> get generalMovements => movements
+      .where((m) => m.packageId == 0)
+      .toList(growable: false);
+
+  /// Los movimientos de UN tipo (`abono`, `gasto`, `inversion`, `ahorro`,
+  /// `abono_externo`).
+  List<FinanceMovement> movementsOfKind(String kind) =>
+      movements.where((m) => m.kind == kind).toList(growable: false);
 
   /// El paquete con ese id (o null).
   FinancePackage? packageOf(int id) {
@@ -190,7 +297,10 @@ class FinanceData {
         currency: (json['currency'] ?? 'MXN').toString(),
         totals: FinanceTotals.fromJson(
             ((json['totals'] as Map?) ?? const {}).cast<String, dynamic>()),
+        general: FinanceGeneral.fromJson(
+            ((json['general'] as Map?) ?? const {}).cast<String, dynamic>()),
         packages: _list(json['packages'], FinancePackage.fromJson),
         months: _list(json['months'], FinanceMonth.fromJson),
+        movements: _list(json['movements'], FinanceMovement.fromJson),
       );
 }

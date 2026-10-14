@@ -64,12 +64,6 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _openForm([Map<String, dynamic>? user]) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -89,13 +83,10 @@ class _UsersPageState extends State<UsersPage> {
     if (!ok) return;
     try {
       await HsApi.deleteUser((user['id'] as num).toInt());
-      _snack('Usuario eliminado');
-      _reload();
-    } on ApiException catch (e) {
-      _snack(e.message);
     } catch (_) {
-      _snack('No se pudo eliminar el usuario');
+      // El backend ya avisó con la notificación roja.
     }
+    _reload();
   }
 
   List<Map<String, dynamic>> get _filtered {

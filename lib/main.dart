@@ -7,10 +7,12 @@ import 'app_constants.dart';
 import 'app_platform.dart';
 import 'app_settings.dart';
 import 'drive_api_service.dart';
+import 'event_widget.dart';
 import 'hs_access.dart';
 import 'hs_api.dart';
 import 'drive_scope.dart';
 import 'image_memory.dart';
+import 'pages/activity_page.dart';
 import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
 import 'pages/clients_page.dart';
@@ -28,6 +30,8 @@ import 'theme.dart';
 import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
 import 'widgets/force_update_dialog.dart';
+import 'widgets/hs_toast.dart';
+import 'widgets/startup_intro.dart';
 import 'widgets/wheel_fix.dart';
 
 void main() {
@@ -104,6 +108,10 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   /// primer chequeo de versión se comportará como entrada YA logueada.
   bool _sessionRestored = false;
 
+  /// true cuando la animación de arranque terminó (antes, la intro ocupa la
+  /// pantalla). Así el arranque se siente continuo en Windows y en Android.
+  bool _introDone = false;
+
   bool get _hasSession => HsSession.isLogged || _sessionRestored;
 
   @override
@@ -125,6 +133,17 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // también en web. La app ESCUCHA los cambios: alternar el tema desde el
     // login o desde el panel reconstruye el MaterialApp al instante.
     AppSettings.instance.addListener(_onSettingsChanged);
+    // Preferencia del panel de eventos de escritorio (Windows): se lee ANTES
+    // de que el servicio de avisos empiece a alimentarlo.
+    UpcomingEventsWidget.load();
+    // Toques del widget nativo (Android y Windows): tocar un evento abre su
+    // detalle y el botón "Agregar agenda" abre el alta. El widget AVISA; quien
+    // navega es el panel (AdminHome + AgendasPage).
+    UpcomingEventsWidget.listen();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ¿El widget lanzó la app en frío con una acción? (arranque en frío)
+      await UpcomingEventsWidget.consumePending();
+    });
     AppSettings.instance.load().then((_) {
       if (!mounted) return;
       setState(() {});
@@ -248,7 +267,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     if (!mounted || _forceUpdateShown) return; // NO entra al panel
     if (_versionError) return; // la ventana de reintento ya está visible
     setState(() => _loggedIn = true);
-    // Avisos de eventos próximos: empiezan a consultarse en segundo plano.
+    // Avisos de eventos próximos + widget: empiezan a consultarse en segundo
+    // plano (el widget también se alimenta desde ahí).
     RemindersService.instance.start();
   }
 
@@ -294,35 +314,64 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
           // Edge-to-edge: la app SÍ dibuja detrás de la barra de estado;
           // este ColoredBox pinta esa franja con el color del fondo y la
           // SafeArea empuja el contenido debajo de la barra.
-          return ColoredBox(
-            color: isDark ? const Color(0xFF0C111C) : Colors.white,
-            child: SafeArea(
-              bottom: false,
-              child: child ?? const SizedBox.shrink(),
+          //
+          // HsToastHost envuelve TODO: las notificaciones laterales (verde
+          // al éxito / rojo al error) flotan encima del panel y de cualquier
+          // diálogo abierto.
+          return HsToastHost(
+            child: ColoredBox(
+              color: isDark ? const Color(0xFF0C111C) : Colors.white,
+              child: SafeArea(
+                bottom: false,
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
           );
         },
-        home: _versionError
-            ? _VersionErrorScreen(
-                onRetry: () async {
-                  setState(() => _versionError = false);
-                  await _checkVersion();
-                },
-              )
-            : _loggedIn || (_hasSession && AppSettings.instance.loaded)
-            ? AdminHome(
-                dark: AppSettings.instance.dark,
-                onToggleTheme: () {
-                  final v = !AppSettings.instance.dark;
-                  AppSettings.instance.setDark(v); // persiste
-                  setState(() {});
-                },
-                onLogout: _onLogout,
-                updateBanner: _buildUpdateBanner(context),
-              )
-            : LoginPage(onLogin: _onLogin),
+        // ARRANQUE: primero la animación de marca y, al terminar, un fundido
+        // cruzado hacia el contenido (login o panel). La clave del contenido
+        // es estable, así que el cruce ocurre UNA vez: la intro nunca vuelve.
+        home: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 420),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: _introDone
+              ? KeyedSubtree(key: const ValueKey('hs-home'), child: _home(context))
+              : StartupIntro(
+                  key: const ValueKey('hs-intro'),
+                  onDone: () => setState(() => _introDone = true),
+                ),
+        ),
       ),
     );
+  }
+
+  /// Contenido real de la app (lo que aparece tras la animación de arranque).
+  Widget _home(BuildContext context) {
+    if (_versionError) {
+      return _VersionErrorScreen(
+        onRetry: () async {
+          setState(() => _versionError = false);
+          await _checkVersion();
+        },
+      );
+    }
+    if (_loggedIn || (_hasSession && AppSettings.instance.loaded)) {
+      return AdminHome(
+        dark: AppSettings.instance.dark,
+        onToggleTheme: () {
+          final v = !AppSettings.instance.dark;
+          AppSettings.instance.setDark(v); // persiste
+          // El widget de eventos vive FUERA de la app: hay que
+          // recordarle el modo nuevo para que se repinte igual.
+          UpcomingEventsWidget.refresh();
+          setState(() {});
+        },
+        onLogout: _onLogout,
+        updateBanner: _buildUpdateBanner(context),
+      );
+    }
+    return LoginPage(onLogin: _onLogin);
   }
 
   /// Banner discreto de "actualización disponible" (NO bloqueante).
@@ -419,6 +468,7 @@ enum _Section {
   clients,
   packages,
   services,
+  activity,
   settings,
   reports,
 }
@@ -448,13 +498,48 @@ class _AdminHomeState extends State<AdminHome> {
   _Section _section = _Section.dashboard;
   bool _sidebarOpen = false;
 
+  /// El alcance compartido del drive se pide UNA vez (necesita el contexto
+  /// para llegar al DriveScope, así que no puede correr en initState).
+  bool _driveScopeLoaded = false;
+
   DriveBase get _drive => DriveScope.of(context);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_driveScopeLoaded) return;
+    _driveScopeLoaded = true;
+    _loadDriveScope();
+  }
+
+  /// Limita el drive a las carpetas COMPARTIDAS cuando el usuario es un
+  /// CLIENTE (sus paquetes comprados definen qué ve); el equipo del estudio
+  /// sigue viendo el drive completo. Best effort: sin conexión o con un
+  /// backend viejo, el drive se queda como estaba.
+  Future<void> _loadDriveScope() async {
+    try {
+      final info = await HsApi.myDriveDirectories();
+      if (!mounted) return;
+      await _drive.setSharedRoots(
+        [for (final p in info.paths) (p['path'] ?? '').toString()],
+        isClient: info.isClient,
+      );
+    } catch (_) {
+      // Sin permiso/sin red: no se toca el alcance del drive.
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     HsAccess.addListener(_onAccessChanged);
     _loadPermissions();
+    // Toques del widget nativo: tocar un evento (o el botón "Agregar agenda")
+    // lleva a Agendas; la página abre el detalle o el alta.
+    UpcomingEventsWidget.requested.addListener(_onWidgetRequest);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (UpcomingEventsWidget.requested.value != null) _onWidgetRequest();
+    });
     // Al guardar permisos en Roles: el menú se adapta AL INSTANTE.
     HsApi.onPermissionsChanged = () async {
       await _loadPermissions();
@@ -470,6 +555,10 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.dashboard => _canSee('Dashboard'),
         _Section.clientDashboard => _canSee('Dashboard Cliente'),
         _Section.drive => _canSee('Archivos'),
+        _Section.activity => _canSee('Actividad'),
+        _Section.connection => _canSee('Conexión'),
+        _Section.settings => _canSee('Configuraciones'),
+        _Section.reports => _canSee('Reportes'),
         _ => true,
       };
       if (!canSee) {
@@ -484,6 +573,7 @@ class _AdminHomeState extends State<AdminHome> {
   void dispose() {
     HsApi.onPermissionsChanged = null;
     HsAccess.removeListener(_onAccessChanged);
+    UpcomingEventsWidget.requested.removeListener(_onWidgetRequest);
     super.dispose();
   }
 
@@ -491,9 +581,19 @@ class _AdminHomeState extends State<AdminHome> {
     if (mounted) setState(() {});
   }
 
+  /// El widget nativo pidió abrir algo: se salta a Agendas (si el rol puede
+  /// verlas) y la página se encarga del detalle o del alta.
+  void _onWidgetRequest() {
+    if (!mounted || UpcomingEventsWidget.requested.value == null) return;
+    if (_canSee('Agendas')) setState(() => _section = _Section.agendas);
+  }
+
   /// Descarga los permisos del usuario (HsAccess) y refresca el menú.
   Future<void> _loadPermissions() async {
     await HsAccess.load();
+    // El widget nativo también vive de los permisos (el botón "Agregar
+    // agenda"): se le recuerda el estado nuevo en cuanto se conocen.
+    UpcomingEventsWidget.refresh();
     if (mounted) setState(() {});
   }
 
@@ -510,13 +610,20 @@ class _AdminHomeState extends State<AdminHome> {
   bool _showModule(String module) =>
       _canSee(module) || !HsAccess.instance.knows(module);
 
+  /// Igual que [_showModule], salvo los módulos que dependen de una migración
+  /// reciente (Actividad): esos solo aparecen si el rol tiene "Ver" de verdad,
+  /// para no ofrecer una pantalla que el backend va a rechazar.
+  bool _visibleModule(String module) =>
+      module == 'Actividad' ? _canSee(module) : _showModule(module);
+
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 720;
 
-    // Destinos visibles según permisos REALES del rol (HsAccess). Conexión
-    // es herramienta técnica: siempre visible. Los demás exigen "Ver" sobre
-    // su módulo — con el nombre EXACTO de la tabla modules.
+    // Destinos visibles según permisos REALES del rol (HsAccess). TODOS exigen
+    // "Ver" sobre su módulo — con el nombre EXACTO de la tabla modules
+    // (Conexión, Configuraciones y Reportes incluidos: también son módulos con
+    // permisos y por ahora solo ofrecen "Ver").
     final all = <(AdminDestination, _Section?, String)>{
       (
         const AdminDestination(
@@ -570,7 +677,7 @@ class _AdminHomeState extends State<AdminHome> {
           header: AdminDestination.headerNone,
         ),
         _Section.connection,
-        '',
+        'Conexión',
       ),
       (
         const AdminDestination(
@@ -619,6 +726,15 @@ class _AdminHomeState extends State<AdminHome> {
       ),
       (
         const AdminDestination(
+          icon: Icons.history_rounded,
+          label: 'Actividad',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.activity,
+        'Actividad',
+      ),
+      (
+        const AdminDestination(
           icon: Icons.settings_outlined,
           label: 'Configuraciones',
           header: AdminDestination.headerNone,
@@ -636,21 +752,59 @@ class _AdminHomeState extends State<AdminHome> {
         'Reportes',
       ),
     };
-    final destinations = [
-      for (final (dest, _, module) in all)
-        if (module.isEmpty || _showModule(module))
-          AdminDestination(
-            icon: dest.icon,
-            label: dest.label,
-            header: dest.header,
-          ),
+    // CATEGORÍAS + ORDEN desde la BD (modules.module_categories): los módulos
+    // SUELTOS (sin categoría, como Dashboard) van primero; luego cada
+    // categoría por su `order` (menor = arriba) con sus módulos por `order`.
+    // Sin datos del backend se conserva el orden y los encabezados de siempre.
+    final access = HsAccess.instance;
+    final useCatalog = !access.degraded && access.catalog.isNotEmpty;
+
+    final allList = all.toList();
+    final entries = <(int, _Section?, String, AdminDestination)>[
+      for (var i = 0; i < allList.length; i++)
+        if (allList[i].$3.isEmpty || _visibleModule(allList[i].$3))
+          (i, allList[i].$2, allList[i].$3, allList[i].$1),
     ];
 
-    // Seleccionable → sección real (respetando los módulos ocultos).
-    final visibleSections = [
-      for (final (_, section, module) in all)
-        if (module.isEmpty || _showModule(module)) section,
-    ];
+    if (useCatalog) {
+      entries.sort((a, b) {
+        final ma = access.metaOf(a.$3);
+        final mb = access.metaOf(b.$3);
+        // Sueltos primero (rank 0), luego las categorías por su orden.
+        final ca = ma?.categoryOrder ?? 0;
+        final cb = mb?.categoryOrder ?? 0;
+        if (ca != cb) return ca - cb;
+        // Dentro de la categoría, por el `order` del módulo (menor primero).
+        final oa = ma?.order ?? 1 << 30;
+        final ob = mb?.order ?? 1 << 30;
+        if (oa != ob) return oa - ob;
+        return a.$1 - b.$1; // empate: orden original (estable)
+      });
+    }
+
+    final destinations = <AdminDestination>[];
+    final visibleSections = <_Section?>[];
+    String? prevCategory;
+    for (final (_, section, module, dest) in entries) {
+      String? header;
+      if (useCatalog) {
+        final category =
+            (access.metaOf(module)?.categoryName ?? '').trim();
+        if (category.isNotEmpty) {
+          // Encabezado solo al ABRIR una categoría nueva.
+          if (category != prevCategory) header = category;
+          prevCategory = category;
+        }
+      } else {
+        header = dest.header; // modo degradado: encabezados estáticos
+      }
+      destinations.add(AdminDestination(
+        icon: dest.icon,
+        label: dest.label,
+        header: header ?? AdminDestination.headerNone,
+      ));
+      visibleSections.add(section);
+    }
     final titles = {
       _Section.dashboard: 'Dashboard',
       _Section.clientDashboard: 'Dashboard Cliente',
@@ -661,6 +815,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.clients: 'Clientes',
       _Section.packages: 'Paquetes',
       _Section.services: 'Servicios',
+      _Section.activity: 'Actividad',
       _Section.agendas: 'Agendas',
       _Section.finance: 'Finanzas',
       _Section.settings: 'Configuraciones',
@@ -729,6 +884,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.services:
         body = const ServicesPage();
+        break;
+      case _Section.activity:
+        body = const ActivityPage();
         break;
       case _Section.clients:
         body = const ClientsPage();

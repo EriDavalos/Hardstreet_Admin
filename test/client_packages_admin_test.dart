@@ -272,6 +272,35 @@ void main() {
     expect(find.text('MXN \$12,000'), findsOneWidget);
   });
 
+  testWidgets('teléfono: las acciones del servicio van en UNA fila horizontal',
+      (tester) async {
+    await _pumpDialog(tester, posts: [], size: const Size(430, 760));
+    await _tap(tester, find.text('Servicios'));
+
+    // Las acciones de cada servicio quedan en la MISMA línea (en el celular
+    // NO se apilan en vertical). El mock trae dos servicios: uno pendiente
+    // (Completar / Añadir nota / Editar enlace) y uno ya entregado
+    // (Reabrir / Editar nota / Agregar enlace).
+    for (final row in const [
+      ['Completar servicio', 'Añadir nota', 'Editar enlace'],
+      ['Reabrir', 'Editar nota', 'Agregar enlace'],
+    ]) {
+      final dy = tester.getCenter(find.text(row.first)).dy;
+      for (final label in row.skip(1)) {
+        expect(tester.getCenter(find.text(label)).dy, dy,
+            reason: '«$label» comparte la fila de «${row.first}»');
+      }
+      // Y van en orden horizontal (no una encima de otra).
+      for (var i = 1; i < row.length; i++) {
+        expect(
+          tester.getCenter(find.text(row[i])).dx,
+          greaterThan(tester.getCenter(find.text(row[i - 1])).dx),
+        );
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('justo en el umbral (1024) ya son dos columnas y nada '
       'desborda', (tester) async {
     final posts = <Map<String, dynamic>>[];
@@ -461,6 +490,65 @@ void main() {
     expect(movs.first['kind'], 'ahorro');
     expect(movs.first['amount'], 520);
     expect(movs.first['description'], '10 % del disponible');
+  });
+
+  testWidgets('EDITAR un movimiento: precarga sus datos y guarda el cambio '
+      '(mientras el paquete no esté finalizado)', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+
+    // Un botón de edición por registro (el paquete vigente se administra).
+    expect(find.byTooltip('Editar registro'), findsNWidgets(2));
+
+    // La INVERSIÓN (movimiento propio): llega precargada y deja cambiar el
+    // tipo, el monto y el concepto.
+    await _tap(tester, find.byTooltip('Editar registro').last);
+    expect(find.text('Editar movimiento'), findsOneWidget);
+    expect(find.text('Guardar cambios'), findsOneWidget);
+    expect(find.text('800'), findsOneWidget); // monto precargado
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Monto'), '950');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Descripción'), 'Renta de lente + trípode');
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final edits =
+        posts.where((p) => p['action'] == 'editar-movimiento').toList();
+    expect(edits, hasLength(1));
+    expect(edits.first['movementId'], 6);
+    expect(edits.first['source'], 'movement');
+    expect(edits.first['kind'], 'inversion');
+    expect(edits.first['amount'], 950);
+    expect(edits.first['description'], 'Renta de lente + trípode');
+  });
+
+  testWidgets('EDITAR un ABONO: solo monto y concepto (sin cambiar el tipo)',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+
+    // El primer registro es el abono (vive en la tabla de pagos).
+    await _tap(tester, find.byTooltip('Editar registro').first);
+    expect(find.text('Editar abono'), findsOneWidget);
+    expect(find.textContaining('Este registro es un abono'), findsOneWidget);
+    // Sin selector de tipo: el tipo lo define la tabla de pagos.
+    expect(find.text('Tipo de movimiento'), findsNothing);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Monto'), '6200');
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final edits =
+        posts.where((p) => p['action'] == 'editar-movimiento').toList();
+    expect(edits, hasLength(1));
+    expect(edits.first['movementId'], 5);
+    expect(edits.first['source'], 'payment');
+    expect(edits.first['amount'], 6200);
+    expect(edits.first.containsKey('kind'), isFalse);
   });
 
   testWidgets('la pestaña Servicios muestra la liga del Drive y permite '

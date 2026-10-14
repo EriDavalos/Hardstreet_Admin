@@ -1,5 +1,24 @@
 import 'hs_api.dart';
 
+/// Ubicación de un módulo dentro del menú: su orden y su categoría (o null si
+/// va SUELTO, como Dashboard). Se usa para agrupar y ordenar el sidebar.
+class HsModuleMeta {
+  const HsModuleMeta({
+    this.order,
+    this.categoryKey,
+    this.categoryName,
+    this.categoryOrder,
+  });
+
+  final int? order;
+  final String? categoryKey;
+  final String? categoryName;
+  final int? categoryOrder;
+
+  bool get hasCategory =>
+      categoryName != null && categoryName!.trim().isNotEmpty;
+}
+
 /// Permisos del usuario logueado, cargados de /api/admin/permission.
 ///
 /// REGLAS (decididas con el usuario):
@@ -14,6 +33,7 @@ class HsAccess {
     required this.admin,
     required this.perms,
     required this.degraded,
+    this.catalog = const {},
     this.loading = false,
   });
 
@@ -26,12 +46,17 @@ class HsAccess {
   /// moduleName normalizado → set de acciones.
   final Map<String, Set<String>> perms;
 
+  /// moduleName normalizado (clave Y nombre) → orden + categoría. Permite
+  /// agrupar el sidebar por las categorías definidas en la BD.
+  final Map<String, HsModuleMeta> catalog;
+
   /// true cuando no se pudo consultar (backend viejo / sin conexión): todo
   /// visible, igual que el comportamiento previo.
   final bool degraded;
 
-  static HsAccess _instance =
-      HsAccess._(admin: true, perms: const {}, degraded: true, loading: true);
+  static HsAccess _instance = HsAccess._(
+      admin: true, perms: const {}, degraded: true, loading: true,
+      catalog: const {});
   static final List<void Function()> _listeners = [];
 
   /// Estado actual (caché en memoria; el sidebar no debe ser async).
@@ -56,17 +81,32 @@ class HsAccess {
       // users, rols...) Y por NOMBRE visible (Inicio, Archivos, Usuarios...):
       // la UI puede preguntar con cualquiera de las dos formas.
       final map = <String, Set<String>>{};
+      final catalog = <String, HsModuleMeta>{};
       for (final m in p.modules) {
+        // Se registran TAMBIÉN los módulos SIN acciones: así el panel sabe
+        // que existen y puede OCULTARLOS cuando falta "Ver" (read).
         final actions = m.actions;
-        if (actions.isEmpty) continue;
-        if (m.key.isNotEmpty) map[_norm(m.key)] = actions;
-        if (m.name.isNotEmpty) map[_norm(m.name)] = actions;
+        final meta = HsModuleMeta(
+          order: m.order,
+          categoryKey: m.categoryKey,
+          categoryName: m.categoryName,
+          categoryOrder: m.categoryOrder,
+        );
+        if (m.key.isNotEmpty) {
+          map[_norm(m.key)] = actions;
+          catalog[_norm(m.key)] = meta;
+        }
+        if (m.name.isNotEmpty) {
+          map[_norm(m.name)] = actions;
+          catalog[_norm(m.name)] = meta;
+        }
       }
       _update(HsAccess._(
         admin: p.isAdmin,
         perms: map,
         degraded: false,
         loading: false,
+        catalog: catalog,
       ));
     } catch (_) {
       _update(HsAccess._(
@@ -84,6 +124,23 @@ class HsAccess {
       perms: const {},
       degraded: true,
       loading: true,
+    ));
+  }
+
+  /// Puebla los permisos en PRUEBAS (sin red ni sesión). No usar en producción.
+  /// Las claves se normalizan igual que al cargarlas del servidor.
+  static void seedForTest({
+    bool admin = false,
+    Map<String, Set<String>> modules = const {},
+    bool degraded = false,
+  }) {
+    _update(HsAccess._(
+      admin: admin,
+      perms: {
+        for (final e in modules.entries) _norm(e.key): Set<String>.of(e.value),
+      },
+      degraded: degraded,
+      loading: false,
     ));
   }
 
@@ -124,4 +181,9 @@ class HsAccess {
   /// ¿Tiene la acción [action] sobre [module]? (admin incluido).
   bool can(String module, String action) =>
       _actionsOf(module)?.contains(action) ?? false;
+
+  /// Ubicación (orden + categoría) del módulo [module], buscando por clave o
+  /// nombre. null cuando el backend no lo reporta (modo degradado/backend
+  /// viejo): el sidebar conserva entonces su orden por defecto.
+  HsModuleMeta? metaOf(String module) => catalog[_norm(module)];
 }

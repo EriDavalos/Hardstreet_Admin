@@ -7,6 +7,12 @@
     <!-- Avisos de eventos (falta 1 semana / falta 1 día). Android 13+ exige
          que el usuario conceda este permiso: la app lo pide al iniciar. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Descargas del Drive (Android 9 y anteriores): escribir en la carpeta
+         pública de Descargas. En Android 10+ se usa MediaStore y este permiso
+         NO se declara (maxSdkVersion lo limita a los sistemas que lo exigen). -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <!-- HTTP plano: el servidor usa http:// (sin TLS). Quitar al pasar a HTTPS. -->
     <application
         android:usesCleartextTraffic="true"
@@ -40,6 +46,26 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Widget de inicio "Próximos eventos": la app le empuja los eventos
+             por el canal hardstreet/events_widget. -->
+        <receiver
+            android:name=".EventWidgetProvider"
+            android:exported="false"
+            android:label="@string/event_widget_header">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/event_widget_info" />
+        </receiver>
+        <!-- Lista del widget: RemoteViewsService que llena el listado de
+             eventos (así se ven TODOS y el widget se puede desplazar). Solo el
+             sistema (la appwidget host) puede enlazarlo: BIND_REMOTEVIEWS. -->
+        <service
+            android:name=".EventWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
         <!-- FileProvider para entregar el .apk descargado al instalador
              del sistema como content:// (Android 7+ prohíbe file://). -->
         <provider

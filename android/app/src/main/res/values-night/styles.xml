@@ -6,8 +6,11 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
+    <!-- Tema detrás de Flutter. El fondo es el MISMO azul-negro del arranque de
+         la app (#0C111C): en oscuro ya no hay destello blanco antes del primer
+         frame, la animación de inicio nace sin costuras. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">#0C111C</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>

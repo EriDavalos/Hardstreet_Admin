@@ -11,6 +11,7 @@ import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/drive_service.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
+import 'package:hardstreet_admin/widgets/startup_intro.dart';
 
 /// Cliente falso para el flujo completo: login (rol admin), permisos,
 /// recordatorios y las fuentes del dashboard. Todo lo demás responde {ok}.
@@ -68,11 +69,18 @@ void main() {
         child: const HardStreetAdminApp(),
       ),
     );
+
+    // 0. Animación de arranque: es lo PRIMERO que se ve (Windows y Android
+    //    comparten la misma) y desaparece sola al terminar.
+    expect(find.byType(StartupIntro), findsOneWidget);
+
     await tester.pumpAndSettle(
       const Duration(milliseconds: 100),
       EnginePhase.sendSemanticsUpdate,
       const Duration(seconds: 5),
     );
+    expect(find.byType(StartupIntro), findsNothing,
+        reason: 'la animación de arranque cede el paso al contenido');
 
     // 1. Pantalla de login
     expect(find.text('Bienvenido'), findsOneWidget);

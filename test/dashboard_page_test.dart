@@ -5,8 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/drive_api_service.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/admin_pages.dart';
+
+/// Drive remoto de mentira: al tablero solo le interesa el espacio ocupado.
+class _FakeApiDrive extends DriveApiService {
+  _FakeApiDrive() : super(baseUrl: 'http://127.0.0.1:1');
+
+  @override
+  Future<Map<String, dynamic>> fetchSpace() async => {
+        'usedBytes': 123456789,
+        'totalBytes': 500000000,
+        'files': 1204,
+        'folders': 88,
+      };
+}
 
 /// Cliente HTTP falso con el resumen completo (usuarios, clientes, catálogo y
 /// una agenda futura) para poder renderizar el Dashboard con datos reales.
@@ -127,8 +141,14 @@ void _installMockClient() {
   });
 }
 
-Future<void> _pumpDashboard(WidgetTester tester, Size size) async {
+Future<void> _pumpDashboard(WidgetTester tester, Size size,
+    {bool withDrive = false}) async {
   await tester.binding.setSurfaceSize(size);
+  // MediaQuery NO sigue al tamaño de la superficie: hay que declarar la
+  // vista para que el panel vea la MISMA ventana (y elija su acomodo).
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = size;
+  addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
@@ -136,11 +156,21 @@ Future<void> _pumpDashboard(WidgetTester tester, Size size) async {
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
-    const MaterialApp(home: Scaffold(body: DashboardPage())),
+    MaterialApp(
+      home: Scaffold(
+        body: DashboardPage(drive: withDrive ? _FakeApiDrive() : null),
+      ),
+    ),
   );
   await tester.pump(); // respuestas simuladas
   await tester.pump(const Duration(milliseconds: 700)); // animaciones
 }
+
+/// Cuánto hay que bajar DENTRO de cada zona con scroll del dashboard.
+List<double> _scrollExtents(WidgetTester tester) => [
+      for (final s in tester.stateList<ScrollableState>(find.byType(Scrollable)))
+        s.position.maxScrollExtent,
+    ];
 
 void main() {
   testWidgets('Dashboard (escritorio): resumen ordenado con todas las fuentes',
@@ -179,6 +209,30 @@ void main() {
     expect(find.text('Agendas'), findsOneWidget);
     expect(find.text('Paquetes'), findsOneWidget);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Dashboard (escritorio): NO hay que bajar para verlo todo',
+      (tester) async {
+    // El tamaño más apretado de una laptop corriente: todo el resumen debe
+    // caber SIN scroll de página (ni de sus columnas), con el drive incluido.
+    await _pumpDashboard(tester, const Size(1366, 768), withDrive: true);
+
+    expect(find.text('Resumen general'), findsOneWidget);
+    expect(find.text('Finanzas'), findsNWidgets(2));
+    expect(find.text('Próximos eventos'), findsOneWidget);
+    expect(find.text('Accesos rápidos'), findsOneWidget);
+    expect(find.text('Carla Méndez'), findsWidgets);
+    expect(find.textContaining('archivos'), findsOneWidget,
+        reason: 'el espacio del drive va en una línea, sin tarjeta extra');
+
+    final extents = _scrollExtents(tester);
+    expect(extents, isNotEmpty);
+    expect(
+      extents.every((e) => e <= 0.5),
+      isTrue,
+      reason: 'en 1366x768 nada debería necesitar scroll: $extents',
+    );
     expect(tester.takeException(), isNull);
   });
 

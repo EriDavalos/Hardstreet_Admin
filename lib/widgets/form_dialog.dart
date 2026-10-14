@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'hs_modal.dart';
 
 /// Diálogo de formulario ESTÁNDAR del panel (usuarios, clientes, roles,
 /// paquetes y permisos):
 /// - Cabecera con avatar degradado + título/subtítulo y botón cerrar.
 /// - Ancho RESPONSIVO: en computadora se ensancha para aprovechar el espacio
-///   (configurable con [maxWidth]); en móvil se ajusta a la pantalla.
+///   (configurable con [maxWidth]); en móvil el formulario es una PANTALLA
+///   COMPLETA (cabecera fija, contenido desplazable y acciones abajo).
 /// - Contenido en secciones ([FormSection]) con etiqueta en mayúsculas.
 /// - Banner de error destacado y acciones Cancelar / Guardar (spinner).
 /// - Opcional: barra lateral de menú ([FormMenu]) para modales grandes.
@@ -78,167 +80,228 @@ class FormDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final screen = MediaQuery.sizeOf(context).width;
     final target = _targetWidth(screen);
     final hasMenu = (menu?.length ?? 0) > 1 && screen > 760;
-    // Márgenes COMPACTOS en móvil: más contenido visible, menos aire.
-    final compact = screen < 620;
+    // En MÓVIL el formulario deja de ser una tarjeta flotante y pasa a ser una
+    // PANTALLA COMPLETA: cabecera, contenido desplazable y acciones siempre a
+    // la vista. Es el mismo umbral que usa el resto del panel (isCompact).
+    final compact = screen < kHsPhoneWidth;
+
+    if (compact) {
+      return Material(
+        // El mismo fondo que usan los diálogos del tema (claro/oscuro).
+        color: theme.dialogTheme.backgroundColor ?? theme.cardColor,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 8, 12),
+                child: _header(context, scheme, compact: true),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: _body(hasMenu: false, target: 0),
+                ),
+              ),
+              _actionsBar(scheme),
+            ],
+          ),
+        ),
+      );
+    }
 
     return AlertDialog(
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: compact ? 12 : 40,
-        vertical: compact ? 18 : 24,
-      ),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      titlePadding: EdgeInsets.fromLTRB(compact ? 14 : 20, compact ? 14 : 20, 8, 0),
-      contentPadding: EdgeInsets.fromLTRB(compact ? 14 : 24, 14, compact ? 14 : 24, 0),
-      actionsPadding:
-          EdgeInsets.fromLTRB(compact ? 14 : 24, 10, compact ? 14 : 24, compact ? 14 : 18),
-      title: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppColors.brand, AppColors.brandDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.brand.withValues(alpha: .30),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Icon(icon, color: Colors.white, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w800),
-                ),
-                if (subtitle != null && subtitle!.isNotEmpty)
-                  Text(
-                    subtitle!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                      height: 1.25,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Cerrar',
-            visualDensity: VisualDensity.compact,
-            onPressed: saving ? null : onCancel,
-            icon: Icon(Icons.close, size: 20, color: scheme.onSurfaceVariant),
-          ),
-        ],
-      ),
-      // NOTA: la animación de entrada va DENTRO del scroll (envolviendo la
-      // columna), nunca alrededor del SingleChildScrollView/ListView:
-      // un LayoutBuilder/Opacity animado por encima de scrollables anidados
-      // dispara el assertion '!semantics.parentDataDirty' del framework.
-      content: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: target <= 0 ? double.infinity : target,
-            minWidth: target <= 0 ? 0 : target * .96,
-          ),
-          child: SizedBox(
-            height: contentHeight,
-            child: SingleChildScrollView(
-              child: TweenAnimationBuilder<double>(
-                // Animación sutil de entrada: el formulario se desvanece y
-                // sube (solo el contenido, no el contenedor del scroll).
-                tween: Tween(begin: 0, end: 1),
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                builder: (context, t, child) => Opacity(
-                  opacity: t,
-                  child: Transform.translate(
-                    offset: Offset(0, (1 - t) * 12),
-                    child: child,
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (hasMenu)
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            width: 168,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                for (final item in menu!)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 4),
-                                    child: _FormMenuItem(item: item),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 20),
-                          Expanded(child: _FormBody(error: error, children: children)),
-                        ],
-                      )
-                    else
-                      _FormBody(error: error, children: children),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ),
-      // Wrap responsivo: en diálogos angostos (móvil) los botones pasan a una
+      titlePadding: const EdgeInsets.fromLTRB(20, 20, 8, 0),
+      contentPadding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+      title: _header(context, scheme, compact: false),
+      content: _body(hasMenu: hasMenu, target: target),
+      // Wrap responsivo: en diálogos angostos los botones pasan a una
       // segunda fila en vez de desbordar por la derecha.
-      actions: [
-        Wrap(
-          alignment: WrapAlignment.end,
-          spacing: 10,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            ...?footer,
-            TextButton(
-              onPressed: saving ? null : onCancel,
-              child: const Text('Cancelar'),
+      actions: [_actions(context)],
+    );
+  }
+
+  /// Cabecera: avatar degradado + título/subtítulo + cerrar.
+  Widget _header(BuildContext context, ColorScheme scheme,
+      {required bool compact}) {
+    return Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.brand, AppColors.brandDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            FilledButton.icon(
-              onPressed: saving ? null : onSave,
-              icon: saving
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.check_rounded, size: 18),
-              label: Text(saveLabel),
-            ),
-          ],
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.brand.withValues(alpha: .30),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+              if (subtitle != null && subtitle!.isNotEmpty)
+                Text(
+                  subtitle!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                    height: 1.25,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Cerrar',
+          visualDensity: VisualDensity.compact,
+          onPressed: saving ? null : onCancel,
+          icon: Icon(Icons.close, size: 20, color: scheme.onSurfaceVariant),
         ),
       ],
     );
   }
+
+  /// Cuerpo (secciones + banner de error), dentro del scroll.
+  ///
+  /// NOTA: la animación de entrada va DENTRO del scroll (envolviendo la
+  /// columna), nunca alrededor del SingleChildScrollView/ListView: un
+  /// LayoutBuilder/Opacity animado por encima de scrollables anidados dispara
+  /// el assertion '!semantics.parentDataDirty' del framework.
+  Widget _body({required bool hasMenu, required double target}) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: target <= 0 ? double.infinity : target,
+        minWidth: target <= 0 ? 0 : target * .96,
+      ),
+      child: SizedBox(
+        height: contentHeight,
+        child: SingleChildScrollView(
+          child: TweenAnimationBuilder<double>(
+            // Animación sutil de entrada: el formulario se desvanece y
+            // sube (solo el contenido, no el contenedor del scroll).
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            builder: (context, t, child) => Opacity(
+              opacity: t,
+              child: Transform.translate(
+                offset: Offset(0, (1 - t) * 12),
+                child: child,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (hasMenu)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 168,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final item in menu!)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: _FormMenuItem(item: item),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      Expanded(child: _FormBody(error: error, children: children)),
+                    ],
+                  )
+                else
+                  _FormBody(error: error, children: children),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Botones del modal flotante.
+  Widget _actions(BuildContext context) {
+    return Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 10,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: _buttons(),
+    );
+  }
+
+  /// Botones del modo PANTALLA COMPLETA: barra fija al pie, separada del
+  /// contenido por una línea (siempre a la vista sin hacer scroll).
+  Widget _actionsBar(ColorScheme scheme) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 10,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: _buttons(),
+      ),
+    );
+  }
+
+  List<Widget> _buttons() => [
+        ...?footer,
+        TextButton(
+          onPressed: saving ? null : onCancel,
+          child: const Text('Cancelar'),
+        ),
+        FilledButton.icon(
+          onPressed: saving ? null : onSave,
+          icon: saving
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.check_rounded, size: 18),
+          label: Text(saveLabel),
+        ),
+      ];
 }
 
 /// Cuerpo del formulario (children + banner de error).

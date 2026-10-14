@@ -45,6 +45,26 @@ String hsDateLabel(DateTime d) =>
 /// Fecha corta: `10/10/2026`.
 String hsShortDate(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${d.year}';
 
+/// Etiqueta para AGRUPAR eventos por día: `HOY · 16 OCT`, `MAÑANA · 17 OCT`
+/// o `VIE 18 OCT`.
+///
+/// Siempre lleva la fecha escrita (aunque diga HOY): el widget puede estar
+/// días sin repintarse y un "HOY" solo quedaría mintiendo.
+String hsDayLabel(DateTime d, [DateTime? ref]) {
+  final now = ref ?? DateTime.now();
+  final month = kHsMonths[d.month - 1];
+  final short = month.length > 3 ? month.substring(0, 3) : month;
+  final stamp = '${d.day} ${short.toUpperCase()}';
+  final today = DateTime(now.year, now.month, now.day);
+  final that = DateTime(d.year, d.month, d.day);
+  final diff = that.difference(today).inDays;
+  if (diff == 0) return 'HOY · $stamp';
+  if (diff == 1) return 'MAÑANA · $stamp';
+  final wd = kHsWeekdays[d.weekday - 1];
+  final wdShort = wd.length > 3 ? wd.substring(0, 3) : wd;
+  return '${wdShort.toUpperCase()} $stamp';
+}
+
 /// Hora: `18:00`.
 String hsTimeLabel(DateTime d) => '${_two(d.hour)}:${_two(d.minute)}';
 

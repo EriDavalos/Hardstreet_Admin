@@ -84,12 +84,19 @@ void main() {
     expect(find.text('9+'), findsOneWidget);
   });
 
-  testWidgets('al tocar la campanita se abre el diálogo con los avisos',
+  testWidgets('al tocar la campanita se abre el PANEL con los avisos',
       (tester) async {
     await _pumpBell(tester, unread: 2);
 
     await tester.tap(find.byType(RemindersBell));
     await tester.pumpAndSettle();
+
+    // Ya no es un diálogo modal: el panel FIJO se ancla bajo la top bar
+    // (junto a la campanita) sin tapar el resto de la pantalla.
+    expect(find.byType(Dialog), findsNothing);
+    final panel = tester.getRect(find.text('Avisos de eventos'));
+    expect(panel.top, lessThan(160),
+        reason: 'el panel queda anclado arriba, bajo la barra superior');
 
     expect(find.text('Avisos de eventos'), findsOneWidget);
     expect(find.text('Aviso 1'), findsOneWidget);
@@ -117,8 +124,13 @@ void main() {
     expect(after, contains(Icons.check_circle_outline));
     expect(after, isNot(contains(Icons.circle)));
 
-    // La acción de marcar desaparece (0 sin leer) y el diálogo sigue abierto.
+    // La acción de marcar desaparece (0 sin leer) y el panel sigue abierto.
     expect(find.text('Marcar leídos'), findsNothing);
-    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.text('Avisos de eventos'), findsOneWidget);
+
+    // Tocar la campanita de nuevo (o fuera) lo cierra.
+    await tester.tap(find.byType(RemindersBell));
+    await tester.pumpAndSettle();
+    expect(find.text('Avisos de eventos'), findsNothing);
   });
 }

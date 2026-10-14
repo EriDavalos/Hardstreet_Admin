@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'event_widget.dart';
 import 'hs_api.dart';
 import 'reminder_notifications_native.dart';
 
@@ -13,6 +14,9 @@ import 'reminder_notifications_native.dart';
 ///   Android (en Windows la campanita con badge cumple ese papel).
 /// - Mantiene `unread` y `reminders` reactivos para la campanita de la
 ///   top bar.
+/// - Alimenta el WIDGET de "próximos eventos" (inicio de Android / panel de
+///   Windows) con las agendas que vienen, aprovechando este mismo ciclo de
+///   refresco.
 ///
 /// Singleton simple: `RemindersService.instance`. El polling se inicia y
 /// detiene desde el panel al entrar/salir de sesión.
@@ -58,13 +62,14 @@ class RemindersService extends ChangeNotifier {
   }
 
   /// Limpia todo (al cerrar sesión): la campanita no debe recordar avisos
-  /// de un usuario que ya salió.
+  /// de un usuario que ya salió (ni el widget mostrar sus eventos).
   void reset() {
     stop();
     _reminders = <Map<String, dynamic>>[];
     _unread = 0;
     _notifiedIds.clear();
     notifyListeners();
+    unawaited(UpcomingEventsWidget.publish(const []));
   }
 
   /// Consulta los avisos del usuario y actualiza estado.
@@ -77,8 +82,23 @@ class RemindersService extends ChangeNotifier {
       _unread = list.where((r) => _isUnread(r)).length;
       notifyListeners();
       await _notifyNew(list);
+      await feedEventWidget();
     } catch (_) {
       // Sin conexión: se conserva el último estado conocido.
+    }
+  }
+
+  /// Mantiene al día el WIDGET de próximos eventos (inicio de Android / panel
+  /// de Windows). Las agendas mandan; si no se pueden leer, se usan los avisos
+  /// que ya están en memoria. No lanza nunca.
+  Future<void> feedEventWidget() async {
+    if (!UpcomingEventsWidget.supported) return;
+    if (!UpcomingEventsWidget.autoFeed) return;
+    try {
+      final agendas = await HsApi.agendas();
+      await UpcomingEventsWidget.publish(agendas, reminders: _reminders);
+    } catch (_) {
+      await UpcomingEventsWidget.publish(const [], reminders: _reminders);
     }
   }
 
