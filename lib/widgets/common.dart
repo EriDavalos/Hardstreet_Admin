@@ -262,6 +262,7 @@ class PageContainer extends StatelessWidget {
     this.icon,
     this.stats = const [],
     this.expand = false,
+    this.actionsInline = false,
   });
 
   final String title;
@@ -277,6 +278,11 @@ class PageContainer extends StatelessWidget {
 
   /// Datos de contexto: 1-3 píldoras (conteos, estado del módulo).
   final List<StatPill> stats;
+
+  /// Móvil: mantiene los botones en UNA fila (se desliza de lado si no caben)
+  /// en vez de apilarlos. Para módulos donde el alto es escaso y la
+  /// información de abajo importa más (Finanzas), no para todos.
+  final bool actionsInline;
 
   /// true = el contenido LLENA el alto restante de la pantalla y la página NO
   /// hace scroll: úsalo en módulos que deben caber exactos (p. ej. el
@@ -396,22 +402,41 @@ class PageContainer extends StatelessWidget {
                     ],
                   ],
                 ),
-                // Píldoras de estadísticas con entrada ESCALONADA.
+                // Píldoras de estadísticas con entrada ESCALONADA. En MÓVIL van
+                // en UNA sola fila que se desliza de lado (como en Finanzas):
+                // antes el [Wrap] las apilaba en varios renglones y se comía el
+                // alto de la información de abajo. En escritorio siguen
+                // envueltas, que ahí sobra ancho.
                 if (stats.isNotEmpty) ...[
                   const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < stats.length; i++)
-                        PopIn(delayMs: 140 + i * 70, child: stats[i]),
-                    ],
-                  ),
+                  if (compact)
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.only(right: 2),
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < stats.length; i++) ...[
+                            PopIn(delayMs: 140 + i * 70, child: stats[i]),
+                            if (i != stats.length - 1)
+                              const SizedBox(width: 8),
+                          ],
+                        ],
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var i = 0; i < stats.length; i++)
+                          PopIn(delayMs: 140 + i * 70, child: stats[i]),
+                      ],
+                    ),
                 ],
-                // En móvil las acciones bajan a fila propia, a LO ANCHO. Si
-                // no cabe una al lado de la otra (etiquetas largas, como en
-                // Finanzas), cada botón va en su propia línea a todo ancho:
-                // mejor una pila legible que etiquetas recortadas.
+                // En móvil las acciones bajan a fila propia, a LO ANCHO y en
+                // UNA sola fila que se desliza de lado (los botones no se
+                // apilan ni se recortan): así el héroe conserva poco alto y la
+                // información de abajo tiene la pantalla.
                 if (compact && hasActions) ...[
                   const SizedBox(height: 14),
                   // En teléfono el padding por defecto de los botones (24 px
@@ -435,30 +460,23 @@ class PageContainer extends StatelessWidget {
                         ),
                       ),
                     ),
-                    child: LayoutBuilder(builder: (context, box) {
-                      final n = actions!.length;
-                      final each = (box.maxWidth - 10 * (n - 1)) / n;
-                      if (each < 230) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (final a in actions!) ...[
-                              a,
-                              if (a != actions!.last)
-                                const SizedBox(height: 10),
-                            ],
-                          ],
-                        );
-                      }
-                      return Row(
+                    // En el teléfono los botones van SIEMPRE en UNA fila que se
+                    // desliza de lado: apilados se comían el alto de la
+                    // información de abajo (que es lo que el usuario viene a
+                    // ver). [actionsInline] se conserva por compatibilidad, pero
+                    // ya es el comportamiento por defecto en móvil.
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.only(right: 2),
+                      child: Row(
                         children: [
                           for (final a in actions!) ...[
-                            Expanded(child: a),
+                            a,
                             if (a != actions!.last) const SizedBox(width: 10),
                           ],
                         ],
-                      );
-                    }),
+                      ),
+                    ),
                   ),
                 ],
               ],

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../app_constants.dart';
+import '../drive_base.dart';
+import '../drive_scope.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../theme.dart';
@@ -10,8 +12,8 @@ import '../widgets/common.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
-// DASHBOARD CLIENTE (módulo "Dashboard Cliente"): lo que el CLIENTE ve
-// de sus paquetes comprados.
+// MI PAQUETE (módulo "Mi paquete", clave `my_package`; antes se llamaba
+// "Dashboard Cliente"): lo que el CLIENTE ve de sus paquetes comprados.
 //   - Su paquete seleccionado: estatus, avance de pago y servicios.
 //   - "Lo que hemos cumplido": checklist de servicios con su estatus
 //     (Entregado ✓ / En proceso ◐ / Pendiente ○).
@@ -159,7 +161,13 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     for (final s in _services) {
       final svc = s['service'];
       if (svc is! Map) continue;
-      final url = (svc['url'] ?? '').toString().trim();
+      // La liga compartida PARA ESTE SERVICIO del paquete manda; la del
+      // catálogo queda como respaldo de un backend viejo.
+      final url = ((s['shareLink'] ?? '').toString().trim().isNotEmpty
+              ? s['shareLink']
+              : svc['url'])
+          .toString()
+          .trim();
       if (url.isEmpty || !seen.add(url)) continue;
       out.add(((svc['name'] ?? 'Servicio').toString(), url));
     }
@@ -189,6 +197,41 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         .where((s) => s.isNotEmpty)
         .toList();
     widget.onOpenDrive?.call(segments);
+  }
+
+  /// Abre el selector de fotos/elementos para UN servicio y guarda la lista
+  /// que el cliente marque (nada se mueve ni se copia de carpeta).
+  Future<void> _pickServiceItems(Map<String, dynamic> s, String name) async {
+    final serviceId = (s['id'] as num?)?.toInt() ?? 0;
+    if (serviceId == 0) {
+      HsToast.info('No se pudo identificar el servicio');
+      return;
+    }
+    // La selección guardada es la fuente de verdad; si el backend todavía no
+    // tiene la migración, se arranca vacío en vez de fallar.
+    var current = const <String>[];
+    try {
+      current = await HsApi.myServiceItems(serviceId);
+    } catch (_) {
+      // Sin backend nuevo: se empieza sin selección.
+    }
+    if (!mounted) return;
+    final picked = await showDialog<List<String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ServiceItemsPicker(
+        title: name.isEmpty ? 'Servicio' : name,
+        initial: current,
+      ),
+    );
+    if (picked == null) return;
+    try {
+      await HsApi.setMyServiceItems(serviceId, picked);
+      HsToast.success('Selección guardada');
+      await _load();
+    } catch (_) {
+      // El error ya se notificó desde la capa de API.
+    }
   }
 
   @override
@@ -515,6 +558,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         : const <String, dynamic>{};
     final name = (svc['name'] ?? 'Servicio').toString();
     final note = (s['description'] ?? '').toString();
+    // Opciones de compartir del SERVICIO: carpeta y liga (las define el
+    // estudio) y la selección de fotos que hace el propio cliente.
+    final shareFolder = (s['shareFolder'] ?? '').toString().trim();
+    final shareLink = (s['shareLink'] ?? '').toString().trim();
+    final items = (s['items'] as num?)?.toInt() ?? 0;
     final done = _isDone(s);
     final progress = _isInProgress(s);
     final color = done
@@ -559,6 +607,36 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                         color: scheme.onSurfaceVariant),
                   ),
                 ],
+                // Opciones de compartir: en MÓVIL van en UNA fila que se
+                // desliza (no apiladas), para no comerse el alto del listado.
+                const SizedBox(height: 4),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (shareFolder.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () => _openShared(shareFolder),
+                          icon: const Icon(Icons.folder_open_outlined, size: 16),
+                          label: const Text('Abrir carpeta'),
+                        ),
+                      if (shareLink.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () => _openLink(shareLink),
+                          icon: const Icon(Icons.link, size: 16),
+                          label: const Text('Ver liga'),
+                        ),
+                      TextButton.icon(
+                        onPressed: () => _pickServiceItems(s, name),
+                        icon: const Icon(Icons.photo_library_outlined,
+                            size: 16),
+                        label: Text(items > 0
+                            ? 'Mis fotos ($items)'
+                            : 'Elegir fotos'),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -710,6 +788,211 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           const SizedBox(height: 6),
         ],
       ),
+    );
+  }
+}
+
+/// Selector de elementos/fotos del Drive del CLIENTE para UN servicio:
+/// navega SUS carpetas (solo lo compartido) y marca lo que quiera. Se guarda
+/// la LISTA de rutas; nada se mueve ni se copia de carpeta.
+class _ServiceItemsPicker extends StatefulWidget {
+  const _ServiceItemsPicker({required this.title, required this.initial});
+
+  final String title;
+  final List<String> initial;
+
+  @override
+  State<_ServiceItemsPicker> createState() => _ServiceItemsPickerState();
+}
+
+class _ServiceItemsPickerState extends State<_ServiceItemsPicker> {
+  List<String> _path = const [];
+  List<DriveItem> _items = const [];
+  bool _loading = true;
+  String? _error;
+  bool _started = false;
+
+  /// Rutas ABSOLUTAS marcadas (se conservan al navegar entre carpetas).
+  late final Set<String> _picked = {
+    for (final p in widget.initial) drivePathNormalize(p),
+  };
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    _load();
+  }
+
+  Future<void> _load() async {
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) {
+      setState(() {
+        _loading = false;
+        _error = 'El Drive no está disponible en esta pantalla';
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await drive.listFolderItems(_path);
+      if (!mounted) return;
+      setState(() {
+        _items = list;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _items = const [];
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  String _abs(String name) => drivePathNormalize([..._path, name].join('/'));
+
+  bool _isImage(DriveItem i) =>
+      !i.isFolder &&
+      kImageExtensions.any((e) => i.name.toLowerCase().endsWith(e));
+
+  void _toggle(String abs) {
+    setState(() {
+      if (!_picked.remove(abs)) _picked.add(abs);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final folders = _items.where((i) => i.isFolder).toList();
+    final images = _items.where(_isImage).toList();
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      title: Text(
+        'Elegir fotos · ${widget.title}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: 460,
+        height: 420,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Navega tus carpetas compartidas y marca los elementos que '
+              'quieras para este servicio. Se guarda tu SELECCIÓN: nada se '
+              'mueve ni se copia de carpeta.',
+              style: TextStyle(
+                  fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (_path.isNotEmpty)
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Subir',
+                    onPressed: () {
+                      setState(() => _path = _path.sublist(0, _path.length - 1));
+                      _load();
+                    },
+                    icon: const Icon(Icons.arrow_upward, size: 18),
+                  ),
+                Expanded(
+                  child: Text(
+                    _path.isEmpty ? 'Mi Drive' : _path.join(' / '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  '${_picked.length} elegidos',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.primary),
+                ),
+              ],
+            ),
+            const Divider(height: 12),
+            Expanded(child: _list(scheme, folders, images)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        if (_picked.isNotEmpty)
+          TextButton(
+            onPressed: () => setState(() => _picked.clear()),
+            child: const Text('Limpiar'),
+          ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.pop(context, _picked.toList()..sort()),
+          child: const Text('Guardar selección'),
+        ),
+      ],
+    );
+  }
+
+  Widget _list(
+      ColorScheme scheme, List<DriveItem> folders, List<DriveItem> images) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12.5, color: scheme.error),
+        ),
+      );
+    }
+    if (folders.isEmpty && images.isEmpty) {
+      return Center(
+        child: Text(
+          'Esta carpeta está vacía.',
+          style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        for (final f in folders)
+          ListTile(
+            dense: true,
+            leading: Icon(Icons.folder_rounded, color: scheme.primary),
+            title: Text(f.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              setState(() => _path = [..._path, f.name]);
+              _load();
+            },
+          ),
+        for (final img in images)
+          CheckboxListTile(
+            dense: true,
+            value: _picked.contains(_abs(img.name)),
+            onChanged: (_) => _toggle(_abs(img.name)),
+            title: Text(
+              img.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5),
+            ),
+          ),
+      ],
     );
   }
 }

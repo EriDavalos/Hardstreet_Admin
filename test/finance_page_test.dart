@@ -442,4 +442,50 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('Finanzas (móvil): los totales se DESLIZAN de uno en uno',
+      (tester) async {
+    await _pumpFinance(tester, const Size(390, 844));
+
+    // El carrusel ocupa el ancho de la pantalla…
+    final page = tester.getRect(find.byType(PageView));
+    expect(page.width, greaterThan(340));
+    // …y se ve UNA tarjeta COMPLETA: la siguiente no asoma a medias.
+    expect(find.text('GANADO'), findsOneWidget);
+    expect(find.text('COBRADO'), findsNothing);
+    expect(find.text('POR COBRAR'), findsNothing);
+
+    // Al deslizar de lado entra la SIGUIENTE y la de antes se va.
+    await tester.drag(find.byType(PageView), const Offset(-340, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('COBRADO'), findsOneWidget);
+    expect(find.text('GANADO'), findsNothing);
+
+    // La tarjeta que quedó a la vista no trae nada recortado.
+    final clipped = _clippedOneLineTexts(tester, {'COBRADO'});
+    expect(clipped, isEmpty, reason: 'etiqueta recortada: $clipped');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Finanzas (móvil): desglose y acciones en UNA fila horizontal',
+      (tester) async {
+    await _pumpFinance(tester, const Size(390, 844));
+
+    // Las acciones de la página comparten renglón (no una por línea).
+    final nuevo = tester.getRect(find.text('Nuevo movimiento'));
+    final abonar = tester.getRect(find.text('Abonar al ahorro').first);
+    expect((nuevo.top - abonar.top).abs(), lessThan(1),
+        reason: 'las acciones de la página van en el mismo renglón');
+
+    // Al expandir un paquete, sus píldoras de desglose también van en fila.
+    await _tap(tester, find.text('Boda - Premium').first);
+    final cobrado = tester.getRect(find.text('Cobrado '));
+    final porCobrar = tester.getRect(find.text('Por cobrar '));
+    final ganado = tester.getRect(find.text('Ganado (disponible) '));
+    expect((cobrado.top - porCobrar.top).abs(), lessThan(1));
+    expect((ganado.top - porCobrar.top).abs(), lessThan(1));
+    expect(cobrado.left, lessThan(porCobrar.left));
+    expect(porCobrar.left, lessThan(ganado.left));
+    expect(tester.takeException(), isNull);
+  });
 }

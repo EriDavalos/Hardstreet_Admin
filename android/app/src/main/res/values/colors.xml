@@ -7,19 +7,20 @@
      NOMBRES DISTINTOS (…_dark) y el provider elige uno u otro en tiempo de
      ejecución; así el tema del teléfono no pisa la elección del usuario.
 
-     Cada color es EXACTAMENTE el que usa AppTheme (lib/theme.dart) del lado
-     de la app: la tarjeta es cardColor, los textos onSurface/onSurfaceVariant,
-     el acento es el primary de la marca y las líneas son dividerColor.
-     La prueba test/event_widget_theme_test.dart compara estos valores con el
-     tema real de la app: si alguien cambia la paleta, el test lo avisa. -->
+     Los TEXTOS y la marca son EXACTAMENTE los de AppTheme (lib/theme.dart):
+     onSurface / onSurfaceVariant, el acento es el primary y las líneas son
+     dividerColor. El FONDO es la única excepción a propósito: un poco más
+     oscuro que la cardColor del tema, para que el widget se distinga del fondo
+     de pantalla (y sin borde: el trazo se recortaba en las esquinas).
+     La prueba test/event_widget_theme_test.dart compara esto con el tema real
+     de la app: si alguien cambia la paleta, el test lo avisa. -->
 <resources>
 
-    <!-- Tarjeta (cardColor del tema: blanca en claro, #1A2233 en oscuro) -->
-    <color name="event_widget_bg">#FFFFFF</color>
-    <color name="event_widget_bg_dark">#1A2233</color>
-    <!-- Borde: dividerColor (en oscuro, blanco al 8 % sobre la tarjeta) -->
-    <color name="event_widget_border">#E5EAF2</color>
-    <color name="event_widget_border_dark">#2C3443</color>
+    <!-- Tarjeta: un poco MÁS OSCURA que la cardColor del tema para que el
+         widget se distinga del fondo de pantalla (y sin borde: el trazo se
+         recortaba en las esquinas redondeadas). -->
+    <color name="event_widget_bg">#F3F6FC</color>
+    <color name="event_widget_bg_dark">#0D121C</color>
 
     <!-- Acento de la marca (encabezado y rótulo de día): el MISMO primary del
          tema, también en oscuro (la app no aclara su azul en modo oscuro). -->

@@ -161,10 +161,16 @@ void _installMockClient({required List<Map<String, dynamic>> posts}) {
             },
           ],
           'movementsAvailable': true,
+          // Solo colaboradores y empleados pueden recibir un pago.
+          'recipients': [
+            {'id': 3, 'name': 'Yusef Ali', 'roleName': 'Colaborador'},
+            {'id': 4, 'name': 'Marta Soto', 'roleName': 'Empleado'},
+          ],
           'totals': {
             'abonado': 6000,
             'invertido': 800,
             'gastado': 0,
+            'pagos': 0,
             'ahorrado': 0,
             'abonoExterno': 0,
             // Disponible = abonado (6000) - gastado (inversión 800).
@@ -598,5 +604,89 @@ void main() {
     expect(find.byTooltip('Todos los paquetes'), findsNothing);
     expect(find.text('Ver administración'), findsNWidgets(2));
     expect(find.text('Servicios'), findsNothing);
+  });
+
+  testWidgets('repartir pago en PARTES IGUALES: pide el total y a quiénes',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    expect(find.text('Repartir pago'), findsOneWidget);
+
+    await _tap(tester, find.text('Repartir pago'));
+    // El título de la sección se dibuja en MAYÚSCULAS (FormSection).
+    expect(find.text('¿CÓMO SE REPARTE?'), findsOneWidget);
+    expect(find.text('Partes iguales'), findsOneWidget);
+    expect(find.text('Por numeración'), findsOneWidget);
+
+    // Monto total y los dos destinatarios (un colaborador y un empleado).
+    await tester.enterText(find.widgetWithText(TextField, 'Total'), '900');
+    await tester.pump(const Duration(milliseconds: 200));
+    await _tap(tester, find.text('Yusef Ali'));
+    await _tap(tester, find.text('Marta Soto'));
+
+    // La previsualización dice cuánto le toca a cada uno.
+    expect(find.text('A cada uno de 2 le toca'), findsOneWidget);
+    expect(find.text('MXN \$450'), findsWidgets);
+
+    await _tap(tester, find.text('Repartir'));
+
+    final splits =
+        posts.where((p) => p['action'] == 'repartir-pago').toList();
+    expect(splits, hasLength(1));
+    expect(splits.first['mode'], 'iguales');
+    expect(splits.first['total'], 900);
+    expect((splits.first['userIds'] as List).toSet(), {3, 4});
+  });
+
+  testWidgets('repartir pago por NUMERACIÓN: un monto por persona',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Repartir pago'));
+    await _tap(tester, find.text('Por numeración'));
+
+    // Un monto por destinatario (el campo del concepto va al final).
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '300');
+    await tester.enterText(fields.at(1), '450');
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Total a repartir'), findsOneWidget);
+    expect(find.text('MXN \$750'), findsWidgets);
+
+    await _tap(tester, find.text('Repartir'));
+
+    final splits =
+        posts.where((p) => p['action'] == 'repartir-pago').toList();
+    expect(splits, hasLength(1));
+    expect(splits.first['mode'], 'numeracion');
+    final parts = (splits.first['parts'] as List).cast<Map>();
+    expect(parts.map((p) => p['userId']), containsAll([3, 4]));
+    expect(parts.map((p) => p['amount']), containsAll([300, 450]));
+  });
+
+  testWidgets('un movimiento tipo Pago pide el destinatario', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Registrar movimiento'));
+    // «Pago» también existe como etiqueta de la ficha: se toca por su ayuda.
+    await _tap(tester, find.text('Pago a un colaborador o empleado'));
+
+    expect(find.text('¿A QUIÉN SE LE PAGA?'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Monto'), '500');
+    await _tap(tester, find.byType(DropdownButtonFormField<int>));
+    await _tap(tester, find.text('Yusef Ali · Colaborador').last);
+    await _tap(tester, find.text('Registrar'));
+
+    final movs = posts.where((p) => p['action'] == 'movimiento').toList();
+    expect(movs, hasLength(1));
+    expect(movs.first['kind'], 'pago');
+    expect(movs.first['userId'], 3);
   });
 }

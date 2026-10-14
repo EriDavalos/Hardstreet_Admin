@@ -10,12 +10,14 @@ Map<String, dynamic> _agenda({
   String packageName = 'Boda - Premium',
   String clientName = 'Ana Ruiz',
   String serviceName = 'Cobertura en evento',
+  int serviceId = 3,
 }) =>
     {
       'purchasedPackageId': 10,
       'clientName': clientName,
       'packageName': packageName,
       'serviceName': serviceName,
+      'serviceId': serviceId,
       'eventDate': date,
     };
 
@@ -31,13 +33,42 @@ void main() {
     );
     expect(
       events.single.keys.toSet(),
-      {'id', 'title', 'subtitle', 'when', 'time', 'day', 'showDay', 'at'},
+      {
+        'id',
+        'service',
+        'title',
+        'subtitle',
+        'when',
+        'time',
+        'day',
+        'showDay',
+        'at'
+      },
       reason: 'Android (EventWidgetProvider) y Windows (event_widget.cpp) '
           'leen EXACTAMENTE estas claves; `id` es la agenda que se abre al '
-          'tocar la fila',
+          'tocar la fila y `service` elige el color de la tarjeta',
     );
     expect(events.single['at'], isA<int>()); // optLong en Kotlin
     expect(events.single['id'], isA<int>());
+  });
+
+  test('cada evento lleva el SERVICIO: el widget tiñe la fila con su color',
+      () {
+    final events = UpcomingEventsWidget.buildEvents(
+      [_agenda(date: '2026-10-18 12:00:00', serviceId: 5)],
+      now: now,
+    );
+    expect(events.single['service'], 5);
+
+    // Sin servicio (un aviso) va en 0: color neutro.
+    final fromReminders = UpcomingEventsWidget.buildEvents(
+      const [],
+      reminders: [
+        {'title': 'Entrega', 'body': 'Ana Ruiz', 'eventDate': '2026-10-18 09:00:00'},
+      ],
+      now: now,
+    );
+    expect(fromReminders.single['service'], 0);
   });
 
   test('cada evento lleva el ID de su agenda (lo usa el toque del widget)', () {

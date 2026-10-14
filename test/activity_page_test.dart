@@ -115,6 +115,27 @@ void main() {
     expect(find.textContaining('email: ana@hardstreet.com'), findsOneWidget);
   });
 
+  testWidgets('la flecha de detalle tiene aire: no va pegada a la hora',
+      (tester) async {
+    _installMock();
+    await _pumpPage(tester);
+
+    // Solo la fila CON detalle dibuja la flecha.
+    final arrow = find.byIcon(Icons.expand_more_rounded);
+    expect(arrow, findsOneWidget);
+
+    final time = tester.getRect(find.text('10:30'));
+    final box = tester.getRect(arrow);
+    // Va DEBAJO de la hora, con aire vertical entre las dos.
+    expect(box.top - time.bottom, greaterThanOrEqualTo(6),
+        reason: 'la flecha tiene aire respecto a la hora (antes pegaba)');
+
+    // Y tampoco pegada al borde derecho de la tarjeta.
+    final card = tester.getRect(find.byType(Card).first);
+    expect(card.right - box.right, greaterThanOrEqualTo(10),
+        reason: 'queda margen contra el borde de la tarjeta');
+  });
+
   testWidgets('el filtro por acción pide solo las eliminaciones',
       (tester) async {
     final urls = <String>[];

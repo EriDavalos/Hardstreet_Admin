@@ -32,8 +32,10 @@ Map<String, dynamic> _mod(
     };
 
 /// Mock del backend: TODOS los módulos con su categoría/orden, EXCEPTO Roles
-/// (que existe pero SIN "Ver": debe desaparecer del menú).
-void _installMock() {
+/// (que existe pero SIN "Ver": debe desaparecer del menú) y "Mi paquete"
+/// (el módulo del cliente, `my_package`), cuyo permiso se controla con
+/// [miPaqueteRead] para comprobar que también se oculta sin "Ver".
+void _installMock({bool miPaqueteRead = true}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -43,6 +45,11 @@ void _installMock() {
           'isAdmin': false,
           'modules': [
             _mod('dashboard', 'Dashboard', order: 1),
+            // El módulo del cliente: se llama "Mi paquete" (antes "Dashboard
+            // Cliente") y exige "Ver" como cualquier otro.
+            _mod('my_package', 'Mi paquete',
+                order: 2,
+                actions: miPaqueteRead ? const ['read'] : const []),
             _mod('drive', 'Archivos',
                 order: 3, categoryOrder: 1, categoryName: 'Operación'),
             _mod('schedules', 'Agendas',
@@ -60,6 +67,8 @@ void _installMock() {
                 order: 8, categoryOrder: 2, categoryName: 'Administración'),
             _mod('packages', 'Paquetes',
                 order: 9, categoryOrder: 2, categoryName: 'Administración'),
+            _mod('storage', 'Almacenamiento',
+                order: 6, categoryOrder: 1, categoryName: 'Operación'),
           ],
         }),
         200,
@@ -135,6 +144,12 @@ void main() {
     // dashboard, así que basta con que aparezcan).
     expect(find.text('Archivos'), findsWidgets);
     expect(find.text('Usuarios'), findsWidgets);
+    // El módulo del cliente se llama "Mi paquete" (y ya NO "Dashboard
+    // Cliente"): con "Ver" aparece en el menú.
+    expect(find.text('Mi paquete'), findsWidgets);
+    // Almacenamiento es un módulo más, con su "Ver".
+    expect(find.text('Almacenamiento'), findsWidgets);
+    expect(find.text('Dashboard Cliente'), findsNothing);
     // Roles existe pero SIN "Ver": oculto del menú.
     expect(find.text('Roles'), findsNothing);
 
@@ -144,6 +159,57 @@ void main() {
       tester.getTopLeft(find.text('Usuarios')).dy,
       greaterThan(tester.getTopLeft(find.text('ADMINISTRACIÓN')).dy),
     );
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('"Mi paquete" es un módulo más: sin "Ver" se oculta del menú',
+      (tester) async {
+    late Directory tmp;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('hardstreet_my_package');
+    });
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final previous = HsApi.client;
+    _installMock(miPaqueteRead: false);
+    addTearDown(() {
+      HsApi.client = previous;
+      HsAccess.reset();
+      tmp.deleteSync(recursive: true);
+    });
+    SharedPreferences.setMockInitialValues({});
+    HsAccess.reset();
+
+    await tester.pumpWidget(
+      DriveScope(
+        drive: DriveService.testRoot(tmp),
+        child: MaterialApp(
+          home: AdminHome(
+            dark: false,
+            onToggleTheme: () {},
+            onLogout: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    await tester.tap(find.byTooltip('Menú'));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    // El rol NO tiene "Ver" en Mi paquete: no se ofrece en el menú.
+    expect(find.text('Mi paquete'), findsNothing);
+    // Los demás módulos con permiso siguen ahí.
+    expect(find.text('Archivos'), findsWidgets);
 
     expect(tester.takeException(), isNull);
   });

@@ -28,6 +28,27 @@ String hsMoney(num v, [String currency = 'MXN']) {
   return '$currency \$${hsThousands(s)}';
 }
 
+/// Tamaño legible: `812 B`, `12.5 KB`, `4.31 GB`, `1.2 TB`.
+///
+/// Se usa en Almacenamiento (espacio usado, cuota y libre del disco).
+String hsBytes(num bytes) {
+  final b = bytes.abs().toDouble();
+  if (b < 1024) return '${bytes.round()} B';
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+  var v = b / 1024;
+  var i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  final s = v >= 100
+      ? v.toStringAsFixed(0)
+      : v >= 10
+          ? v.toStringAsFixed(1)
+          : v.toStringAsFixed(2);
+  return '$s ${units[i]}';
+}
+
 String _two(int n) => n.toString().padLeft(2, '0');
 
 /// Valor que espera el backend para `eventDate`: `yyyy-MM-dd HH:mm:ss`.

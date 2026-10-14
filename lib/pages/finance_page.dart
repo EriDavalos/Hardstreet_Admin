@@ -155,6 +155,37 @@ class _FinancePageState extends State<FinancePage> {
   /// con el mensaje del backend).
   void _snack(String msg) => HsToast.info(msg);
 
+  /// Píldoras de detalle en UNA sola fila, deslizable de lado. En el teléfono
+  /// el [Wrap] las apilaba en tres renglones y se comía el espacio de la
+  /// información; así todo el desglose vive en un renglón.
+  Widget _pillsRow(List<Widget> pills) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(right: 2),
+        child: Row(
+          children: [
+            for (final p in pills) ...[
+              p,
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      );
+
+  /// Botones de acción del desglose, también en UNA fila (se desliza si no
+  /// caben) en vez de apilarse uno por renglón.
+  Widget _buttonsRow(List<Widget> buttons) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(right: 2),
+        child: Row(
+          children: [
+            for (final b in buttons) ...[
+              b,
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final t = _data.totals;
@@ -172,6 +203,9 @@ class _FinancePageState extends State<FinancePage> {
       icon: Icons.account_balance_wallet_outlined,
       // Sin scroll de página: la tabla scrollea por dentro.
       expand: true,
+      // En el teléfono los dos botones van en UNA fila (se desliza si no
+      // caben): apilados se comían el alto de la tabla.
+      actionsInline: true,
       stats: [
         StatPill(
             icon: Icons.savings_outlined,
@@ -232,11 +266,10 @@ class _FinancePageState extends State<FinancePage> {
       children: [
         FinanceKpiGrid(
           currency: currency,
-          // MÓVIL: los cuadros en 3 columnas compactas. El de "Ahorro" no
-          // se lista aquí: ese dato ya va en la píldora de la cabecera
-          // ("Ahorro …") y duplicarlo solo hacía la rejilla más alta.
-          columns: narrow ? 3 : null,
-          minForcedWidth: 300,
+          // MÓVIL: carrusel —una tarjeta COMPLETA por pantalla, se desliza de
+          // lado— en vez de 3 columnas diminutas con los textos recortados.
+          // En escritorio siguen siendo filas parejas. El de "Ahorro" no se
+          // lista aquí: ese dato ya va en la píldora de la cabecera.
           kpis: [
             FinanceKpi(
               label: 'Ganado',
@@ -629,31 +662,23 @@ class _FinancePageState extends State<FinancePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _DetailPill('Gastos', g.gastos, FinanceColors.red, currency),
-                    _DetailPill(
-                        'Inversión', g.inversiones, FinanceColors.violet, currency),
-                    _DetailPill('Ahorro', g.ahorro, FinanceColors.teal, currency),
-                    _DetailPill('Abono externo', g.abonoExterno,
-                        FinanceColors.blue, currency),
-                  ],
-                ),
+                _pillsRow([
+                  _DetailPill('Gastos', g.gastos, FinanceColors.red, currency),
+                  _DetailPill('Inversión', g.inversiones, FinanceColors.violet,
+                      currency),
+                  _DetailPill('Ahorro', g.ahorro, FinanceColors.teal, currency),
+                  _DetailPill('Abono externo', g.abonoExterno,
+                      FinanceColors.blue, currency),
+                ]),
                 if (_canSave) ...[
                   const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+                  _buttonsRow([
                       FilledButton.icon(
                         onPressed: () => _addMovement(kind: 'gasto'),
                         icon: const Icon(Icons.add, size: 16),
                         label: const Text('Agregar movimiento general'),
                       ),
-                    ],
-                  ),
+                  ]),
                 ],
                 const SizedBox(height: 10),
                 if (moves.isEmpty)
@@ -830,40 +855,34 @@ class _FinancePageState extends State<FinancePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            _DetailPill('Cobrado', p.paid, FinanceColors.green, currency),
-            _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
-            _DetailPill('Ganado (disponible)', p.disponible,
-                FinanceColors.green, currency),
-            _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
-            _DetailPill('Gastos', p.gastos, FinanceColors.red, currency),
-            _DetailPill(
-                'Inversión', p.inversiones, FinanceColors.violet, currency),
-            _DetailPill(
-                'Abono externo', p.abonoExterno, FinanceColors.blue, currency),
-          ],
-        ),
+        // Los detalles van en UNA fila que se desliza: en el teléfono ya no
+        // roban media pantalla en tres renglones.
+        _pillsRow([
+          _DetailPill('Cobrado', p.paid, FinanceColors.green, currency),
+          _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
+          _DetailPill('Ganado (disponible)', p.disponible,
+              FinanceColors.green, currency),
+          _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
+          _DetailPill('Gastos', p.gastos, FinanceColors.red, currency),
+          _DetailPill(
+              'Inversión', p.inversiones, FinanceColors.violet, currency),
+          _DetailPill(
+              'Abono externo', p.abonoExterno, FinanceColors.blue, currency),
+        ]),
         if (_canSave) ...[
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonalIcon(
-                onPressed: () => _addMovement(kind: 'ahorro', package: p),
-                icon: const Icon(Icons.savings_outlined, size: 16),
-                label: const Text('Abonar al ahorro'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _addMovement(kind: 'gasto', package: p),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Agregar movimiento'),
-              ),
-            ],
-          ),
+          _buttonsRow([
+            FilledButton.tonalIcon(
+              onPressed: () => _addMovement(kind: 'ahorro', package: p),
+              icon: const Icon(Icons.savings_outlined, size: 16),
+              label: const Text('Abonar al ahorro'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => _addMovement(kind: 'gasto', package: p),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Agregar movimiento'),
+            ),
+          ]),
         ],
         const SizedBox(height: 10),
         if (moves.isEmpty)

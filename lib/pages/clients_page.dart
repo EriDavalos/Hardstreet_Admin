@@ -1164,6 +1164,7 @@ String _moveLabel(String kind) => switch (kind) {
       'abono_externo' => 'Abono externo',
       'inversion' => 'Inversión',
       'ahorro' => 'Ahorro',
+      'pago' => 'Pago',
       _ => 'Gasto',
     };
 
@@ -1172,6 +1173,7 @@ IconData _moveIcon(String kind) => switch (kind) {
       'abono_externo' => Icons.account_balance_wallet_outlined,
       'inversion' => Icons.trending_up,
       'ahorro' => Icons.savings_rounded,
+      'pago' => Icons.handshake_outlined,
       _ => Icons.trending_down,
     };
 
@@ -1180,6 +1182,7 @@ Color _moveColor(String kind) => switch (kind) {
       'abono_externo' => _kBlue,
       'inversion' => _kViolet,
       'ahorro' => _kTeal,
+      'pago' => _kAmber,
       _ => _kRed,
     };
 
@@ -1189,6 +1192,7 @@ const List<String> _kMovementKinds = [
   'gasto',
   'ahorro',
   'abono_externo',
+  'pago',
 ];
 
 /// Descripción corta de cada tipo (tarjetas de selección del diálogo).
@@ -1196,7 +1200,8 @@ String _moveHint(String kind) => switch (kind) {
       'inversion' => 'Dinero que se mete al paquete',
       'gasto' => 'Dinero que se gasta del paquete',
       'ahorro' => 'Dinero que se aparta del disponible',
-      _ => 'Pago recibido fuera del paquete',
+      'abono_externo' => 'Pago recibido fuera del paquete',
+      _ => 'Pago a un colaborador o empleado',
     };
 
 /// Administrador del paquete del cliente.
@@ -1396,6 +1401,13 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   List<Map<String, dynamic>> get _movements =>
       (((_progress?['movements'] as List?) ?? const []))
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+
+  /// A quién se le puede asignar un pago: colaboradores y empleados activos
+  /// (lo determina el backend).
+  List<Map<String, dynamic>> get _recipients =>
+      (((_progress?['recipients'] as List?) ?? const []))
           .map((e) => (e as Map).cast<String, dynamic>())
           .toList();
 
@@ -1626,7 +1638,32 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
-  /// Registra un movimiento (inversión, gasto, ahorro o abono externo).
+  /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
+  /// servicio DEL PAQUETE (las dos opcionales; el cliente las ve en "Mi
+  /// paquete" junto a su selección de fotos).
+  Future<void> _editServiceShare(Map<String, dynamic> svc) async {
+    final serviceId = (svc['id'] as num?)?.toInt() ?? 0;
+    if (serviceId == 0) {
+      _snack('No se pudo identificar el servicio');
+      return;
+    }
+    final out = await showDialog<(String, String)>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ServiceShareDialog(
+        serviceName: (svc['name'] ?? 'Servicio').toString(),
+        folder: (svc['shareFolder'] ?? '').toString(),
+        link: (svc['shareLink'] ?? '').toString(),
+        onPickFolder: _pickDriveFolder,
+      ),
+    );
+    if (out == null) return;
+    await _run(
+      () => HsApi.updateServiceShare(serviceId, folder: out.$1, link: out.$2),
+    );
+  }
+
+  /// Registra un movimiento (inversión, gasto, ahorro, abono externo o pago).
   /// El ahorro acepta monto o porcentaje del DISPONIBLE (abonado - gastado).
   Future<void> _addMovement() async {
     final pkg = _selected;
@@ -1638,6 +1675,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         package: pkg,
         disponible: _disponible,
         currency: (pkg['currency'] ?? 'MXN').toString(),
+        recipients: _recipients,
       ),
     );
     if (saved == true) await _reload(silent: true);
@@ -1656,6 +1694,30 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         disponible: _disponible,
         currency: (pkg['currency'] ?? 'MXN').toString(),
         movement: m,
+        recipients: _recipients,
+      ),
+    );
+    if (saved == true) await _reload(silent: true);
+  }
+
+  /// Reparte un pago del paquete entre colaboradores y empleados, en partes
+  /// iguales o por numeración. Cada parte se guarda como un `pago` con su
+  /// destinatario y cuenta como gasto.
+  Future<void> _splitPayment() async {
+    final pkg = _selected;
+    if (pkg == null) return;
+    final recipients = _recipients;
+    if (recipients.isEmpty) {
+      _snack('No hay colaboradores ni empleados activos para repartir');
+      return;
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SplitPaymentDialog(
+        package: pkg,
+        recipients: recipients,
+        currency: (pkg['currency'] ?? 'MXN').toString(),
       ),
     );
     if (saved == true) await _reload(silent: true);
@@ -2853,31 +2915,60 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     }
   }
 
-  // ---------- Pestaña: carpeta compartida del Drive ----------
+  // ---------- Pestaña: carpetas compartidas del Drive ----------
 
-  /// Carpeta del Drive COMPARTIDA con el cliente de ESTE paquete.
-  /// El cliente solo verá esta carpeta (y las de sus otros paquetes) en su
-  /// drive; es la forma de "compartir" una parte del Drive con él.
-  String get _drivePath {
+  /// Carpetas del Drive COMPARTIDAS con el cliente de ESTE paquete (puede
+  /// haber VARIAS). El cliente verá estas carpetas (y las de sus otros
+  /// paquetes) en su drive; es la forma de "compartir" una parte del Drive.
+  List<String> get _drivePaths {
     final pkg = _progress?['package'];
-    if (pkg is! Map) return '';
-    return (pkg['drivePath'] ?? '').toString().trim();
+    if (pkg is! Map) return const [];
+    final out = _pathsOf(pkg.cast<String, dynamic>());
+    if (out.isEmpty) {
+      // Backend viejo (una sola carpeta).
+      final one = drivePathNormalize((pkg['drivePath'] ?? '').toString());
+      if (one.isNotEmpty) out.add(one);
+    }
+    return out;
   }
 
-  /// Rutas del Drive compartidas en los DEMÁS paquetes del cliente (todas
-  /// menos la del paquete que se está editando en este momento).
+  /// Carpetas compartidas de un paquete tal como las manda la API
+  /// (`drivePaths`, con `drivePath` como respaldo de un backend viejo).
+  static List<String> _pathsOf(Map<String, dynamic> pkg) {
+    final out = <String>[];
+    final raw = pkg['drivePaths'];
+    if (raw is List) {
+      for (final x in raw) {
+        final path = drivePathNormalize(x.toString());
+        if (path.isNotEmpty && !out.contains(path)) out.add(path);
+      }
+    }
+    return out;
+  }
+
+  /// Rutas del Drive compartidas en los DEMÁS paquetes del cliente y en las
+  /// OTRAS carpetas del paquete que se está editando (todo menos la carpeta
+  /// que se va a compartir ahora).
   List<String> _otherSharedPaths() {
     final id = _selectedId;
     final out = <String>[];
     for (final p in _purchased) {
       if ((p['id'] as num?)?.toInt() == id) continue;
-      final path = drivePathNormalize((p['drivePath'] ?? '').toString());
-      if (path.isNotEmpty) out.add(path);
+      out.addAll(_pathsOf(p));
+      if (_pathsOf(p).isEmpty) {
+        final one = drivePathNormalize((p['drivePath'] ?? '').toString());
+        if (one.isNotEmpty) out.add(one);
+      }
+    }
+    for (final path in _drivePaths) {
+      if (!out.contains(path)) out.add(path);
     }
     return out;
   }
 
-  /// La carpeta YA compartida con la que choca [path], o null si no choca.
+  /// La carpeta YA compartida con la que choca [path], o null si no choca
+  /// (cuenta tanto lo compartido en los otros paquetes del cliente como las
+  /// otras carpetas de este mismo paquete).
   ///
   /// Compartir una carpeta que está dentro de otra ya compartida (o que la
   /// contiene) no aporta nada: el cliente vería el mismo contenido dos veces.
@@ -2987,10 +3078,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Ya compartiste «$hereConflict» en otro paquete de '
-                              'este cliente, y esta carpeta está dentro de '
-                              'aquella (o la contiene). Elige otra para no '
-                              'compartir dos veces lo mismo.',
+                              '«$hereConflict» ya está compartida con este '
+                              'cliente y esta carpeta está dentro de aquella '
+                              '(o la contiene). Elige otra para no compartir '
+                              'dos veces lo mismo.',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 height: 1.3,
@@ -3112,25 +3203,27 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (id == null) return;
     final segments = await _pickDriveFolder();
     if (segments == null || segments.isEmpty) return;
+    final path = segments.join('/');
+    if (_drivePaths.contains(path)) {
+      _snack('Esa carpeta ya está compartida con el cliente');
+      return;
+    }
     // Última revisión con los datos más frescos (el backend valida igual).
-    final clash = _sharedConflict(segments.join('/'));
+    final clash = _sharedConflict(path);
     if (clash != null) {
       _snack('Esa carpeta se solapa con «$clash», que ya está compartida');
       return;
     }
     await _run(
-      () => HsApi.setPackageDrivePath(
-        purchasedPackageId: id,
-        path: segments.join('/'),
-      ),
+      () => HsApi.addPackageDrivePath(purchasedPackageId: id, path: path),
     );
   }
 
-  Future<void> _unshareDriveFolder() async {
+  Future<void> _unshareDriveFolder(String path) async {
     final id = _selectedId;
     if (id == null) return;
     await _run(
-      () => HsApi.setPackageDrivePath(purchasedPackageId: id, path: ''),
+      () => HsApi.removePackageDrivePath(purchasedPackageId: id, path: path),
     );
   }
 
@@ -3138,7 +3231,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (_loadingProgress) {
       return const Center(child: CircularProgressIndicator());
     }
-    final path = _drivePath;
+    final paths = _drivePaths;
     final editable = _canAdminister && !_busy;
     return ListView(
       primary: false,
@@ -3159,9 +3252,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Dale a este paquete UNA carpeta del Drive. El cliente verá '
-                  'en su Drive solo las carpetas compartidas de sus paquetes '
-                  '(y nada más).',
+                  'Comparte con este paquete las carpetas del Drive que '
+                  'quieras: puede ser MÁS DE UNA. El cliente verá en su Drive '
+                  'solo las carpetas compartidas de sus paquetes (y nada más).',
                   style: TextStyle(
                       fontSize: 12,
                       height: 1.35,
@@ -3172,73 +3265,108 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: .5)),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                path.isEmpty
-                    ? Icons.folder_off_outlined
-                    : Icons.folder_rounded,
-                color: path.isEmpty ? scheme.onSurfaceVariant : AppColors.brand,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      path.isEmpty ? 'Sin carpeta compartida' : path,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      path.isEmpty
-                          ? 'El cliente todavía no ve nada en su Drive.'
-                          : 'Carpeta compartida con el cliente de este paquete.',
-                      style: TextStyle(
-                          fontSize: 11.5, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
+        // UNA tarjeta por carpeta compartida, cada una con su botón para
+        // dejar de compartirla (las demás siguen igual).
+        for (final path in paths) ...[
+          _sharedFolderCard(scheme, path, editable),
+          const SizedBox(height: 8),
+        ],
+        if (paths.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: .5)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.folder_off_outlined,
+                    color: scheme.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Sin carpeta compartida',
+                        style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'El cliente todavía no ve nada en su Drive.',
+                        style: TextStyle(
+                            fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 12),
-        if (editable) ...[
+        if (editable)
           FilledButton.icon(
             onPressed: _shareDriveFolder,
             icon: const Icon(Icons.folder_open_outlined, size: 18),
-            label: Text(path.isEmpty
+            label: Text(paths.isEmpty
                 ? 'Elegir carpeta del Drive'
-                : 'Cambiar carpeta compartida'),
-          ),
-          if (path.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _unshareDriveFolder,
-              icon: const Icon(Icons.link_off, size: 18),
-              label: const Text('Dejar de compartir'),
-            ),
-          ],
-        ] else
+                : 'Agregar otra carpeta'),
+          )
+        else
           Text(
-            path.isEmpty
+            paths.isEmpty
                 ? 'Este paquete no comparte ninguna carpeta con el cliente.'
                 : 'Solo lectura: este paquete ya no se administra.',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
       ],
+    );
+  }
+
+  /// Tarjeta de UNA carpeta compartida con el cliente de este paquete.
+  Widget _sharedFolderCard(ColorScheme scheme, String path, bool editable) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.folder_rounded, color: AppColors.brand),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  path,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Carpeta compartida con el cliente de este paquete.',
+                  style:
+                      TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          if (editable)
+            IconButton(
+              tooltip: 'Dejar de compartir esta carpeta',
+              onPressed: () => _unshareDriveFolder(path),
+              icon: const Icon(Icons.link_off, size: 18),
+            ),
+        ],
+      ),
     );
   }
 
@@ -3358,6 +3486,84 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                           ),
                         ),
                       ),
+                    // Lo COMPARTIDO con el cliente para ESTE servicio: su
+                    // carpeta del Drive y su liga (si las hay), más cuántas
+                    // fotos/elementos ya eligió el cliente.
+                    if ((s['shareFolder'] ?? '').toString().trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.folder_open_outlined,
+                                size: 13, color: AppColors.brand),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                (s['shareFolder'] ?? '').toString().trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.brand,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if ((s['shareLink'] ?? '').toString().trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Tooltip(
+                          message: 'Copiar la liga compartida',
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () => _copyServiceUrl(
+                                (s['shareLink'] ?? '').toString().trim()),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.link,
+                                    size: 13, color: AppColors.brand),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Text(
+                                    (s['shareLink'] ?? '').toString().trim(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.brand,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (((s['items'] as num?)?.toInt() ?? 0) > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.photo_library_outlined,
+                                size: 13, color: _kViolet),
+                            const SizedBox(width: 5),
+                            Text(
+                              '${(s['items'] as num).toInt()} '
+                              '${(s['items'] as num).toInt() == 1 ? 'elemento elegido' : 'elementos elegidos'} '
+                              'por el cliente',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: _kViolet,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     if (when != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
@@ -3434,6 +3640,27 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                                   (s['url'] ?? '').toString().trim().isEmpty
                                       ? 'Agregar enlace'
                                       : 'Editar enlace',
+                                ),
+                              ),
+                              // Compartir POR SERVICIO: carpeta del Drive y/o
+                              // liga que el cliente ve en "Mi paquete".
+                              TextButton.icon(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _editServiceShare(s),
+                                style: _kServiceAction,
+                                icon: const Icon(
+                                    Icons.folder_shared_outlined,
+                                    size: 15),
+                                label: Text(
+                                  ((s['shareFolder'] ?? '').toString().trim()
+                                                  .isEmpty &&
+                                              (s['shareLink'] ?? '')
+                                                  .toString()
+                                                  .trim()
+                                                  .isEmpty)
+                                      ? 'Compartir'
+                                      : 'Editar lo compartido',
                                 ),
                               ),
                             ],
@@ -3600,6 +3827,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     'Gastado',
                     hsMoney((totals['gastado'] as num?) ?? 0, currency),
                     _kRed),
+                _MoneyTile(
+                    'Pagado',
+                    hsMoney((totals['pagos'] as num?) ?? 0, currency),
+                    _kAmber),
               ],
             ),
           ),
@@ -3634,6 +3865,21 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   textStyle: const TextStyle(fontSize: 12.5),
                 ),
               );
+              // Repartir un pago entre colaboradores y empleados: partes
+              // iguales o por numeración.
+              final repartir = OutlinedButton.icon(
+                onPressed: _busy ? null : _splitPayment,
+                icon: const Icon(Icons.handshake_outlined, size: 16),
+                label: const Text('Repartir pago'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kAmber,
+                  visualDensity:
+                      MediaQuery.sizeOf(context).width < 560
+                          ? null
+                          : VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12.5),
+                ),
+              );
               if (MediaQuery.sizeOf(context).width < 560) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3641,13 +3887,15 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     abonar,
                     const SizedBox(height: 8),
                     registrar,
+                    const SizedBox(height: 8),
+                    repartir,
                   ],
                 );
               }
               return Wrap(
                 spacing: 8,
                 runSpacing: 6,
-                children: [abonar, registrar],
+                children: [abonar, registrar, repartir],
               );
             }(),
           ),
@@ -3676,7 +3924,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     final color = _moveColor(kind);
     final when = hsParseDate(m['created']);
     final concept = (m['description'] ?? '').toString().trim();
+    // Destinatario del pago (colaborador o empleado), cuando lo hay.
+    final who = (m['userName'] ?? '').toString().trim();
     final subtitle = [
+      if (who.isNotEmpty) '→ $who',
       if (concept.isNotEmpty) concept,
       if (when != null) '${hsShortDate(when)} ${hsTimeLabel(when)}',
     ].join(' · ');
@@ -4508,6 +4759,7 @@ class _MovementDialog extends StatefulWidget {
     this.disponible = 0,
     this.currency = 'MXN',
     this.movement,
+    this.recipients = const [],
   });
 
   final Map<String, dynamic> package;
@@ -4515,6 +4767,9 @@ class _MovementDialog extends StatefulWidget {
   /// Dinero libre del paquete (base del ahorro en porcentaje).
   final num disponible;
   final String currency;
+
+  /// Colaboradores y empleados a los que se puede asignar un pago.
+  final List<Map<String, dynamic>> recipients;
 
   /// Movimiento/abono a EDITAR (null = registrar uno nuevo). Cuando viene,
   /// el diálogo precarga sus datos y guarda con `editar-movimiento`.
@@ -4535,6 +4790,9 @@ class _MovementDialogState extends State<_MovementDialog> {
   final TextEditingController _concept = TextEditingController();
   bool _saving = false;
   String? _error;
+
+  /// Destinatario del pago (solo se usa cuando el tipo es `pago`).
+  int? _recipientId;
 
   /// ¿Se está editando un registro existente?
   bool get _editing => widget.movement != null;
@@ -4560,6 +4818,7 @@ class _MovementDialogState extends State<_MovementDialog> {
       final amount = (m['amount'] as num?) ?? 0;
       _amount.text = _clean(amount);
       _concept.text = (m['description'] ?? '').toString();
+      _recipientId = (m['userId'] as num?)?.toInt();
     }
   }
 
@@ -4625,6 +4884,7 @@ class _MovementDialogState extends State<_MovementDialog> {
           kind: _kind,
           amount: amount,
           description: description,
+          userId: _kind == 'pago' ? _recipientId : null,
         );
       }
       if (!mounted) return;
@@ -4667,7 +4927,7 @@ class _MovementDialogState extends State<_MovementDialog> {
           ? 'Solo mientras el paquete no esté finalizado · '
               '${_moveLabel(_kind)}'
           : '${(widget.package['name'] ?? '').toString()} · inversión, gasto, '
-              'ahorro o abono externo',
+              'ahorro, abono externo o pago',
       saving: _saving,
       error: _error,
       saveLabel: _editing ? 'Guardar cambios' : 'Registrar',
@@ -4766,6 +5026,40 @@ class _MovementDialogState extends State<_MovementDialog> {
           ),
         ),
         const SizedBox(height: 14),
+        if (showKinds && _kind == 'pago') ...[
+          FormSection(
+            label: '¿A quién se le paga?',
+            child: widget.recipients.isEmpty
+                ? Text(
+                    'No hay colaboradores ni empleados activos.',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant),
+                  )
+                : DropdownButtonFormField<int>(
+                    initialValue: _recipientId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Colaborador o empleado',
+                      prefixIcon: Icon(Icons.person_outline, size: 20),
+                    ),
+                    items: [
+                      for (final r in widget.recipients)
+                        DropdownMenuItem<int>(
+                          value: (r['id'] as num).toInt(),
+                          child: Text(
+                            '${(r['name'] ?? '').toString()}'
+                            '${(r['roleName'] ?? '').toString().isEmpty ? '' : ' · ${(r['roleName'] ?? '').toString()}'}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() => _recipientId = v),
+                  ),
+          ),
+          const SizedBox(height: 14),
+        ],
         if (_isSavings) ...[
           // Base del ahorro en porcentaje: el disponible del paquete.
           Container(
@@ -4903,6 +5197,369 @@ class _MovementDialogState extends State<_MovementDialog> {
 }
 
 // ==================================================================
+// Repartir un pago entre colaboradores y empleados
+// ==================================================================
+
+/// Reparte un monto del paquete entre COLABORADORES y EMPLEADOS, en dos
+/// modos: partes iguales (se escribe el total y se marca a quiénes) o por
+/// numeración (un monto por persona). Cada parte se guarda como un movimiento
+/// `pago` con su destinatario y cuenta como gasto.
+class _SplitPaymentDialog extends StatefulWidget {
+  const _SplitPaymentDialog({
+    required this.package,
+    required this.recipients,
+    required this.currency,
+  });
+
+  final Map<String, dynamic> package;
+
+  /// Colaboradores y empleados activos (lo determina el backend).
+  final List<Map<String, dynamic>> recipients;
+  final String currency;
+
+  @override
+  State<_SplitPaymentDialog> createState() => _SplitPaymentDialogState();
+}
+
+class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
+  /// 'iguales' (partes iguales) o 'numeracion' (un monto por persona).
+  String _mode = 'iguales';
+
+  final TextEditingController _total = TextEditingController();
+  final TextEditingController _concept = TextEditingController();
+  final Set<int> _selected = {};
+  final Map<int, TextEditingController> _amounts = {};
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final r in widget.recipients) {
+      final id = (r['id'] as num).toInt();
+      _amounts[id] = TextEditingController();
+    }
+  }
+
+  @override
+  void dispose() {
+    _total.dispose();
+    _concept.dispose();
+    for (final c in _amounts.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  num _parse(String s) => num.tryParse(s.replaceAll(',', '').trim()) ?? 0;
+
+  num get _totalValue => _parse(_total.text);
+
+  num _amountOf(int id) => _parse(_amounts[id]?.text ?? '');
+
+  /// Suma de todos los montos escritos en el modo por numeración.
+  num get _byNumberTotal =>
+      _amounts.keys.fold<num>(0, (sum, id) => sum + _amountOf(id));
+
+  /// Lo que le toca a cada uno en partes iguales.
+  num get _perPerson =>
+      _selected.isEmpty ? 0 : _totalValue / _selected.length;
+
+  /// Montos positivos del modo por numeración (los vacíos se ignoran).
+  List<Map<String, dynamic>> _numberParts() {
+    final parts = <Map<String, dynamic>>[];
+    _amounts.forEach((id, c) {
+      final amount = _parse(c.text);
+      if (amount > 0) parts.add({'userId': id, 'amount': amount});
+    });
+    return parts;
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final pkgId = (widget.package['id'] as num).toInt();
+    final description = _concept.text.trim();
+    if (_mode == 'iguales') {
+      if (_totalValue <= 0) {
+        setState(() => _error = 'Escribe el total a repartir');
+        return;
+      }
+      if (_selected.isEmpty) {
+        setState(() => _error = 'Marca al menos un colaborador o empleado');
+        return;
+      }
+    } else if (_numberParts().isEmpty) {
+      setState(() => _error = 'Escribe al menos un monto mayor a 0');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      if (_mode == 'iguales') {
+        await HsApi.splitPackagePayment(
+          purchasedPackageId: pkgId,
+          mode: 'iguales',
+          total: _totalValue,
+          userIds: _selected.toList(),
+          description: description,
+        );
+      } else {
+        await HsApi.splitPackagePayment(
+          purchasedPackageId: pkgId,
+          mode: 'numeracion',
+          parts: _numberParts(),
+          description: description,
+        );
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo repartir el pago';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _moveColor('pago');
+    return FormDialog(
+      icon: Icons.handshake_outlined,
+      title: 'Repartir pago',
+      subtitle: '${(widget.package['name'] ?? '').toString()} · '
+          'solo colaboradores y empleados · cuenta como gasto',
+      saving: _saving,
+      error: _error,
+      saveLabel: 'Repartir',
+      maxWidth: 500,
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        FormSection(
+          label: '¿Cómo se reparte?',
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            segments: const [
+              ButtonSegment(
+                value: 'iguales',
+                icon: Icon(Icons.balance, size: 16),
+                label: Text('Partes iguales'),
+              ),
+              ButtonSegment(
+                value: 'numeracion',
+                icon: Icon(Icons.tag, size: 16),
+                label: Text('Por numeración'),
+              ),
+            ],
+            selected: {_mode},
+            onSelectionChanged:
+                _saving ? null : (s) => setState(() => _mode = s.first),
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (_mode == 'iguales') ...[
+          FormSection(
+            label: 'Total a repartir',
+            child: TextField(
+              controller: _total,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Total',
+                prefixIcon: Icon(Icons.attach_money, size: 20),
+              ),
+            ),
+          ),
+          if (_totalValue > 0 && _selected.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color.withValues(alpha: .30)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.calculate_outlined, size: 16, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'A cada uno de ${_selected.length} le toca',
+                      style: TextStyle(
+                          fontSize: 12, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  Text(
+                    hsMoney(_perPerson, widget.currency),
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: color),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          FormSection(
+            label: '¿A quiénes se les reparte?',
+            child: Column(
+              children: [
+                for (final r in widget.recipients)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _selected.contains((r['id'] as num).toInt()),
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() {
+                              final id = (r['id'] as num).toInt();
+                              if (v == true) {
+                                _selected.add(id);
+                              } else {
+                                _selected.remove(id);
+                              }
+                            }),
+                    title: Text(
+                      (r['name'] ?? '').toString(),
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: (r['roleName'] ?? '').toString().isEmpty
+                        ? null
+                        : Text(
+                            (r['roleName'] ?? '').toString(),
+                            style: TextStyle(
+                                fontSize: 11.5,
+                                color: scheme.onSurfaceVariant),
+                          ),
+                  ),
+              ],
+            ),
+          ),
+        ] else ...[
+          FormSection(
+            label: 'Monto de cada uno',
+            child: Column(
+              children: [
+                for (final r in widget.recipients)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                (r['name'] ?? '').toString(),
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                              if ((r['roleName'] ?? '').toString().isNotEmpty)
+                                Text(
+                                  (r['roleName'] ?? '').toString(),
+                                  style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: scheme.onSurfaceVariant),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: _amounts[(r['id'] as num).toInt()],
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            onChanged: (_) => setState(() {}),
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              hintText: '0',
+                              prefixText: '\$ ',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color.withValues(alpha: .30)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.calculate_outlined, size: 16, color: color),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Total a repartir',
+                          style: TextStyle(
+                              fontSize: 12, color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                      Text(
+                        hsMoney(_byNumberTotal, widget.currency),
+                        style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: color),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Concepto',
+          child: TextField(
+            controller: _concept,
+            minLines: 1,
+            maxLines: 2,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Descripción',
+              hintText: 'Ej. Pago de la semana…',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ==================================================================
 // Descripción de un servicio (cierre o avance)
 // ==================================================================
 
@@ -4984,6 +5641,111 @@ class _NoteDialogState extends State<_NoteDialog> {
             decoration: InputDecoration(
               labelText: widget.label,
               alignLabelWithHint: true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN servicio
+/// del paquete. Devuelve `(folder, link)` al guardar, o null al cancelar.
+class _ServiceShareDialog extends StatefulWidget {
+  const _ServiceShareDialog({
+    required this.serviceName,
+    required this.folder,
+    required this.link,
+    required this.onPickFolder,
+  });
+
+  final String serviceName;
+  final String folder;
+  final String link;
+
+  /// Abre el selector de carpetas del Drive y devuelve la ruta elegida.
+  final Future<List<String>?> Function() onPickFolder;
+
+  @override
+  State<_ServiceShareDialog> createState() => _ServiceShareDialogState();
+}
+
+class _ServiceShareDialogState extends State<_ServiceShareDialog> {
+  late final TextEditingController _link =
+      TextEditingController(text: widget.link);
+  late String _folder = widget.folder;
+
+  @override
+  void dispose() {
+    _link.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pick() async {
+    final segments = await widget.onPickFolder();
+    if (segments == null || segments.isEmpty) return;
+    setState(() => _folder = segments.join('/'));
+  }
+
+  void _save() => Navigator.of(context).pop((_folder, _link.text.trim()));
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return FormDialog(
+      icon: Icons.folder_shared_outlined,
+      title: 'Compartir con el cliente',
+      subtitle: widget.serviceName,
+      saveLabel: 'Guardar',
+      maxWidth: 520,
+      onCancel: () => Navigator.of(context).pop(),
+      onSave: _save,
+      children: [
+        Text(
+          'Para ESTE servicio del paquete puedes compartir una carpeta del '
+          'Drive, una liga, o las dos. El cliente las verá en «Mi paquete» '
+          'junto a las fotos que elija del Drive.',
+          style: TextStyle(
+            fontSize: 12.5,
+            height: 1.3,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Carpeta del Drive',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _pick,
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: Text(
+                  _folder.isEmpty ? 'Elegir carpeta' : _folder,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_folder.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _folder = ''),
+                    icon: const Icon(Icons.close, size: 16),
+                    label: const Text('Quitar carpeta'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Liga (opcional)',
+          child: TextField(
+            controller: _link,
+            decoration: const InputDecoration(
+              hintText: 'https://…',
+              prefixIcon: Icon(Icons.link, size: 20),
             ),
           ),
         ),

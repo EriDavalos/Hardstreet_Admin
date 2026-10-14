@@ -145,6 +145,7 @@ void FlutterWindow::SetUpEventsChannel() {
               if (map == nullptr) continue;
               EventWidget::Event event;
               event.id = IntOf(ArgOf(*map, "id"));
+              event.service = IntOf(ArgOf(*map, "service"));
               event.title = WideFromUtf8(StringOf(ArgOf(*map, "title")));
               event.subtitle = WideFromUtf8(StringOf(ArgOf(*map, "subtitle")));
               event.when = WideFromUtf8(StringOf(ArgOf(*map, "when")));

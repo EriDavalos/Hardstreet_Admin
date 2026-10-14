@@ -420,6 +420,53 @@ class DriveApiService extends DriveBase {
     }
   }
 
+  /// ESPACIO de la carpeta de fotos consultado al servidor del drive
+  /// (`/api/space`): usado, cuota configurada (`limitBytes`) y libre real.
+  /// El servidor recorre el árbol, así que se le da un margen amplio.
+  @override
+  Future<Map<String, dynamic>?> storageInfo() async {
+    final r = await http
+        .get(_u('/api/space'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 90));
+    if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+    return (jsonDecode(r.body) as Map).cast<String, dynamic>();
+  }
+
+  /// CONTENIDO directo de [rel] (carpetas y archivos) consultado al servidor,
+  /// SIN mover el estado del drive. Lo usa el selector de fotos del cliente.
+  @override
+  Future<List<DriveItem>> listFolderItems(List<String> rel) async {
+    try {
+      final r = await http
+          .get(
+            _u('/api/drive', {'path': rel.join('/')}),
+            headers: _authHeaders,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+      final data = jsonDecode(r.body) as Map<String, dynamic>;
+      final raw = (data['folders'] as List?) ?? const [];
+      final out = <DriveItem>[];
+      for (final e in raw) {
+        if (e is! Map) continue;
+        final name = e['name']?.toString() ?? '';
+        if (name.isEmpty) continue;
+        out.add(DriveItem(
+          name: name,
+          isFolder: e['isFolder'] == true,
+          modified: e['modified'] == null
+              ? null
+              : DateTime.tryParse(e['modified'].toString()),
+          size: (e['size'] as num?)?.toInt(),
+          childCount: (e['childCount'] as num?)?.toInt() ?? 0,
+        ));
+      }
+      return out;
+    } catch (e) {
+      throw 'No se pudo abrir la carpeta: $e';
+    }
+  }
+
   /// El backend no expone carpetas por HTTP para el selector: derivo la lista
   /// navegando con /api/drive de cada subcarpeta visible en la raíz pedida.
   @override

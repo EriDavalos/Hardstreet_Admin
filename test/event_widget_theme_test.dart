@@ -103,13 +103,26 @@ void main() {
       expect(_hex(actual), _hex(want), reason: '$what del widget vs. la app');
     }
 
-    same(colors['event_widget_bg']!, lightExpected['card']!, 'Tarjeta clara');
-    same(colors['event_widget_bg_dark']!, darkExpected['card']!,
-        'Tarjeta oscura');
-    same(colors['event_widget_border']!, lightExpected['border']!,
-        'Borde claro');
-    same(colors['event_widget_border_dark']!, darkExpected['border']!,
-        'Borde oscuro');
+    // El fondo va MÁS OSCURO que la cardColor del tema (para despegarse del
+    // fondo de pantalla) y SIN borde: el trazo se recortaba en las esquinas
+    // redondeadas. Los textos y la marca siguen siendo los del tema.
+    int lum(Color c) {
+      final v = c.toARGB32();
+      return ((v >> 16) & 0xFF) + ((v >> 8) & 0xFF) + (v & 0xFF);
+    }
+
+    expect(lum(colors['event_widget_bg']!),
+        lessThan(lum(lightExpected['card']!)),
+        reason: 'la tarjeta clara va más oscura que el blanco de la app');
+    expect(lum(colors['event_widget_bg_dark']!),
+        lessThan(lum(darkExpected['card']!)),
+        reason: 'la tarjeta oscura va más oscura que la de la app');
+    for (final f in ['event_widget_bg.xml', 'event_widget_bg_dark.xml']) {
+      final svg = File('android/app/src/main/res/drawable/$f').readAsStringSync();
+      expect(svg.contains('<stroke'), isFalse,
+          reason: '$f ya no dibuja borde');
+    }
+
     same(colors['event_widget_accent']!, lightExpected['brand']!,
         'Acento claro');
     same(colors['event_widget_accent_dark']!, darkExpected['brand']!,
@@ -140,21 +153,48 @@ void main() {
         'Botón Agregar oscuro');
   });
 
-  test('Windows: la paleta del panel es la del tema de la app', () {
+  test('Windows: el panel conserva la identidad de la app y se despega del '
+      'escritorio', () {
     final cpp = File(_windowsCpp).readAsStringSync();
     final panelLight = _readWindows(cpp, 'kLight');
     final panelDark = _readWindows(cpp, 'kDark');
     final lightExpected = expected(light, isDark: false);
     final darkExpected = expected(dark, isDark: true);
 
-    lightExpected.forEach((key, want) {
-      expect(_hex(panelLight[key]!), _hex(want),
+    /// Luminosidad simple (suma de canales): sirve para comparar "más oscuro".
+    int lum(Color c) {
+      final v = c.toARGB32();
+      return ((v >> 16) & 0xFF) + ((v >> 8) & 0xFF) + (v & 0xFF);
+    }
+
+    // (1) Los textos y la marca SIGUEN siendo los del tema: el panel se ve
+    //     como la app, no "parecido".
+    for (final key in ['brand', 'accent', 'text', 'muted']) {
+      expect(_hex(panelLight[key]!), _hex(lightExpected[key]!),
           reason: 'kLight.$key del panel vs. la app');
-    });
-    darkExpected.forEach((key, want) {
-      expect(_hex(panelDark[key]!), _hex(want),
+      expect(_hex(panelDark[key]!), _hex(darkExpected[key]!),
           reason: 'kDark.$key del panel vs. la app');
-    });
+    }
+
+    // (2) El fondo del panel va MÁS OSCURO que la tarjeta del tema (así el
+    //     panel se distingue del escritorio, que es lo que pidió el usuario).
+    expect(lum(panelLight['card']!), lessThan(lum(lightExpected['card']!)),
+        reason: 'el panel claro debe ir más oscuro que la tarjeta blanca');
+    expect(lum(panelDark['card']!), lessThan(lum(darkExpected['card']!)),
+        reason: 'el panel oscuro debe ir más oscuro que la tarjeta de la app');
+
+    // (3) Las líneas del listado no se confunden con el fondo.
+    for (final key in ['divider', 'separator']) {
+      expect(_hex(panelLight[key]!), isNot(_hex(panelLight['card']!)),
+          reason: 'kLight.$key debe leerse sobre el fondo');
+      expect(_hex(panelDark[key]!), isNot(_hex(panelDark['card']!)),
+          reason: 'kDark.$key debe leerse sobre el fondo');
+    }
+
+    // (4) SIN borde dibujado: la línea sobre las esquinas redondeadas se
+    //     recortaba y se veía sucia. El redondeo lo hace la región de ventana.
+    expect(cpp.contains('CreatePen(PS_SOLID, 1, c.border)'), isFalse,
+        reason: 'el panel ya no dibuja borde sobre el redondeo');
   });
 
   test('el widget de Android NO tiene carpeta values-night (no sigue al '

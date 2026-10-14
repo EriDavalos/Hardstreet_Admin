@@ -15,22 +15,58 @@ POINT PointFromLParam(LPARAM lparam) {
 }
 
 constexpr wchar_t kClassName[] = L"HardstreetEventWidget";
-constexpr int kWidth = 360;    // ancho del panel
+constexpr int kWidth = 376;    // ancho del panel
 constexpr int kMargin = 18;    // separación con el borde del área de trabajo
-constexpr int kPadding = 14;   // relleno interior
-constexpr int kHeaderH = 28;   // encabezado (título + contador)
+constexpr int kPadding = 16;   // relleno interior
+constexpr int kHeaderH = 40;   // encabezado (título + contador) más GRANDE
 constexpr int kDividerGap = 8;
 constexpr int kContentGap = 10;  // aire entre el separador y el listado
-constexpr int kMaxViewH = 620;   // tope del listado visible (el resto se rueda)
-constexpr int kSepH = 9;         // banda donde va la línea entre eventos
-constexpr int kDayH = 22;        // rótulo del día
-constexpr int kTitleH = 22;      // titular + hora
-constexpr int kSubH = 18;        // cliente · servicio
-constexpr int kItemGap = 8;      // aire bajo cada evento
+constexpr int kMaxViewH = 640;   // tope del listado visible (el resto se rueda)
+constexpr int kSepH = 8;         // banda donde va la línea entre eventos
+constexpr int kDayH = 24;        // rótulo del día
+constexpr int kTitleH = 25;      // titular + hora
+constexpr int kSubH = 19;        // cliente · servicio
+constexpr int kItemGap = 10;     // aire bajo cada evento
 constexpr int kEmptyH = 22;
 constexpr int kScrollStep = 56;  // una muesca de la rueda
-constexpr int kAddSize = 26;    // lado del botón "+" (Agregar agenda)
-constexpr int kAddGap = 8;      // aire entre el botón, el contador y el título
+constexpr int kAddSize = 34;    // lado del botón "+" (Agregar agenda)
+constexpr int kAddGap = 10;     // aire entre el botón, el contador y el título
+// Tarjeta de cada evento: fondo tenue del color del servicio ("disimulado pero
+// que se entienda a simple vista", como el calendario de Agendas) + una barra
+// de acento a la izquierda.
+constexpr int kRowRadius = 12;
+constexpr int kRowInset = 5;   // aire entre la tarjeta y los textos
+constexpr int kBarW = 3;       // grosor de la barra de servicio
+
+// Colores por servicio: la MISMA paleta del calendario de la app
+// (lib/pages/agendas_page.dart, `_agendaPalette`). Cada evento se tiñe con el
+// color de su servicio, así dos eventos distintos se distinguen de un vistazo.
+constexpr COLORREF kServiceColors[8] = {
+    RGB(0x8B, 0x5C, 0xF6),  // violeta
+    RGB(0x10, 0xB9, 0x81),  // esmeralda
+    RGB(0xF5, 0x9E, 0x0B),  // ámbar
+    RGB(0x3B, 0x82, 0xF6),  // azul
+    RGB(0xEF, 0x44, 0x44),  // rojo
+    RGB(0x14, 0xB8, 0xA6),  // turquesa
+    RGB(0xEC, 0x48, 0x99),  // rosa
+    RGB(0x63, 0x66, 0xF1),  // índigo
+};
+
+COLORREF ServiceColor(int service) {
+  return kServiceColors[(service < 0 ? -service : service) % 8];
+}
+
+// Mezcla lineal de [a] sobre [b] con peso [t] (0 = b, 1 = a). Sirve para teñir
+// el fondo de una fila con el color del servicio SIN que grite.
+double BlendComponent(int a, int b, double t) {
+  return a * t + b * (1.0 - t);
+}
+
+COLORREF Blend(COLORREF a, COLORREF b, double t) {
+  return RGB(static_cast<int>(BlendComponent(GetRValue(a), GetRValue(b), t)),
+             static_cast<int>(BlendComponent(GetGValue(a), GetGValue(b), t)),
+             static_cast<int>(BlendComponent(GetBValue(a), GetBValue(b), t)));
+}
 
 // Alto de un evento (con su separador y su rótulo de día, si tocan).
 int EventHeight(const EventWidget::Event& e, bool first) {
@@ -45,32 +81,34 @@ int EventHeight(const EventWidget::Event& e, bool first) {
 // (AppTheme.light): tarjeta = cardColor, texto = onSurface, secundario =
 // onSurfaceVariant, acento = primary y líneas = dividerColor.
 constexpr EventWidget::Palette kLight = {
-    /* card      */ RGB(255, 255, 255),  // #FFFFFF (cardColor)
-    /* border    */ RGB(229, 234, 242),  // #E5EAF2 (dividerColor)
+    /* card      */ RGB(243, 246, 252),  // #F3F6FC (gris azulado: se separa
+                                         // del escritorio blanco)
+    /* border    */ RGB(226, 232, 242),
     /* brand     */ RGB(47, 107, 255),   // #2F6BFF (primary)
     /* accent    */ RGB(47, 107, 255),   // #2F6BFF (primary)
     /* text      */ RGB(26, 27, 33),     // #1A1B21 (onSurface)
     /* muted     */ RGB(69, 70, 79),     // #45464F (onSurfaceVariant)
-    /* divider   */ RGB(229, 234, 242),  // #E5EAF2
-    /* badge_bg  */ RGB(238, 243, 255),  // #2F6BFF al 8 % sobre la tarjeta
-    /* add_bg    */ RGB(238, 243, 255),  // #EEF3FF
-    /* separator */ RGB(229, 234, 242),  // #E5EAF2
+    /* divider   */ RGB(219, 226, 238),  // línea bajo el encabezado
+    /* badge_bg  */ RGB(230, 238, 255),
+    /* add_bg    */ RGB(230, 238, 255),
+    /* separator */ RGB(230, 235, 244),
 };
 
 // Paleta de la app en OSCURO: mismos colores del tema oscuro (AppTheme.dark).
 // La app NO aclara su azul de marca en oscuro (primary sigue siendo #2F6BFF) ni
 // cambia el texto: el widget debe verse igual que la app, no "parecido".
 constexpr EventWidget::Palette kDark = {
-    /* card      */ RGB(26, 34, 51),     // #1A2233 (cardColor)
-    /* border    */ RGB(44, 52, 67),     // #2C3443 (dividerColor)
+    /* card      */ RGB(13, 18, 28),     // #0D121C (más oscuro: el panel se
+                                         // despega del escritorio)
+    /* border    */ RGB(37, 45, 60),
     /* brand     */ RGB(47, 107, 255),   // #2F6BFF (primary)
     /* accent    */ RGB(47, 107, 255),   // #2F6BFF (primary)
-    /* text      */ RGB(227, 225, 233),  // #E3E1E9 (onSurface)
+    /* text      */ RGB(227, 225, 233),  // #E3E1E9 (onSurface del tema)
     /* muted     */ RGB(198, 198, 208),  // #C6C6D0 (onSurfaceVariant)
-    /* divider   */ RGB(44, 52, 67),     // #2C3443
-    /* badge_bg  */ RGB(29, 46, 84),     // #2F6BFF al 16 % sobre la tarjeta
-    /* add_bg    */ RGB(29, 46, 84),     // #1D2E54
-    /* separator */ RGB(44, 52, 67),     // #2C3443
+    /* divider   */ RGB(35, 43, 58),     // línea bajo el encabezado
+    /* badge_bg  */ RGB(24, 39, 72),
+    /* add_bg    */ RGB(24, 39, 72),
+    /* separator */ RGB(28, 36, 50),
 };
 
 HFONT MakeFont(HDC dc, int point_size, bool bold) {
@@ -121,6 +159,18 @@ void HairLine(HDC dc, COLORREF color, int x1, int x2, int y) {
 void FillRectColor(HDC dc, COLORREF color, const RECT& box) {
   HBRUSH brush = CreateSolidBrush(color);
   FillRect(dc, &box, brush);
+  DeleteObject(brush);
+}
+
+// Rectángulo con esquinas redondeadas y relleno SÓLIDO (sin borde): lo usan las
+// tarjetas de cada evento y su barra de acento.
+void RoundedFill(HDC dc, COLORREF color, const RECT& box, int radius) {
+  HBRUSH brush = CreateSolidBrush(color);
+  HGDIOBJ old_brush = SelectObject(dc, brush);
+  HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+  RoundRect(dc, box.left, box.top, box.right, box.bottom, radius, radius);
+  SelectObject(dc, old_brush);
+  SelectObject(dc, old_pen);
   DeleteObject(brush);
 }
 
@@ -289,24 +339,17 @@ void EventWidget::Paint(HDC dc) {
   RECT client = {};
   GetClientRect(hwnd_, &client);
 
-  // Tarjeta (el modo lo elige la app, no el sistema).
+  // Tarjeta (el modo lo elige la app, no el sistema). SIN borde dibujado: la
+  // esquina redondeada ya la recorta la región de la ventana y una línea
+  // encima se cortaba en las curvas (se veía sucia).
   FillRectColor(dc, c.card, client);
 
-  HPEN pen = CreatePen(PS_SOLID, 1, c.border);
-  HGDIOBJ old_pen = SelectObject(dc, pen);
-  HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-  RoundRect(dc, client.left, client.top, client.right - 1, client.bottom - 1,
-            22, 22);
-  SelectObject(dc, old_pen);
-  SelectObject(dc, old_brush);
-  DeleteObject(pen);
-
-  if (!header_font_) header_font_ = MakeFont(dc, 11, true);
-  if (!badge_font_) badge_font_ = MakeFont(dc, 8, true);
-  if (!title_font_) title_font_ = MakeFont(dc, 10, true);
-  if (!time_font_) time_font_ = MakeFont(dc, 9, true);
-  if (!body_font_) body_font_ = MakeFont(dc, 9, false);
-  if (!day_font_) day_font_ = MakeFont(dc, 8, true);
+  if (!header_font_) header_font_ = MakeFont(dc, 14, true);
+  if (!badge_font_) badge_font_ = MakeFont(dc, 9, true);
+  if (!title_font_) title_font_ = MakeFont(dc, 11, true);
+  if (!time_font_) time_font_ = MakeFont(dc, 10, true);
+  if (!body_font_) body_font_ = MakeFont(dc, 10, false);
+  if (!day_font_) day_font_ = MakeFont(dc, 9, true);
 
   SetBkMode(dc, TRANSPARENT);
 
@@ -319,7 +362,7 @@ void EventWidget::Paint(HDC dc) {
     HGDIOBJ old_db = SelectObject(dc, dot);
     HGDIOBJ old_dp = SelectObject(dc, GetStockObject(NULL_PEN));
     const int cy = kPadding + kHeaderH / 2;
-    Ellipse(dc, left, cy - 4, left + 8, cy + 4);
+    Ellipse(dc, left, cy - 5, left + 10, cy + 5);
     SelectObject(dc, old_db);
     SelectObject(dc, old_dp);
     DeleteObject(dot);
@@ -328,7 +371,7 @@ void EventWidget::Paint(HDC dc) {
   // De derecha a izquierda: botón "+", contador y, con lo que sobra, título.
   int trailing_right = right;
   const std::wstring badge = BadgeText();
-  const int badge_w = badge.empty() ? 0 : TextWidth(dc, badge_font_, badge) + 20;
+  const int badge_w = badge.empty() ? 0 : TextWidth(dc, badge_font_, badge) + 24;
 
   // --- Botón "Agregar agenda" (solo si el rol puede crear agendas) ---
   add_box_ = RECT{0, 0, 0, 0};
@@ -348,8 +391,8 @@ void EventWidget::Paint(HDC dc) {
     // El "+", en el azul de la marca.
     const int cx = (pill.left + pill.right) / 2;
     const int cy = (pill.top + pill.bottom) / 2;
-    RECT hbar = {cx - 6, cy - 1, cx + 7, cy + 2};
-    RECT vbar = {cx - 1, cy - 6, cx + 2, cy + 7};
+    RECT hbar = {cx - 8, cy - 1, cx + 9, cy + 2};
+    RECT vbar = {cx - 1, cy - 8, cx + 2, cy + 9};
     FillRectColor(dc, c.brand, hbar);
     FillRectColor(dc, c.brand, vbar);
     add_box_ = pill;
@@ -357,7 +400,7 @@ void EventWidget::Paint(HDC dc) {
   }
 
   if (!badge.empty()) {
-    const int bh = 21;
+    const int bh = 26;
     const int top = kPadding + (kHeaderH - bh) / 2;
     RECT pill = {trailing_right - badge_w, top, trailing_right, top + bh};
     HPEN bpen = CreatePen(PS_SOLID, 1, c.badge_bg);
@@ -374,7 +417,7 @@ void EventWidget::Paint(HDC dc) {
     trailing_right = pill.left - 8;
   }
 
-  RECT header_box = {left + 16, kPadding, trailing_right, kPadding + kHeaderH};
+  RECT header_box = {left + 18, kPadding, trailing_right, kPadding + kHeaderH};
   DrawLine(dc, header_font_, c.brand, header_box, header_);
 
   // --- Separador bajo el encabezado ---
@@ -414,30 +457,50 @@ void EventWidget::Paint(HDC dc) {
       y += kSepH;
     }
     if (e.show_day && !e.day.empty()) {
-      RECT day_box = {left, y, content_right, y + kDayH - 5};
+      RECT day_box = {left + 4, y, content_right, y + kDayH - 5};
       DrawLine(dc, day_font_, c.brand, day_box, e.day);
       y += kDayH;
     }
 
-    // Titular a la izquierda y HORA a la derecha, en el acento de la marca.
+    // ---- Tarjeta del evento: tinte tenue del color de SU servicio + barra de
+    // acento a la izquierda. Así dos eventos distintos se separan a simple
+    // vista sin gritar (el mismo lenguaje del calendario de la app). ----
+    const int card_top = y;
+    const int card_bottom =
+        card_top + kTitleH + (e.subtitle.empty() ? 0 : kSubH);
+    const COLORREF service = ServiceColor(e.service);
+    if (card_bottom > content_top && card_top < content_bottom) {
+      const COLORREF tint =
+          Blend(service, c.card, dark_ ? 0.18 : 0.11);
+      const RECT card = {left, card_top, content_right, card_bottom};
+      RoundedFill(dc, tint, card, kRowRadius);
+      const RECT bar = {left + 1, card_top + 2, left + 1 + kBarW,
+                        card_bottom - 2};
+      RoundedFill(dc, service, bar, kBarW);
+    }
+
+    // Titular a la izquierda (dentro de la tarjeta) y HORA a la derecha.
+    const int text_left = left + kBarW + kRowInset + 5;
+    const int text_right = content_right - kRowInset;
     const std::wstring& when =
         (e.show_day && !e.time.empty()) ? e.time : e.when;
     const int when_w = TextWidth(dc, time_font_, when);
-    RECT title_box = {left, y, content_right - when_w - 10, y + kTitleH};
+    RECT title_box = {text_left, card_top + 1, text_right - when_w - 10,
+                      card_top + kTitleH};
     DrawLine(dc, title_font_, c.text, title_box, e.title);
     if (when_w > 0) {
-      RECT when_box = {content_right - when_w, y, content_right, y + kTitleH};
+      RECT when_box = {text_right - when_w, card_top + 1, text_right,
+                       card_top + kTitleH};
       DrawTextIn(dc, time_font_, c.accent, when_box, when,
                  DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
     }
-    y += kTitleH;
 
     if (!e.subtitle.empty()) {
-      RECT sub_box = {left, y, content_right, y + kSubH - 2};
+      RECT sub_box = {text_left, card_top + kTitleH, text_right,
+                      card_top + kTitleH + kSubH - 3};
       DrawLine(dc, body_font_, c.muted, sub_box, e.subtitle);
-      y += kSubH;
     }
-    y += kItemGap;
+    y = card_bottom + kItemGap;
 
     // Toda la fila (rótulo de día incluido) es zona de clic.
     row_hits_[i] = std::make_pair(row_top, y);

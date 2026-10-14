@@ -343,6 +343,19 @@ abstract class DriveBase extends ChangeNotifier {
   Future<List<String>> listChildFolders(List<String> rel) async =>
       items.where((i) => i.isFolder).map((i) => i.name).toList(growable: false);
 
+  /// CONTENIDO directo de [rel] —carpetas Y archivos— sin mover la carpeta que
+  /// se está viendo. Lo usa el selector de fotos/elementos del cliente ("elegir
+  /// qué quiero de mi Drive para este servicio"). Por defecto devuelve lo ya
+  /// cargado; las implementaciones remotas lo consultan al servidor.
+  Future<List<DriveItem>> listFolderItems(List<String> rel) async =>
+      List<DriveItem>.of(items);
+
+  /// ESPACIO usado por la carpeta donde se guardan las fotos, su CUOTA
+  /// configurada y lo que queda libre en el disco (lo que devuelve
+  /// /api/space del servidor del drive). Por defecto no hay información: el
+  /// módulo Almacenamiento lo dice en vez de inventar números.
+  Future<Map<String, dynamic>?> storageInfo() async => null;
+
   String absolutePathOf(DriveItem item);
 
   /// Vuelve a subir el archivo de un trabajo que quedó en error (botón

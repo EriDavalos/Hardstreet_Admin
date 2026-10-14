@@ -72,8 +72,17 @@ class _FakeDrive extends DriveBase {
   Future<void> retryUpload(String jobId) async {}
 }
 
-/// Paquete del cliente con su carpeta compartida (la que se edita aquí).
-void _installMock({required List<Map<String, dynamic>> posts, required _Shared path}) {
+/// Carpetas compartidas mutables (el mock las devuelve; el POST las cambia).
+class _Shared {
+  _Shared(this.value);
+  List<String> value;
+}
+
+/// Paquete del cliente con SUS carpetas compartidas (las que se editan aquí).
+void _installMock({
+  required List<Map<String, dynamic>> posts,
+  required _Shared paths,
+}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final p = request.url.path;
@@ -96,6 +105,8 @@ void _installMock({required List<Map<String, dynamic>> posts, required _Shared p
               'tierName': 'Premium',
               'categoryName': 'Boda',
               'agendaCount': 0,
+              'drivePath': paths.value.isEmpty ? '' : paths.value.first,
+              'drivePaths': paths.value,
               'services': const [],
             },
           ],
@@ -115,8 +126,16 @@ void _installMock({required List<Map<String, dynamic>> posts, required _Shared p
       if (request.method == 'POST') {
         final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
         posts.add(body);
-        if (body['action'] == 'compartir-directorio') {
-          path.value = (body['path'] ?? '').toString();
+        final path = (body['path'] ?? '').toString();
+        switch (body['action']) {
+          case 'agregar-directorio':
+            if (path.isNotEmpty && !paths.value.contains(path)) {
+              paths.value = [...paths.value, path];
+            }
+          case 'quitar-directorio':
+            paths.value = [...paths.value]..remove(path);
+          case 'compartir-directorio':
+            paths.value = path.isEmpty ? <String>[] : [path];
         }
         return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
       }
@@ -132,7 +151,8 @@ void _installMock({required List<Map<String, dynamic>> posts, required _Shared p
             'statusId': 2,
             'finished': false,
             'finishedAt': null,
-            'drivePath': path.value,
+            'drivePath': paths.value.isEmpty ? '' : paths.value.first,
+            'drivePaths': paths.value,
           },
           'services': const [],
           'movements': const [],
@@ -150,16 +170,12 @@ void _installMock({required List<Map<String, dynamic>> posts, required _Shared p
   });
 }
 
-/// Carpeta compartida mutable (el mock la devuelve y el POST la actualiza).
-class _Shared {
-  _Shared(this.value);
-  String value;
-}
-
-Future<void> _pump(WidgetTester tester,
-    {required List<Map<String, dynamic>> posts,
-    required _Shared path,
-    required _FakeDrive drive}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  required List<Map<String, dynamic>> posts,
+  required _Shared paths,
+  _FakeDrive? drive,
+}) async {
   const size = Size(1250, 940);
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
@@ -167,12 +183,12 @@ Future<void> _pump(WidgetTester tester,
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
-  _installMock(posts: posts, path: path);
+  _installMock(posts: posts, paths: paths);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
     DriveScope(
-      drive: drive,
+      drive: drive ?? _FakeDrive(),
       child: MaterialApp(
         home: Scaffold(
           body: ClientPackagesDialog(
@@ -206,13 +222,12 @@ void main() {
   testWidgets('paquete del cliente: la pestaña Drive COMPARTE una carpeta',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
-    final path = _Shared('');
-    await _pump(tester,
-        posts: posts, path: path, drive: _FakeDrive());
+    final paths = _Shared([]);
+    await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
 
-    // Sin carpeta compartida, el paquete lo dice claramente.
+    // Sin carpetas compartidas, el paquete lo dice claramente.
     expect(find.text('Sin carpeta compartida'), findsOneWidget);
 
     // Se elige del Drive: ReynaCoot / SesionPrevia.
@@ -222,7 +237,7 @@ void main() {
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'compartir-directorio');
+    expect(posts.first['action'], 'agregar-directorio');
     expect(posts.first['purchasedPackageId'], 10);
     expect(posts.first['path'], 'ReynaCoot/SesionPrevia');
 
@@ -232,21 +247,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('paquete del cliente: se puede DEJAR de compartir',
+  testWidgets('paquete del cliente: se pueden compartir VARIAS carpetas',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
-    final path = _Shared('ReynaCoot');
-    await _pump(tester,
-        posts: posts, path: path, drive: _FakeDrive());
+    // El paquete YA comparte dos carpetas.
+    final paths = _Shared(['ReynaCoot', 'Cliente']);
+    await _pump(tester, posts: posts, paths: paths);
+
+    await _tap(tester, find.text('Drive'));
+
+    // Las dos se ven, cada una con su tarjeta.
+    expect(find.text('ReynaCoot'), findsOneWidget);
+    expect(find.text('Cliente'), findsOneWidget);
+    expect(find.text('Carpeta compartida con el cliente de este paquete.'),
+        findsNWidgets(2));
+
+    // Se agrega una TERCERA (Privado, que es una carpeta del drive).
+    await _tap(tester, find.text('Agregar otra carpeta'));
+    await _tap(tester, _inDialog('Privado'));
+    await _tap(tester, _inDialog('Compartir esta carpeta'));
+
+    expect(posts, hasLength(1));
+    expect(posts.first['action'], 'agregar-directorio');
+    expect(posts.first['path'], 'Privado');
+    expect(paths.value, ['ReynaCoot', 'Cliente', 'Privado']);
+    expect(find.text('Privado'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('paquete del cliente: se deja de compartir UNA de las carpetas',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    final paths = _Shared(['ReynaCoot', 'Cliente']);
+    await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
     expect(find.text('ReynaCoot'), findsOneWidget);
 
-    await _tap(tester, find.text('Dejar de compartir'));
+    // El botón de dejar de compartir de la PRIMERA carpeta.
+    await _tap(tester,
+        find.byTooltip('Dejar de compartir esta carpeta').first);
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'compartir-directorio');
-    expect(posts.first['path'], '');
+    expect(posts.first['action'], 'quitar-directorio');
+    expect(posts.first['path'], 'ReynaCoot');
+    // La otra carpeta sigue compartida.
+    expect(paths.value, ['Cliente']);
+    expect(find.text('ReynaCoot'), findsNothing);
+    expect(find.text('Cliente'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('paquete del cliente: se deja de compartir la ÚLTIMA carpeta',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    final paths = _Shared(['ReynaCoot']);
+    await _pump(tester, posts: posts, paths: paths);
+
+    await _tap(tester, find.text('Drive'));
+    await _tap(tester, find.byTooltip('Dejar de compartir esta carpeta'));
+
+    expect(posts, hasLength(1));
+    expect(posts.first['action'], 'quitar-directorio');
+    expect(posts.first['path'], 'ReynaCoot');
     expect(find.text('Sin carpeta compartida'), findsOneWidget);
   });
 }

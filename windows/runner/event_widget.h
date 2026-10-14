@@ -35,6 +35,9 @@ class EventWidget {
     // Id de la agenda: es lo que la app abre al hacer clic en la fila (0 si el
     // evento viene de un aviso y no hay agenda que abrir).
     int id = 0;
+    // Id del SERVICIO de la agenda: elige el color de la tarjeta (cada evento
+    // se tiñe con el color de su servicio, como en el calendario de la app).
+    int service = 0;
     std::wstring title;
     std::wstring subtitle;
     std::wstring when;  // fecha y hora ("25 oct · 17:30")

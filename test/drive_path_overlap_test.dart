@@ -98,6 +98,7 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
               'categoryName': 'Boda',
               'agendaCount': 0,
               'drivePath': '',
+              'drivePaths': const [],
               'services': const [],
             },
             {
@@ -116,6 +117,7 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
               'agendaCount': 0,
               // ESTA es la carpeta ya compartida con el cliente.
               'drivePath': 'ReynaCoot',
+              'drivePaths': const ['ReynaCoot'],
               'services': const [],
             },
           ],
@@ -263,7 +265,7 @@ void main() {
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'compartir-directorio');
+    expect(posts.first['action'], 'agregar-directorio');
     expect(posts.first['path'], 'Cliente');
     expect(tester.takeException(), isNull);
   });

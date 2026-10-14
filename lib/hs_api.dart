@@ -415,6 +415,43 @@ class HsApi {
         'url': url,
       });
 
+  /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
+  /// servicio del paquete (`serviceId` = id del servicio DEL PAQUETE). Las
+  /// dos son opcionales; vacío = se quita esa opción.
+  static Future<void> updateServiceShare(
+    int serviceId, {
+    String folder = '',
+    String link = '',
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'actualizar-servicio-share',
+        'serviceId': serviceId,
+        'folder': folder,
+        'link': link,
+      });
+
+  /// Los elementos/fotos que YO (cliente) marqué para un servicio de mi
+  /// paquete. Devuelve la lista de rutas del Drive.
+  static Future<List<String>> myServiceItems(int serviceId) async {
+    final data = await get('/api/my/service-items',
+        query: {'serviceId': '$serviceId'});
+    return ((data['items'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+  }
+
+  /// REEMPLAZA mi selección de elementos/fotos de ese servicio.
+  static Future<List<String>> setMyServiceItems(
+      int serviceId, List<String> paths) async {
+    final data = await put('/api/my/service-items', {
+      'serviceId': serviceId,
+      'paths': paths,
+    });
+    return ((data['items'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+  }
+
   // ---------------- Cliente ----------------
 
   /// MIS paquetes comprados → GET /api/my/packages.
@@ -464,12 +501,38 @@ class HsApi {
 
   /// Carpeta del Drive COMPARTIDA con el cliente del paquete (pestaña Drive
   /// del administrador del paquete). `path` vacío deja de compartir.
+  ///
+  /// Deja UNA sola carpeta: para compartir VARIAS usa [addPackageDrivePath]
+  /// y [removePackageDrivePath].
   static Future<void> setPackageDrivePath({
     required int purchasedPackageId,
     required String path,
   }) =>
       post('/api/admin/package-progress', {
         'action': 'compartir-directorio',
+        'purchasedPackageId': purchasedPackageId,
+        'path': path,
+      });
+
+  /// Suma UNA carpeta del Drive a las compartidas con el cliente del paquete
+  /// (un paquete puede compartir varias).
+  static Future<void> addPackageDrivePath({
+    required int purchasedPackageId,
+    required String path,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'agregar-directorio',
+        'purchasedPackageId': purchasedPackageId,
+        'path': path,
+      });
+
+  /// Deja de compartir UNA carpeta del paquete (las demás siguen igual).
+  static Future<void> removePackageDrivePath({
+    required int purchasedPackageId,
+    required String path,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'quitar-directorio',
         'purchasedPackageId': purchasedPackageId,
         'path': path,
       });
@@ -616,6 +679,7 @@ class HsApi {
     required String kind,
     required num amount,
     String description = '',
+    int? userId,
   }) =>
       post('/api/admin/package-progress', {
         'action': 'movimiento',
@@ -623,7 +687,33 @@ class HsApi {
         'kind': kind,
         'amount': amount,
         'description': description,
+        'userId': ?userId,
       });
+
+  /// Reparte un pago entre colaboradores y empleados del paquete. Cuenta como
+  /// gasto, pero cada parte queda registrada como `pago` con su destinatario.
+  ///
+  /// `mode` = 'iguales' (partes iguales de `total` entre `userIds`) o
+  /// 'numeracion' (un monto por usuario en `parts`).
+  static Future<Map<String, dynamic>> splitPackagePayment({
+    required int purchasedPackageId,
+    required String mode,
+    num total = 0,
+    List<int> userIds = const [],
+    List<Map<String, dynamic>> parts = const [],
+    String description = '',
+  }) async {
+    final data = await post('/api/admin/package-progress', {
+      'action': 'repartir-pago',
+      'purchasedPackageId': purchasedPackageId,
+      'mode': mode,
+      'total': total,
+      'userIds': userIds,
+      'parts': parts,
+      'description': description,
+    });
+    return ((data as Map?) ?? const {}).cast<String, dynamic>();
+  }
 
   /// Edita un movimiento o un abono del historial. Solo se permite mientras
   /// el paquete NO esté finalizado (el backend lo vuelve a validar).

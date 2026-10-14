@@ -14,6 +14,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
 | **Agendas** | ✅ Calendario de eventos con franja de próximos eventos y **alta de eventos** eligiendo cliente → su paquete → servicio |
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
+| **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | Conexión, Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
@@ -39,17 +40,26 @@ En ventanas angostas (menos de 1020 px de ancho, p. ej. un teléfono) la ficha
 queda arriba y las pestañas abajo; la ficha, el precio y el pie del modal se
 reacomodan en vez de recortar contenido.
 
-### Carpeta compartida (pestaña Drive)
+### Carpetas compartidas (pestaña Drive)
 
-Cada paquete del cliente puede **compartir UNA carpeta del Drive**:
+Cada paquete del cliente puede **compartir VARIAS carpetas del Drive** (antes
+solo una):
 
 - El botón abre un **selector que navega el Drive de verdad** (sin mover la
-  carpeta que estás viendo en el módulo Archivos) y la carpeta elegida queda
-  guardada en el paquete (`purchased_packages.drive_path`).
+  carpeta que estás viendo en el módulo Archivos); cada carpeta elegida queda
+  en una tarjeta propia, con su botón para **dejar de compartirla** (las demás
+  siguen igual).
+- Se guardan en `purchased_packages_drive` (una fila por carpeta); la columna
+  vieja `purchased_packages.drive_path` se mantiene sincronizada con la
+  primera, por compatibilidad.
 - El **Drive del cliente** muestra SOLO las carpetas compartidas de sus
   paquetes: si a un paquete le compartes `ReynaCoot` y a otro `Cliente`, en
-  su Drive aparecen esas dos carpetas y **nada más**.
-- Sin carpeta asignada, el cliente ve su Drive vacío con el aviso "Aún no se
+  su Drive aparecen esas carpetas y **nada más**.
+- **Sin duplicados**: no deja compartir una carpeta que esté dentro de otra ya
+  compartida (o que la contenga), ni en el mismo paquete ni en otro del mismo
+  cliente — el cliente vería el mismo contenido dos veces. El selector muestra
+  esas carpetas **bloqueadas, con el motivo**.
+- Sin carpetas asignadas, el cliente ve su Drive vacío con el aviso "Aún no se
   te comparte ninguna carpeta".
 - El equipo del estudio (rol Admin, u otro rol con permiso de Archivos) sigue
   viendo el Drive completo: el alcance solo aplica al cliente.
@@ -137,6 +147,44 @@ conoce el módulo, se muestra igual).
   y nota. Sin cliente no se pueden elegir paquetes: el formulario avisa si el
   cliente no tiene paquetes comprados.
 
+## Opciones de compartir por SERVICIO (Mi paquete)
+
+Cada servicio de un paquete comprado puede compartir con el cliente TRES
+cosas, todas opcionales y **por servicio del paquete** (no globales del
+catálogo):
+
+- **Carpeta del Drive**: se elige con el mismo selector que navega el Drive de
+  verdad (pestaña Servicios del paquete, acción **Compartir**).
+- **Liga**: la URL que el cliente verá (p. ej. su álbum en línea).
+- **Selección de elementos/fotos**: la hace **el propio CLIENTE** desde "Mi
+  paquete": el botón **Elegir fotos** abre un navegador de SUS carpetas
+  compartidas y marca lo que quiere (se ve el contador de elegidos). Se guarda
+  la **LISTA de rutas** — nada se mueve ni se copia de carpeta — y las rutas
+  tienen que caer dentro de lo que se le comparte (el backend lo revalida).
+
+En "Mi paquete" cada servicio muestra sus acciones en **UNA fila deslizable**
+(en el teléfono no se apilan): *Abrir carpeta*, *Ver liga* y *Mis fotos (N)*.
+El estudio ve lo compartido y cuántos elementos eligió el cliente en la
+pestaña Servicios del paquete.
+
+Requiere las tablas `purchased_packages_services_shares` y
+`purchased_packages_services_items` (dump `Hardstreet-DB/hardstreet.sql`); sin
+ellas todo cae a "sin opciones" en vez de fallar.
+
+## Móvil: el encabezado no se come la pantalla
+
+En el teléfono el encabezado de cada módulo conserva POCO alto para que la
+información tenga la pantalla:
+
+- Los **botones de acción** (Nuevo, Agregar movimiento, Abonar al ahorro,
+  Refrescar…) van en **UNA sola fila que se desliza de lado**; antes se
+  apilaban y empujaban el contenido hacia abajo.
+- Las **píldoras de información** ("Ganado", "Ahorro", "Salidas", conteos…)
+  también van en una fila deslizable en vez de envolverse en varios renglones.
+- El **desglose de cada renglón** (tabla de Finanzas, ficha del paquete) usa
+  filas y píldoras deslizables, y su contenido scrollea por dentro de su zona
+  en vez de estirar la página.
+
 ## Personalizar paquete
 
 El diálogo de alta/edición de paquete es visual e intuitivo:
@@ -202,13 +250,20 @@ consulta la API por su cuenta).
   siempre visible, con esquinas redondeadas): se puede arrastrar y su botón
   **+** hace lo mismo que el de Android. Se enciende y apaga con el mismo botón
   de la franja (la preferencia se guarda con `shared_preferences`).
-- **Colores y toques**: el widget se pinta con la MISMA paleta del tema de la
-  app (tarjeta = `cardColor`, textos = `onSurface`/`onSurfaceVariant`, acento =
-  `primary`), en claro y en oscuro; una prueba compara la paleta nativa
-  (`colors.xml` y `event_widget.cpp`) con `AppTheme` para que no se separen.
-  **Tocar un evento abre el detalle de ESA agenda** en la app, y el botón **+
-  (Agregar agenda), que solo aparece si el rol tiene "Crear" en Agendas,
-  abre el alta de evento** (el widget no navega: le pasa el toque a la app).
+- **Colores y toques**: los TEXTOS y la marca siguen siendo los del tema de la
+  app (`onSurface`/`onSurfaceVariant` y `primary`), pero el FONDO va **más
+  oscuro** a propósito para que el widget se distinga del escritorio/fondo de
+  pantalla, y **sin borde dibujado** (el trazo se recortaba en las esquinas
+  redondeadas y se veía sucio). El **panel de Windows** pinta además cada
+  evento como una **tarjeta con el color de SU servicio** (la misma paleta del
+  calendario) en un tinte tenue, con barra de acento a la izquierda:
+  disimulado, pero se distinguen de un vistazo; su encabezado y su botón **+**
+  van más grandes. Una prueba compara la paleta nativa (`colors.xml` y
+  `event_widget.cpp`) con `AppTheme` para que no se separen.
+  **Tocar un evento abre el módulo de Agendas en ESE evento** (el calendario se
+  mueve a su día y abre su detalle), y el botón **+ (Agregar agenda), que solo
+  aparece si el rol tiene "Crear" en Agendas, abre el alta de evento** (el
+  widget no navega: le pasa el toque a la app).
 
 ## Arranque
 

@@ -252,6 +252,9 @@ class UpcomingEventsWidget {
         at: at,
         // Id de la agenda: es lo que la app abre al tocar la fila del widget.
         id: (a['id'] as num?)?.toInt() ?? 0,
+        // Id del servicio: el widget tiñe la fila con SU color (cada servicio
+        // conserva su color, como en el calendario de la app).
+        service: (a['serviceId'] as num?)?.toInt() ?? 0,
         title: title.isEmpty ? 'Evento' : title,
         subtitle: subtitle,
       ));
@@ -281,6 +284,7 @@ class UpcomingEventsWidget {
       final day = hsDayLabel(e.at, ref);
       out.add({
         'id': e.id,
+        'service': e.service,
         'title': e.title,
         'subtitle': e.subtitle,
         'when': _when(e.at),
@@ -312,6 +316,7 @@ class _Event {
     required this.title,
     required this.subtitle,
     this.id = 0,
+    this.service = 0,
   });
 
   final DateTime at;
@@ -320,4 +325,7 @@ class _Event {
 
   /// Id de la agenda (0 = no aplica, p. ej. un aviso).
   final int id;
+
+  /// Id del servicio (0 = sin servicio): el widget usa su color.
+  final int service;
 }

@@ -15,6 +15,11 @@ import '../widgets/common.dart';
 //
 // Backend: GET /api/admin/activity (módulo "Actividad", acción "Ver").
 // Es de SOLO LECTURA: aquí no se crea, edita ni elimina nada.
+//
+// DISEÑO: cada registro es una tarjeta con barra de acento del color de su
+// acción, avatar con las INICIALES del usuario y, si el registro trae detalle,
+// una flecha con aire propio (en su propio recuadro y separada del texto) que
+// gira al abrir; el detalle se despliega dentro de la MISMA tarjeta.
 // ==================================================================
 
 /// Filtros de acción disponibles ('' = todas).
@@ -226,6 +231,7 @@ class _ActivityPageState extends State<ActivityPage> {
 }
 
 /// La bitácora agrupada por día, del registro más reciente al más antiguo.
+/// Cada día lleva una pastilla con su conteo de registros.
 class _ActivityTimeline extends StatelessWidget {
   const _ActivityTimeline({required this.entries});
 
@@ -234,6 +240,16 @@ class _ActivityTimeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+
+    // Conteo por día (para la pastilla del encabezado).
+    final counts = <String, int>{};
+    for (final e in entries) {
+      final d = hsParseDate(e['created']);
+      if (d == null) continue;
+      final k = hsDateKey(d);
+      counts[k] = (counts[k] ?? 0) + 1;
+    }
+
     final children = <Widget>[];
     String? lastDay;
 
@@ -243,36 +259,69 @@ class _ActivityTimeline extends StatelessWidget {
       final day = when == null ? '' : hsDateKey(when);
       if (day.isNotEmpty && day != lastDay) {
         lastDay = day;
+        final n = counts[day] ?? 0;
         children.add(Padding(
-          padding: EdgeInsets.only(top: i == 0 ? 0 : 14, bottom: 8),
-          child: Text(
-            hsDayLabel(when!).toUpperCase(),
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .6,
-              color: scheme.onSurfaceVariant,
-            ),
+          padding: EdgeInsets.only(top: i == 0 ? 0 : 18, bottom: 10),
+          child: Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(999),
+                  border:
+                      Border.all(color: scheme.primary.withValues(alpha: .22)),
+                ),
+                child: Text(
+                  hsDayLabel(when!).toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .7,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$n ${n == 1 ? 'registro' : 'registros'}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
         ));
       }
       children.add(StaggeredItem(index: i, child: _ActivityTile(entry: e)));
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }
 }
 
-/// Una fila de la bitácora. Si el backend mandó `details`, la fila se expande
-/// para verlos (monto, campos tocados, etc.).
-class _ActivityTile extends StatelessWidget {
+/// Una fila de la bitácora. Si el backend mandó `details`, la tarjeta se
+/// expande para verlos (monto, campos tocados, etc.) y la flecha gira.
+class _ActivityTile extends StatefulWidget {
   const _ActivityTile({required this.entry});
 
   final Map<String, dynamic> entry;
 
   @override
+  State<_ActivityTile> createState() => _ActivityTileState();
+}
+
+class _ActivityTileState extends State<_ActivityTile> {
+  bool _open = false;
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final entry = widget.entry;
     final style = _actionStyle((entry['action'] ?? '').toString());
     final when = hsParseDate(entry['created']);
     final user = (entry['userName'] ?? '').toString().trim();
@@ -288,115 +337,164 @@ class _ActivityTile extends StatelessWidget {
         entityId == null ? entity : '$entity #$entityId',
     ].join('  ·  ');
 
-    final row = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: style.color.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: style.color.withValues(alpha: .28)),
-            ),
-            child: Icon(style.icon, size: 17, color: style.color),
+    final head = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Barra de acento de la acción (a toda la altura de la tarjeta).
+        Container(
+          width: 3,
+          height: 62,
+          decoration: BoxDecoration(
+            color: style.color,
+            borderRadius: BorderRadius.circular(3),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+        ),
+        const SizedBox(width: 12),
+        // Quién lo hizo: iniciales del usuario (o el icono de la acción).
+        _ActorBadge(name: user, tint: style.color),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                (entry['description'] ?? style.label).toString(),
+                style: const TextStyle(
+                    fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
+              if (meta.isNotEmpty) ...[
+                const SizedBox(height: 3),
                 Text(
-                  (entry['description'] ?? style.label).toString(),
-                  style: const TextStyle(
-                      fontSize: 13.5, fontWeight: FontWeight.w700),
-                ),
-                if (meta.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    meta,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                ],
-                const SizedBox(height: 5),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _MiniChip(
-                      icon: Icons.person_outline,
-                      label: user.isEmpty ? 'Usuario desconocido' : user,
-                      tint: scheme.primary,
-                    ),
-                    if (role.isNotEmpty)
-                      _MiniChip(
-                        icon: Icons.badge_outlined,
-                        label: role,
-                        tint: scheme.onSurfaceVariant,
-                      ),
-                    _MiniChip(
-                      icon: style.icon,
-                      label: style.label,
-                      tint: style.color,
-                    ),
-                  ],
+                  meta,
+                  style:
+                      TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),
               ],
-            ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _MiniChip(
+                    icon: Icons.person_outline,
+                    label: user.isEmpty ? 'Usuario desconocido' : user,
+                    tint: scheme.primary,
+                  ),
+                  if (role.isNotEmpty)
+                    _MiniChip(
+                      icon: Icons.badge_outlined,
+                      label: role,
+                      tint: scheme.onSurfaceVariant,
+                    ),
+                  _MiniChip(
+                    icon: style.icon,
+                    label: style.label,
+                    tint: style.color,
+                  ),
+                ],
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(
-            when == null ? '' : hsTimeLabel(when),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: scheme.onSurfaceVariant,
+        ),
+        // Hora + flecha. La flecha vive en su PROPIO recuadro y con aire
+        // respecto a la hora y al texto: antes quedaba pegada al contenido.
+        const SizedBox(width: 16),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              when == null ? '' : hsTimeLabel(when),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
-          ),
-        ],
-      ),
+            if (details != null) ...[
+              const SizedBox(height: 10),
+              AnimatedRotation(
+                turns: _open ? .5 : 0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _open
+                        ? style.color.withValues(alpha: .16)
+                        : scheme.surfaceContainerHighest.withValues(alpha: .5),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _open
+                          ? style.color.withValues(alpha: .45)
+                          : scheme.onSurfaceVariant.withValues(alpha: .22),
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.expand_more_rounded,
+                    size: 20,
+                    color: _open ? style.color : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
     );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Card(
         clipBehavior: Clip.antiAlias,
-        child: details == null
-            ? row
-            : Theme(
-                // Sin líneas divisorias del ExpansionTile: tarjeta plana.
-                data: Theme.of(context)
-                    .copyWith(dividerColor: Colors.transparent),
-                child: ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.fromLTRB(58, 0, 14, 12),
-                  expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                  title: row,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest
-                            .withValues(alpha: .35),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        details,
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.4,
-                          color: scheme.onSurfaceVariant,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: details == null
+                  ? null
+                  : () => setState(() => _open = !_open),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: head,
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _open && details != null
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(29, 0, 14, 14),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest
+                              .withValues(alpha: .35),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color:
+                                scheme.onSurfaceVariant.withValues(alpha: .14),
+                          ),
+                        ),
+                        child: Text(
+                          details,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -420,6 +518,53 @@ class _ActivityTile extends StatelessWidget {
     if (details is List) return null;
     final s = details.toString().trim();
     return s.isEmpty ? null : s;
+  }
+}
+
+/// Avatar "de quién": iniciales del usuario en un círculo con el tinte de la
+/// acción; si no hay nombre, el icono de la acción.
+class _ActorBadge extends StatelessWidget {
+  const _ActorBadge({required this.name, required this.tint});
+
+  final String name;
+  final Color tint;
+
+  static String _initials(String name) {
+    final parts = name
+        .split(RegExp(r'\s+'))
+        .where((p) => p.trim().isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return (p.length >= 2 ? p.substring(0, 2) : p).toUpperCase();
+    }
+    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = _initials(name);
+    return Container(
+      width: 38,
+      height: 38,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tint.withValues(alpha: .30)),
+      ),
+      child: initials.isEmpty
+          ? Icon(Icons.person_outline_rounded, size: 18, color: tint)
+          : Text(
+              initials,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: tint,
+              ),
+            ),
+    );
   }
 }
 

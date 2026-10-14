@@ -24,6 +24,7 @@ import 'pages/login_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
 import 'pages/services_page.dart';
+import 'pages/storage_page.dart';
 import 'pages/users_page.dart';
 import 'reminders_service.dart';
 import 'theme.dart';
@@ -469,6 +470,7 @@ enum _Section {
   packages,
   services,
   activity,
+  storage,
   settings,
   reports,
 }
@@ -553,9 +555,10 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.agendas => _canSee('Agendas'),
         _Section.finance => _canSee('Finanzas'),
         _Section.dashboard => _canSee('Dashboard'),
-        _Section.clientDashboard => _canSee('Dashboard Cliente'),
+        _Section.clientDashboard => _canSee('Mi paquete'),
         _Section.drive => _canSee('Archivos'),
         _Section.activity => _canSee('Actividad'),
+        _Section.storage => _canSee('Almacenamiento'),
         _Section.connection => _canSee('Conexión'),
         _Section.settings => _canSee('Configuraciones'),
         _Section.reports => _canSee('Reportes'),
@@ -637,11 +640,11 @@ class _AdminHomeState extends State<AdminHome> {
       (
         const AdminDestination(
           icon: Icons.workspace_premium_outlined,
-          label: 'Dashboard Cliente',
+          label: 'Mi paquete',
           header: AdminDestination.headerNone,
         ),
         _Section.clientDashboard,
-        'Dashboard Cliente',
+        'Mi paquete',
       ),
       (
         const AdminDestination(
@@ -669,6 +672,15 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.finance,
         'Finanzas',
+      ),
+      (
+        const AdminDestination(
+          icon: Icons.sd_storage_outlined,
+          label: 'Almacenamiento',
+          header: 'Operación',
+        ),
+        _Section.storage,
+        'Almacenamiento',
       ),
       (
         const AdminDestination(
@@ -807,7 +819,7 @@ class _AdminHomeState extends State<AdminHome> {
     }
     final titles = {
       _Section.dashboard: 'Dashboard',
-      _Section.clientDashboard: 'Dashboard Cliente',
+      _Section.clientDashboard: 'Mi paquete',
       _Section.drive: 'Archivos',
       _Section.connection: 'Conexión',
       _Section.users: 'Usuarios',
@@ -816,6 +828,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.packages: 'Paquetes',
       _Section.services: 'Servicios',
       _Section.activity: 'Actividad',
+      _Section.storage: 'Almacenamiento',
       _Section.agendas: 'Agendas',
       _Section.finance: 'Finanzas',
       _Section.settings: 'Configuraciones',
@@ -887,6 +900,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.activity:
         body = const ActivityPage();
+        break;
+      case _Section.storage:
+        body = const StoragePage();
         break;
       case _Section.clients:
         body = const ClientsPage();

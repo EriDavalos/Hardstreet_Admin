@@ -58,16 +58,27 @@ class FinanceKpi {
   final String? note;
 }
 
-/// Cuadros de dinero en HORIZONTAL: filas parejas que se reacomodan según el
-/// ancho (2 en teléfono, 3 en tablet, hasta 4 en escritorio) sin recortar
-/// etiquetas ni montos.
-class FinanceKpiGrid extends StatelessWidget {
+/// Cuadros de dinero en HORIZONTAL.
+///
+/// Dos formas según el ancho disponible:
+///
+///  * **Escritorio/tablet**: filas parejas que se reacomodan (2/3/4 columnas)
+///    sin recortar etiquetas ni montos.
+///  * **Teléfono**: un CARRUSEL —se desliza de lado— con UNA tarjeta COMPLETA
+///    por pantalla (nunca dos a medias en los bordes) y sus puntos abajo para
+///    saber cuántas hay. Así el dinero se lee entero y no se come el alto que
+///    necesita la información de abajo.
+///
+/// Con [columns] fijo (tableros donde el alto es crítico) siempre se usa la
+/// rejilla: ese modo no cambia.
+class FinanceKpiGrid extends StatefulWidget {
   const FinanceKpiGrid({
     super.key,
     required this.kpis,
     this.currency = 'MXN',
     this.columns,
     this.minForcedWidth = 400,
+    this.carouselBelow = 560,
   });
 
   final List<FinanceKpi> kpis;
@@ -81,60 +92,149 @@ class FinanceKpiGrid extends StatelessWidget {
   /// responsivas (2/3/4). Finanzas lo baja para caber en teléfonos angostos.
   final double minForcedWidth;
 
+  /// Por debajo de este ancho (y sin [columns] fijo) los cuadros van en
+  /// carrusel, de uno en uno.
+  final double carouselBelow;
+
+  @override
+  State<FinanceKpiGrid> createState() => _FinanceKpiGridState();
+}
+
+class _FinanceKpiGridState extends State<FinanceKpiGrid> {
+  final PageController _pages = PageController();
+  int _page = 0;
+
+  List<FinanceKpi> get kpis => widget.kpis;
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kpis.isEmpty) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     return LayoutBuilder(builder: (context, box) {
       final w = box.maxWidth;
-      final forced = columns;
-      final cols = (forced != null && w >= minForcedWidth)
-          ? math.min(forced, kpis.length)
-          : w < 520
-              ? 2
-              : w < 900
-                  ? 3
-                  : 4;
-      // Ancho de cada cuadro: (total - separaciones) / columnas. El último de
-      // cada fila queda alineado a la izquierda (no se estira de más).
-      const gap = 10.0;
-      final tileW = (w - gap * (cols - 1)) / cols;
-      // Cuadro ESTRECHO (teléfono, tablero): el icono a un lado solo deja ~30
-      // px de texto y todo queda recortado. En ese caso el contenido va en
-      // apilado (icono + etiqueta arriba, monto abajo) y sin la nota, que es
-      // la que más ancho pide. La nota vuelve cuando el cuadro es amplio.
-      final stacked = tileW < 210;
-      final withNote = !stacked && tileW >= 238;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (final k in kpis)
-            SizedBox(
-              width: tileW,
-              child: Container(
-                padding: stacked
-                    ? const EdgeInsets.symmetric(horizontal: 8, vertical: 9)
-                    : const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: scheme.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: k.tint.withValues(alpha: .28)),
-                ),
-                child: stacked
-                    ? _stacked(context, k)
-                    : _inline(context, k, withNote),
-              ),
-            ),
-        ],
-      );
+      // Teléfono: carrusel (solo cuando nadie pidió columnas exactas).
+      if (widget.columns == null &&
+          w < widget.carouselBelow &&
+          kpis.length > 1) {
+        return _carousel(scheme, w);
+      }
+      return _wrap(scheme, w);
     });
+  }
+
+  /// Rejilla responsiva (escritorio/tablet).
+  Widget _wrap(ColorScheme scheme, double w) {
+    final forced = widget.columns;
+    final cols = (forced != null && w >= widget.minForcedWidth)
+        ? math.min(forced, kpis.length)
+        : w < 520
+            ? 2
+            : w < 900
+                ? 3
+                : 4;
+    // Ancho de cada cuadro: (total - separaciones) / columnas. El último de
+    // cada fila queda alineado a la izquierda (no se estira de más).
+    const gap = 10.0;
+    final tileW = (w - gap * (cols - 1)) / cols;
+    // Cuadro ESTRECHO (teléfono, tablero): el icono a un lado solo deja ~30
+    // px de texto y todo queda recortado. En ese caso el contenido va en
+    // apilado (icono + etiqueta arriba, monto abajo) y sin la nota, que es
+    // la que más ancho pide. La nota vuelve cuando el cuadro es amplio.
+    final stacked = tileW < 210;
+    final withNote = !stacked && tileW >= 238;
+    return Wrap(
+      spacing: gap,
+      runSpacing: gap,
+      children: [
+        for (final k in kpis)
+          SizedBox(
+            width: tileW,
+            child: _tile(scheme, k, stacked: stacked, withNote: withNote),
+          ),
+      ],
+    );
+  }
+
+  /// Carrusel del teléfono: una tarjeta COMPLETA por pantalla, se desliza
+  /// horizontalmente y abajo van los puntos (tocables) para saltar a otra.
+  Widget _carousel(ColorScheme scheme, double w) {
+    const gap = 10.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 94,
+          child: PageView.builder(
+            controller: _pages,
+            itemCount: kpis.length,
+            onPageChanged: (i) => setState(() => _page = i),
+            itemBuilder: (context, i) => Padding(
+              // Aire a la derecha: la tarjeta siguiente no asoma por el borde
+              // (nada de dos tarjetas a medias).
+              padding: const EdgeInsets.only(right: gap),
+              child: _tile(scheme, kpis[i], stacked: false, withNote: true),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (var i = 0; i < kpis.length; i++)
+              GestureDetector(
+                onTap: () => _pages.animateToPage(
+                  i,
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                ),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: i == _page ? 16 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: i == _page
+                        ? kpis[i].tint
+                        : scheme.onSurfaceVariant.withValues(alpha: .3),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Tarjeta de un total: plana, con el borde del color del concepto.
+  Widget _tile(
+    ColorScheme scheme,
+    FinanceKpi k, {
+    required bool stacked,
+    required bool withNote,
+  }) {
+    return Container(
+      padding: stacked
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 9)
+          : const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: k.tint.withValues(alpha: .28)),
+      ),
+      child: stacked ? _stacked(scheme, k) : _inline(scheme, k, withNote),
+    );
   }
 
   /// Cuadro APILADO: etiqueta con su icono en una línea y el monto debajo,
   /// a todo el ancho del cuadro (nada queda cortado en pantallas angostas).
-  Widget _stacked(BuildContext context, FinanceKpi k) {
-    final scheme = Theme.of(context).colorScheme;
+  Widget _stacked(ColorScheme scheme, FinanceKpi k) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -166,7 +266,7 @@ class FinanceKpiGrid extends StatelessWidget {
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
           child: Text(
-            hsMoney(k.amount, currency),
+            hsMoney(k.amount, widget.currency),
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w800,
@@ -179,32 +279,33 @@ class FinanceKpiGrid extends StatelessWidget {
   }
 
   /// Cuadro en HORIZONTAL: icono a la izquierda, etiqueta/monto/nota a la
-  /// derecha (el de escritorio, donde hay ancho de sobra).
-  Widget _inline(BuildContext context, FinanceKpi k, bool withNote) {
-    final scheme = Theme.of(context).colorScheme;
+  /// derecha (escritorio y las tarjetas del carrusel del teléfono).
+  Widget _inline(ColorScheme scheme, FinanceKpi k, bool withNote) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
-          width: 34,
-          height: 34,
+          width: 40,
+          height: 40,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: k.tint.withValues(alpha: .13),
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(k.icon, size: 17, color: k.tint),
+          child: Icon(k.icon, size: 20, color: k.tint),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 k.label.toUpperCase(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 9.5,
+                  fontSize: 10,
                   letterSpacing: .4,
                   fontWeight: FontWeight.w800,
                   color: scheme.onSurfaceVariant,
@@ -215,9 +316,9 @@ class FinanceKpiGrid extends StatelessWidget {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  hsMoney(k.amount, currency),
+                  hsMoney(k.amount, widget.currency),
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 17,
                     fontWeight: FontWeight.w800,
                     color: k.tint,
                   ),
@@ -229,7 +330,7 @@ class FinanceKpiGrid extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 10.5,
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
@@ -239,6 +340,7 @@ class FinanceKpiGrid extends StatelessWidget {
       ],
     );
   }
+
 }
 
 /// Gráfica de barras por mes: dos columnas por mes (lo que ENTRÓ y lo que
