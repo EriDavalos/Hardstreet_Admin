@@ -251,7 +251,7 @@ void main() {
     final posts = <Map<String, dynamic>>[];
     await _pump(tester, posts: posts);
 
-    await _tap(tester, find.text('Elegir carpeta del Drive'));
+    await _tap(tester, find.text('Compartir una carpeta del Drive'));
 
     // La carpeta ya compartida aparece BLOQUEADA, con el motivo a la vista.
     expect(_inDialog('Ya compartida en «ReynaCoot»'), findsOneWidget);
@@ -265,7 +265,8 @@ void main() {
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'agregar-directorio');
+    // Se comparte al CLIENTE (el Drive no depende del paquete).
+    expect(posts.first['action'], 'agregar-directorio-cliente');
     expect(posts.first['path'], 'Cliente');
     expect(tester.takeException(), isNull);
   });

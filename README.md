@@ -128,7 +128,7 @@ El **Dashboard** añade esa misma información en versión compacta (cuadros +
 gráfica) y un acceso rápido al módulo. Todo es *best effort*: si el usuario no
 tiene permiso o no hay conexión, el resto del dashboard sigue viéndose.
 
-Requiere la migración `Hardstreet-DB/2026-10-15_movimientos_generales_y_carpeta_compartida.sql`
+Requiere las tablas `site_config` y `user_drive_shares` (`Hardstreet-DB/hardstreet.sql`)
 (movimientos sin paquete + `drive_path`) y la de
 `Hardstreet-DB/2026-10-14_modulo_finanzas.sql`, que
 registra el módulo y copia los permisos de "Clientes" a los roles que ya los
@@ -196,6 +196,81 @@ El diálogo de alta/edición de paquete es visual e intuitivo:
 - Pestaña **Servicios**: buscador, contador y **Agregar** — crea un servicio
   nuevo del catálogo sin salir del diálogo (queda seleccionado solo).
 
+## Módulo Paquetes: cards o filas
+
+El catálogo se presenta de dos formas, con el conmutador que está junto al
+buscador (el mismo gesto que en el Drive):
+
+- **Cards** (por defecto): el flyer de la web tal cual se ve en "Nuestros
+  Paquetes" — línea dorada, badge de tier, categoría con icono, servicios y
+  precio con CTA "Personalizar".
+- **Filas**: el mismo diseño en una línea por paquete (barra de acento del tier,
+  icono de categoría, nombre, subtítulo, servicios incluidos y precio), para
+  recorrer y comparar todo el catálogo sin perder la identidad de la marca. En
+  el celular las acciones van al menú "⋮".
+
+## Diseñar las cards (Diseñador de paquetes)
+
+El botón **Diseñar cards** (en Paquetes, requiere permiso de *update*) abre el
+diseñador: a la izquierda los controles y a la derecha la **vista previa en
+vivo** de la tarjeta y de la fila, tal como quedarán en la web.
+
+- Pestaña **Global**: dorados de la marca, columnas del catálogo (1–4),
+  separación, redondeo, borde, relleno, línea superior, elevación y sombra al
+  pasar el mouse, tipografía del nombre (serif/MAYÚSCULAS), qué se muestra
+  (categoría, subtítulo, cuántos servicios, lista, precio, botón), cuántos
+  servicios se listan y los textos ("Desde"/"Cotizar"…).
+- Pestañas por **tier** (Premium / Gold / Basic): acento, acento claro, fondo,
+  badge relleno o delineado y fuerza del borde, con **paletas listas** de un
+  toque y la opción de copiar la paleta a los otros tiers.
+- **Volver al diseño original** restaura el look de fábrica del sitio.
+
+Lo que se guarda aquí lo aplica la web **en vivo** (sin volver a publicar):
+`PUT /api/admin/site` → `site_config.design`, y el sitio lo lee al cargar con
+`GET /api/site` y lo traduce a CSS (`Hardstreet/gallery/assets/site.js`). Los
+dos lados comparten los MISMOS defaults: `test/site_design_test.dart` compara
+el diseño del panel con el de la web y falla si alguien los separa.
+
+Los **colores de la marca** que se elijan aquí también tiñen el módulo: los
+chips de categoría y la minivista previa del formulario de paquete los usan.
+
+## Módulo Sitio web (portada) — solo Windows
+
+**Sitio web** edita la PORTADA que ven los clientes desde el panel, sin tocar
+HTML: textos, imágenes y qué secciones se muestran (y en qué orden). Lo que se
+guarda lo aplica la web en vivo (`GET /api/site` → `gallery/assets/site.js`),
+así que no hay que volver a publicar el sitio.
+
+- **Textos**: cada campo muestra arriba el valor de fábrica (lo que dice hoy el
+  sitio) y al lado un botón para volver a él. El titular admite dos líneas con
+  `|` (la segunda va resaltada) para no perder el diseño al reescribirlo.
+- **Imágenes**: ruta local del sitio o una URL; los fondos del hero y del
+  divisor también se cambian desde aquí.
+- **Secciones**: subir/bajar cada bloque y apagarlo cuando no se quiere mostrar.
+- **Base de datos**: mientras la base esté vacía, la web se pinta con lo que
+  trae su HTML y el panel guarda SÓLO los campos cambiados. Con la base vacía el
+  módulo lo avisa y ofrece **"Guardar lo actual en la base"**: sube TODO el
+  contenido actual (textos, imágenes, opciones, orden y visibilidad). A partir
+  de ahí la base manda y cada guardado vuelve a mandar el documento completo,
+  así que la web lee su contenido de la base y nunca se pierde lo que no se
+  tocó en esa sesión.
+- Requiere el permiso del módulo "Sitio web" (`Ver` / `Editar`) y la tabla
+  `site_config` que registra el módulo (`Hardstreet-DB/hardstreet.sql`).
+- Alternativa al botón, desde el servidor:
+  `node Hardstreet-Backend/tool/seed-site-content.mjs` lee lo que la web tiene
+  ahora (HTML + CSS + defaults de `site.js`) y lo escribe en
+  `site_config.landing` (`--dry-run` para verlo sin tocar la base).
+
+Por ahora el módulo se ofrece **sólo en Windows** (en Android y en la web del
+panel ni aparece en el menú): es un editor pensado para trabajar con el sitio a
+la vista en la computadora.
+
+Pruebas: `test/site_page_test.dart` comprueba que los ganchos del HTML y el
+catálogo del panel coincidan, que los valores de fábrica sean los del sitio y
+que editar/guardar haga lo que dice (incluido que un documento COMPLETO —el que
+sube "Guardar lo actual en la base"— pinta la portada igual que los defaults:
+`Hardstreet/tests/site-sections.test.mjs`).
+
 ## Módulo Servicios
 
 Catálogo que se incluye en los paquetes (`/api/admin/services`, permiso
@@ -203,6 +278,14 @@ sobre el módulo "Servicios"):
 
 - Icono seleccionable, nombre, descripción y **URL base** opcional: la
   liga de la carpeta del Drive afiliada al servicio.
+- El icono se guarda como `material:videocam` y la web dibuja **el mismo
+  icono** con la tipografía Material Symbols (el panel y la página no
+  mantienen dos listas distintas). Los iconos heredados (`icon/x.svg`) siguen
+  funcionando. `Hardstreet/tests/site-design.test.mjs` lo comprueba:
+
+  ```bash
+  cd Hardstreet && node --test tests/site-design.test.mjs
+  ```
 - La liga se administra aquí o directo desde la pestaña Servicios del
   paquete comprado del cliente.
 - Requiere la migración `Hardstreet-DB/2026-10-13_services_url.sql`.
@@ -264,6 +347,56 @@ consulta la API por su cuenta).
   mueve a su día y abre su detalle), y el botón **+ (Agregar agenda), que solo
   aparece si el rol tiene "Crear" en Agendas, abre el alta de evento** (el
   widget no navega: le pasa el toque a la app).
+- **Se mantiene al día SOLO** (sin la app abierta): el rótulo del día ("HOY ·
+  16 OCT") y el descarte de lo que ya pasó NO se copian de lo último que empujó
+  la app, se **recalculan con la hora del dispositivo** cada vez que el widget
+  se repinta. Además se repinta por su cuenta: en Android con una alarma propia
+  cada 15 min más el `updatePeriodMillis` del lanzador, y en Windows con un
+  temporizador del panel. Antes, al pasar la medianoche con la app cerrada, un
+  evento del día anterior seguía diciendo "HOY".
+
+## Archivos compartidos (entre usuarios)
+
+Módulo **independiente** del Drive de los paquetes: aquí las personas comparten
+una carpeta entre ellas (una carpeta de su computadora o una de su Drive), y se
+navega **dentro del mismo módulo** —nunca salta al módulo Archivos— con el mismo
+diseño que el Drive y en **solo lectura** (se ve, se amplía y se descarga; no se
+escribe en la carpeta de otra persona).
+
+Lo importante para que funcione: **una carpeta de TU computadora la sirve TU
+computadora**. La app abre una conexión SALIENTE al servidor del drive (long
+polling) y contesta lo que los demás usuarios piden, leyendo su propio disco:
+es como compartir una carpeta de red, pero sin abrir puertos, sin IP fija y sin
+tocar el router. La contraparte es que **la carpeta se ve mientras la app esté
+abierta en esa computadora**; si se cierra, la app avisa ("Esa carpeta está en
+la computadora de quien la comparte: se abre cuando su aplicación esté
+abierta") en vez de mostrar un error raro. El agente arranca y se detiene solo:
+se enciende al compartir la primera carpeta del equipo y se apaga al dejar de
+compartir la última.
+
+Compartir exige **permiso de compartir** en el rol y, en el celular, el módulo
+es de solo lectura (compartir requiere elegir una carpeta del equipo, y eso se
+hace en la computadora): la app lo dice en vez de ofrecer un botón que no puede
+funcionar.
+
+Arriba del módulo hay un **switch del servicio de compartir**: encendido, la
+app sirve las carpetas de ESTA computadora mientras el panel esté abierto
+(aunque ahora mismo no queden compartidos a la vista) y lo recuerda para la
+próxima vez; apagado, los demás solo ven "Apagada ahora". El switch muestra el
+estado REAL (también se apaga solo si la sesión deja de servir) y, en pantalla
+angosta, va como botón de imagen junto a "Actualizar". Si el rol no puede
+compartir, la tarjeta lo dice ahí mismo (antes el botón simplemente no
+aparecía).
+
+Cada carpeta compartida lleva su **estado a la vista** (se pregunta al servidor
+con `/api/local/status`): *Disponible* (está en el servidor), *En línea* (está en
+la computadora del dueño y su app está abierta), *Apagada ahora* (su app no está
+abierta), *Servidor sin base de datos* (al servidor del drive le falta
+`DRIVE_DB`), *Ya no está compartida* (el compartido se dio de baja) o *No
+disponible*, con el motivo que manda el servidor. Ese último caso también cubre
+un servidor todavía sin actualizar, que contesta 404 con "La carpeta compartida
+no existe o ya no está activa": el módulo lo traduce a "Ya no está compartida"
+y explica qué hacer, en vez de mostrar el texto crudo.
 
 ## Arranque
 

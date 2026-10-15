@@ -9,6 +9,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
+import 'site_design.dart';
+import 'web_content.dart';
 import 'widgets/hs_toast.dart';
 
 /// Respuesta de GET /api/admin/meta.
@@ -240,6 +242,20 @@ class HsApi {
 
   static Future<dynamic> delete(String path, {bool notify = true}) => _run(
         () => client.delete(_u(path), headers: _headers()),
+        path: path,
+        notify: notify,
+      );
+
+  /// DELETE con cuerpo (lo pide el módulo Archivos compartidos: la carpeta
+  /// y a qué usuarios se le quita no caben cómodos en la URL).
+  static Future<dynamic> deleteBody(
+    String path,
+    Map<String, dynamic> body, {
+    bool notify = true,
+  }) =>
+      _run(
+        () => client.delete(_u(path),
+            headers: _headers(), body: jsonEncode(body)),
         path: path,
         notify: notify,
       );
@@ -537,6 +553,29 @@ class HsApi {
         'path': path,
       });
 
+  /// Comparte UNA carpeta del Drive DIRECTAMENTE con el CLIENTE: la ve en
+  /// TODOS sus paquetes (no solo en el que se está administrando).
+  static Future<void> addClientDrivePath({
+    required int purchasedPackageId,
+    required String path,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'agregar-directorio-cliente',
+        'purchasedPackageId': purchasedPackageId,
+        'path': path,
+      });
+
+  /// Deja de compartir UNA carpeta compartida con el CLIENTE.
+  static Future<void> removeClientDrivePath({
+    required int purchasedPackageId,
+    required String path,
+  }) =>
+      post('/api/admin/package-progress', {
+        'action': 'quitar-directorio-cliente',
+        'purchasedPackageId': purchasedPackageId,
+        'path': path,
+      });
+
   /// Carpetas del Drive COMPARTIDAS con el usuario logueado.
   ///
   /// `isClient` = true cuando su drive debe limitarse a esas carpetas (los
@@ -553,6 +592,123 @@ class HsApi {
         .toList();
     return (isClient: data['isClient'] == true, paths: paths);
   }
+
+  // ---------------- Diseño del sitio (tarjetas y portada) -------------
+
+  /// Diseño GUARDADO del sitio (tarjetas de paquetes y portada).
+  ///
+  /// Endpoint: GET /api/admin/site
+  /// Si la tabla `site_config` todavía no existe (o nadie ha diseñado nada)
+  /// devuelve los valores por defecto del sitio.
+  static Future<({SiteDesign design, Map<String, dynamic>? landing})>
+      siteDesign() async {
+    final data = (await get('/api/admin/site') as Map?) ?? const {};
+    final landing = (data['landing'] as Map?)?.cast<String, dynamic>();
+    return (
+      design: SiteDesign.fromJsonText(data['design']),
+      landing: landing,
+    );
+  }
+
+  /// Guarda el diseño de las tarjetas (permiso de actualizar en "Paquetes").
+  ///
+  /// Endpoint: PUT /api/admin/site — lo que se guarda aquí lo aplica la web
+  /// EN VIVO (GET /api/site), sin volver a publicar el sitio.
+  static Future<void> saveSiteDesign(SiteDesign design) =>
+      put('/api/admin/site', {'design': design.toJson()});
+
+  /// Guarda el CONTENIDO de la portada: textos, imágenes y secciones.
+  /// Permiso de actualizar en el módulo "Sitio web".
+  ///
+  /// Endpoint: PUT /api/admin/site con el documento `landing`. Con la base
+  /// vacía sólo viaja lo que se cambió (lo demás se sigue leyendo del HTML del
+  /// sitio); en cuanto la base tiene contenido, viaja el documento COMPLETO.
+  static Future<void> saveSiteContent(SiteContent content) =>
+      put('/api/admin/site', {'landing': content.toJson()});
+
+  // ---------------- Archivos compartidos ----------------
+
+  /// MIS archivos compartidos y los que OTROS me compartieron, más la lista
+  /// de usuarios con los que se puede compartir.
+  ///
+  /// Endpoint: GET /api/admin/shared-files
+  static Future<
+      ({
+        List<Map<String, dynamic>> shared,
+        List<Map<String, dynamic>> received,
+        List<Map<String, dynamic>> candidates,
+        bool canShare,
+        bool canDelete,
+      })> sharedFiles() async {
+    final data = (await get('/api/admin/shared-files') as Map?) ?? const {};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>() ?? const {};
+    List<Map<String, dynamic>> list(Object? raw) =>
+        ((raw as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+    return (
+      shared: list(item['shared']),
+      received: list(item['received']),
+      candidates: list(item['candidates']),
+      canShare: data['canShare'] != false,
+      canDelete: data['canDelete'] != false,
+    );
+  }
+
+  /// A quién le tengo compartida YA la carpeta [folder] (y los candidatos).
+  ///
+  /// Endpoint: `GET /api/admin/shared-files?folder=<ruta>`
+  static Future<({
+    List<int> targets,
+    List<Map<String, dynamic>> candidates,
+    bool canShare,
+    bool canDelete,
+  })> sharedFileTargets(String folder) async {
+    final data = (await get('/api/admin/shared-files',
+            query: {'folder': folder}) as Map?) ??
+        const {};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final targets = ((item['targets'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => (e['id'] as num?)?.toInt() ?? 0)
+        .where((n) => n > 0)
+        .toList();
+    final candidates = ((data['candidates'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    return (
+      targets: targets,
+      candidates: candidates,
+      canShare: data['canShare'] != false,
+      canDelete: data['canDelete'] != false,
+    );
+  }
+
+  /// Comparte la carpeta [path] con [userIds] (los que falten se suman).
+  ///
+  /// Endpoint: POST /api/admin/shared-files
+  static Future<void> shareFolderWith({
+    required String path,
+    required List<int> userIds,
+  }) =>
+      post('/api/admin/shared-files', {
+        'path': path,
+        'userIds': userIds,
+      });
+
+  /// Deja de compartir la carpeta [path] con [userIds].
+  ///
+  /// Endpoint: DELETE /api/admin/shared-files
+  static Future<void> unshareFolderWith({
+    required String path,
+    required List<int> userIds,
+  }) =>
+      deleteBody('/api/admin/shared-files', {
+        'path': path,
+        'userIds': userIds,
+      });
 
   // ---------------- Clientes ----------------
 

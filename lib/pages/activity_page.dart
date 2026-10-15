@@ -148,10 +148,11 @@ class _ActivityPageState extends State<ActivityPage> {
             label: "${_countOf('delete')} bajas"),
       ],
       actions: [
-        OutlinedButton.icon(
+        HsActionButton(
+          primary: false,
           onPressed: _loading ? null : _reload,
-          icon: const Icon(Icons.refresh, size: 18),
-          label: const Text('Actualizar'),
+          icon: Icons.refresh,
+          label: 'Actualizar',
         ),
       ],
       child: Column(

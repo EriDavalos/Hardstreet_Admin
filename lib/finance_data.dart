@@ -23,6 +23,9 @@ class FinanceTotals {
     this.inversiones = 0,
     this.gastos = 0,
     this.abonoExterno = 0,
+    this.pagos = 0,
+    this.gananciaEstimada = 0,
+    this.gananciaReal = 0,
   });
 
   /// Suma de los precios de los paquetes activos.
@@ -45,21 +48,49 @@ class FinanceTotals {
   final num gastos;
   final num abonoExterno;
 
-  /// Todo lo que salió del paquete: gastos + inversiones.
+  /// Pagos repartidos a colaboradores/empleados: SOLO registro, no son una
+  /// salida (un "gasto invisible").
+  final num pagos;
+
+  /// Ganancia ESTIMADA: cobrado + abono externo − inversión − ahorro (el
+  /// ahorro y la inversión se cuentan como salida, el gasto NO).
+  final num gananciaEstimada;
+
+  /// Ganancia REAL: la estimada menos los gastos. Coincide con el disponible.
+  final num gananciaReal;
+
+  /// Todo lo que salió del paquete: gastos + inversiones (los pagos no).
   num get gastado => gastos + inversiones;
 
   static num _num(Object? v) => v is num ? v : 0;
 
-  factory FinanceTotals.fromJson(Map<String, dynamic> json) => FinanceTotals(
-        facturado: _num(json['facturado']),
-        ganancias: _num(json['ganancias'] ?? json['abonado']),
-        porCobrar: _num(json['porCobrar']),
-        disponible: _num(json['disponible']),
-        ahorro: _num(json['ahorro'] ?? json['ahorrado']),
-        inversiones: _num(json['inversiones'] ?? json['invertido']),
-        gastos: _num(json['gastos'] ?? json['gastado']),
-        abonoExterno: _num(json['abonoExterno']),
-      );
+  factory FinanceTotals.fromJson(Map<String, dynamic> json) {
+    final gastos = _num(json['gastos'] ?? json['gastado']);
+    final ganancias = _num(json['ganancias'] ?? json['abonado']);
+    final abonoExterno = _num(json['abonoExterno']);
+    final inversiones = _num(json['inversiones'] ?? json['invertido']);
+    final ahorro = _num(json['ahorro'] ?? json['ahorrado']);
+    // Si el backend todavía no manda las ganancias, se derivan aquí con la
+    // misma fórmula (así el módulo funciona con un servidor viejo).
+    final estimada = json['gananciaEstimada'] != null
+        ? _num(json['gananciaEstimada'])
+        : ganancias + abonoExterno - inversiones - ahorro;
+    return FinanceTotals(
+      facturado: _num(json['facturado']),
+      ganancias: ganancias,
+      porCobrar: _num(json['porCobrar']),
+      disponible: _num(json['disponible']),
+      ahorro: ahorro,
+      inversiones: inversiones,
+      gastos: gastos,
+      abonoExterno: abonoExterno,
+      pagos: _num(json['pagos']),
+      gananciaEstimada: estimada,
+      gananciaReal: json['gananciaReal'] != null
+          ? _num(json['gananciaReal'])
+          : estimada - gastos,
+    );
+  }
 }
 
 /// Dinero registrado SIN paquete: gastos, inversiones, ahorro y abonos
@@ -70,6 +101,7 @@ class FinanceGeneral {
     this.inversiones = 0,
     this.ahorro = 0,
     this.abonoExterno = 0,
+    this.pagos = 0,
     this.neto = 0,
   });
 
@@ -77,6 +109,9 @@ class FinanceGeneral {
   final num inversiones;
   final num ahorro;
   final num abonoExterno;
+
+  /// Pagos a colaboradores/empleados registrados SIN paquete (solo registro).
+  final num pagos;
 
   /// Efecto neto en el dinero del negocio: abonos externos − gastado −
   /// ahorro (puede ser negativo).
@@ -95,6 +130,7 @@ class FinanceGeneral {
       inversiones: n(json['inversiones']),
       ahorro: n(json['ahorro']),
       abonoExterno: n(json['abonoExterno']),
+      pagos: n(json['pagos']),
       neto: n(json['neto']),
     );
   }
@@ -114,6 +150,8 @@ class FinancePackage {
     this.gastos = 0,
     this.inversiones = 0,
     this.abonoExterno = 0,
+    this.pagos = 0,
+    this.gananciaEstimada = 0,
   });
 
   final int id;
@@ -127,6 +165,12 @@ class FinancePackage {
   final num gastos;
   final num inversiones;
   final num abonoExterno;
+
+  /// Pagos del paquete a colaboradores/empleados (solo registro).
+  final num pagos;
+
+  /// Ganancia estimada del paquete (sin contar los gastos).
+  final num gananciaEstimada;
 
   /// Etiqueta corta para los selectores: "Boda - Premium · Ana Ruiz".
   String get label => clientName.isEmpty ? name : '$name · $clientName';
@@ -148,6 +192,13 @@ class FinancePackage {
       gastos: n(json['gastos']),
       inversiones: n(json['inversiones']),
       abonoExterno: n(json['abonoExterno']),
+      pagos: n(json['pagos']),
+      gananciaEstimada: json['gananciaEstimada'] != null
+          ? n(json['gananciaEstimada'])
+          : n(json['paid']) -
+              n(json['inversiones']) -
+              n(json['ahorro']) +
+              n(json['abonoExterno']),
     );
   }
 }
@@ -212,10 +263,14 @@ class FinanceMovement {
     this.amount = 0,
     this.description = '',
     this.created = '',
+    this.userName = '',
   });
 
   final int id;
   final String kind;
+
+  /// Quién recibió un PAGO (colaborador/empleado); vacío en el resto.
+  final String userName;
 
   /// 0 = movimiento GENERAL (del negocio, sin paquete).
   final int packageId;
@@ -238,6 +293,7 @@ class FinanceMovement {
       amount: n(json['amount']),
       description: (json['description'] ?? '').toString(),
       created: (json['created'] ?? '').toString(),
+      userName: (json['userName'] ?? '').toString(),
     );
   }
 }

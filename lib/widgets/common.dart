@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import 'anim.dart';
+import 'hs_modal.dart';
 
 /// Paleta dorada de la marca (idéntica a la web: --gold / --gold-light) y el
 /// fondo oscuro del "flyer" con el que se representan los paquetes.
@@ -164,16 +165,27 @@ class SectionCard extends StatelessWidget {
 /// Píldora de estadística del encabezado (flat): icono en círculo tintado +
 /// texto. La animación de entrada la maneja el [PageContainer] (escalonada).
 class StatPill extends StatelessWidget {
-  const StatPill({super.key, required this.icon, required this.label});
+  const StatPill({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.dense = false,
+  });
 
   final IconData icon;
   final String label;
+
+  /// Móvil: la píldora va más chica (letra y aire menores) para no robar
+  /// alto a la información del módulo.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 5, 12, 5),
+      padding: dense
+          ? const EdgeInsets.fromLTRB(6, 4, 10, 4)
+          : const EdgeInsets.fromLTRB(8, 5, 12, 5),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(999),
@@ -183,19 +195,20 @@ class StatPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 22,
-            height: 22,
+            width: dense ? 19 : 22,
+            height: dense ? 19 : 22,
             decoration: BoxDecoration(
               color: scheme.primary.withValues(alpha: .14),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 13, color: scheme.primary),
+            child: Icon(icon,
+                size: dense ? 11.5 : 13, color: scheme.primary),
           ),
-          const SizedBox(width: 7),
+          SizedBox(width: dense ? 6 : 7),
           Text(
             label,
             style: TextStyle(
-              fontSize: 12.5,
+              fontSize: dense ? 11.5 : 12.5,
               fontWeight: FontWeight.w700,
               color: scheme.onSurfaceVariant,
             ),
@@ -375,7 +388,13 @@ class PageContainer extends StatelessWidget {
                             style: Theme.of(context)
                                 .textTheme
                                 .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w800),
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  // En el CELULAR la letra del héroe baja un
+                                  // punto (y medio el texto): la tarjeta de
+                                  // presentación se veía enorme.
+                                  fontSize: compact ? 19 : null,
+                                ),
                           ),
                           const SizedBox(height: 4),
                           Text(
@@ -384,7 +403,10 @@ class PageContainer extends StatelessWidget {
                                 .textTheme
                                 .bodyMedium
                                 ?.copyWith(
-                                    color: scheme.onSurfaceVariant, height: 1.3),
+                                  color: scheme.onSurfaceVariant,
+                                  height: compact ? 1.25 : 1.3,
+                                  fontSize: compact ? 12.5 : null,
+                                ),
                           ),
                           const _AccentBar(),
                         ],
@@ -416,7 +438,17 @@ class PageContainer extends StatelessWidget {
                       child: Row(
                         children: [
                           for (var i = 0; i < stats.length; i++) ...[
-                            PopIn(delayMs: 140 + i * 70, child: stats[i]),
+                            // Móvil: las píldoras van compactas (letra y aire
+                            // menores) para que quepan varias sin robarte
+                            // espacio a la información del módulo.
+                            PopIn(
+                              delayMs: 140 + i * 70,
+                              child: StatPill(
+                                icon: stats[i].icon,
+                                label: stats[i].label,
+                                dense: true,
+                              ),
+                            ),
                             if (i != stats.length - 1)
                               const SizedBox(width: 8),
                           ],
@@ -640,6 +672,150 @@ class EmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ==================================================================
+// Acciones del panel (encabezados y filas de lista)
+// ==================================================================
+
+/// Acción principal del encabezado de un módulo ("Nuevo cliente", "Nuevo
+/// evento", "Actualizar", "Agregar movimiento"…).
+///
+/// * **Computadora**: el botón de siempre (icono + texto).
+/// * **Celular**: un botón de IMAGEN —solo el icono, en un círculo tintado—
+///   con el texto como tooltip. Así las acciones del héroe no compiten por el
+///   ancho ni empujan la información del módulo hacia abajo.
+class HsActionButton extends StatelessWidget {
+  const HsActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.onPressed,
+    this.primary = true,
+    this.tint,
+  });
+
+  final IconData icon;
+
+  /// Texto del botón (en celular pasa a ser el tooltip).
+  final String label;
+  final VoidCallback? onPressed;
+
+  /// true = acción principal (rellena, en el azul de la marca).
+  final bool primary;
+
+  /// Color propio de la acción (p. ej. el ahorro en verde azulado).
+  final Color? tint;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = tint ?? scheme.primary;
+    final phone = MediaQuery.sizeOf(context).width < kHsPhoneWidth;
+
+    if (!phone) {
+      return primary
+          ? FilledButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 18),
+              label: Text(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: color,
+                side: BorderSide(color: color.withValues(alpha: .55)),
+              ),
+              icon: Icon(icon, size: 18),
+              label: Text(label),
+            );
+    }
+
+    // Celular: botón de imagen (solo el icono). El texto va como tooltip del
+    // propio botón (una sola vez: envolverlo en otro Tooltip duplicaba el
+    // globo y el nodo de accesibilidad).
+    return primary
+        ? IconButton.filled(
+            onPressed: onPressed,
+            tooltip: label,
+            style: IconButton.styleFrom(
+              backgroundColor: color,
+              foregroundColor: Colors.white,
+            ),
+            icon: Icon(icon, size: 20),
+          )
+        : IconButton.outlined(
+            onPressed: onPressed,
+            tooltip: label,
+            style: IconButton.styleFrom(
+              foregroundColor: color,
+              side: BorderSide(color: color.withValues(alpha: .55)),
+            ),
+            icon: Icon(icon, size: 20),
+          );
+  }
+}
+
+/// Una opción del menú "⋮" de una fila ([HsRowMenu]).
+class HsMenuAction {
+  const HsMenuAction({
+    required this.icon,
+    required this.label,
+    this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool destructive;
+}
+
+/// ¿La pantalla es de TELÉFONO? Las filas de lista guardan sus acciones en
+/// el menú "⋮" ([HsRowMenu]) solo en ese caso; en escritorio se conservan
+/// los botones de siempre.
+bool hsRowCompact(BuildContext context) =>
+    MediaQuery.sizeOf(context).width < kHsPhoneWidth;
+
+/// Los botones de una fila de lista agrupados en el menú "⋮".
+///
+/// Es el patrón del directorio de clientes, aplicado a todos los módulos en
+/// el CELULAR: en una pantalla angosta los iconos "Editar / Eliminar…" no
+/// caben junto al texto, así que se guardan aquí. Si ninguna opción está
+/// disponible (falta de permisos), el menú NO se dibuja.
+class HsRowMenu extends StatelessWidget {
+  const HsRowMenu({super.key, required this.actions});
+
+  final List<HsMenuAction> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = actions.where((a) => a.onTap != null).toList();
+    if (enabled.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<HsMenuAction>(
+      tooltip: 'Acciones',
+      icon: Icon(Icons.more_vert_rounded,
+          size: 20, color: scheme.onSurfaceVariant),
+      onSelected: (a) => a.onTap?.call(),
+      itemBuilder: (context) => [
+        for (final a in enabled)
+          PopupMenuItem<HsMenuAction>(
+            value: a,
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(a.icon,
+                  size: 20, color: a.destructive ? scheme.error : null),
+              title: Text(
+                a.label,
+                style: a.destructive ? TextStyle(color: scheme.error) : null,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

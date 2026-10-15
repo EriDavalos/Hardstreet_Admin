@@ -47,6 +47,12 @@ class EventWidget {
     std::wstring day;
     std::wstring time;  // hora sola ("17:30"), para filas con rótulo.
     bool show_day = false;
+    // Instante del evento (epoch en ms, hora local). El panel lo usa para
+    // RECALCULAR el rótulo del día con la hora actual y descartar lo que ya
+    // pasó: el rótulo que empuja la app envejece y un "HOY" de ayer sigue
+    // diciendo "HOY" si la app no vuelve a empujar. 0 = sin instante (carga
+    // vieja): se respeta tal cual lo que mandó la app.
+    long long at_ms = 0;
   };
 
   // Paleta del panel: siempre la de la app (claro u oscuro). Pública porque los
@@ -90,6 +96,12 @@ class EventWidget {
   LRESULT HandleMessage(UINT message, WPARAM wparam, LPARAM lparam);
 
   const Palette& Colors() const;
+  // Recalcula [events_] a partir de [all_events_] con la hora ACTUAL: rótulos
+  // de día al día y sin lo que ya pasó. La llama cada empujón de la app y el
+  // temporizador propio del panel (ver kRefreshTimerId en el .cpp).
+  void RefreshNow();
+  // Lo que hace el temporizador propio del panel: recalcula y repinta.
+  void RefreshByTimer();
   void EnsureWindow();
   void DestroyPanel();
   void PlaceAtCorner();
@@ -109,6 +121,9 @@ class EventWidget {
   HWND hwnd_ = nullptr;
 
   std::wstring header_ = L"Pr\u00f3ximos eventos";
+  // Lo que empujó la app (sin filtrar): es la fuente de [events_], que es lo
+  // que de verdad se dibuja y se vuelve a calcular con la hora actual.
+  std::vector<Event> all_events_;
   std::vector<Event> events_;
   bool dark_ = false;     // modo de la APP (no el del sistema)
   bool can_add_ = false;  // ¿se ofrece el botón "Agregar agenda"?

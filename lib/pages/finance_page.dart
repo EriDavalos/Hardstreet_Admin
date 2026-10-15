@@ -35,6 +35,7 @@ String _kindLabel(String kind) => switch (kind) {
       'abono_externo' => 'Abonos externos',
       'inversion' => 'Inversiones',
       'ahorro' => 'Ahorro',
+      'pago' => 'Pagos',
       _ => 'Gastos',
     };
 
@@ -43,6 +44,7 @@ IconData _kindIcon(String kind) => switch (kind) {
       'abono_externo' => Icons.account_balance_wallet_outlined,
       'inversion' => Icons.trending_up,
       'ahorro' => Icons.savings_rounded,
+      'pago' => Icons.handshake_outlined,
       _ => Icons.trending_down,
     };
 
@@ -51,20 +53,37 @@ Color _kindColor(String kind) => switch (kind) {
       'abono_externo' => FinanceColors.blue,
       'inversion' => FinanceColors.violet,
       'ahorro' => FinanceColors.teal,
+      'pago' => FinanceColors.amber,
       _ => FinanceColors.red,
     };
 
 /// Tipos de movimiento que se listan como filas de la tabla (en orden).
+/// Los PAGOS van al final y con la etiqueta que aclara que son un registro:
+/// no se descuentan del paquete.
 const List<String> _kKindRows = [
   'abono',
   'gasto',
   'inversion',
   'ahorro',
   'abono_externo',
+  'pago',
 ];
 
 /// Fila especial de la tabla: los movimientos del NEGOCIO (sin paquete).
 const String _kGeneralRow = 'general';
+
+/// Alto MÍNIMO que necesita la tarjeta de la tabla (encabezado + una fila)
+/// para no recortarse. Por debajo de esto la vista de escritorio deja de usar
+/// las dos columnas: en una ventana baja el bloque de totales se comía el
+/// espacio y la tabla desbordaba la pantalla.
+const double _kTableMinHeight = 210;
+
+/// Alto aproximado que ocupa el bloque del resumen del dinero (todos los
+/// cuadros en una lista vertical). Se usa para decidir si el resumen y la
+/// tabla CABEN juntos en la ventana; si no, todo baja a una zona con scroll.
+/// Es a propósito algo holgado: en una ventana mediana es preferible
+/// desplazar un poco a que algo se recorte.
+const double _kSummaryHeight = 420;
 
 class FinancePage extends StatefulWidget {
   const FinancePage({super.key});
@@ -80,6 +99,10 @@ class _FinancePageState extends State<FinancePage> {
 
   /// Claves de las filas EXPANDIDAS de la tabla ('pkg:10', 'kind:gasto'…).
   final Set<String> _open = <String>{};
+
+  /// Móvil: los cuadros de totales se pueden MINIMIZAR para dejarle la
+  /// pantalla a la tabla de "Dinero por paquete y movimiento".
+  bool _kpisOpen = true;
 
   @override
   void initState() {
@@ -222,29 +245,19 @@ class _FinancePageState extends State<FinancePage> {
           // Son DOS acciones distintas y no se mezclan: el movimiento
           // (gasto/inversión/abono externo/ahorro general) va como acción
           // principal y aparte, con su propio color, el ahorro.
-          Tooltip(
-            message: 'Gasto, inversión, abono externo o ahorro del negocio',
-            child: FilledButton.icon(
-              onPressed: () => _addMovement(kind: 'gasto'),
-              icon: const Icon(Icons.add, size: 18),
-              // En el teléfono la etiqueta completa no cabe en el botón y
-              // quedaba a medias: ahí va la versión corta.
-              label: Text(narrow ? 'Nuevo movimiento' : 'Agregar movimiento'),
-            ),
+          HsActionButton(
+            onPressed: () => _addMovement(kind: 'gasto'),
+            icon: Icons.add,
+            // En el teléfono la etiqueta completa no cabe en el botón y
+            // quedaba a medias: ahí va la versión corta.
+            label: narrow ? 'Nuevo movimiento' : 'Agregar movimiento',
           ),
-          Tooltip(
-            message: 'Apartar dinero en el ahorro',
-            child: OutlinedButton.icon(
-              onPressed: () => _addMovement(kind: 'ahorro'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: FinanceColors.teal,
-                side: BorderSide(
-                  color: FinanceColors.teal.withValues(alpha: .55),
-                ),
-              ),
-              icon: const Icon(Icons.savings_outlined, size: 18),
-              label: const Text('Abonar al ahorro'),
-            ),
+          HsActionButton(
+            primary: false,
+            tint: FinanceColors.teal,
+            onPressed: () => _addMovement(kind: 'ahorro'),
+            icon: Icons.savings_outlined,
+            label: 'Abonar al ahorro',
           ),
         ],
       ],
@@ -259,100 +272,169 @@ class _FinancePageState extends State<FinancePage> {
   Widget _body(ColorScheme scheme, FinanceTotals t, String currency) {
     if (_loading) return const ListSkeleton(lines: 3, cardHeight: 104);
     if (_error != null) return _errorCard(scheme);
-    // Mismo umbral del héroe: en el teléfono la rejilla va compacta.
+    // Mismo umbral del héroe: en el teléfono el resumen va apilado.
     final narrow = MediaQuery.sizeOf(context).width < 620;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        FinanceKpiGrid(
-          currency: currency,
-          // MÓVIL: carrusel —una tarjeta COMPLETA por pantalla, se desliza de
-          // lado— en vez de 3 columnas diminutas con los textos recortados.
-          // En escritorio siguen siendo filas parejas. El de "Ahorro" no se
-          // lista aquí: ese dato ya va en la píldora de la cabecera.
-          kpis: [
-            FinanceKpi(
-              label: 'Ganado',
-              amount: t.disponible,
-              icon: Icons.savings_outlined,
-              tint: FinanceColors.green,
-              note: '= Disponible',
+
+    // MÓVIL: TODO en una sola zona con scroll —el resumen del dinero ARRIBA,
+    // junto con la tabla— para poder bajar y ver más información. El bloque
+    // se puede MINIMIZAR con el botón del encabezado.
+    if (narrow) {
+      return SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _kpiHeader(scheme, t),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: _kpisOpen
+                  ? Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      // Los grupos se apilan (una columna): en el teléfono es lo
+                      // único que deja leer las etiquetas completas.
+                      child: _MoneySummary(
+                        totals: t,
+                        currency: currency,
+                        showNotes: false,
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
             ),
-            FinanceKpi(
-              label: 'Cobrado',
-              amount: t.ganancias,
-              icon: Icons.payments_outlined,
-              tint: FinanceColors.green,
-              note: 'Abonos recibidos',
-            ),
-            FinanceKpi(
-              label: 'Por cobrar',
-              amount: t.porCobrar,
-              icon: Icons.hourglass_bottom_rounded,
-              tint: FinanceColors.amber,
-              note: 'De ${hsMoney(t.facturado, currency)}',
-            ),
-            if (!narrow)
-              FinanceKpi(
-                label: 'Ahorro',
-                amount: t.ahorro,
-                icon: Icons.lock_outline_rounded,
-                tint: FinanceColors.teal,
-                note: 'Apartado',
-              ),
-            FinanceKpi(
-              label: 'Gastos',
-              amount: t.gastos,
-              icon: Icons.trending_down,
-              tint: FinanceColors.red,
-            ),
-            FinanceKpi(
-              label: 'Inversión',
-              amount: t.inversiones,
-              icon: Icons.trending_up,
-              tint: FinanceColors.violet,
-            ),
-            FinanceKpi(
-              label: 'Abono externo',
-              amount: t.abonoExterno,
-              icon: Icons.account_balance_wallet_outlined,
-              tint: FinanceColors.blue,
-            ),
+            _tableCard(scheme, currency, inline: true),
+            const SizedBox(height: 14),
+            _chartCard(scheme),
+            const SizedBox(height: 14),
+            _savingsCard(scheme, t, currency),
           ],
         ),
-        const SizedBox(height: 14),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, box) {
-              // Escritorio: tabla | gráfica + ahorro, sin scroll de página.
-              if (box.maxWidth >= 980) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 3, child: _tableCard(scheme, currency)),
-                    const SizedBox(width: 14),
-                    Expanded(flex: 2, child: _sideColumn(scheme, t, currency)),
-                  ],
-                );
-              }
-              // Angosto: todo en UNA zona con scroll propio (la página sigue
-              // sin crecer y cada pieza conserva su espacio).
-              return SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _tableCard(scheme, currency, inline: true),
-                    const SizedBox(height: 14),
-                    _chartCard(scheme),
-                    const SizedBox(height: 14),
-                    _savingsCard(scheme, t, currency),
-                  ],
-                ),
-              );
-            },
-          ),
+      );
+    }
+
+    // ESCRITORIO: el resumen del dinero TAMBIÉN se puede minimizar. Es un
+    // bloque alto (los cuatro grupos en fila) y cuando se está trabajando con
+    // la tabla de abajo estorba: minimizado, el encabezado queda en UNA línea
+    // y la tabla y la gráfica se reparten toda la pantalla.
+    // ESCRITORIO: el resumen del dinero TAMBIÉN se puede minimizar. Es un
+    // bloque alto (los cuatro grupos en fila) y cuando se está trabajando con
+    // la tabla de abajo estorba: minimizado, el encabezado queda en UNA línea
+    // y la tabla y la gráfica se reparten toda la pantalla.
+    //
+    // El reparto se decide por el ALTO disponible, no solo por el ancho: los
+    // bloques de arriba (encabezado + resumen) tienen alto propio y, si no
+    // caben junto con la tabla, todo baja a UNA zona con scroll en vez de
+    // recortarse.
+    return LayoutBuilder(builder: (context, box) {
+      const header = 48.0; // encabezado del resumen + su separación
+      final summary = _kpisOpen ? _kSummaryHeight : 0.0;
+      final caben = box.maxWidth >= 980 &&
+          box.maxHeight >= header + summary + _kTableMinHeight;
+
+      // Resumen arriba: encabezado + (si está abierto) los cuatro grupos.
+      final top = <Widget>[
+        _kpiHeader(scheme, t, showEarned: false),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: _kpisOpen
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _MoneySummary(totals: t, currency: currency),
+                )
+              : const SizedBox(width: double.infinity),
         ),
-      ],
+      ];
+
+      // Cabe: el resumen queda fijo arriba y abajo la tabla | gráfica + ahorro
+      // se reparten el resto del alto (sin scroll de página).
+      if (caben) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ...top,
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(flex: 3, child: _tableCard(scheme, currency)),
+                  const SizedBox(width: 14),
+                  Expanded(flex: 2, child: _sideColumn(scheme, t, currency)),
+                ],
+              ),
+            ),
+          ],
+        );
+      }
+
+      // Angosto o bajo: todo en UNA zona con scroll (la página no crece y cada
+      // pieza conserva su espacio; nada se recorta).
+      return SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ...top,
+            _tableCard(scheme, currency, inline: true),
+            const SizedBox(height: 14),
+            _chartCard(scheme),
+            const SizedBox(height: 14),
+            _savingsCard(scheme, t, currency),
+          ],
+        ),
+      );
+    });
+  }
+
+  /// Encabezado del bloque de cuadros: título + botón para minimizar/mostrar
+  /// (así la tabla gana toda la pantalla cuando se quiere trabajar con ella).
+  ///
+  /// Se usa en móvil y en escritorio. En escritorio el "Ganado" del extremo
+  /// se omite ([showEarned] = false): ese número ya va en la píldora de la
+  /// cabecera y repetirlo sería ruido.
+  Widget _kpiHeader(ColorScheme scheme, FinanceTotals t,
+      {bool showEarned = true}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(Icons.account_balance_wallet_outlined,
+              size: 16, color: scheme.primary),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'Resumen del dinero',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          if (_kpisOpen && showEarned)
+            Text(
+              'Ganado ${hsMoney(t.disponible)}',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: FinanceColors.green,
+              ),
+            ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: _kpisOpen ? 'Minimizar los cuadros' : 'Mostrar los cuadros',
+            child: IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: () => setState(() => _kpisOpen = !_kpisOpen),
+              icon: AnimatedRotation(
+                turns: _kpisOpen ? 0 : .5,
+                duration: const Duration(milliseconds: 180),
+                child: Icon(Icons.keyboard_arrow_up_rounded,
+                    size: 20, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -532,10 +614,16 @@ class _FinancePageState extends State<FinancePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ...head,
+              // Scroll NO vago: se construyen todas las filas aunque la
+              // tarjeta tenga poco alto (así el desglose y las acciones de
+              // cada fila están listos al alcanzarlas con el scroll).
               Expanded(
-                child: ListView(
+                child: SingleChildScrollView(
                   padding: const EdgeInsets.only(bottom: 10),
-                  children: rows,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: rows,
+                  ),
                 ),
               ),
             ],
@@ -868,6 +956,11 @@ class _FinancePageState extends State<FinancePage> {
               'Inversión', p.inversiones, FinanceColors.violet, currency),
           _DetailPill(
               'Abono externo', p.abonoExterno, FinanceColors.blue, currency),
+          if (p.pagos > 0)
+            _DetailPill('Pagos (solo registro)', p.pagos, FinanceColors.amber,
+                currency),
+          _DetailPill('Ganancia estimada', p.gananciaEstimada,
+              FinanceColors.teal, currency),
         ]),
         if (_canSave) ...[
           const SizedBox(height: 12),
@@ -1025,6 +1118,7 @@ class _FinancePageState extends State<FinancePage> {
       'ahorro' => t.ahorro,
       'inversion' => t.inversiones,
       'abono_externo' => t.abonoExterno,
+      'pago' => t.pagos,
       _ => t.gastos,
     };
   }
@@ -1039,6 +1133,7 @@ class _FinancePageState extends State<FinancePage> {
             ? m.packageName
             : '${m.packageName} · ${m.clientName}');
     final detail = [
+      if (m.userName.trim().isNotEmpty) '→ ${m.userName.trim()}',
       if (m.description.trim().isNotEmpty) m.description.trim(),
       if (where.isNotEmpty) where,
       if (when != null) hsShortDate(when),
@@ -1505,6 +1600,245 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ==================================================================
+// Resumen del dinero: cuadros AGRUPADOS
+// ==================================================================
+// Antes los 10 cuadros eran una rejilla pareja y quedaba todo junto: no se
+// distinguía lo que GANAS de lo que SALE. Ahora van en cuatro tarjetas
+// (Lo que ganas · Cobros · Salidas · Apartado y pagos), cada una con su
+// título y sus cuadros dentro.
+//
+//  * Ventana ancha: los cuatro grupos en UNA fila, cada uno con sus cuadros
+//    apilados (el número se lee de un vistazo).
+//  * Ventana angosta / teléfono: los grupos se apilan en una columna.
+//
+// El diseño cambia por ANCHO, nunca por alto: así el bloque tiene siempre la
+// misma altura y no vuelve a comerse el espacio de la tabla de abajo.
+// ==================================================================
+
+/// Un grupo de cuadros (título + sus totales).
+class _MoneyGroup {
+  const _MoneyGroup(this.title, this.icon, this.tint, this.kpis);
+
+  final String title;
+  final IconData icon;
+  final Color tint;
+  final List<FinanceKpi> kpis;
+}
+
+class _MoneySummary extends StatelessWidget {
+  const _MoneySummary({
+    required this.totals,
+    required this.currency,
+    this.showNotes = true,
+  });
+
+  final FinanceTotals totals;
+  final String currency;
+
+  /// ¿Cada cuadro muestra su aclaración ("= Disponible", "Solo registro"…)?
+  /// En el teléfono se omite: el nombre del concepto se queda con todo el
+  /// ancho y nada se recorta.
+  final bool showNotes;
+
+  /// Los cuatro grupos, en el orden en que se leen: primero lo que ganas,
+  /// luego lo que entra, lo que sale y al final lo apartado.
+  List<_MoneyGroup> _groups() => [
+        _MoneyGroup('Lo que ganas', Icons.workspace_premium_outlined,
+            FinanceColors.green, [
+          FinanceKpi(
+            label: 'Ganado',
+            amount: totals.disponible,
+            icon: Icons.savings_outlined,
+            tint: FinanceColors.green,
+            note: '= Disponible',
+          ),
+          FinanceKpi(
+            label: 'Ganancia real',
+            amount: totals.gananciaReal,
+            icon: Icons.verified_outlined,
+            tint: FinanceColors.green,
+            note: 'Contando los gastos',
+          ),
+          FinanceKpi(
+            label: 'Ganancia estimada',
+            amount: totals.gananciaEstimada,
+            icon: Icons.insights_outlined,
+            tint: FinanceColors.teal,
+            note: 'Ahorro e inversión aparte',
+          ),
+        ]),
+        _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.green, [
+          FinanceKpi(
+            label: 'Cobrado',
+            amount: totals.ganancias,
+            icon: Icons.payments_outlined,
+            tint: FinanceColors.green,
+            note: 'Abonos recibidos',
+          ),
+          FinanceKpi(
+            label: 'Por cobrar',
+            amount: totals.porCobrar,
+            icon: Icons.hourglass_bottom_rounded,
+            tint: FinanceColors.amber,
+            note: 'De ${hsMoney(totals.facturado, currency)}',
+          ),
+          FinanceKpi(
+            label: 'Abono externo',
+            amount: totals.abonoExterno,
+            icon: Icons.account_balance_wallet_outlined,
+            tint: FinanceColors.blue,
+            note: 'Entra por fuera',
+          ),
+        ]),
+        _MoneyGroup('Salidas', Icons.trending_down, FinanceColors.red, [
+          FinanceKpi(
+            label: 'Gastos',
+            amount: totals.gastos,
+            icon: Icons.trending_down,
+            tint: FinanceColors.red,
+          ),
+          FinanceKpi(
+            label: 'Inversión',
+            amount: totals.inversiones,
+            icon: Icons.trending_up,
+            tint: FinanceColors.violet,
+          ),
+        ]),
+        _MoneyGroup('Apartado y pagos', Icons.savings_outlined,
+            FinanceColors.teal, [
+          FinanceKpi(
+            label: 'Ahorro',
+            amount: totals.ahorro,
+            icon: Icons.lock_outline_rounded,
+            tint: FinanceColors.teal,
+          ),
+          FinanceKpi(
+            label: 'Pagos',
+            amount: totals.pagos,
+            icon: Icons.handshake_outlined,
+            tint: FinanceColors.amber,
+            note: 'Solo registro',
+          ),
+        ]),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final groups = _groups();
+    // Un SOLO bloque con TODOS los cuadros, uno por línea (en vertical) y sin
+    // un recuadro por concepto: se lee como una lista, ocupa menos y no parte
+    // el dinero en tarjetas.
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < groups.length; i++) ...[
+              if (i > 0) const SizedBox(height: 4),
+              _sectionLabel(scheme, groups[i]),
+              for (final k in groups[i].kpis)
+                _kpiRow(scheme, k, showNote: showNotes),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Rótulo de una sección del resumen (Lo que ganas, Cobros…). Es solo una
+  /// línea con su icono: separa sin volver a meter recuadros.
+  Widget _sectionLabel(ColorScheme scheme, _MoneyGroup g) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: Row(
+        children: [
+          Icon(g.icon, size: 12, color: g.tint),
+          const SizedBox(width: 6),
+          Text(
+            g.title.toUpperCase(),
+            style: TextStyle(
+              fontSize: 9.5,
+              letterSpacing: .7,
+              fontWeight: FontWeight.w800,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Divider(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Una línea del resumen: icono, concepto (con su aclaración) y el monto a
+  /// la derecha. Va en UNA sola línea y sin recuadro: todos los cuadros juntos
+  /// en la misma tarjeta, uno debajo del otro.
+  Widget _kpiRow(ColorScheme scheme, FinanceKpi k, {required bool showNote}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(k.icon, size: 15, color: k.tint),
+          const SizedBox(width: 8),
+          // El concepto tiene la mayor parte del ancho (nunca se recorta); la
+          // aclaración va después, más pequeña, y el dinero se ancla a la
+          // derecha. En el teléfono la aclaración se omite ([showNote]=false)
+          // para dejarle todo el ancho al nombre.
+          // El nombre nunca sale con puntos suspensivos: si el concepto es
+          // largo ("Ganancia estimada") se encoge lo justo para caber, así se
+          // lee completo en vez de recortado.
+          Expanded(
+            flex: 3,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  k.label.toUpperCase(),
+                  maxLines: 1,
+                  style: const TextStyle(
+                      fontSize: 11.5, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+          ),
+          if (showNote && k.note != null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              flex: 2,
+              child: Text(
+                k.note!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
+          const SizedBox(width: 12),
+          Text(
+            hsMoney(k.amount, currency),
+            style: TextStyle(
+                fontSize: 13.5, fontWeight: FontWeight.w800, color: k.tint),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -263,10 +263,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           ),
       ],
       actions: [
-        OutlinedButton.icon(
+        HsActionButton(
+          primary: false,
           onPressed: _loading ? null : _load,
-          icon: const Icon(Icons.refresh, size: 18),
-          label: const Text('Actualizar'),
+          icon: Icons.refresh,
+          label: 'Actualizar',
         ),
       ],
       child: Column(

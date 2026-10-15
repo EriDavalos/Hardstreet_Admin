@@ -1044,18 +1044,15 @@ class _DrivePageState extends State<DrivePage> {
         .where((i) => !i.isFolder)
         .toList(growable: false);
     final index = images.indexWhere((i) => i.name == item.name);
-    showDialog(
-      context: context,
-      barrierColor: Colors.black87,
-      builder: (ctx) => _ImageViewerDialog(
-        drive: widget.drive,
-        images: images,
-        initialIndex: index < 0 ? 0 : index,
-        // Descargar SIN salir del visor.
-        // Sin permiso de descarga el visor ni siquiera muestra el botón.
-        onDownload:
-            _driveCan('download') ? (item) => _downloadItems([item]) : null,
-      ),
+    showDriveImageViewer(
+      context,
+      drive: widget.drive,
+      images: images,
+      initialIndex: index < 0 ? 0 : index,
+      // Descargar SIN salir del visor.
+      // Sin permiso de descarga el visor ni siquiera muestra el botón.
+      onDownload:
+          _driveCan('download') ? (item) => _downloadItems([item]) : null,
     );
   }
 
@@ -3138,6 +3135,32 @@ String _metaLabel(DriveItem item) {
 }
 
 // ===================== Visor de imágenes =====================
+
+/// Abre el VISOR de imágenes del Drive (pantalla completa, con zoom, flechas,
+/// Esc y botón de descarga).
+///
+/// Es PÚBLICO para poder reutilizarlo en carpetas que no son del Drive: el
+/// módulo "Archivos compartidos" lo usa con sus carpetas LOCALES (a través de
+/// un [DriveBase] adaptador), y así una carpeta compartida se ve y se descarga
+/// EXACTAMENTE igual que el Drive.
+Future<void> showDriveImageViewer(
+  BuildContext context, {
+  required DriveBase drive,
+  required List<DriveItem> images,
+  required int initialIndex,
+  Future<void> Function(DriveItem item)? onDownload,
+}) {
+  return showDialog<void>(
+    context: context,
+    barrierColor: Colors.black87,
+    builder: (_) => _ImageViewerDialog(
+      drive: drive,
+      images: images,
+      initialIndex: initialIndex,
+      onDownload: onDownload,
+    ),
+  );
+}
 
 class _ImageViewerDialog extends StatefulWidget {
   const _ImageViewerDialog({

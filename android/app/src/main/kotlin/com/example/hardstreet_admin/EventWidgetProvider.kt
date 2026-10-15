@@ -1,5 +1,6 @@
 package com.example.hardstreet_admin
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -10,6 +11,7 @@ import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.widget.RemoteViews
 import org.json.JSONArray
@@ -39,6 +41,12 @@ internal data class WidgetEvent(
  * y él solo los dibuja. Los eventos quedan guardados en SharedPreferences, así
  * que el widget sigue mostrando lo último conocido aunque la app esté cerrada.
  *
+ * SE ACTUALIZA SOLO, aunque la app esté cerrada: el rótulo del día ("HOY ·
+ * 16 OCT") y el descarte de lo que ya pasó se calculan AQUÍ, con la hora del
+ * teléfono ([EventWidgetClock]), cada vez que el widget se repinta; además se
+ * repinta por su cuenta cada [REFRESH_MS] con una alarma propia. Así no se
+ * queda diciendo "HOY" el día siguiente.
+ *
  * El listado es una COLECCIÓN (ListView) que llena [EventWidgetService]: así se
  * ven TODOS los eventos próximos y el usuario puede desplazarse dentro del
  * widget. Los colores salen de [EventWidgetTheme] según el modo de la APP.
@@ -61,6 +69,30 @@ class EventWidgetProvider : AppWidgetProvider() {
             // La lista la sirve el servicio: que vuelva a leer lo guardado.
             manager.notifyAppWidgetViewDataChanged(id, R.id.event_widget_list)
         }
+        // El widget ya está colocado: que se repinte solo (por si la app no
+        // vuelve a abrirse en todo el día).
+        scheduleRefresh(context)
+    }
+
+    /**
+     * La alarma de refresco llega como un Intent a este mismo provider. Se
+     * atiende aquí porque [AppWidgetProvider] ignora las acciones que no son
+     * suyas (y así no hace falta declarar otro receptor en el manifiesto).
+     */
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_REFRESH) {
+            // Renuévalo TODO con la hora actual: rótulos de día y lo que ya
+            // pasó. La alarma sigue repitiéndose sola (setInexactRepeating).
+            refreshAll(context)
+            return
+        }
+        super.onReceive(context, intent)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        // Sin widgets colocados no hay nada que repintar.
+        cancelRefresh(context)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -75,6 +107,18 @@ class EventWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val PREFS = "event_widget"
+
+        /** Refresco propio del widget (rótulos y eventos vencidos). */
+        const val ACTION_REFRESH = "com.example.hardstreet_admin.WIDGET_REFRESH"
+
+        /**
+         * Cada cuánto se repinta solo. 15 minutos: suficiente para que el
+         * rótulo cambie de día a los pocos minutos de la medianoche, y lo
+         * bastante espaciado como para no gastar batería.
+         */
+        const val REFRESH_MS = 15L * 60L * 1000L
+
+        private const val REQ_REFRESH = 13
         private const val KEY_HEADER = "header"
         private const val KEY_EVENTS = "events"
         private const val KEY_DARK = "dark"
@@ -114,8 +158,51 @@ class EventWidgetProvider : AppWidgetProvider() {
             refreshAll(context)
         }
 
+        /** Intent con el que la alarma vuelve a este mismo provider. */
+        private fun refreshIntent(context: Context): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                REQ_REFRESH,
+                Intent(context, EventWidgetProvider::class.java)
+                    .setAction(ACTION_REFRESH),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+        /**
+         * Pide al sistema que despierte al widget cada [REFRESH_MS]. Inexacto a
+         * propósito: el sistema lo agrupa con otras alarmas (menos batería) y
+         * no hace falta precisión al minuto.
+         */
+        fun scheduleRefresh(context: Context) {
+            if (!hasWidgets(context)) return
+            try {
+                val alarm = context.getSystemService(Context.ALARM_SERVICE)
+                    as? AlarmManager ?: return
+                alarm.setInexactRepeating(
+                    AlarmManager.ELAPSED_REALTIME,
+                    SystemClock.elapsedRealtime() + REFRESH_MS,
+                    REFRESH_MS,
+                    refreshIntent(context)
+                )
+            } catch (_: Exception) {
+                // Sin alarma el widget sigue correcto: solo se repinta menos.
+            }
+        }
+
+        /** Deja de repintar (ya no hay widgets colocados). */
+        fun cancelRefresh(context: Context) {
+            try {
+                val alarm = context.getSystemService(Context.ALARM_SERVICE)
+                    as? AlarmManager ?: return
+                alarm.cancel(refreshIntent(context))
+            } catch (_: Exception) {
+                // Nada que cancelar.
+            }
+        }
+
         /** Repinta todos los widgets de este provider. */
         fun refreshAll(context: Context) {
+            scheduleRefresh(context)
             val manager = AppWidgetManager.getInstance(context)
             val ids = manager.getAppWidgetIds(
                 ComponentName(context, EventWidgetProvider::class.java)
@@ -151,6 +238,14 @@ class EventWidgetProvider : AppWidgetProvider() {
         /** ¿Se muestra el botón "Agregar agenda"? (lo decide el rol en la app) */
         internal fun canAdd(context: Context): Boolean =
             prefs(context).getBoolean(KEY_CAN_ADD, false)
+
+        /**
+         * Los eventos guardados, ya LISTOS PARA MOSTRAR: sin los que ya
+         * pasaron y con el rótulo del día recalculado con la hora actual
+         * (ver [EventWidgetClock]).
+         */
+        internal fun shownEvents(context: Context): List<WidgetEvent> =
+            EventWidgetClock.fresh(readEvents(context))
 
         /** Eventos guardados (los que la app empujó la última vez). */
         internal fun readEvents(context: Context): List<WidgetEvent> {
@@ -197,7 +292,7 @@ class EventWidgetProvider : AppWidgetProvider() {
 
             // Contador de eventos: sale del MISMO listado que se va a mostrar,
             // así el número nunca miente respecto a lo que hay abajo.
-            val count = readEvents(context).size
+            val count = shownEvents(context).size
             if (count > 0) {
                 views.setViewVisibility(R.id.event_widget_count, View.VISIBLE)
                 views.setTextViewText(

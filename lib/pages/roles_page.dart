@@ -139,10 +139,10 @@ class _RolesPageState extends State<RolesPage> {
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
         if (_canCreate)
-          FilledButton.icon(
+          HsActionButton(
             onPressed: () => _openForm(),
-            icon: const Icon(Icons.add_moderator_outlined, size: 18),
-            label: const Text('Nuevo rol'),
+            icon: Icons.add_moderator_outlined,
+            label: 'Nuevo rol',
           ),
       ],
       child: Column(
@@ -268,27 +268,53 @@ class _RoleTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          // Botón de icono (como Renombrar/Eliminar): el rótulo "Acciones"
-          // ocupaba demasiado ancho en la lista.
-          if (onPermissions != null)
-            IconButton(
-              tooltip: 'Acciones y permisos',
-              onPressed: onPermissions,
-              icon: Icon(Icons.tune, size: 20, color: scheme.primary),
-            ),
-          if (onEdit != null)
-            IconButton(
-              tooltip: 'Renombrar',
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined, size: 20),
-            ),
-          if (onDelete != null)
-            IconButton(
-              tooltip: 'Eliminar',
-              onPressed: onDelete,
-              icon: Icon(Icons.delete_outline,
-                  size: 20, color: scheme.error.withValues(alpha: .8)),
-            ),
+          // CELULAR: las tres acciones (permisos, renombrar, eliminar) viajan
+          // en el menú "⋮" para no comerse el ancho de la fila. Sin ninguna
+          // opción disponible por permisos, el menú NO se dibuja.
+          if (hsRowCompact(context))
+            HsRowMenu(
+              actions: [
+                HsMenuAction(
+                  icon: Icons.tune,
+                  label: 'Acciones y permisos',
+                  onTap: onPermissions,
+                ),
+                HsMenuAction(
+                  icon: Icons.edit_outlined,
+                  label: 'Renombrar',
+                  onTap: onEdit,
+                ),
+                HsMenuAction(
+                  icon: Icons.delete_outline,
+                  label: 'Eliminar',
+                  onTap: onDelete,
+                  destructive: true,
+                ),
+              ],
+            )
+          else ...[
+            // Botón de icono (como Renombrar/Eliminar): el rótulo "Acciones"
+            // ocupaba demasiado ancho en la lista.
+            if (onPermissions != null)
+              IconButton(
+                tooltip: 'Acciones y permisos',
+                onPressed: onPermissions,
+                icon: Icon(Icons.tune, size: 20, color: scheme.primary),
+              ),
+            if (onEdit != null)
+              IconButton(
+                tooltip: 'Renombrar',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+              ),
+            if (onDelete != null)
+              IconButton(
+                tooltip: 'Eliminar',
+                onPressed: onDelete,
+                icon: Icon(Icons.delete_outline,
+                    size: 20, color: scheme.error.withValues(alpha: .8)),
+              ),
+          ],
         ],
       ),
     );

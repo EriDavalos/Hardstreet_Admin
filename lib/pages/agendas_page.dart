@@ -8,9 +8,11 @@ import '../event_widget.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
+import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_pickers.dart';
 import '../widgets/hs_toast.dart';
 
 /// Paleta estable por servicio: cada servicio conserva su color en toda la
@@ -2580,27 +2582,36 @@ class _PickerField extends StatelessWidget {
         ),
       );
     }
-    return InputDecorator(
-      isEmpty: selected == 0,
+    // Selector con el MISMO lenguaje que el resto de los campos del panel:
+    // superficie rellena, esquinas redondeadas, icono a la izquierda y el
+    // rótulo flotante del tema. (Antes era un `InputDecorator` con un
+    // `DropdownButton` denso por dentro: el rótulo quedaba encimado y el
+    // valor se veía apretado.)
+    return DropdownButtonFormField<int>(
+      // La clave vive SOLO en el campo ([_PickerField]): repetirla aquí
+      // duplicaba el key en el árbol (dos widgets con la misma clave).
+      initialValue: selected == 0 ? null : selected,
+      isExpanded: true,
+      borderRadius: BorderRadius.circular(14),
+      icon: Icon(Icons.keyboard_arrow_down_rounded,
+          color: Theme.of(context).colorScheme.onSurfaceVariant),
+      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, size: 20),
         helperText: helper,
+        helperMaxLines: 2,
       ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<int>(
-          isExpanded: true,
-          isDense: true,
-          value: selected == 0 ? null : selected,
-          hint: Text(hint),
-          items: options,
-          onChanged: !enabled
-              ? null
-              : (v) {
-                  if (v != null) onChanged?.call(v);
-                },
-        ),
-      ),
+      hint: Text(hint),
+      items: options,
+      onChanged: !enabled
+          ? null
+          : (v) {
+              if (v != null) onChanged?.call(v);
+            },
     );
   }
 }
@@ -2763,12 +2774,7 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
   }
 
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dateTime,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
+    final picked = await showHsDatePicker(context, initialDate: _dateTime);
     if (picked == null) return;
     setState(() {
       _dateTime = DateTime(picked.year, picked.month, picked.day,
@@ -2777,16 +2783,26 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
   }
 
   Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_dateTime),
-    );
+    final picked = await showHsTimePicker(context, initialTime: _dateTime);
     if (picked == null) return;
     setState(() {
       _dateTime = DateTime(_dateTime.year, _dateTime.month, _dateTime.day,
           picked.hour, picked.minute);
     });
   }
+
+  /// Atajos rápidos de fecha (hoy / mañana / en una semana), para no abrir el
+  /// calendario cuando el evento es inminente.
+  void _quickDay(int daysAhead) {
+    final base = DateTime.now().add(Duration(days: daysAhead));
+    setState(() {
+      _dateTime = DateTime(base.year, base.month, base.day, _dateTime.hour,
+          _dateTime.minute);
+    });
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   Future<void> _save() async {
     if (_saving) return;
@@ -2828,32 +2844,115 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     }
   }
 
-  /// Fila táctil de fecha/hora (abre el selector del sistema).
+  /// Tarjeta táctil de fecha/hora: icono tintado + rótulo + valor, y abre el
+  /// selector correspondiente. Se ve como una pieza de la app (no como un
+  /// campo de texto disfrazado).
   Widget _slot({
     required IconData icon,
     required String label,
     required String value,
     required VoidCallback onTap,
+    required Color tint,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: _saving ? null : onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: InputDecorator(
-        decoration:
-            InputDecoration(labelText: label, prefixIcon: Icon(icon, size: 20)),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(11, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: .07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tint.withValues(alpha: .28)),
+        ),
         child: Row(
           children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(icon, size: 18, color: tint),
+            ),
+            const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                value,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: .8,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: tint,
+                    ),
+                  ),
+                ],
               ),
             ),
-            Icon(Icons.expand_more, size: 18, color: scheme.onSurfaceVariant),
+            Icon(Icons.edit_calendar_outlined,
+                size: 16, color: scheme.onSurfaceVariant),
           ],
         ),
       ),
+    );
+  }
+
+  /// Atajos (Hoy / Mañana / +7 días) bajo los selectores de fecha.
+  Widget _dayChips() {
+    final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final chips = <(String, int)>[
+      ('Hoy', 0),
+      ('Mañana', 1),
+      ('En 7 días', 7),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final (label, days) in chips)
+          Builder(builder: (context) {
+            final selected = _isSameDay(
+                _dateTime, DateTime(now.year, now.month, now.day + days));
+            return ChoiceChip(
+              label: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : scheme.onSurfaceVariant,
+                ),
+              ),
+              selected: selected,
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              selectedColor: AppColors.brand,
+              backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: .45),
+              onSelected:
+                  _saving ? null : (_) => _quickDay(days),
+            );
+          }),
+      ],
     );
   }
 
@@ -3007,27 +3106,48 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
           ],
           FormSection(
             label: 'Fecha y hora',
-            child: Row(
-              children: [
-                Expanded(
-                  child: _slot(
-                    icon: Icons.calendar_today_outlined,
-                    label: 'Fecha',
-                    value: hsShortDate(_dateTime),
-                    onTap: _pickDate,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _slot(
-                    icon: Icons.schedule_outlined,
-                    label: 'Hora',
-                    value: hsTimeLabel(_dateTime),
-                    onTap: _pickTime,
-                  ),
-                ),
-              ],
-            ),
+            // El ancho se mide por la PANTALLA, no con un `LayoutBuilder`:
+            // el diálogo necesita calcular sus dimensiones intrínsecas y un
+            // LayoutBuilder dentro de un AlertDialog las hace fallar
+            // ("LayoutBuilder does not support returning intrinsic"); en
+            // teléfonos angostos las dos tarjetas se apilan porque en una
+            // fila el valor quedaba recortado.
+            child: (() {
+              final stack = MediaQuery.sizeOf(context).width < 420;
+              final date = _slot(
+                icon: Icons.calendar_today_outlined,
+                label: 'Fecha',
+                value: hsShortDate(_dateTime),
+                onTap: _pickDate,
+                tint: AppColors.brand,
+              );
+              final time = _slot(
+                icon: Icons.schedule_outlined,
+                label: 'Hora',
+                value: hsTimeLabel(_dateTime),
+                onTap: _pickTime,
+                tint: const Color(0xFF8B5CF6),
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (stack) ...[
+                    date,
+                    const SizedBox(height: 10),
+                    time,
+                  ] else
+                    Row(
+                      children: [
+                        Expanded(child: date),
+                        const SizedBox(width: 10),
+                        Expanded(child: time),
+                      ],
+                    ),
+                  const SizedBox(height: 10),
+                  _dayChips(),
+                ],
+              );
+            })(),
           ),
           const SizedBox(height: 14),
           FormSection(

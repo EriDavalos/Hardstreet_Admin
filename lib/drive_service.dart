@@ -62,6 +62,10 @@ class DriveService extends DriveBase {
   @override
   Future<void> refresh() async {
     if (_root == null) return;
+    // TICKET del refresco: si mientras carga el usuario se va a otra carpeta
+    // (o refresca otra vez), lo que llegue después se DESCARTA: si no, el
+    // listado de la carpeta que se dejó aparecería encima de la nueva.
+    final ticket = beginRefresh();
     loading = true;
     error = null;
     notifyListeners();
@@ -100,14 +104,17 @@ class DriveService extends DriveBase {
           a.name.toLowerCase().compareTo(b.name.toLowerCase());
       folders.sort(byName);
       files.sort(byName);
-      updateItems([...folders, ...files]);
+      if (!applyRefresh(ticket, [...folders, ...files])) return;
       conn = DriveConn.online;
-      loadedPath = pathLabel;
     } catch (e) {
-      failRefresh('No se pudo leer la carpeta: $e');
+      if (isCurrentRefresh(ticket)) failRefresh('No se pudo leer la carpeta: $e');
     } finally {
-      loading = false;
-      notifyListeners();
+      // El girador lo apaga el ÚLTIMO refresco pedido (un refresco viejo no
+      // puede dejarlo encendido para siempre).
+      if (isLatestRefresh(ticket)) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 

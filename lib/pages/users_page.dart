@@ -118,10 +118,10 @@ class _UsersPageState extends State<UsersPage> {
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
         if (HsAccess.instance.degraded || HsAccess.instance.can('Usuarios', 'create'))
-          FilledButton.icon(
+          HsActionButton(
             onPressed: () => _openForm(),
-            icon: const Icon(Icons.person_add_alt, size: 18),
-            label: const Text('Nuevo usuario'),
+            icon: Icons.person_add_alt,
+            label: 'Nuevo usuario',
           ),
       ],
       child: Column(
@@ -284,19 +284,40 @@ class _UserTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (onEdit != null)
-            IconButton(
-              tooltip: 'Editar y asignar rol',
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined, size: 20),
-            ),
-          if (onDelete != null)
-            IconButton(
-              tooltip: 'Eliminar',
-              onPressed: onDelete,
-              icon: Icon(Icons.delete_outline,
-                  size: 20, color: scheme.error.withValues(alpha: .8)),
-            ),
+          // CELULAR: los botones de la fila van dentro del menú "⋮" (mismo
+          // patrón que el directorio de clientes). Sin ninguna opción
+          // disponible por permisos, el menú NO se dibuja.
+          if (hsRowCompact(context))
+            HsRowMenu(
+              actions: [
+                HsMenuAction(
+                  icon: Icons.edit_outlined,
+                  label: 'Editar y asignar rol',
+                  onTap: onEdit,
+                ),
+                HsMenuAction(
+                  icon: Icons.delete_outline,
+                  label: 'Eliminar',
+                  onTap: onDelete,
+                  destructive: true,
+                ),
+              ],
+            )
+          else ...[
+            if (onEdit != null)
+              IconButton(
+                tooltip: 'Editar y asignar rol',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+              ),
+            if (onDelete != null)
+              IconButton(
+                tooltip: 'Eliminar',
+                onPressed: onDelete,
+                icon: Icon(Icons.delete_outline,
+                    size: 20, color: scheme.error.withValues(alpha: .8)),
+              ),
+          ],
         ],
       ),
     );

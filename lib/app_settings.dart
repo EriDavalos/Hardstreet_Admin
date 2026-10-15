@@ -23,9 +23,13 @@ class AppSettings extends ChangeNotifier {
   static const _kRemember = 'app.remember';
   static const _kToken = 'app.token';
   static const _kUser = 'app.user';
+  static const _kShareServing = 'app.share.serving';
 
   bool _loaded = false;
   bool _dark = false;
+
+  // ---- Servicio de compartir (switch de "Archivos compartidos") ----
+  bool _shareServing = false;
 
   // ---- Sesión persistente ("Recordarme") ----
   bool _remember = false;
@@ -37,6 +41,13 @@ class AppSettings extends ChangeNotifier {
 
   /// ¿Modo oscuro activado? (persistente)
   bool get dark => _dark;
+
+  /// ¿El usuario encendió el SERVICIO DE COMPARTIR? (persistente)
+  ///
+  /// Encendido, la app sigue sirviendo las carpetas de ESTA computadora aunque
+  /// no quede ningún compartido a la vista, y lo sigue haciendo en la próxima
+  /// apertura: es lo que pide el switch del módulo "Archivos compartidos".
+  bool get shareServing => _shareServing;
 
   /// ¿Hay sesión guardada para restaurar automáticamente?
   bool get hasSavedSession => _remember && (_savedToken?.isNotEmpty ?? false);
@@ -102,6 +113,7 @@ class AppSettings extends ChangeNotifier {
     try {
       final sp = await SharedPreferences.getInstance();
       _dark = sp.getBool(_kDark) ?? false;
+      _shareServing = sp.getBool(_kShareServing) ?? false;
       _remember = sp.getBool(_kRemember) ?? false;
       _savedToken = sp.getString(_kToken);
       final userJson = sp.getString(_kUser);
@@ -121,6 +133,19 @@ class AppSettings extends ChangeNotifier {
       // Sin storage disponible: defaults en memoria.
       _loaded = true;
       notifyListeners();
+    }
+  }
+
+  /// Enciende o apaga el servicio de compartir y lo recuerda.
+  Future<void> setShareServing(bool value) async {
+    if (_shareServing == value) return;
+    _shareServing = value;
+    notifyListeners();
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setBool(_kShareServing, value);
+    } catch (_) {
+      // Sin storage: el cambio vale solo para esta sesión.
     }
   }
 

@@ -12,6 +12,7 @@ import 'hs_access.dart';
 import 'hs_api.dart';
 import 'drive_scope.dart';
 import 'image_memory.dart';
+import 'local_share_agent.dart';
 import 'pages/activity_page.dart';
 import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
@@ -24,6 +25,8 @@ import 'pages/login_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
 import 'pages/services_page.dart';
+import 'pages/shared_files_page.dart';
+import 'pages/site_page.dart';
 import 'pages/storage_page.dart';
 import 'pages/users_page.dart';
 import 'reminders_service.dart';
@@ -159,6 +162,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _checkVersion());
       // Sesión restaurada ("Recordarme"): los avisos también empiezan ya.
       if (_sessionRestored) RemindersService.instance.start();
+      // Si este usuario comparte carpetas de SU computadora, la app empieza a
+      // servirlas (agente): así los demás las ven mientras la app esté abierta.
+      if (_sessionRestored) unawaited(LocalShareAgent.instance.syncWithShares());
     });
     // Chequeo periódico mientras la app siga abierta (por si el servidor
     // publica una versión nueva en caliente). En web/tests se omite.
@@ -177,6 +183,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     AppSettings.instance.removeListener(_onSettingsChanged);
     _versionTimer?.cancel();
     RemindersService.instance.stop();
+    LocalShareAgent.instance.stop();
     super.dispose();
   }
 
@@ -271,6 +278,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // Avisos de eventos próximos + widget: empiezan a consultarse en segundo
     // plano (el widget también se alimenta desde ahí).
     RemindersService.instance.start();
+    // Carpetas compartidas DESDE esta computadora: el agente empieza a
+    // atenderlas (solo si el usuario comparte alguna de su PC).
+    unawaited(LocalShareAgent.instance.syncWithShares());
   }
 
   /// Cerrar sesión: descarta el token en el servidor y borra lo persistido
@@ -281,6 +291,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     HsAccess.reset(); // el siguiente login recarga permisos desde cero
     _sessionRestored = false;
     RemindersService.instance.reset(); // la campanita no recuerda avisos viejos
+    // Las carpetas de esta computadora dejan de servirse al salir: sin sesión
+    // no hay a quién autorizar.
+    LocalShareAgent.instance.stop();
     if (mounted) setState(() => _loggedIn = false);
   }
 
@@ -461,6 +474,7 @@ enum _Section {
   dashboard,
   clientDashboard,
   drive,
+  sharedFiles,
   agendas,
   finance,
   connection,
@@ -473,6 +487,7 @@ enum _Section {
   storage,
   settings,
   reports,
+  site,
 }
 
 class AdminHome extends StatefulWidget {
@@ -614,10 +629,13 @@ class _AdminHomeState extends State<AdminHome> {
       _canSee(module) || !HsAccess.instance.knows(module);
 
   /// Igual que [_showModule], salvo los módulos que dependen de una migración
-  /// reciente (Actividad): esos solo aparecen si el rol tiene "Ver" de verdad,
-  /// para no ofrecer una pantalla que el backend va a rechazar.
+  /// reciente (Actividad, Archivos compartidos): esos solo aparecen si el rol
+  /// tiene "Ver" de verdad, para no ofrecer una pantalla que el backend va a
+  /// rechazar.
   bool _visibleModule(String module) =>
-      module == 'Actividad' ? _canSee(module) : _showModule(module);
+      (module == 'Actividad' || module == 'Archivos compartidos')
+          ? _canSee(module)
+          : _showModule(module);
 
   @override
   Widget build(BuildContext context) {
@@ -654,6 +672,15 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.drive,
         'Archivos',
+      ),
+      (
+        const AdminDestination(
+          icon: Icons.folder_shared_outlined,
+          label: 'Archivos compartidos',
+          header: 'Operación',
+        ),
+        _Section.sharedFiles,
+        'Archivos compartidos',
       ),
       (
         const AdminDestination(
@@ -745,6 +772,19 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.activity,
         'Actividad',
       ),
+      // Diseñador de la página web (portada). SOLO para Windows: en móvil y en
+      // la web del panel el destino no se ofrece (el backend ya lo exige con el
+      // permiso del módulo "Sitio web").
+      if (siteModuleSupported())
+        (
+          const AdminDestination(
+            icon: Icons.language_rounded,
+            label: 'Sitio web',
+            header: 'Administración',
+          ),
+          _Section.site,
+          kSiteModuleName,
+        ),
       (
         const AdminDestination(
           icon: Icons.settings_outlined,
@@ -821,6 +861,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.dashboard: 'Dashboard',
       _Section.clientDashboard: 'Mi paquete',
       _Section.drive: 'Archivos',
+      _Section.sharedFiles: 'Archivos compartidos',
       _Section.connection: 'Conexión',
       _Section.users: 'Usuarios',
       _Section.roles: 'Roles',
@@ -828,6 +869,7 @@ class _AdminHomeState extends State<AdminHome> {
       _Section.packages: 'Paquetes',
       _Section.services: 'Servicios',
       _Section.activity: 'Actividad',
+      _Section.site: 'Sitio web',
       _Section.storage: 'Almacenamiento',
       _Section.agendas: 'Agendas',
       _Section.finance: 'Finanzas',
@@ -876,12 +918,18 @@ class _AdminHomeState extends State<AdminHome> {
             } else {
               _drive.path = const [];
             }
+            // Carga ESA carpeta (y descarta lo que estaba a la vista: si no,
+            // la sección Archivos abriría con el contenido de otra carpeta).
+            _drive.refresh();
             setState(() => _section = _Section.drive);
           },
         );
         break;
       case _Section.drive:
         body = DrivePage(drive: _drive);
+        break;
+      case _Section.sharedFiles:
+        body = const SharedFilesPage();
         break;
       case _Section.connection:
         body = ConnectionPage(driveApi: _drive as DriveApiService);
@@ -900,6 +948,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.activity:
         body = const ActivityPage();
+        break;
+      case _Section.site:
+        body = const SitePage();
         break;
       case _Section.storage:
         body = const StoragePage();

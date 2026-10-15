@@ -91,10 +91,19 @@ void main() {
 
     expect(find.text('Almacenamiento'), findsOneWidget);
     expect(find.text('45.0 GB de 180 GB ocupados'), findsOneWidget);
-    expect(find.text('25 %'), findsOneWidget);
+    // El % de la cuota se repite: número grande, barra partida y gráficas.
+    expect(find.text('25 %'), findsWidgets);
     expect(find.text('18342'), findsOneWidget);
     expect(find.text('C:/HardStreetDrive'), findsOneWidget);
     expect(find.textContaining('DRIVE_LIMIT_GB'), findsOneWidget);
+    // Las GRÁFICAS del espacio: barra partida y una barra por porcentaje.
+    expect(find.text('Porcentajes del espacio'), findsOneWidget);
+    expect(find.text('Cuota usada'), findsOneWidget);
+    expect(find.text('Cuota libre'), findsOneWidget);
+    expect(find.text('Disco usado'), findsOneWidget);
+    expect(find.text('Disco libre'), findsOneWidget);
+    // El botón de actualizar es de IMAGEN, en la tarjeta de presentación.
+    expect(find.byTooltip('Actualizar el espacio'), findsOneWidget);
     // Al 25 % no hay avisos.
     expect(find.textContaining('85 %'), findsNothing);
 
@@ -117,7 +126,7 @@ void main() {
       }),
     );
 
-    expect(find.text('89 %'), findsOneWidget);
+    expect(find.text('89 %'), findsWidgets);
     expect(find.textContaining('85 % o más de su cuota'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

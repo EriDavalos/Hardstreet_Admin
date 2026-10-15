@@ -1,8 +1,10 @@
 #include "event_widget.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 
 namespace {
 
@@ -15,6 +17,77 @@ POINT PointFromLParam(LPARAM lparam) {
 }
 
 constexpr wchar_t kClassName[] = L"HardstreetEventWidget";
+// El panel se repinta SOLO cada tanto (SetTimer): así el rótulo del día cambia
+// al día siguiente —y desaparece lo que ya pasó— aunque la app no vuelva a
+// empujar eventos. 15 minutos: suficiente al minuto siguiente a la medianoche
+// y muy barato (un repintado de una ventanita).
+constexpr UINT_PTR kRefreshTimerId = 1;
+constexpr UINT kRefreshMs = 15 * 60 * 1000;
+
+// Instante ACTUAL en epoch (ms, hora local), igual que el `at` que manda Dart.
+long long NowMillis() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+// Hora LOCAL de un instante (para el rótulo del día).
+bool LocalTimeOf(long long at_ms, std::tm& out) {
+  const std::time_t secs = static_cast<std::time_t>(at_ms / 1000);
+  return localtime_s(&out, &secs) == 0;
+}
+
+// Meses y días en español, abreviados como en la app (lib/hs_format.dart: se
+// toman las 3 primeras letras y se ponen en mayúsculas).
+const wchar_t* MonthShort(int month) {
+  static const wchar_t* kMonths[12] = {
+      L"ENE", L"FEB", L"MAR", L"ABR", L"MAY", L"JUN",
+      L"JUL", L"AGO", L"SEP", L"OCT", L"NOV", L"DIC"};
+  if (month < 1 || month > 12) return L"";
+  return kMonths[month - 1];
+}
+
+const wchar_t* WeekdayShort(int tm_wday) {  // std::tm: 0 = domingo
+  static const wchar_t* kDays[7] = {L"DOM", L"LUN", L"MAR", L"MI\u00c9",
+                                    L"JUE", L"VIE", L"S\u00c1B"};
+  if (tm_wday < 0 || tm_wday > 6) return L"";
+  return kDays[tm_wday];
+}
+
+constexpr long long kDayMs = 86'400'000LL;
+
+// Número de DÍAS de calendario entre dos instantes (0 = el mismo día local, 1
+// = mañana). Se comparan solo las fechas: la hora no cuenta.
+long long DaysBetween(long long from_ms, long long to_ms) {
+  std::tm a = {};
+  std::tm b = {};
+  if (!LocalTimeOf(from_ms, a) || !LocalTimeOf(to_ms, b)) {
+    return (from_ms - to_ms) / kDayMs;
+  }
+  // Días desde el año 0 aproximados por año bisiesto medio (1970-2100 va
+  // exacto): sirve para comparar, que es lo único que se necesita aquí.
+  auto day_index = [](const std::tm& t) {
+    return static_cast<long long>(t.tm_year) * 365LL +
+           static_cast<long long>(t.tm_year) / 4 -
+           static_cast<long long>(t.tm_year) / 100 +
+           static_cast<long long>(t.tm_year) / 400 + t.tm_yday;
+  };
+  return day_index(a) - day_index(b);
+}
+
+// Rótulo de la jornada: "HOY \u00b7 16 OCT", "MA\u00d1ANA \u00b7 17 OCT" o
+// "VIE 18 OCT". SIEMPRE lleva la fecha escrita, así el rótulo no miente aunque
+// el panel tarde en repintarse.
+std::wstring DayLabel(long long at_ms, long long now_ms) {
+  std::tm at = {};
+  if (!LocalTimeOf(at_ms, at)) return std::wstring();
+  wchar_t stamp[40] = {};
+  swprintf_s(stamp, L"%d %s", at.tm_mday, MonthShort(at.tm_mon + 1));
+  const long long days = DaysBetween(at_ms, now_ms);
+  if (days == 0) return std::wstring(L"HOY \u00b7 ") + stamp;
+  if (days == 1) return std::wstring(L"MA\u00d1ANA \u00b7 ") + stamp;
+  return std::wstring(WeekdayShort(at.tm_wday)) + L" " + stamp;
+}
 constexpr int kWidth = 376;    // ancho del panel
 constexpr int kMargin = 18;    // separación con el borde del área de trabajo
 constexpr int kPadding = 16;   // relleno interior
@@ -262,12 +335,14 @@ void EventWidget::EnsureWindow() {
       nullptr, GetModuleHandle(nullptr), this);
   if (hwnd_) {
     PlaceAtCorner();
+    SetTimer(hwnd_, kRefreshTimerId, kRefreshMs, nullptr);
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
   }
 }
 
 void EventWidget::DestroyPanel() {
   if (hwnd_) {
+    KillTimer(hwnd_, kRefreshTimerId);
     DestroyWindow(hwnd_);
     hwnd_ = nullptr;
   }
@@ -295,13 +370,42 @@ void EventWidget::PlaceAtCorner() {
   SetWindowRgn(hwnd_, region, TRUE);  // el sistema toma la propiedad
 }
 
+// Recalcula lo que se muestra con la hora ACTUAL. La app manda el rótulo del
+// día ya escrito, pero ese rótulo es del momento en que consultó: si el panel
+// se queda abierto (o la app cerrada) al día siguiente seguiría diciendo "HOY".
+// Aquí se recalcula desde el instante de cada evento y se descarta lo que ya
+// pasó, salvo una hora de gracia para no borrar un evento EN CURSO.
+void EventWidget::RefreshNow() {
+  const long long now = NowMillis();
+  const long long limit = now - 3'600'000LL;
+  std::vector<Event> shown;
+  shown.reserve(all_events_.size());
+  std::wstring last_day;
+  for (const Event& source : all_events_) {
+    const bool has_date = source.at_ms > 0;
+    if (has_date && source.at_ms < limit) continue;  // ya pasó
+    Event e = source;
+    if (has_date) {
+      e.day = DayLabel(source.at_ms, now);
+      // El rótulo se pinta SOLO en el primer evento de cada jornada.
+      e.show_day = !e.day.empty() && e.day != last_day;
+    } else {
+      e.show_day = source.show_day && !source.day.empty();
+    }
+    if (!e.day.empty()) last_day = e.day;
+    shown.push_back(std::move(e));
+  }
+  events_ = std::move(shown);
+}
+
 void EventWidget::Update(const std::wstring& header,
                          const std::vector<Event>& events, bool visible,
                          bool dark, bool can_add) {
   if (!header.empty()) header_ = header;
   dark_ = dark;
   can_add_ = can_add;
-  events_ = events;
+  all_events_ = events;
+  RefreshNow();
   // La lista empieza de arriba: es información nueva.
   scroll_ = 0;
   if (!visible) {
@@ -316,6 +420,16 @@ void EventWidget::Update(const std::wstring& header,
 }
 
 void EventWidget::Hide() { DestroyPanel(); }
+
+// El panel se repinta por su cuenta: los rótulos del día y los eventos vencidos
+// se recalculan aunque la app no mande nada nuevo.
+void EventWidget::RefreshByTimer() {
+  if (!hwnd_) return;
+  RefreshNow();
+  // El alto puede cambiar (se fueron eventos): se reacomoda la tarjeta.
+  PlaceAtCorner();
+  InvalidateRect(hwnd_, nullptr, TRUE);
+}
 
 int EventWidget::EventAt(POINT p) const {
   // Las zonas salen del último Paint (ya llevan el desplazamiento aplicado),
@@ -559,6 +673,12 @@ LRESULT EventWidget::HandleMessage(UINT message, WPARAM wparam,
     }
     case WM_ERASEBKGND:
       return 1;  // el fondo lo pinta WM_PAINT (evita parpadeo)
+    // Refresco propio: rótulos de día al día y fuera lo que ya pasó.
+    case WM_TIMER: {
+      if (wparam != kRefreshTimerId) break;
+      RefreshByTimer();
+      return 0;
+    }
     // La rueda desplaza el listado. Windows también la manda a la ventana bajo
     // el cursor ("desplazar ventanas inactivas"), que es justo lo que queremos:
     // el panel nunca tiene el foco.

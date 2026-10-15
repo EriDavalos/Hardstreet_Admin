@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Metadatos del widget "Próximos eventos".
 
-     updatePeriodMillis = 0: el widget NO consulta nada por su cuenta; la app
-     le EMPUJA los eventos (que es quien tiene la sesión y los datos).
+     updatePeriodMillis = 30 min: el widget NO consulta nada por su cuenta (la
+     app le EMPUJA los eventos, que es quien tiene la sesión y los datos), pero
+     SÍ se repinta solo de vez en cuando para que el rótulo del día ("HOY ·
+     16 OCT") y el descarte de lo que ya pasó sigan siendo ciertos aunque la
+     app esté cerrada. El sistema no admite periodos menores a 30 minutos;
+     para el refresco fino el widget usa además su propia alarma (ver
+     EventWidgetProvider.scheduleRefresh, cada 15 min).
 
      El widget muestra TODA la agenda próxima en una lista desplazable, así que
      pide un tamaño mínimo cómodo (~4 filas) y se puede redimensionar. -->
@@ -15,5 +20,5 @@
     android:resizeMode="horizontal|vertical"
     android:targetCellHeight="3"
     android:targetCellWidth="4"
-    android:updatePeriodMillis="0"
+    android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

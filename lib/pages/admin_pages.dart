@@ -320,7 +320,13 @@ class _DashboardPageState extends State<DashboardPage> {
         const _SectionHeader(
             icon: Icons.insights_outlined, label: 'Resumen general'),
         const SizedBox(height: 10),
-        _metrics(scheme, catalogValue, upcoming.length),
+        // En el CELULAR el resumen va en cuadros COMPACTOS (una línea cada uno,
+        // 2-3 por fila): las tarjetas grandes se veían desordenadas y robaban
+        // media pantalla. En tablet se conserva la rejilla de siempre.
+        if (compact)
+          _metricStrip(scheme, catalogValue, upcoming.length)
+        else
+          _metrics(scheme, catalogValue, upcoming.length),
         if (_finance != null) ...[
           const SizedBox(height: 22),
           const _SectionHeader(
@@ -750,7 +756,10 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Espacio del drive en UNA línea (versión de tablero de [_spaceCard]).
   Widget _spaceLine(ColorScheme scheme, Map<String, dynamic> space) {
     final used = (space['usedBytes'] as num?) ?? 0;
-    final total = space['totalBytes'] as num?;
+    // Se muestra la CUOTA de la carpeta (180 GB por defecto), no el tamaño
+    // del disco: es el límite que maneja el estudio.
+    final quota = space['limitBytes'] as num?;
+    final total = quota ?? (space['totalBytes'] as num?);
     final files = (space['files'] as num?) ?? 0;
     final folders = (space['folders'] as num?) ?? 0;
     final pct =
@@ -770,6 +779,7 @@ class _DashboardPageState extends State<DashboardPage> {
           Expanded(
             child: Text(
               '${_fmtBytes(used)}${total != null ? ' de ${_fmtBytes(total)}' : ''}'
+              '${quota != null ? ' de cuota' : ''}'
               ' · $files archivos · $folders carpetas',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -808,10 +818,12 @@ class _DashboardPageState extends State<DashboardPage> {
     return '${b.round()} B';
   }
 
-  /// Tarjeta "Espacio del drive": ocupado vs. total + conteo de archivos.
+  /// Tarjeta "Espacio del drive": ocupado vs. la CUOTA + conteo de archivos.
   Widget _spaceCard(ColorScheme scheme, Map<String, dynamic> space) {
     final used = (space['usedBytes'] as num?) ?? 0;
-    final total = space['totalBytes'] as num?;
+    // La barra se mide contra la CUOTA (180 GB), no contra el disco completo.
+    final quota = space['limitBytes'] as num?;
+    final total = quota ?? (space['totalBytes'] as num?);
     final files = (space['files'] as num?) ?? 0;
     final folders = (space['folders'] as num?) ?? 0;
     final pct =
@@ -843,7 +855,9 @@ class _DashboardPageState extends State<DashboardPage> {
                           TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 4),
                   Text(
-                    '${_fmtBytes(used)}${total != null ? ' de ${_fmtBytes(total)}' : ''} ocupados · $files archivos · $folders carpetas',
+                    '${_fmtBytes(used)}${total != null ? ' de ${_fmtBytes(total)}' : ''}'
+                    '${quota != null ? ' de cuota' : ''}'
+                    ' · $files archivos · $folders carpetas',
                     style: TextStyle(
                         fontSize: 12,
                         height: 1.35,

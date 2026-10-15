@@ -201,8 +201,19 @@ void main() {
       (tester) async {
     await _pumpFinance(tester, const Size(1280, 1000));
 
-    // El módulo con su tira de totales (cuadros HORIZONTALES).
+    // El módulo con su resumen AGRUPADO: cuatro grupos, cada uno con sus
+    // cuadros (antes eran 10 cuadros sueltos en una rejilla pareja y todo se
+    // veía junto, sin distinguir lo que entra de lo que sale).
     expect(find.text('Finanzas'), findsOneWidget);
+    for (final group in [
+      'LO QUE GANAS',
+      'COBROS',
+      'SALIDAS',
+      'APARTADO Y PAGOS',
+    ]) {
+      // 'SALIDAS' también es una columna de la tabla.
+      expect(find.text(group), findsWidgets, reason: 'grupo $group');
+    }
     for (final label in [
       'GANADO',
       'COBRADO',
@@ -219,18 +230,28 @@ void main() {
     expect(find.text(r'MXN $14,950'), findsWidgets);
     expect(find.text('= Disponible'), findsOneWidget);
 
-    // Los cuadros de una fila comparten altura.
-    final ganado = tester.getRect(find.text('GANADO'));
-    final cobrado = tester.getRect(find.text('COBRADO'));
-    expect((ganado.top - cobrado.top).abs(), lessThan(1),
-        reason: 'los cuadros están alineados en la misma fila (horizontal)');
-    expect(cobrado.left, greaterThan(ganado.left));
+    // Los cuadros van TODOS juntos en UNA lista VERTICAL, sin un recuadro por
+    // grupo: se leen de arriba abajo en el orden en que se ganan → entran →
+    // salen → se apartan.
+    final ganas = tester.getRect(find.text('LO QUE GANAS'));
+    final cobros = tester.getRect(find.text('COBROS'));
+    final salidas = tester.getRect(find.text('SALIDAS').first);
+    final apartado = tester.getRect(find.text('APARTADO Y PAGOS'));
+    expect(ganas.left, cobros.left,
+        reason: 'las secciones arrancan en la misma columna (vertical)');
+    expect(cobros.left, salidas.left);
+    expect(salidas.left, apartado.left);
+    expect(ganas.top, lessThan(cobros.top));
+    expect(cobros.top, lessThan(salidas.top));
+    expect(salidas.top, lessThan(apartado.top));
 
     // La TABLA: encabezado de columnas y de grupos.
     expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
-    for (final col in ['CONCEPTO', 'MONTO', 'SALIDAS']) {
+    // 'SALIDAS' es columna de la tabla Y grupo del resumen.
+    for (final col in ['CONCEPTO', 'MONTO']) {
       expect(find.text(col), findsOneWidget, reason: 'columna $col');
     }
+    expect(find.text('SALIDAS'), findsNWidgets(2));
     // 'AHORRO' es columna de la tabla Y cuadro de totales.
     expect(find.text('AHORRO'), findsNWidgets(2));
     expect(find.text('PAQUETES'), findsOneWidget);
@@ -389,6 +410,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Finanzas: en una ventana BAJA nada se desborda', (tester) async {
+    // El resumen del dinero es un bloque de ALTO FIJO: con una ventana baja
+    // (1366x620, típica de una laptop) se comía el espacio de la tabla y el
+    // RenderFlex desbordaba la pantalla. En ese caso la tabla y la gráfica
+    // bajan a una zona con scroll en vez de recortarse.
+    await _pumpFinance(tester, const Size(1366, 620));
+
+    expect(find.text('LO QUE GANAS'), findsOneWidget);
+    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
+    // La tabla sigue COMPLETA (grupos, paquetes y filas de movimiento).
+    expect(find.text('PAQUETES'), findsOneWidget);
+    expect(find.text('Boda - Premium'), findsWidgets);
+    expect(find.text('Abonos'), findsWidgets);
+    expect(tester.takeException(), isNull);
+
+    // Y con la ventana todavía más baja tampoco.
+    await _pumpFinance(tester, const Size(1100, 560));
+    expect(find.text('SALIDAS'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Finanzas (escritorio): el resumen del dinero se puede MINIMIZAR '
+      'para dejarle la pantalla a la tabla', (tester) async {
+    await _pumpFinance(tester, const Size(1280, 1000));
+
+    // Abierto por defecto: los cuatro grupos a la vista.
+    expect(find.text('LO QUE GANAS'), findsOneWidget);
+    expect(find.text('COBROS'), findsOneWidget);
+    final tablaAbierta = tester.getRect(find.text('Dinero por paquete y movimiento'));
+
+    // Se minimiza: los grupos desaparecen y la tabla SUBE (gana el espacio
+    // que ocupaba el resumen).
+    await _tap(tester, find.byTooltip('Minimizar los cuadros'));
+    expect(find.text('LO QUE GANAS'), findsNothing);
+    expect(find.text('COBROS'), findsNothing);
+    // El encabezado del bloque sigue ahí, en una línea.
+    expect(find.text('Resumen del dinero'), findsOneWidget);
+    final tablaMin = tester.getRect(find.text('Dinero por paquete y movimiento'));
+    expect(tablaMin.top, lessThan(tablaAbierta.top),
+        reason: 'la tabla arranca más arriba cuando el resumen está minimizado');
+    // La tabla sigue COMPLETA.
+    expect(find.text('PAQUETES'), findsOneWidget);
+    expect(find.text('Abonos'), findsWidgets);
+
+    // Y se vuelve a mostrar.
+    await _tap(tester, find.byTooltip('Mostrar los cuadros'));
+    expect(find.text('LO QUE GANAS'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Finanzas (móvil): la tabla se ve ordenada y sin desbordes',
       (tester) async {
     await _pumpFinance(tester, const Size(390, 844));
@@ -415,21 +487,30 @@ void main() {
       'XV Años - Gold',
       'Luis Gómez',
       'GANADO',
+      'GANANCIA REAL',
+      'GANANCIA ESTIMADA',
       'COBRADO',
       'POR COBRAR',
-      'AHORRO',
       'GASTOS',
       'INVERSIÓN',
       'ABONO EXTERNO',
+      'PAGOS',
       'Abonos externos',
       'Ahorro apartado',
-      'Abonar al ahorro',
-      'Nuevo movimiento',
+      // Los títulos de los grupos del resumen.
+      'LO QUE GANAS',
+      'COBROS',
+      'SALIDAS',
+      'APARTADO Y PAGOS',
     });
     expect(clipped, isEmpty, reason: 'textos cortados en el teléfono: $clipped');
 
-    // En el teléfono la acción es la versión corta (la larga no cabía).
-    expect(find.text('Nuevo movimiento'), findsOneWidget);
+    // En el teléfono las acciones son de IMAGEN (solo el icono, con el texto
+    // como tooltip): así no compiten por el ancho con la información.
+    expect(find.byTooltip('Nuevo movimiento'), findsOneWidget);
+    expect(find.byTooltip('Abonar al ahorro'), findsOneWidget);
+    expect(find.text('Nuevo movimiento'), findsNothing);
+    expect(find.text('Abonar al ahorro'), findsNothing);
 
     // Las columnas de la tabla se alinean con su encabezado.
     final head = tester.getRect(find.text('CONCEPTO'));
@@ -443,27 +524,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Finanzas (móvil): los totales se DESLIZAN de uno en uno',
+  testWidgets(
+      'Finanzas (móvil): los totales van juntos en una lista VERTICAL y se '
+      'pueden MINIMIZAR',
       (tester) async {
     await _pumpFinance(tester, const Size(390, 844));
 
-    // El carrusel ocupa el ancho de la pantalla…
-    final page = tester.getRect(find.byType(PageView));
-    expect(page.width, greaterThan(340));
-    // …y se ve UNA tarjeta COMPLETA: la siguiente no asoma a medias.
+    // Ya NO hay carrusel: los cuadros se ven varios a la vez y bajan con el
+    // MISMO scroll que la tabla (así se consulta más información sin tanto
+    // deslizamiento).
+    expect(find.byType(PageView), findsNothing);
     expect(find.text('GANADO'), findsOneWidget);
-    expect(find.text('COBRADO'), findsNothing);
-    expect(find.text('POR COBRAR'), findsNothing);
-
-    // Al deslizar de lado entra la SIGUIENTE y la de antes se va.
-    await tester.drag(find.byType(PageView), const Offset(-340, 0));
-    await tester.pumpAndSettle();
     expect(find.text('COBRADO'), findsOneWidget);
-    expect(find.text('GANADO'), findsNothing);
+    expect(find.text('POR COBRAR'), findsOneWidget);
 
-    // La tarjeta que quedó a la vista no trae nada recortado.
-    final clipped = _clippedOneLineTexts(tester, {'COBRADO'});
+    // Nada recortado en la rejilla compacta.
+    final clipped =
+        _clippedOneLineTexts(tester, {'GANADO', 'COBRADO', 'POR COBRAR'});
     expect(clipped, isEmpty, reason: 'etiqueta recortada: $clipped');
+
+    // El bloque se puede MINIMIZAR para dejarle la pantalla a la tabla…
+    expect(find.text('Resumen del dinero'), findsOneWidget);
+    await _tap(tester, find.byTooltip('Minimizar los cuadros'));
+    expect(find.text('GANADO'), findsNothing);
+    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
+
+    // …y volver a mostrar cuando se quieren los números.
+    await _tap(tester, find.byTooltip('Mostrar los cuadros'));
+    expect(find.text('GANADO'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -471,9 +559,10 @@ void main() {
       (tester) async {
     await _pumpFinance(tester, const Size(390, 844));
 
-    // Las acciones de la página comparten renglón (no una por línea).
-    final nuevo = tester.getRect(find.text('Nuevo movimiento'));
-    final abonar = tester.getRect(find.text('Abonar al ahorro').first);
+    // Las acciones de la página comparten renglón (no una por línea). En el
+    // teléfono son botones de imagen, así que se miden por su tooltip.
+    final nuevo = tester.getRect(find.byTooltip('Nuevo movimiento'));
+    final abonar = tester.getRect(find.byTooltip('Abonar al ahorro'));
     expect((nuevo.top - abonar.top).abs(), lessThan(1),
         reason: 'las acciones de la página van en el mismo renglón');
 

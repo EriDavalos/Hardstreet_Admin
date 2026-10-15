@@ -9,6 +9,7 @@ import '../hs_format.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
+import '../widgets/hs_pickers.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
@@ -135,10 +136,10 @@ class _ClientsPageState extends State<ClientsPage> {
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
         if (HsAccess.instance.degraded || HsAccess.instance.can('Clientes', 'create'))
-          FilledButton.icon(
+          HsActionButton(
             onPressed: () => _openForm(),
-            icon: const Icon(Icons.badge_outlined, size: 18),
-            label: const Text('Nuevo cliente'),
+            icon: Icons.badge_outlined,
+            label: 'Nuevo cliente',
           ),
       ],
       child: Column(
@@ -324,12 +325,8 @@ class _ClientTile extends StatelessWidget {
                       label: pkgCount == 1 ? '1 paquete' : '$pkgCount paquetes',
                       tint: const Color(0xFF8B5CF6),
                     ),
-                    if (onPackages != null)
-                      _ClientChip(
-                        icon: Icons.touch_app_outlined,
-                        label: 'Abrir',
-                        tint: scheme.primary,
-                      ),
+                    // Ya no hay pastilla "Abrir": la tarjeta entera abre el
+                    // administrador (y el menú "⋮" tiene la acción).
                   ],
                 ),
               ],
@@ -337,53 +334,26 @@ class _ClientTile extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           if (compact)
-            PopupMenuButton<String>(
-              tooltip: 'Acciones',
-              icon: Icon(Icons.more_vert_rounded,
-                  size: 20, color: scheme.onSurfaceVariant),
-              onSelected: (value) {
-                switch (value) {
-                  case 'paquetes':
-                    onPackages?.call();
-                  case 'editar':
-                    onEdit?.call();
-                  case 'eliminar':
-                    onDelete?.call();
-                }
-              },
-              itemBuilder: (context) => [
-                if (onPackages != null)
-                  const PopupMenuItem(
-                    value: 'paquetes',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.card_giftcard_outlined, size: 20),
-                      title: Text('Paquetes'),
-                    ),
-                  ),
-                if (onEdit != null)
-                  const PopupMenuItem(
-                    value: 'editar',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.edit_outlined, size: 20),
-                      title: Text('Editar'),
-                    ),
-                  ),
-                if (onDelete != null)
-                  PopupMenuItem(
-                    value: 'eliminar',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.delete_outline,
-                          size: 20, color: scheme.error),
-                      title: Text('Eliminar',
-                          style: TextStyle(color: scheme.error)),
-                    ),
-                  ),
+            // Menú "⋮" (el mismo patrón en todos los módulos en el celular).
+            // Sin ninguna opción disponible (permisos) no se dibuja.
+            HsRowMenu(
+              actions: [
+                HsMenuAction(
+                  icon: Icons.card_giftcard_outlined,
+                  label: 'Paquetes',
+                  onTap: onPackages,
+                ),
+                HsMenuAction(
+                  icon: Icons.edit_outlined,
+                  label: 'Editar',
+                  onTap: onEdit,
+                ),
+                HsMenuAction(
+                  icon: Icons.delete_outline,
+                  label: 'Eliminar',
+                  onTap: onDelete,
+                  destructive: true,
+                ),
               ],
             )
           else ...[
@@ -948,12 +918,7 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
       ((s['serviceId'] ?? s['id']) as num?)?.toInt() ?? 0;
 
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dateTime,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
+    final picked = await showHsDatePicker(context, initialDate: _dateTime);
     if (picked == null) return;
     setState(() {
       _dateTime = DateTime(picked.year, picked.month, picked.day,
@@ -962,10 +927,7 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
   }
 
   Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_dateTime),
-    );
+    final picked = await showHsTimePicker(context, initialTime: _dateTime);
     if (picked == null) return;
     setState(() {
       _dateTime = DateTime(_dateTime.year, _dateTime.month, _dateTime.day,
@@ -1031,27 +993,40 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
       children: [
         FormSection(
           label: 'Fecha y hora',
-          child: Row(
-            children: [
-              Expanded(
-                child: _PickerField(
-                  icon: Icons.calendar_today_outlined,
-                  label: 'Fecha',
-                  value: hsShortDate(_dateTime),
-                  onTap: _pickDate,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _PickerField(
-                  icon: Icons.schedule_outlined,
-                  label: 'Hora',
-                  value: hsTimeLabel(_dateTime),
-                  onTap: _pickTime,
-                ),
-              ),
-            ],
-          ),
+          // El ancho se mide por la PANTALLA: el diálogo calcula sus
+          // dimensiones intrínsecas y un `LayoutBuilder` dentro de un
+          // AlertDialog las hace fallar ("does not support returning
+          // intrinsic dimensions").
+          child: (() {
+            final stack = MediaQuery.sizeOf(context).width < 380;
+            final date = _PickerField(
+              icon: Icons.calendar_today_outlined,
+              label: 'Fecha',
+              value: hsShortDate(_dateTime),
+              onTap: _pickDate,
+              tint: AppColors.brand,
+            );
+            final time = _PickerField(
+              icon: Icons.schedule_outlined,
+              label: 'Hora',
+              value: hsTimeLabel(_dateTime),
+              onTap: _pickTime,
+              tint: _kViolet,
+            );
+            if (stack) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [date, const SizedBox(height: 10), time],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: date),
+                const SizedBox(width: 10),
+                Expanded(child: time),
+              ],
+            );
+          })(),
         ),
         const SizedBox(height: 16),
         FormSection(
@@ -1101,33 +1076,83 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
   }
 }
 
-/// Campo de selección (fecha u hora) con aspecto de input.
+/// Campo de selección (fecha u hora): tarjeta táctil con icono tintado,
+/// rótulo y valor. Se ve como una pieza de la app, no como un input prestado.
 class _PickerField extends StatelessWidget {
   const _PickerField({
     required this.icon,
     required this.label,
     required this.value,
     required this.onTap,
+    this.tint,
   });
 
   final IconData icon;
   final String label;
   final String value;
   final VoidCallback onTap;
+  final Color? tint;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = tint ?? AppColors.brand;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon, size: 20),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(11, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: .28)),
         ),
-        child: Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: .8,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.edit_calendar_outlined,
+                size: 16, color: scheme.onSurfaceVariant),
+          ],
         ),
       ),
     );
@@ -1248,6 +1273,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// 1 = detalle de administración. Al tocar una tarjeta se entra con
   /// animación; la flecha del encabezado regresa al selector.
   int _stage = 0;
+
+  /// Pestaña Movimientos: las tarjetas de dinero se pueden MINIMIZAR para
+  /// dejarle la pantalla al historial.
+  bool _moneyOpen = true;
 
   late final int _userId = (widget.client['id'] as num).toInt();
   late final String _name =
@@ -1641,6 +1670,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
   /// servicio DEL PAQUETE (las dos opcionales; el cliente las ve en "Mi
   /// paquete" junto a su selección de fotos).
+  ///
+  /// La carpeta se elige DENTRO del Drive del cliente: el selector se abre en
+  /// la carpeta que YA se le comparte y no deja subir más arriba (lo de fuera
+  /// no lo vería).
   Future<void> _editServiceShare(Map<String, dynamic> svc) async {
     final serviceId = (svc['id'] as num?)?.toInt() ?? 0;
     if (serviceId == 0) {
@@ -1654,7 +1687,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         serviceName: (svc['name'] ?? 'Servicio').toString(),
         folder: (svc['shareFolder'] ?? '').toString(),
         link: (svc['shareLink'] ?? '').toString(),
-        onPickFolder: _pickDriveFolder,
+        onPickFolder: () => _pickDriveFolder(insideShared: true),
       ),
     );
     if (out == null) return;
@@ -1829,43 +1862,52 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     // En MÓVIL el administrador de paquetes ocupa TODA la pantalla: entre
     // pestañas, tarjetas y acciones necesita el espacio completo.
     final phone = hsIsPhone(context);
-    return Dialog(
-      insetPadding: phone
-          ? EdgeInsets.zero
-          : EdgeInsets.symmetric(
-              horizontal: wide ? 24 : 10,
-              vertical: wide ? 20 : 12,
-            ),
-      clipBehavior: Clip.antiAlias,
-      shape: phone
-          ? const RoundedRectangleBorder()
-          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: phone ? double.infinity : 1180),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // Alto FIJO: el alto disponible se toma del layout real (dentro
-            // de un diálogo no siempre coincide con el de la pantalla).
-            final available = constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : size.height * .94;
-            final height =
-                phone ? available : (available * .98).clamp(460.0, 920.0);
-            return SizedBox(
-              width: phone ? double.infinity : 1180,
-              height: height,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _header(scheme),
-                  Divider(height: 1, color: scheme.outlineVariant),
-                  Expanded(child: _body(scheme)),
-                  Divider(height: 1, color: scheme.outlineVariant),
-                  _footer(scheme),
-                ],
+    // ATRÁS (botón del sistema o gesto) NO cierra el modal: si se está
+    // administrando un paquete, regresa al selector de paquetes del cliente.
+    return PopScope(
+      canPop: _stage == 0 || _purchased.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _busy) return;
+        _backToPicker();
+      },
+      child: Dialog(
+        insetPadding: phone
+            ? EdgeInsets.zero
+            : EdgeInsets.symmetric(
+                horizontal: wide ? 24 : 10,
+                vertical: wide ? 20 : 12,
               ),
-            );
-          },
+        clipBehavior: Clip.antiAlias,
+        shape: phone
+            ? const RoundedRectangleBorder()
+            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: phone ? double.infinity : 1180),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Alto FIJO: el alto disponible se toma del layout real (dentro
+              // de un diálogo no siempre coincide con el de la pantalla).
+              final available = constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : size.height * .94;
+              final height =
+                  phone ? available : (available * .98).clamp(460.0, 920.0);
+              return SizedBox(
+                width: phone ? double.infinity : 1180,
+                height: height,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _header(scheme),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    Expanded(child: _body(scheme)),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    _footer(scheme),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -1978,28 +2020,40 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           )
         : const SizedBox.shrink();
 
-    // MÓVIL: botones apilados y a lo ancho (en pantallas angostas la fila
-    // comprimía "Asignar del catálogo" y "Listo" hasta hacerlos ilegibles).
+    // MÓVIL: TODO en UN renglón y con botones de IMAGEN (icono + tooltip),
+    // que ocupan mucho menos que las etiquetas completas.
     if (narrow) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(18, 10, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+        child: Row(
           children: [
-            actions,
-            const SizedBox(height: 10),
-            if (_busy) ...[
-              const Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+            Tooltip(
+              message: 'Asignar un paquete del catálogo',
+              child: IconButton.filledTonal(
+                visualDensity: VisualDensity.compact,
+                onPressed: _busy || _loading ? null : _addFromCatalog,
+                icon: const Icon(Icons.library_add_outlined, size: 20),
+              ),
+            ),
+            if (_selected != null && _canAdminister) ...[
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Quitar el paquete del cliente',
+                child: IconButton.outlined(
+                  visualDensity: VisualDensity.compact,
+                  onPressed:
+                      _busy ? null : () => _removeFromClient(_selected!),
+                  icon: Icon(Icons.remove_circle_outline,
+                      size: 20, color: scheme.error),
                 ),
               ),
-              const SizedBox(height: 10),
             ],
-            done,
+            const Spacer(),
+            if (_busy) spinner,
+            FilledButton(
+              onPressed: _busy ? null : () => Navigator.of(context).pop(),
+              child: const Text('Listo'),
+            ),
           ],
         ),
       );
@@ -2057,16 +2111,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       if (!twoColumns) {
         // MÓVIL: la presentación del paquete YA NO ocupa media pantalla: se
         // convierte en la pestaña "Paquete", junto con Servicios, Calendario,
-        // Movimientos y Drive. Arriba solo queda la tira para cambiar de
-        // paquete; si las cinco pestañas no caben, la fila hace scroll
-        // horizontal.
+        // Movimientos y Drive. Para cambiar de paquete se vuelve con la
+        // flecha del encabezado (el selector de paquetes se quitó).
         content = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: _selectorSection(scheme),
-            ),
             _tabBar(scheme, withFicha: true),
             Expanded(child: _tabContent(scheme)),
           ],
@@ -2199,24 +2248,13 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   // ---------- Columna izquierda: ficha del paquete ----------
 
-  /// Tira para CAMBIAR de paquete del cliente (etiqueta + pestañas). En
-  /// móvil queda fija arriba, sobre la fila de pestañas de administración.
-  Widget _selectorSection(ColorScheme scheme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _sectionLabel(scheme, 'Paquetes del cliente'),
-        const SizedBox(height: 8),
-        _selector(scheme),
-      ],
-    );
-  }
-
   Widget _sidePanel(ColorScheme scheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _selectorSection(scheme),
+        // La etiqueta "Paquetes del cliente" y las pestañas para cambiar de
+        // paquete se quitaron: se vuelve al selector con la flecha del
+        // encabezado (ahí se ven TODOS los paquetes del cliente).
         _ficha(scheme),
       ],
     );
@@ -2347,122 +2385,6 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           ),
         ),
       ],
-    );
-  }
-
-  /// Selector de los paquetes del cliente: una tira de PESTAÑAS con scroll
-  /// horizontal (antes eran chips que se apilaban en varias filas).
-  Widget _selector(ColorScheme scheme) {
-    if (_purchased.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 36,
-      child: SingleChildScrollView(
-        primary: false,
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (var i = 0; i < _purchased.length; i++) ...[
-              if (i > 0) const SizedBox(width: 8),
-              _packageChip(scheme, _purchased[i]),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Cada paquete como PESTAÑA: una sola línea, esquinas superiores
-  /// redondeadas y el activo remarcado con el acento de la app.
-  Widget _packageChip(ColorScheme scheme, Map<String, dynamic> p) {
-    final id = (p['id'] as num).toInt();
-    final isSelected = id == _selectedId;
-    final isVigente = id == _vigenteId;
-    final isFinished = _isFinished(p);
-    final edge = isSelected
-        ? AppColors.brand.withValues(alpha: .55)
-        : scheme.outlineVariant.withValues(alpha: .5);
-    return InkWell(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-      onTap: _busy ? null : () => _select(id),
-      child: Stack(
-        fit: StackFit.passthrough,
-        children: [
-          Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? AppColors.brand.withValues(alpha: .12)
-                  : scheme.surfaceContainerHighest.withValues(alpha: .30),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(10)),
-              border: Border.all(color: edge),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isFinished
-                      ? Icons.verified_outlined
-                      : Icons.play_circle_outline,
-                  size: 15,
-                  color: isSelected ? AppColors.brand : scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 7),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 170),
-                  child: Text(
-                    (p['name'] ?? 'Paquete').toString(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: isSelected
-                          ? scheme.onSurface
-                          : scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                if (isVigente) ...[
-                  const SizedBox(width: 7),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: _kGreen.withValues(alpha: .16),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text(
-                      'Actual',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        color: _kGreen,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // Indicador de la pestaña activa (barra inferior marcada).
-          if (isSelected)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                height: 2.4,
-                decoration: BoxDecoration(
-                  color: AppColors.brand,
-                  borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(2)),
-                ),
-              ),
-            ),
-        ],
-      ),
     );
   }
 
@@ -2980,244 +2902,70 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return null;
   }
 
-  /// Selector de carpeta del Drive (navega de verdad, sin mover la carpeta
-  /// que se está viendo en la sección Archivos).
-  Future<List<String>?> _pickDriveFolder() async {
+  /// Todas las carpetas ya compartidas con el cliente: las compartidas
+  /// DIRECTAMENTE con él (las ve en todos sus paquetes: son su drive), las del
+  /// paquete en foco y las de sus otros paquetes. Es lo que el cliente ve, y
+  /// por eso es el punto de partida al compartir una carpeta de un servicio
+  /// ([insideShared]): la primera es la carpeta raíz del selector.
+  List<String> _allSharedPaths() {
+    final out = <String>[];
+    for (final p in _clientDrivePaths) {
+      if (!out.contains(p)) out.add(p);
+    }
+    for (final p in _drivePaths) {
+      if (!out.contains(p)) out.add(p);
+    }
+    for (final p in _otherSharedPaths()) {
+      if (!out.contains(p)) out.add(p);
+    }
+    return out;
+  }
+
+  /// Selector de carpeta del Drive: abre [_DriveFolderPicker] y devuelve los
+  /// segmentos de la carpeta elegida (null si se cancela la elección).
+  ///
+  /// [insideShared] = true: se elige DENTRO de lo que el cliente ya tiene
+  /// compartido —ese es SU drive—, así que el selector se abre EN la carpeta
+  /// compartida, muestra sus subcarpetas y no deja subir más arriba: nada
+  /// antes de esa carpeta. Es lo que usa compartir la carpeta de UN SERVICIO.
+  Future<List<String>?> _pickDriveFolder({bool insideShared = false}) async {
     final drive = DriveScope.maybeOf(context);
     if (drive == null) {
       _snack('El Drive no está disponible en esta pantalla');
       return null;
     }
-    var current = List<String>.of(drive.path);
-    List<String> folders = const [];
-    var loading = true;
-    String? error;
-    List<String>? picked;
-
-    Future<void> load(StateSetter setDialogState) async {
-      setDialogState(() {
-        loading = true;
-        error = null;
-      });
-      try {
-        final list = await drive.listChildFolders(current);
-        setDialogState(() {
-          folders = list;
-          loading = false;
-        });
-      } catch (e) {
-        setDialogState(() {
-          folders = const [];
-          error = '$e';
-          loading = false;
-        });
-      }
+    // El "drive" del cliente: las carpetas que YA se le comparten.
+    final roots = <String>[
+      if (insideShared)
+        for (final p in _allSharedPaths())
+          if (drivePathNormalize(p).isNotEmpty) drivePathNormalize(p),
+    ];
+    if (insideShared && roots.isEmpty) {
+      _snack('Comparte primero una carpeta con el cliente: el servicio '
+          'comparte DENTRO de su Drive');
+      return null;
     }
-
-    // Primera carpeta: se pide ANTES de abrir el diálogo (así ya aparece
-    // con contenido y no con un girador).
-    try {
-      folders = await drive.listChildFolders(current);
-      loading = false;
-    } catch (e) {
-      error = '$e';
-      loading = false;
-    }
-    if (!mounted) return null;
-
-    await showHsModal<void>(
+    return showHsModal<List<String>>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final scheme = Theme.of(ctx).colorScheme;
-          // En móvil el navegador de carpetas usa TODO el alto disponible.
-          final phone = hsIsPhone(ctx);
-          // ¿La carpeta abierta ya se solapa con alguna compartida del cliente?
-          final hereConflict = _sharedConflict(current.join('/'));
-          return AlertDialog(
-            title: const Text('¿Qué carpeta le compartes?'),
-            content: SizedBox(
-              width: phone ? double.infinity : 380,
-              height: phone ? double.infinity : 330,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHighest.withValues(alpha: .5),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      ['Mi Drive', ...current].join('  /  '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  if (hereConflict != null) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: scheme.error.withValues(alpha: .08),
-                        borderRadius: BorderRadius.circular(10),
-                        border:
-                            Border.all(color: scheme.error.withValues(alpha: .35)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(Icons.lock_outline,
-                              size: 16, color: scheme.error),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '«$hereConflict» ya está compartida con este '
-                              'cliente y esta carpeta está dentro de aquella '
-                              '(o la contiene). Elige otra para no compartir '
-                              'dos veces lo mismo.',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                height: 1.3,
-                                color: scheme.error,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: loading
-                        ? const Center(child: CircularProgressIndicator())
-                        : error != null
-                            ? Center(
-                                child: Text(
-                                  error!,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                      fontSize: 12.5, color: scheme.error),
-                                ),
-                              )
-                            : folders.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      'Esta carpeta no tiene subcarpetas.\n'
-                                      'Puedes compartirla tal cual.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: scheme.onSurfaceVariant),
-                                    ),
-                                  )
-                                : ListView(
-                                    children: [
-                                      if (current.isNotEmpty)
-                                        ListTile(
-                                          dense: true,
-                                          leading:
-                                              const Icon(Icons.arrow_upward),
-                                          title: const Text('..'),
-                                          onTap: () {
-                                            current = current.sublist(
-                                                0, current.length - 1);
-                                            load(setDialogState);
-                                          },
-                                        ),
-                                      // Las carpetas que se solapan con lo ya
-                                      // compartido salen BLOQUEADAS: se ve por
-                                      // qué no se pueden usar.
-                                      for (final f in folders)
-                                        Builder(builder: (_) {
-                                          final child = drivePathNormalize(
-                                              [...current, f].join('/'));
-                                          final clash = _sharedConflict(child);
-                                          return ListTile(
-                                            dense: true,
-                                            enabled: clash == null,
-                                            leading: Icon(
-                                              clash == null
-                                                  ? Icons.folder_rounded
-                                                  : Icons.lock_outline,
-                                              color: clash == null
-                                                  ? scheme.primary
-                                                  : scheme.onSurfaceVariant,
-                                            ),
-                                            title: Text(f),
-                                            subtitle: clash == null
-                                                ? null
-                                                : Text(
-                                                    'Ya compartida en «$clash»',
-                                                    maxLines: 2,
-                                                    style: TextStyle(
-                                                      fontSize: 11,
-                                                      color: scheme.error,
-                                                    ),
-                                                  ),
-                                            onTap: clash == null
-                                                ? () {
-                                                    current = [...current, f];
-                                                    load(setDialogState);
-                                                  }
-                                                : null,
-                                          );
-                                        }),
-                                    ],
-                                  ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                // Sin carpeta elegida o con choque: no se puede compartir.
-                onPressed: current.isEmpty || hereConflict != null
-                    ? null
-                    : () {
-                        picked = List<String>.of(current);
-                        Navigator.pop(ctx);
-                      },
-                child: const Text('Compartir esta carpeta'),
-              ),
-            ],
-          );
-        },
+      builder: (_) => _DriveFolderPicker(
+        base: insideShared ? roots.first : '',
+        initial: insideShared ? const <String>[] : drive.path,
+        roots: roots,
+        load: drive.listChildFolders,
+        // Dentro del drive del cliente NO hay solapamiento que valga: TODO lo
+        // que se ofrece está dentro de lo que ya ve (compartir una subcarpeta
+        // para un servicio no duplica nada en su Drive). Fuera, se avisa de
+        // las carpetas que se solapan con lo ya compartido.
+        conflict: insideShared
+            ? (_) => null
+            : (path) => _sharedConflict(drivePathNormalize(path)),
       ),
     );
-    return picked;
   }
 
-  Future<void> _shareDriveFolder() async {
-    final id = _selectedId;
-    if (id == null) return;
-    final segments = await _pickDriveFolder();
-    if (segments == null || segments.isEmpty) return;
-    final path = segments.join('/');
-    if (_drivePaths.contains(path)) {
-      _snack('Esa carpeta ya está compartida con el cliente');
-      return;
-    }
-    // Última revisión con los datos más frescos (el backend valida igual).
-    final clash = _sharedConflict(path);
-    if (clash != null) {
-      _snack('Esa carpeta se solapa con «$clash», que ya está compartida');
-      return;
-    }
-    await _run(
-      () => HsApi.addPackageDrivePath(purchasedPackageId: id, path: path),
-    );
-  }
+  // Compartir una carpeta se hace SIEMPRE al CLIENTE (_shareClientDriveFolder):
+  // el Drive no depende del paquete. Solo queda el "dejar de compartir" de las
+  // carpetas que pertenecen a la versión anterior (compartidas al paquete).
 
   Future<void> _unshareDriveFolder(String path) async {
     final id = _selectedId;
@@ -3231,7 +2979,12 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (_loadingProgress) {
       return const Center(child: CircularProgressIndicator());
     }
-    final paths = _drivePaths;
+    // El Drive compartido NO depende del paquete: depende del CLIENTE. Lo
+    // que se comparte aquí lo ve en TODOS sus paquetes (y en su Drive solo ve
+    // eso). Las carpetas que quedaron compartidas "al paquete" en la versión
+    // anterior siguen funcionando: se listan aparte, para poder quitarlas.
+    final paths = _clientDrivePaths;
+    final legacy = _drivePaths;
     final editable = _canAdminister && !_busy;
     return ListView(
       primary: false,
@@ -3252,9 +3005,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Comparte con este paquete las carpetas del Drive que '
-                  'quieras: puede ser MÁS DE UNA. El cliente verá en su Drive '
-                  'solo las carpetas compartidas de sus paquetes (y nada más).',
+                  'Aquí se le comparten carpetas del Drive AL CLIENTE: las ve '
+                  'en todos sus paquetes (y su Drive solo muestra lo que se le '
+                  'comparte). Puede ser más de una.',
                   style: TextStyle(
                       fontSize: 12,
                       height: 1.35,
@@ -3268,7 +3021,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         // UNA tarjeta por carpeta compartida, cada una con su botón para
         // dejar de compartirla (las demás siguen igual).
         for (final path in paths) ...[
-          _sharedFolderCard(scheme, path, editable),
+          _clientFolderCard(scheme, path, editable),
           const SizedBox(height: 8),
         ],
         if (paths.isEmpty)
@@ -3290,7 +3043,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Sin carpeta compartida',
+                        'Sin carpetas compartidas',
                         style: TextStyle(
                             fontSize: 13, fontWeight: FontWeight.w800),
                       ),
@@ -3309,20 +3062,148 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         const SizedBox(height: 12),
         if (editable)
           FilledButton.icon(
-            onPressed: _shareDriveFolder,
+            onPressed: _shareClientDriveFolder,
             icon: const Icon(Icons.folder_open_outlined, size: 18),
             label: Text(paths.isEmpty
-                ? 'Elegir carpeta del Drive'
-                : 'Agregar otra carpeta'),
+                ? 'Compartir una carpeta del Drive'
+                : 'Compartir otra carpeta'),
           )
         else
           Text(
             paths.isEmpty
-                ? 'Este paquete no comparte ninguna carpeta con el cliente.'
+                ? 'No se le comparte ninguna carpeta al cliente.'
                 : 'Solo lectura: este paquete ya no se administra.',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
+        // Carpetas de la versión anterior (compartidas AL PAQUETE): si el
+        // cliente tiene más paquetes, aquí NO se ven. Se dejan a la vista solo
+        // si existen, para poder quitarlas.
+        if (legacy.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _sectionLabel(scheme, 'Solo en este paquete'),
+          const SizedBox(height: 8),
+          Text(
+            'Estas carpetas se compartieron al paquete (versión anterior) y '
+            'solo se ven aquí. Para que el cliente las vea en TODOS sus '
+            'paquetes, quítalas y vuelve a compartirlas arriba.',
+            style: TextStyle(
+                fontSize: 11.5, height: 1.35, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          for (final path in legacy) ...[
+            _sharedFolderCard(scheme, path, editable),
+            const SizedBox(height: 8),
+          ],
+        ],
       ],
+    );
+  }
+
+  /// Carpetas compartidas DIRECTAMENTE con el cliente de este paquete.
+  List<String> get _clientDrivePaths {
+    final pkg = _progress?['package'];
+    if (pkg is! Map) return const [];
+    final data = pkg.cast<String, dynamic>();
+    final out = <String>[];
+    final raw = data['clientDrivePaths'];
+    if (raw is List) {
+      for (final x in raw) {
+        final path = drivePathNormalize(x.toString());
+        if (path.isNotEmpty && !out.contains(path)) out.add(path);
+      }
+    }
+    return out;
+  }
+
+  Future<void> _shareClientDriveFolder() async {
+    final id = _selectedId;
+    if (id == null) return;
+    final segments = await _pickDriveFolder(insideShared: false);
+    if (segments == null || segments.isEmpty) return;
+    final path = segments.join('/');
+    if (_clientDrivePaths.contains(path)) {
+      _snack('Esa carpeta ya se comparte con el cliente');
+      return;
+    }
+    await _run(
+      () => HsApi.addClientDrivePath(purchasedPackageId: id, path: path),
+    );
+  }
+
+  Future<void> _unshareClientDriveFolder(String path) async {
+    final id = _selectedId;
+    if (id == null) return;
+    await _run(
+      () => HsApi.removeClientDrivePath(purchasedPackageId: id, path: path),
+    );
+  }
+
+  /// Tarjeta de UNA carpeta compartida con el CLIENTE (todos sus paquetes).
+  ///
+  /// Se ve en TODOS sus paquetes, así que lo que se quita es el VÍNCULO con el
+  /// cliente (desvincular): el azul del panel, sin el morado de antes y con el
+  /// botón nombrado en vez de una "x".
+  Widget _clientFolderCard(ColorScheme scheme, String path, bool editable) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: AppColors.brand.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.brand.withValues(alpha: .24)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppColors.brand.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.folder_shared_outlined,
+                color: AppColors.brand, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  path,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12.5, fontWeight: FontWeight.w700, height: 1.2),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Compartida con el cliente (todos sus paquetes).',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          if (editable)
+            Tooltip(
+              message: 'Desvincular la carpeta del cliente',
+              child: TextButton.icon(
+                onPressed: () => _unshareClientDriveFolder(path),
+                style: TextButton.styleFrom(
+                  foregroundColor: scheme.error,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  textStyle: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                icon: const Icon(Icons.link_off, size: 16),
+                label: const Text('Desvincular'),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -3385,297 +3266,20 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       primary: false,
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
       itemCount: services.length,
-      itemBuilder: (context, i) {
-        final s = services[i];
-        final done = s['done'] == true;
-        final when = hsParseDate(s['finishedAt']);
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(11),
-          decoration: BoxDecoration(
-            color: done
-                ? _kGreen.withValues(alpha: .07)
-                : scheme.surfaceContainerHighest.withValues(alpha: .30),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: done
-                  ? _kGreen.withValues(alpha: .35)
-                  : scheme.outlineVariant.withValues(alpha: .5),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: (done ? _kGreen : _kViolet).withValues(alpha: .14),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  done ? Icons.task_alt : Icons.pending_actions_outlined,
-                  size: 18,
-                  color: done ? _kGreen : _kViolet,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            (s['name'] ?? 'Servicio').toString(),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13.5),
-                          ),
-                        ),
-                        _MiniPill(
-                          icon: done
-                              ? Icons.check_circle_outline
-                              : Icons.timelapse,
-                          label: (s['status'] ?? 'Pendiente').toString(),
-                          color: done ? _kGreen : _kAmber,
-                        ),
-                      ],
-                    ),
-                    if ((s['description'] ?? '').toString().trim().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          (s['description'] ?? '').toString(),
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.25,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    if ((s['url'] ?? '').toString().trim().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Tooltip(
-                          message: 'Copiar enlace de la carpeta',
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(6),
-                            onTap: () =>
-                                _copyServiceUrl((s['url'] ?? '').toString().trim()),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.link,
-                                    size: 13, color: AppColors.brand),
-                                const SizedBox(width: 5),
-                                Expanded(
-                                  child: Text(
-                                    (s['url'] ?? '').toString().trim(),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.brand,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    // Lo COMPARTIDO con el cliente para ESTE servicio: su
-                    // carpeta del Drive y su liga (si las hay), más cuántas
-                    // fotos/elementos ya eligió el cliente.
-                    if ((s['shareFolder'] ?? '').toString().trim().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.folder_open_outlined,
-                                size: 13, color: AppColors.brand),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                (s['shareFolder'] ?? '').toString().trim(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.brand,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if ((s['shareLink'] ?? '').toString().trim().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Tooltip(
-                          message: 'Copiar la liga compartida',
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(6),
-                            onTap: () => _copyServiceUrl(
-                                (s['shareLink'] ?? '').toString().trim()),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.link,
-                                    size: 13, color: AppColors.brand),
-                                const SizedBox(width: 5),
-                                Expanded(
-                                  child: Text(
-                                    (s['shareLink'] ?? '').toString().trim(),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.brand,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (((s['items'] as num?)?.toInt() ?? 0) > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.photo_library_outlined,
-                                size: 13, color: _kViolet),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${(s['items'] as num).toInt()} '
-                              '${(s['items'] as num).toInt() == 1 ? 'elemento elegido' : 'elementos elegidos'} '
-                              'por el cliente',
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                color: _kViolet,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (when != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.only(top: 1),
-                              child: Icon(Icons.event_available,
-                                  size: 13, color: _kGreen),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                'Terminado el ${hsDateLabel(when)}',
-                                style: const TextStyle(
-                                  fontSize: 11.5,
-                                  height: 1.2,
-                                  fontWeight: FontWeight.w600,
-                                  color: _kGreen,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (_canAdminister)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        // UNA sola fila, siempre en horizontal: en el celular
-                        // los botones NO se apilan (se deslizan si no caben).
-                        // El aire entre ellos es el mínimo: solo su propio
-                        // padding interno, sin separadores extra.
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              if (!done)
-                                TextButton.icon(
-                                  onPressed:
-                                      _busy ? null : () => _completeService(s),
-                                  style: _kServiceAction,
-                                  icon: const Icon(Icons.task_alt, size: 15),
-                                  label: const Text('Completar servicio'),
-                                )
-                              else
-                                TextButton.icon(
-                                  onPressed:
-                                      _busy ? null : () => _reopenService(s),
-                                  style: _kServiceAction,
-                                  icon: const Icon(Icons.undo, size: 15),
-                                  label: const Text('Reabrir'),
-                                ),
-                              TextButton.icon(
-                                onPressed:
-                                    _busy ? null : () => _editServiceNote(s),
-                                style: _kServiceAction,
-                                icon: const Icon(Icons.edit_note, size: 16),
-                                label: Text(
-                                  (s['description'] ?? '')
-                                          .toString()
-                                          .trim()
-                                          .isEmpty
-                                      ? 'Añadir nota'
-                                      : 'Editar nota',
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed:
-                                    _busy ? null : () => _editServiceUrl(s),
-                                style: _kServiceAction,
-                                icon: const Icon(Icons.link, size: 15),
-                                label: Text(
-                                  (s['url'] ?? '').toString().trim().isEmpty
-                                      ? 'Agregar enlace'
-                                      : 'Editar enlace',
-                                ),
-                              ),
-                              // Compartir POR SERVICIO: carpeta del Drive y/o
-                              // liga que el cliente ve en "Mi paquete".
-                              TextButton.icon(
-                                onPressed: _busy
-                                    ? null
-                                    : () => _editServiceShare(s),
-                                style: _kServiceAction,
-                                icon: const Icon(
-                                    Icons.folder_shared_outlined,
-                                    size: 15),
-                                label: Text(
-                                  ((s['shareFolder'] ?? '').toString().trim()
-                                                  .isEmpty &&
-                                              (s['shareLink'] ?? '')
-                                                  .toString()
-                                                  .trim()
-                                                  .isEmpty)
-                                      ? 'Compartir'
-                                      : 'Editar lo compartido',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      itemBuilder: (context, i) => _ServiceTile(
+        service: services[i],
+        canAdminister: _canAdminister,
+        busy: _busy,
+        onComplete: _completeService,
+        onReopen: _reopenService,
+        onNote: _editServiceNote,
+        onUrl: _editServiceUrl,
+        onShare: _editServiceShare,
+        onCopy: _copyServiceUrl,
+      ),
     );
   }
+
 
   // ---------- Pestaña: calendario ----------
 
@@ -3800,123 +3404,159 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     final currency = (_selected?['currency'] ?? 'MXN').toString();
     final movements = _movements;
     final totals = _totals;
+    final phone = MediaQuery.sizeOf(context).width < 560;
+    final tiles = <Widget>[
+      _MoneyTile('Disponible', hsMoney(_disponible, currency), _kGreen),
+      _MoneyTile(
+          'Ahorro', hsMoney((totals['ahorrado'] as num?) ?? 0, currency), _kTeal),
+      _MoneyTile(
+          'Abono externo',
+          hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
+          _kBlue),
+      _MoneyTile(
+          'Invertido',
+          hsMoney((totals['invertido'] as num?) ?? 0, currency),
+          _kViolet),
+      _MoneyTile(
+          'Gastado', hsMoney((totals['gastado'] as num?) ?? 0, currency), _kRed),
+      _MoneyTile(
+          'Pagado', hsMoney((totals['pagos'] as num?) ?? 0, currency), _kAmber),
+    ];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    // TODO (tarjetas de dinero + botones + movimientos) vive en UN solo
+    // scroll: se puede bajar por las tarjetas de información y el bloque de
+    // dinero se puede MINIMIZAR para dejarle la pantalla a los movimientos.
+    return ListView(
+      primary: false,
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
       children: [
-        if (_progress != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-            // Los cuadros del dinero van en UNA SOLA FILA (horizontal), con el
-            // mismo ancho entre sí: nada de unos encima de otros. El texto se
-            // encoge dentro de su cuadro si el panel es angosto.
-            child: _MoneyRow(
-              tiles: [
-                _MoneyTile('Disponible', hsMoney(_disponible, currency), _kGreen),
-                _MoneyTile('Ahorro',
-                    hsMoney((totals['ahorrado'] as num?) ?? 0, currency), _kTeal),
-                _MoneyTile(
-                    'Abono externo',
-                    hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
-                    _kBlue),
-                _MoneyTile(
-                    'Invertido',
-                    hsMoney((totals['invertido'] as num?) ?? 0, currency),
-                    _kViolet),
-                _MoneyTile(
-                    'Gastado',
-                    hsMoney((totals['gastado'] as num?) ?? 0, currency),
-                    _kRed),
-                _MoneyTile(
-                    'Pagado',
-                    hsMoney((totals['pagos'] as num?) ?? 0, currency),
-                    _kAmber),
-              ],
-            ),
+        if (_progress != null) ...[
+          Row(
+            children: [
+              Icon(Icons.account_balance_wallet_outlined,
+                  size: 15, color: scheme.primary),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Dinero del paquete',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (!_moneyOpen)
+                Text(
+                  'Disponible ${hsMoney(_disponible, currency)}',
+                  style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: _kGreen),
+                ),
+              Tooltip(
+                message: _moneyOpen
+                    ? 'Minimizar las tarjetas'
+                    : 'Mostrar las tarjetas',
+                child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() => _moneyOpen = !_moneyOpen),
+                  icon: AnimatedRotation(
+                    turns: _moneyOpen ? 0 : .5,
+                    duration: const Duration(milliseconds: 180),
+                    child: Icon(Icons.keyboard_arrow_up_rounded,
+                        size: 20, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            ],
           ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: !_moneyOpen
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 10),
+                    // En el celular los cuadros van en 2 columnas legibles y
+                    // bajan con el scroll; en escritorio, todos en una fila.
+                    child: phone
+                        ? LayoutBuilder(builder: (context, box) {
+                            const gap = 6.0;
+                            final w = (box.maxWidth - gap) / 2;
+                            return Wrap(
+                              spacing: gap,
+                              runSpacing: gap,
+                              children: [
+                                for (final t in tiles)
+                                  SizedBox(width: w, child: t),
+                              ],
+                            );
+                          })
+                        : _MoneyRow(tiles: tiles),
+                  ),
+          ),
+        ],
         if (_canAdminister)
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
-            child: () {
-              // MÓVIL: los botones de movimientos van apilados y a lo ancho
-              // (en una fila se veían todo junto y apretados).
-              final abonar = FilledButton.tonalIcon(
-                onPressed: _busy ? null : () => _abonar(_selected!),
-                icon: const Icon(Icons.payments_outlined, size: 16),
-                label: const Text('Abonar'),
-                style: FilledButton.styleFrom(
-                  visualDensity:
-                      MediaQuery.sizeOf(context).width < 560
-                          ? null
-                          : VisualDensity.compact,
-                  textStyle:
-                      const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                ),
-              );
-              final registrar = OutlinedButton.icon(
-                onPressed: _busy ? null : _addMovement,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Registrar movimiento'),
-                style: OutlinedButton.styleFrom(
-                  visualDensity:
-                      MediaQuery.sizeOf(context).width < 560
-                          ? null
-                          : VisualDensity.compact,
-                  textStyle: const TextStyle(fontSize: 12.5),
-                ),
-              );
-              // Repartir un pago entre colaboradores y empleados: partes
-              // iguales o por numeración.
-              final repartir = OutlinedButton.icon(
-                onPressed: _busy ? null : _splitPayment,
-                icon: const Icon(Icons.handshake_outlined, size: 16),
-                label: const Text('Repartir pago'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _kAmber,
-                  visualDensity:
-                      MediaQuery.sizeOf(context).width < 560
-                          ? null
-                          : VisualDensity.compact,
-                  textStyle: const TextStyle(fontSize: 12.5),
-                ),
-              );
-              if (MediaQuery.sizeOf(context).width < 560) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    abonar,
-                    const SizedBox(height: 8),
-                    registrar,
-                    const SizedBox(height: 8),
-                    repartir,
-                  ],
-                );
-              }
-              return Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [abonar, registrar, repartir],
-              );
-            }(),
+            padding: const EdgeInsets.only(bottom: 8),
+            // Los TRES botones van juntos, en un solo renglón (se desliza si
+            // no caben) en vez de apilados uno por línea.
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: _busy ? null : () => _abonar(_selected!),
+                    icon: const Icon(Icons.payments_outlined, size: 16),
+                    label: const Text('Abonar'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(
+                          fontSize: 12.5, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _addMovement,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Registrar movimiento'),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _splitPayment,
+                    icon: const Icon(Icons.handshake_outlined, size: 16),
+                    label: const Text('Repartir pago'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _kAmber,
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-        Expanded(
-          child: movements.isEmpty
-              ? _emptyTab(
-                  scheme,
-                  Icons.receipt_long_outlined,
-                  'Sin movimientos registrados. Los abonos aparecen aquí.',
-                )
-              : ListView.builder(
-                  primary: false,
-                  padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
-                  itemCount: movements.length,
-                  itemBuilder: (context, i) =>
-                      _movementRow(scheme, movements[i], currency),
-                ),
-        ),
+        if (movements.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 26),
+            child: _emptyTab(
+              scheme,
+              Icons.receipt_long_outlined,
+              'Sin movimientos registrados. Los abonos aparecen aquí.',
+            ),
+          )
+        else
+          for (final m in movements) _movementRow(scheme, m, currency),
       ],
     );
   }
+
 
   Widget _movementRow(
       ColorScheme scheme, Map<String, dynamic> m, String currency) {
@@ -4025,6 +3665,358 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               message,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Tarjeta de UN servicio del paquete.
+///
+/// Se toca y se EXPANDE con animación para mostrar sus opciones (nota,
+/// enlace, lo compartido y la fecha de cierre). En la cabecera SIEMPRE está el
+/// botón de selección rápida: **Completar servicio** (o **Reabrir** si ya se
+/// entregó), así no hay que desplegar nada para cerrar un servicio.
+class _ServiceTile extends StatefulWidget {
+  const _ServiceTile({
+    required this.service,
+    required this.canAdminister,
+    required this.busy,
+    required this.onComplete,
+    required this.onReopen,
+    required this.onNote,
+    required this.onUrl,
+    required this.onShare,
+    required this.onCopy,
+  });
+
+  final Map<String, dynamic> service;
+  final bool canAdminister;
+  final bool busy;
+  final ValueChanged<Map<String, dynamic>> onComplete;
+  final ValueChanged<Map<String, dynamic>> onReopen;
+  final ValueChanged<Map<String, dynamic>> onNote;
+  final ValueChanged<Map<String, dynamic>> onUrl;
+  final ValueChanged<Map<String, dynamic>> onShare;
+  final ValueChanged<String> onCopy;
+
+  @override
+  State<_ServiceTile> createState() => _ServiceTileState();
+}
+
+class _ServiceTileState extends State<_ServiceTile> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final s = widget.service;
+    final done = s['done'] == true;
+    final when = hsParseDate(s['finishedAt']);
+    final phone = MediaQuery.sizeOf(context).width < 560;
+    final color = done ? _kGreen : _kViolet;
+    final desc = (s['description'] ?? '').toString().trim();
+    final url = (s['url'] ?? '').toString().trim();
+    final shareFolder = (s['shareFolder'] ?? '').toString().trim();
+    final shareLink = (s['shareLink'] ?? '').toString().trim();
+    final items = (s['items'] as num?)?.toInt() ?? 0;
+    // ¿Se puede desplegar la tarjeta? SIEMPRE que haya algo dentro: los datos
+    // del servicio (nota, enlaces, lo compartido…) o, si se administra, sus
+    // OPCIONES (añadir nota/enlace, compartir). Antes solo se desplegaba si el
+    // servicio YA tenía datos, así que un servicio pendiente no dejaba agregar
+    // su nota ni su enlace hasta terminarlo.
+    final hasDetail = desc.isNotEmpty ||
+        url.isNotEmpty ||
+        shareFolder.isNotEmpty ||
+        shareLink.isNotEmpty ||
+        items > 0 ||
+        when != null ||
+        widget.canAdminister;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: done
+            ? _kGreen.withValues(alpha: .07)
+            : scheme.surfaceContainerHighest.withValues(alpha: .30),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: done
+              ? _kGreen.withValues(alpha: .35)
+              : scheme.outlineVariant.withValues(alpha: .5),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            // Despliega/guarda el detalle del servicio.
+            onTap: hasDetail ? () => setState(() => _open = !_open) : null,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(11, 10, 8, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      done ? Icons.task_alt : Icons.pending_actions_outlined,
+                      size: 18,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (s['name'] ?? 'Servicio').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 13.5),
+                        ),
+                        const SizedBox(height: 3),
+                        _MiniPill(
+                          icon: done
+                              ? Icons.check_circle_outline
+                              : Icons.timelapse,
+                          label: (s['status'] ?? 'Pendiente').toString(),
+                          color: done ? _kGreen : _kAmber,
+                        ),
+                      ],
+                    ),
+                  ),
+                  // SELECCIÓN RÁPIDA: cerrar (o reabrir) el servicio sin
+                  // desplegar nada.
+                  if (widget.canAdminister)
+                    done
+                        ? Tooltip(
+                            message: 'Reabrir el servicio',
+                            child: IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: widget.busy
+                                  ? null
+                                  : () => widget.onReopen(s),
+                              icon: const Icon(Icons.undo,
+                                  size: 18, color: _kAmber),
+                            ),
+                          )
+                        // Completar NO es la acción principal de la tarjeta (lo
+                        // importante es ver y llenar el servicio): va como
+                        // botón discreto, del mismo peso que "Asignar del
+                        // catálogo" (contorno), sin el verde de antes.
+                        : (phone
+                            ? Tooltip(
+                                message: 'Completar servicio',
+                                child: IconButton.outlined(
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => widget.onComplete(s),
+                                  icon: const Icon(Icons.task_alt, size: 18),
+                                ),
+                              )
+                            : OutlinedButton.icon(
+                                onPressed: widget.busy
+                                    ? null
+                                    : () => widget.onComplete(s),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  textStyle: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                icon: const Icon(Icons.task_alt, size: 15),
+                                label: const Text('Completar servicio'),
+                              )),
+                  if (hasDetail)
+                    AnimatedRotation(
+                      turns: _open ? .5 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(Icons.keyboard_arrow_down_rounded,
+                          size: 20, color: scheme.onSurfaceVariant),
+                    )
+                  else
+                    const SizedBox(width: 8),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: !_open || !hasDetail
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(11, 0, 11, 11),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Divider(
+                            height: 1,
+                            color:
+                                scheme.outlineVariant.withValues(alpha: .5)),
+                        const SizedBox(height: 9),
+                        if (desc.isNotEmpty)
+                          Text(
+                            desc,
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.3,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        if (url.isNotEmpty) ...[
+                          const SizedBox(height: 7),
+                          _serviceLink(
+                            icon: Icons.link,
+                            label: url,
+                            tooltip: 'Copiar enlace de la carpeta',
+                            onTap: () => widget.onCopy(url),
+                          ),
+                        ],
+                        if (shareFolder.isNotEmpty) ...[
+                          const SizedBox(height: 7),
+                          _serviceLink(
+                            icon: Icons.folder_open_outlined,
+                            label: shareFolder,
+                            tooltip: 'Copiar la carpeta compartida',
+                            onTap: () => widget.onCopy(shareFolder),
+                          ),
+                        ],
+                        if (shareLink.isNotEmpty) ...[
+                          const SizedBox(height: 7),
+                          _serviceLink(
+                            icon: Icons.link,
+                            label: shareLink,
+                            tooltip: 'Copiar la liga compartida',
+                            onTap: () => widget.onCopy(shareLink),
+                          ),
+                        ],
+                        if (items > 0) ...[
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              const Icon(Icons.photo_library_outlined,
+                                  size: 13, color: _kViolet),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  '$items ${items == 1 ? 'elemento elegido' : 'elementos elegidos'} por el cliente',
+                                  style: const TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: _kViolet),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (when != null) ...[
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              const Icon(Icons.event_available,
+                                  size: 13, color: _kGreen),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  'Terminado el ${hsDateLabel(when)}',
+                                  style: const TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: _kGreen),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (widget.canAdminister) ...[
+                          const SizedBox(height: 9),
+                          _serviceActions(s),
+                        ],
+                      ],
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Las opciones del servicio: en el celular se deslizan de lado (UNA fila),
+  /// en escritorio caben en la tarjeta.
+  Widget _serviceActions(Map<String, dynamic> s) {
+    final hasShare = (s['shareFolder'] ?? '').toString().trim().isNotEmpty ||
+        (s['shareLink'] ?? '').toString().trim().isNotEmpty;
+    final hasNote = (s['description'] ?? '').toString().trim().isNotEmpty;
+    final hasUrl = (s['url'] ?? '').toString().trim().isNotEmpty;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          TextButton.icon(
+            onPressed: widget.busy ? null : () => widget.onNote(s),
+            style: _kServiceAction,
+            icon: const Icon(Icons.edit_note, size: 16),
+            label: Text(hasNote ? 'Editar nota' : 'Añadir nota'),
+          ),
+          TextButton.icon(
+            onPressed: widget.busy ? null : () => widget.onUrl(s),
+            style: _kServiceAction,
+            icon: const Icon(Icons.link, size: 15),
+            label: Text(hasUrl ? 'Editar enlace' : 'Agregar enlace'),
+          ),
+          TextButton.icon(
+            onPressed: widget.busy ? null : () => widget.onShare(s),
+            style: _kServiceAction,
+            icon: const Icon(Icons.folder_shared_outlined, size: 15),
+            label: Text(hasShare ? 'Editar lo compartido' : 'Compartir'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _serviceLink({
+    required IconData icon,
+    required String label,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Row(
+          children: [
+            Icon(icon, size: 13, color: AppColors.brand),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.brand,
+                ),
+              ),
             ),
           ],
         ),
@@ -5257,35 +5249,66 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
 
   num _amountOf(int id) => _parse(_amounts[id]?.text ?? '');
 
-  /// Suma de todos los montos escritos en el modo por numeración.
-  num get _byNumberTotal =>
-      _amounts.keys.fold<num>(0, (sum, id) => sum + _amountOf(id));
+  /// Los ELEGIDOS, en el orden de la lista: solo a ellos se les paga.
+  List<Map<String, dynamic>> get _chosen => widget.recipients
+      .where((r) => _selected.contains((r['id'] as num).toInt()))
+      .toList();
 
-  /// Lo que le toca a cada uno en partes iguales.
+  /// Suma de los montos de los ELEGIDOS (modo por numeración).
+  num get _byNumberTotal =>
+      _selected.fold<num>(0, (sum, id) => sum + _amountOf(id));
+
+  /// Lo que le toca a cada elegido en partes iguales.
   num get _perPerson =>
       _selected.isEmpty ? 0 : _totalValue / _selected.length;
 
-  /// Montos positivos del modo por numeración (los vacíos se ignoran).
+  /// Montos positivos de los ELEGIDOS (los vacíos se ignoran).
   List<Map<String, dynamic>> _numberParts() {
     final parts = <Map<String, dynamic>>[];
-    _amounts.forEach((id, c) {
-      final amount = _parse(c.text);
+    for (final r in _chosen) {
+      final id = (r['id'] as num).toInt();
+      final amount = _amountOf(id);
       if (amount > 0) parts.add({'userId': id, 'amount': amount});
-    });
+    }
     return parts;
+  }
+
+  void _toggle(int id) {
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+    });
+  }
+
+  /// Reparte el total escrito en partes IGUALES entre los elegidos (útil en el
+  /// modo por numeración para no teclear cada monto).
+  void _spreadEquals() {
+    final total = _totalValue;
+    if (total <= 0 || _selected.isEmpty) return;
+    final base = (total / _selected.length * 100).round() / 100;
+    var acumulado = 0.0;
+    final ids = _selected.toList();
+    setState(() {
+      for (var i = 0; i < ids.length; i++) {
+        final last = i == ids.length - 1;
+        final amount =
+            last ? ((total - acumulado) * 100).round() / 100 : base;
+        acumulado += amount;
+        _amounts[ids[i]]?.text = amount.toStringAsFixed(2);
+      }
+    });
   }
 
   Future<void> _save() async {
     if (_saving) return;
     final pkgId = (widget.package['id'] as num).toInt();
     final description = _concept.text.trim();
+    if (_selected.isEmpty) {
+      setState(() => _error = 'Marca al menos una persona');
+      return;
+    }
     if (_mode == 'iguales') {
       if (_totalValue <= 0) {
         setState(() => _error = 'Escribe el total a repartir');
-        return;
-      }
-      if (_selected.isEmpty) {
-        setState(() => _error = 'Marca al menos un colaborador o empleado');
         return;
       }
     } else if (_numberParts().isEmpty) {
@@ -5336,20 +5359,98 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = _moveColor('pago');
+    final allChosen = _selected.length == widget.recipients.length;
     return FormDialog(
       icon: Icons.handshake_outlined,
       title: 'Repartir pago',
-      subtitle: '${(widget.package['name'] ?? '').toString()} · '
-          'solo colaboradores y empleados · cuenta como gasto',
+      subtitle: '${(widget.package['name'] ?? '').toString()} · se registra a '
+          'quién se le pagó y cuánto. NO se descuenta del paquete.',
       saving: _saving,
       error: _error,
       saveLabel: 'Repartir',
-      maxWidth: 500,
+      maxWidth: 520,
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
+        // 1) PRIMERO se eligen las personas: solo a ellas se les paga.
         FormSection(
-          label: '¿Cómo se reparte?',
+          label: '1. Elige a quiénes se les paga',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final r in widget.recipients) _personTile(r),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() {
+                              if (allChosen) {
+                                _selected.clear();
+                              } else {
+                                _selected
+                                  ..clear()
+                                  ..addAll(widget.recipients
+                                      .map((r) => (r['id'] as num).toInt()));
+                              }
+                            }),
+                    icon: Icon(
+                        allChosen
+                            ? Icons.check_box_outline_blank
+                            : Icons.select_all,
+                        size: 18),
+                    label: Text(allChosen ? 'Quitar todos' : 'Todos'),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _selected.isEmpty
+                        ? 'Nadie seleccionado'
+                        : (_selected.length == 1
+                            ? '1 persona'
+                            : '${_selected.length} personas'),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color:
+                          _selected.isEmpty ? scheme.onSurfaceVariant : color,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (_selected.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: .5)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 16, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Marca arriba a quién se le reparte y luego elige cómo '
+                    'repartirlo.',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else ...[
+        // 2) DESPUÉS, cómo se reparte entre los elegidos.
+        FormSection(
+          label: '2. ¿Cómo se reparte?',
           child: SegmentedButton<String>(
             showSelectedIcon: false,
             style: const ButtonStyle(
@@ -5389,160 +5490,51 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
               ),
             ),
           ),
-          if (_totalValue > 0 && _selected.isNotEmpty) ...[
+          if (_totalValue > 0) ...[
             const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: color.withValues(alpha: .30)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.calculate_outlined, size: 16, color: color),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'A cada uno de ${_selected.length} le toca',
-                      style: TextStyle(
-                          fontSize: 12, color: scheme.onSurfaceVariant),
-                    ),
-                  ),
-                  Text(
-                    hsMoney(_perPerson, widget.currency),
-                    style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                        color: color),
-                  ),
-                ],
-              ),
-            ),
+            _summary(color, scheme, 'A cada uno de los elegidos le toca',
+                hsMoney(_perPerson, widget.currency)),
           ],
-          const SizedBox(height: 14),
-          FormSection(
-            label: '¿A quiénes se les reparte?',
-            child: Column(
-              children: [
-                for (final r in widget.recipients)
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: _selected.contains((r['id'] as num).toInt()),
-                    onChanged: _saving
-                        ? null
-                        : (v) => setState(() {
-                              final id = (r['id'] as num).toInt();
-                              if (v == true) {
-                                _selected.add(id);
-                              } else {
-                                _selected.remove(id);
-                              }
-                            }),
-                    title: Text(
-                      (r['name'] ?? '').toString(),
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: (r['roleName'] ?? '').toString().isEmpty
-                        ? null
-                        : Text(
-                            (r['roleName'] ?? '').toString(),
-                            style: TextStyle(
-                                fontSize: 11.5,
-                                color: scheme.onSurfaceVariant),
-                          ),
-                  ),
-              ],
-            ),
-          ),
         ] else ...[
           FormSection(
-            label: 'Monto de cada uno',
+            label: 'Monto de cada elegido',
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final r in widget.recipients)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                (r['name'] ?? '').toString(),
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600),
-                              ),
-                              if ((r['roleName'] ?? '').toString().isNotEmpty)
-                                Text(
-                                  (r['roleName'] ?? '').toString(),
-                                  style: TextStyle(
-                                      fontSize: 11.5,
-                                      color: scheme.onSurfaceVariant),
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        SizedBox(
-                          width: 120,
-                          child: TextField(
-                            controller: _amounts[(r['id'] as num).toInt()],
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: (_) => setState(() {}),
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              hintText: '0',
-                              prefixText: '\$ ',
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: .08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: color.withValues(alpha: .30)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.calculate_outlined, size: 16, color: color),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Total a repartir',
-                          style: TextStyle(
-                              fontSize: 12, color: scheme.onSurfaceVariant),
-                        ),
-                      ),
-                      Text(
-                        hsMoney(_byNumberTotal, widget.currency),
-                        style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w800,
-                            color: color),
-                      ),
-                    ],
+                for (final r in _chosen) _amountRow(r),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _total,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Total (opcional)',
+                    helperText: 'Escríbelo y toca «Repartir en partes iguales» '
+                        'para llenar los montos.',
+                    prefixIcon: Icon(Icons.attach_money, size: 20),
                   ),
                 ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        _saving || _totalValue <= 0 ? null : _spreadEquals,
+                    icon: const Icon(Icons.balance, size: 16),
+                    label: const Text('Repartir en partes iguales'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _summary(color, scheme, 'Total a repartir',
+                    hsMoney(_byNumberTotal, widget.currency)),
               ],
             ),
           ),
         ],
         const SizedBox(height: 14),
         FormSection(
-          label: 'Concepto',
+          label: 'Concepto (opcional)',
           child: TextField(
             controller: _concept,
             minLines: 1,
@@ -5554,7 +5546,151 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
             ),
           ),
         ),
+        ],
       ],
+    );
+  }
+
+  /// Fila seleccionable de una persona (con su rol).
+  Widget _personTile(Map<String, dynamic> r) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _moveColor('pago');
+    final id = (r['id'] as num).toInt();
+    final picked = _selected.contains(id);
+    final name = (r['name'] ?? '').toString();
+    final role = (r['roleName'] ?? '').toString();
+    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _saving ? null : () => _toggle(id),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: picked
+                ? color.withValues(alpha: .10)
+                : scheme.surfaceContainerHighest.withValues(alpha: .25),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: picked
+                  ? color.withValues(alpha: .45)
+                  : scheme.outlineVariant.withValues(alpha: .5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                picked
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                size: 20,
+                color: picked ? color : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 10),
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: color.withValues(alpha: .16),
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                    if (role.isNotEmpty)
+                      Text(
+                        role,
+                        style: TextStyle(
+                            fontSize: 11, color: scheme.onSurfaceVariant),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Fila de monto de una persona ELEGIDA (modo por numeración).
+  Widget _amountRow(Map<String, dynamic> r) {
+    final id = (r['id'] as num).toInt();
+    final name = (r['name'] ?? '').toString();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 128,
+            child: TextField(
+              controller: _amounts[id],
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '0',
+                prefixText: '\$ ',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Recuadro resumen del dinero (con el color del pago).
+  Widget _summary(
+      Color color, ColorScheme scheme, String label, String amount) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: .30)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.calculate_outlined, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ),
+          Text(
+            amount,
+            style: TextStyle(
+                fontSize: 13.5, fontWeight: FontWeight.w800, color: color),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -5649,8 +5785,529 @@ class _NoteDialogState extends State<_NoteDialog> {
   }
 }
 
+/// Selector de carpeta del Drive con el diseño del panel: cabecera con el
+/// icono, migas de pan, carpetas como tarjetas y las acciones abajo.
+///
+/// Devuelve los segmentos ABSOLUTOS de la carpeta elegida (null al cancelar).
+///
+/// Con [roots] NO vacío el selector trabaja DENTRO del drive del cliente: la
+/// carpeta compartida es la RAÍZ —no hay nada antes de ella y no se puede
+/// subir más arriba—, se puede cambiar entre las carpetas compartidas y las
+/// que se solapan con lo ya compartido salen bloqueadas.
+class _DriveFolderPicker extends StatefulWidget {
+  const _DriveFolderPicker({
+    required this.base,
+    required this.initial,
+    required this.load,
+    required this.conflict,
+    this.roots = const <String>[],
+  });
+
+  /// Carpeta que hace de RAÍZ ('' = el Drive completo desde su raíz).
+  final String base;
+
+  /// Ruta relativa a [base] donde se abre el selector.
+  final List<String> initial;
+
+  /// Lista las SUBcarpetas de una ruta (en segmentos ABSOLUTOS del Drive).
+  final Future<List<String>> Function(List<String> path) load;
+
+  /// ¿[absolutePath] se solapa con algo ya compartido? Devuelve con cuál.
+  final String? Function(String absolutePath) conflict;
+
+  /// Carpetas compartidas con el cliente (vacío = todo el Drive).
+  final List<String> roots;
+
+  @override
+  State<_DriveFolderPicker> createState() => _DriveFolderPickerState();
+}
+
+class _DriveFolderPickerState extends State<_DriveFolderPicker> {
+  late String _base = widget.base;
+  late List<String> _rel = List<String>.of(widget.initial);
+  List<String> _folders = const [];
+  bool _loading = true;
+  String? _error;
+
+  /// ¿Se está eligiendo dentro del drive del cliente?
+  bool get _scoped => widget.roots.isNotEmpty;
+
+  /// Segmentos de una ruta ('ReynaCoot/Fiesta' → ['ReynaCoot', 'Fiesta']).
+  List<String> _segments(String path) => path.isEmpty
+      ? const <String>[]
+      : drivePathNormalize(path).split('/').where((s) => s.isNotEmpty).toList();
+
+  /// Ruta ABSOLUTA de la carpeta abierta ([extra] mira una subcarpeta suya).
+  List<String> _absolute([List<String>? extra]) =>
+      [..._segments(_base), ...(extra ?? _rel)];
+
+  /// Ruta absoluta de la carpeta abierta, como texto (para el solapamiento).
+  String get _here => _absolute().join('/');
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await widget.load(_absolute());
+      if (!mounted) return;
+      setState(() {
+        _folders = list;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _folders = const [];
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  void _enter(String name) {
+    setState(() => _rel = [..._rel, name]);
+    _load();
+  }
+
+  void _up() {
+    if (_rel.isEmpty) return;
+    setState(() => _rel = _rel.sublist(0, _rel.length - 1));
+    _load();
+  }
+
+  /// Cambia de carpeta compartida ("drive del cliente"): se vuelve a su raíz.
+  void _switchTo(String root) {
+    if (root == _base) return;
+    setState(() {
+      _base = root;
+      _rel = <String>[];
+      _folders = const [];
+    });
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final phone = hsIsPhone(context);
+    final conflict = widget.conflict(_here);
+    // Migas: la carpeta compartida es la RAÍZ y en el Drive completo se navega
+    // desde Mi Drive.
+    final crumbs = <String>[
+      if (_base.isEmpty) 'Mi Drive' else _segments(_base).last,
+      ..._rel,
+    ];
+    // La raíz del Drive completo NO se comparte (sería todo el drive).
+    final canPick = (_scoped || _rel.isNotEmpty) && conflict == null;
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 14, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+      title: _header(scheme),
+      content: SizedBox(
+        width: phone ? double.infinity : 430,
+        height: phone ? double.infinity : 400,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.roots.length > 1) ...[
+              _rootPicker(scheme),
+              const SizedBox(height: 10),
+            ],
+            _crumbBar(scheme, crumbs),
+            if (conflict != null) ...[
+              const SizedBox(height: 8),
+              _conflictNotice(scheme, conflict),
+            ],
+            const SizedBox(height: 10),
+            Expanded(child: _body(scheme)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton.icon(
+          onPressed:
+              canPick ? () => Navigator.pop(context, _absolute()) : null,
+          icon: const Icon(Icons.check_rounded, size: 18),
+          label: const Text('Compartir esta carpeta'),
+        ),
+      ],
+    );
+  }
+
+  /// Cabecera: icono degradado + título y aclaración de qué se puede elegir.
+  Widget _header(ColorScheme scheme) {
+    return Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.brand, AppColors.brandDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.brand.withValues(alpha: .30),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.folder_open_outlined,
+              color: Colors.white, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Carpeta del Drive',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+              Text(
+                _scoped
+                    ? 'Solo lo que está dentro del Drive del cliente'
+                    : 'Elige cualquier carpeta del Drive',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurfaceVariant,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Cambio de carpeta compartida: solo con más de una (si hay una, esa es el
+  /// drive del cliente y no hace falta elegir).
+  Widget _rootPicker(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DRIVE DEL CLIENTE',
+          style: TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .9,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final r in widget.roots)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    selected: r == _base,
+                    showCheckmark: false,
+                    selectedColor: AppColors.brand,
+                    side: BorderSide(
+                      color: r == _base
+                          ? AppColors.brand
+                          : scheme.outlineVariant.withValues(alpha: .6),
+                    ),
+                    avatar: Icon(
+                      Icons.folder_rounded,
+                      size: 16,
+                      color: r == _base ? Colors.white : AppColors.brand,
+                    ),
+                    label: Text(
+                      drivePathNormalize(r).split('/').last,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: r == _base ? Colors.white : scheme.onSurface,
+                      ),
+                    ),
+                    onSelected: (_) => _switchTo(r),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Migas de pan: la carpeta compartida primero y lo abierto dentro de ella.
+  Widget _crumbBar(ColorScheme scheme, List<String> crumbs) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.brand.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.brand.withValues(alpha: .22)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _scoped ? Icons.folder_shared_outlined : Icons.home_outlined,
+            size: 16,
+            color: AppColors.brand,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              // La carpeta actual (la última miga) siempre a la vista.
+              reverse: true,
+              child: Row(
+                children: [
+                  for (var i = 0; i < crumbs.length; i++) ...[
+                    if (i > 0)
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 15,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    Text(
+                      crumbs[i],
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: i == crumbs.length - 1
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        color: i == crumbs.length - 1
+                            ? scheme.onSurface
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Aviso de solapamiento: la carpeta está dentro de (o contiene a) algo ya
+  /// compartido y por eso no se puede elegir.
+  Widget _conflictNotice(ColorScheme scheme, String conflict) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: scheme.error.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.error.withValues(alpha: .35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline, size: 16, color: scheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '«$conflict» ya está compartida con este cliente y esta carpeta '
+              'está dentro de aquella (o la contiene). Elige otra para no '
+              'compartir dos veces lo mismo.',
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.3,
+                color: scheme.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(ColorScheme scheme) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12.5, color: scheme.error),
+        ),
+      );
+    }
+    if (_folders.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.folder_off_outlined,
+                  color: scheme.onSurfaceVariant,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Esta carpeta no tiene subcarpetas.\nPuedes compartirla '
+                'tal cual con el botón de abajo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.35,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        if (_rel.isNotEmpty) _upTile(scheme),
+        for (final f in _folders) _folderTile(scheme, f),
+      ],
+    );
+  }
+
+  /// Subir un nivel (nunca por encima de la carpeta compartida).
+  Widget _upTile(ColorScheme scheme) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _up,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: .6),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(
+                Icons.arrow_upward,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Subir un nivel',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Una carpeta: tarjeta con su icono. Las que se solapan con lo ya
+  /// compartido salen bloqueadas y dicen por qué.
+  Widget _folderTile(ColorScheme scheme, String name) {
+    final clash = widget.conflict(_absolute([..._rel, name]).join('/'));
+    final locked = clash != null;
+    final tint = locked ? scheme.error : AppColors.brand;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: locked ? null : () => _enter(name),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: .30),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: locked
+                ? scheme.error.withValues(alpha: .35)
+                : scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                locked ? Icons.lock_outline : Icons.folder_rounded,
+                size: 18,
+                color: tint,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (locked)
+                    Text(
+                      'Ya compartida en «$clash»',
+                      maxLines: 2,
+                      style: TextStyle(fontSize: 11, color: scheme.error),
+                    ),
+                ],
+              ),
+            ),
+            if (!locked)
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN servicio
 /// del paquete. Devuelve `(folder, link)` al guardar, o null al cancelar.
+///
+/// La carpeta se elige DENTRO del Drive del cliente (lo que ya tiene
+/// compartido): es lo único que él ve, así que el selector se abre en esa
+/// carpeta y no deja salir de ahí.
 class _ServiceShareDialog extends StatefulWidget {
   const _ServiceShareDialog({
     required this.serviceName,
@@ -5702,8 +6359,8 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
       onSave: _save,
       children: [
         Text(
-          'Para ESTE servicio del paquete puedes compartir una carpeta del '
-          'Drive, una liga, o las dos. El cliente las verá en «Mi paquete» '
+          'Para ESTE servicio puedes compartir una carpeta del Drive del '
+          'cliente, una liga, o las dos. El cliente las verá en «Mi paquete» '
           'junto a las fotos que elija del Drive.',
           style: TextStyle(
             fontSize: 12.5,
@@ -5711,34 +6368,12 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
             color: scheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
         FormSection(
           label: 'Carpeta del Drive',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _pick,
-                icon: const Icon(Icons.folder_open_outlined, size: 18),
-                label: Text(
-                  _folder.isEmpty ? 'Elegir carpeta' : _folder,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (_folder.isNotEmpty)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => setState(() => _folder = ''),
-                    icon: const Icon(Icons.close, size: 16),
-                    label: const Text('Quitar carpeta'),
-                  ),
-                ),
-            ],
-          ),
+          child: _folder.isEmpty ? _pickTile(scheme) : _folderCard(scheme),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
         FormSection(
           label: 'Liga (opcional)',
           child: TextField(
@@ -5750,6 +6385,120 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Sin carpeta elegida: una tarjeta que ABRE el selector (antes era un
+  /// botón suelto con el texto cambiando de "Elegir carpeta").
+  Widget _pickTile(ColorScheme scheme) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: _pick,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: .25),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.outlineVariant.withValues(alpha: .6)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.brand.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.create_new_folder_outlined,
+                  size: 20, color: AppColors.brand),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Compartir una carpeta del Drive',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Dentro de lo que el cliente ya tiene compartido.',
+                    style: TextStyle(
+                        fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                size: 18, color: scheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Con carpeta elegida: la ruta y su botón para DESVINCULARLA del servicio.
+  Widget _folderCard(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: AppColors.brand.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.brand.withValues(alpha: .24)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppColors.brand.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.folder_rounded,
+                color: AppColors.brand, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _folder,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Carpeta del Drive compartida con el servicio.',
+                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          Tooltip(
+            message: 'Desvincular la carpeta del servicio',
+            child: TextButton.icon(
+              onPressed: () => setState(() => _folder = ''),
+              style: TextButton.styleFrom(
+                foregroundColor: scheme.error,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                textStyle: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              icon: const Icon(Icons.link_off, size: 16),
+              label: const Text('Desvincular'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -260,6 +260,81 @@ abstract class DriveBase extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------- Refrescos: respuestas VIEJAS ----------
+  //
+  // Navegar es inmediato y la red no: si el usuario entra a una carpeta y
+  // vuelve a la anterior antes de que llegue la respuesta de la primera, esa
+  // respuesta YA NO SIRVE (pintaría las fotos de la carpeta que dejó, como si
+  // siguieran cargando las de antes). Cada refresco lleva un TICKET —número de
+  // petición + carpeta— y su resultado solo se aplica si sigue vigente.
+
+  int _refreshSeq = 0;
+
+  /// Últimos listados BUENOS por carpeta: al volver a una carpeta anterior se
+  /// ve al instante lo que había (y el refresco lo pone al día por detrás) en
+  /// vez de quedarse en blanco esperando a la red.
+  final Map<String, List<DriveItem>> _listingCache = {};
+
+  /// Cuántas carpetas se recuerdan (las más recientes).
+  static const int _listingCacheMax = 8;
+
+  /// Marca el inicio de un refresco: descarta el listado de OTRA carpeta y
+  /// devuelve el ticket de esta petición. Lo llaman las implementaciones.
+  @protected
+  ({int seq, String path}) beginRefresh() {
+    clearStaleItems();
+    _refreshSeq++;
+    return (seq: _refreshSeq, path: pathLabel);
+  }
+
+  /// ¿El ticket sigue vigente? (no se lanzó otro refresco después y no se
+  /// cambió de carpeta). Si no, la respuesta se DESCARTA.
+  @protected
+  bool isCurrentRefresh(({int seq, String path}) ticket) =>
+      ticket.seq == _refreshSeq && ticket.path == pathLabel;
+
+  /// ¿Es el ÚLTIMO refresco pedido? El cargador lo apaga solo el último en
+  /// terminar: así nunca se queda un girador eterno porque su petición fue
+  /// reemplazada por otra.
+  @protected
+  bool isLatestRefresh(({int seq, String path}) ticket) =>
+      ticket.seq == _refreshSeq;
+
+  /// Aplica un refresco EXITOSO y recuerda el listado de esa carpeta.
+  /// Con un ticket viejo no toca nada. Devuelve true si entró a pantalla.
+  @protected
+  bool applyRefresh(({int seq, String path}) ticket, List<DriveItem> listing) {
+    if (!isCurrentRefresh(ticket)) return false;
+    updateItems(listing);
+    loadedPath = pathLabel;
+    _rememberListing(pathLabel, items);
+    return true;
+  }
+
+  void _rememberListing(String path, List<DriveItem> listing) {
+    _listingCache[path] = List<DriveItem>.of(listing);
+    while (_listingCache.length > _listingCacheMax) {
+      _listingCache.remove(_listingCache.keys.first);
+    }
+  }
+
+  /// Al CAMBIAR de carpeta: fuera las fotos de la anterior —se veían mientras
+  /// cargaba la nueva, como si siguieran cargando— y dentro, si ya se conoce,
+  /// el listado de la carpeta nueva.
+  @protected
+  void clearStaleItems() {
+    if (loadedPath == pathLabel) return;
+    if (loadedPath != null) _rememberListing(loadedPath!, items);
+    final cached = _listingCache[pathLabel];
+    if (cached != null) {
+      updateItems(cached);
+      loadedPath = pathLabel;
+      return;
+    }
+    updateItems(const []);
+    loadedPath = null;
+  }
+
   DriveConn conn = DriveConn.checking;
   DriveBusy busy = DriveBusy.none;
   String busyLabel = '';

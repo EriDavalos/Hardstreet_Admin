@@ -149,14 +149,17 @@ void main() {
     expect(_adminOpen, findsOneWidget);
     expect(find.text('Boda - Premium'), findsWidgets);
 
-    // Y desde ahí se entra al detalle de administración del paquete.
+    // Y desde ahí se entra al detalle de administración del paquete: la
+    // ficha del vigente con sus pestañas (la etiqueta "Paquetes del cliente"
+    // se quitó: se vuelve al selector con la flecha del encabezado).
     await _tap(tester, find.text('Boda - Premium').first);
-    expect(find.text('PAQUETES DEL CLIENTE'), findsOneWidget);
+    expect(find.text('Finalizar paquete'), findsOneWidget);
+    expect(find.text('Drive'), findsOneWidget);
 
     // Se puede cerrar.
     await _tap(tester, find.byTooltip('Cerrar').last);
     expect(_adminOpen, findsNothing);
-    expect(find.text('PAQUETES DEL CLIENTE'), findsNothing);
+    expect(find.text('Finalizar paquete'), findsNothing);
   });
 
   testWidgets('el botón "Paquetes" sigue abriendo el administrador',

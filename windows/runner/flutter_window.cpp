@@ -39,14 +39,18 @@ bool BoolOf(const flutter::EncodableValue* value, bool fallback) {
   return flag == nullptr ? fallback : *flag;
 }
 
-// Entero del mapa de argumentos (Dart manda int64; 0 si no viene).
-int IntOf(const flutter::EncodableValue* value) {
+// Entero de 64 bits del mapa de argumentos (lo usa el instante del evento, que
+// en ms no cabe en 32 bits; 0 si no viene).
+int64_t Int64Of(const flutter::EncodableValue* value) {
   if (value == nullptr) return 0;
-  if (const auto* largo = std::get_if<int64_t>(value)) {
-    return static_cast<int>(*largo);
-  }
+  if (const auto* largo = std::get_if<int64_t>(value)) return *largo;
   if (const auto* corto = std::get_if<int>(value)) return *corto;
   return 0;
+}
+
+// Entero del mapa de argumentos (Dart manda int64; 0 si no viene).
+int IntOf(const flutter::EncodableValue* value) {
+  return static_cast<int>(Int64Of(value));
 }
 
 }  // namespace
@@ -153,6 +157,9 @@ void FlutterWindow::SetUpEventsChannel() {
               event.time = WideFromUtf8(StringOf(ArgOf(*map, "time")));
               event.show_day = BoolOf(ArgOf(*map, "showDay"), false) &&
                                !event.day.empty();
+              // El instante permite al panel RECALCULAR el rótulo del día con
+              // la hora actual (ver EventWidget::RefreshNow).
+              event.at_ms = Int64Of(ArgOf(*map, "at"));
               events.push_back(std::move(event));
             }
           }

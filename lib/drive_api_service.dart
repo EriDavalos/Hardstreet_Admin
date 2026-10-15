@@ -36,6 +36,12 @@ class DriveApiService extends DriveBase {
 
   final String base;
 
+  /// Cliente HTTP de las peticiones JSON del drive. Es INYECTABLE: las pruebas
+  /// lo reemplazan por un `MockClient` para no tocar la red (mismo patrón que
+  /// `HsApi.client`). Las subidas y las descargas por bloques crean su propio
+  /// cliente, así que no pasan por aquí.
+  static http.Client client = http.Client();
+
   /// Token de sesión actual (el mismo del login contra el CRUD).
   static String get _apikey => HsSession.token ?? '';
 
@@ -101,13 +107,17 @@ class DriveApiService extends DriveBase {
 
   @override
   Future<void> refresh() async {
+    // TICKET del refresco: si mientras carga el usuario se va a otra carpeta
+    // (o se refresca otra vez), lo que llegue después se DESCARTA. Si no, las
+    // fotos de la carpeta que se dejó aparecerían encima de la nueva.
+    final ticket = beginRefresh();
     loading = true;
     error = null;
     notifyListeners();
     try {
-      final r = await http
+      final r = await client
           .get(
-            _u('/api/drive', {'path': path.join('/')}),
+            _u('/api/drive', {'path': ticket.path}),
             headers: _authHeaders,
           )
           .timeout(const Duration(seconds: 8));
@@ -131,14 +141,19 @@ class DriveApiService extends DriveBase {
         );
         (it.isFolder ? folders : files).add(it);
       }
-      updateItems([...folders, ...files]);
+      if (!applyRefresh(ticket, [...folders, ...files])) return;
       conn = DriveConn.online;
-      loadedPath = pathLabel;
     } catch (e) {
-      failRefresh('No se pudo conectar con el servidor ($base): $e');
+      if (isCurrentRefresh(ticket)) {
+        failRefresh('No se pudo conectar con el servidor ($base): $e');
+      }
     } finally {
-      loading = false;
-      notifyListeners();
+      // El girador lo apaga el ÚLTIMO refresco pedido (un refresco viejo no
+      // puede dejarlo encendido para siempre).
+      if (isLatestRefresh(ticket)) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 

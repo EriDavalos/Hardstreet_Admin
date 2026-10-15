@@ -72,13 +72,13 @@ class _FakeDrive extends DriveBase {
   Future<void> retryUpload(String jobId) async {}
 }
 
-/// Carpetas compartidas mutables (el mock las devuelve; el POST las cambia).
+/// Carpetas compartidas con el CLIENTE (el mock las devuelve y el POST las
+/// cambia). El Drive NO depende del paquete: se comparte al cliente.
 class _Shared {
   _Shared(this.value);
   List<String> value;
 }
 
-/// Paquete del cliente con SUS carpetas compartidas (las que se editan aquí).
 void _installMock({
   required List<Map<String, dynamic>> posts,
   required _Shared paths,
@@ -105,8 +105,7 @@ void _installMock({
               'tierName': 'Premium',
               'categoryName': 'Boda',
               'agendaCount': 0,
-              'drivePath': paths.value.isEmpty ? '' : paths.value.first,
-              'drivePaths': paths.value,
+              'drivePaths': const [],
               'services': const [],
             },
           ],
@@ -128,14 +127,13 @@ void _installMock({
         posts.add(body);
         final path = (body['path'] ?? '').toString();
         switch (body['action']) {
-          case 'agregar-directorio':
+          // Compartir/descompartir va contra el CLIENTE (todos sus paquetes).
+          case 'agregar-directorio-cliente':
             if (path.isNotEmpty && !paths.value.contains(path)) {
               paths.value = [...paths.value, path];
             }
-          case 'quitar-directorio':
+          case 'quitar-directorio-cliente':
             paths.value = [...paths.value]..remove(path);
-          case 'compartir-directorio':
-            paths.value = path.isEmpty ? <String>[] : [path];
         }
         return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
       }
@@ -151,10 +149,26 @@ void _installMock({
             'statusId': 2,
             'finished': false,
             'finishedAt': null,
-            'drivePath': paths.value.isEmpty ? '' : paths.value.first,
-            'drivePaths': paths.value,
+            'drivePaths': const [],
+            'clientDrivePaths': paths.value,
           },
-          'services': const [],
+          // Un servicio PENDIENTE con el que se prueba compartir su carpeta.
+          'services': const [
+            {
+              'id': 1,
+              'serviceId': 5,
+              'name': 'Cobertura en evento',
+              'description': '',
+              'url': '',
+              'status': 'Pendiente',
+              'statusId': 1,
+              'done': false,
+              'finishedAt': null,
+              'shareFolder': '',
+              'shareLink': '',
+              'items': 0,
+            },
+          ],
           'movements': const [],
           'movementsAvailable': true,
           'totals': const {'abonado': 6000, 'disponible': 5200},
@@ -175,8 +189,8 @@ Future<void> _pump(
   required List<Map<String, dynamic>> posts,
   required _Shared paths,
   _FakeDrive? drive,
+  Size size = const Size(1250, 940),
 }) async {
-  const size = Size(1250, 940);
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
@@ -219,77 +233,82 @@ Finder _inDialog(String text) => find.descendant(
     );
 
 void main() {
-  testWidgets('paquete del cliente: la pestaña Drive COMPARTE una carpeta',
+  testWidgets('la pestaña Drive COMPARTE una carpeta con el CLIENTE',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared([]);
     await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
-    // Sin carpetas compartidas, el paquete lo dice claramente.
-    expect(find.text('Sin carpeta compartida'), findsOneWidget);
+    // Sin carpetas compartidas, lo dice claramente.
+    expect(find.text('Sin carpetas compartidas'), findsOneWidget);
 
     // Se elige del Drive: ReynaCoot / SesionPrevia.
-    await _tap(tester, find.text('Elegir carpeta del Drive'));
+    await _tap(tester, find.text('Compartir una carpeta del Drive'));
     await _tap(tester, _inDialog('ReynaCoot'));
     await _tap(tester, _inDialog('SesionPrevia'));
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
+    // Compartir NO depende del paquete: la acción es del CLIENTE.
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'agregar-directorio');
+    expect(posts.first['action'], 'agregar-directorio-cliente');
     expect(posts.first['purchasedPackageId'], 10);
     expect(posts.first['path'], 'ReynaCoot/SesionPrevia');
 
     // La pestaña ya muestra la carpeta compartida.
     expect(find.text('ReynaCoot/SesionPrevia'), findsOneWidget);
-    expect(find.text('Sin carpeta compartida'), findsNothing);
+    expect(find.text('Sin carpetas compartidas'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('paquete del cliente: se pueden compartir VARIAS carpetas',
+  testWidgets('el cliente puede tener VARIAS carpetas compartidas',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
-    // El paquete YA comparte dos carpetas.
+    // El cliente YA tiene dos carpetas compartidas.
     final paths = _Shared(['ReynaCoot', 'Cliente']);
     await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     // Las dos se ven, cada una con su tarjeta.
     expect(find.text('ReynaCoot'), findsOneWidget);
     expect(find.text('Cliente'), findsOneWidget);
-    expect(find.text('Carpeta compartida con el cliente de este paquete.'),
-        findsNWidgets(2));
 
     // Se agrega una TERCERA (Privado, que es una carpeta del drive).
-    await _tap(tester, find.text('Agregar otra carpeta'));
+    await _tap(tester, find.text('Compartir otra carpeta'));
     await _tap(tester, _inDialog('Privado'));
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'agregar-directorio');
+    expect(posts.first['action'], 'agregar-directorio-cliente');
     expect(posts.first['path'], 'Privado');
     expect(paths.value, ['ReynaCoot', 'Cliente', 'Privado']);
     expect(find.text('Privado'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('paquete del cliente: se deja de compartir UNA de las carpetas',
+  testWidgets('se deja de compartir UNA de las carpetas del cliente',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared(['ReynaCoot', 'Cliente']);
     await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ReynaCoot'), findsOneWidget);
 
-    // El botón de dejar de compartir de la PRIMERA carpeta.
+    // El botón de DESVINCULAR de la PRIMERA carpeta.
     await _tap(tester,
-        find.byTooltip('Dejar de compartir esta carpeta').first);
+        find.byTooltip('Desvincular la carpeta del cliente').first);
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'quitar-directorio');
+    expect(posts.first['action'], 'quitar-directorio-cliente');
     expect(posts.first['path'], 'ReynaCoot');
     // La otra carpeta sigue compartida.
     expect(paths.value, ['Cliente']);
@@ -298,18 +317,106 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('paquete del cliente: se deja de compartir la ÚLTIMA carpeta',
-      (tester) async {
+  testWidgets('se deja de compartir la ÚLTIMA carpeta', (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared(['ReynaCoot']);
     await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
-    await _tap(tester, find.byTooltip('Dejar de compartir esta carpeta'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tap(tester, find.byTooltip('Desvincular la carpeta del cliente'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'quitar-directorio');
+    expect(posts.first['action'], 'quitar-directorio-cliente');
     expect(posts.first['path'], 'ReynaCoot');
-    expect(find.text('Sin carpeta compartida'), findsOneWidget);
+    expect(find.text('Sin carpetas compartidas'), findsOneWidget);
+  });
+
+  testWidgets('la carpeta de un SERVICIO se elige DENTRO del Drive del '
+      'cliente: se ven sus subcarpetas y nada antes de ella', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    // El cliente ya tiene compartida ReynaCoot (con Fiesta y SesionPrevia).
+    final paths = _Shared(['ReynaCoot']);
+    await _pump(tester, posts: posts, paths: paths);
+
+    await _tap(tester, find.text('Servicios'));
+    await tester.pump(const Duration(milliseconds: 400));
+    // Se despliega el servicio y se abre "Compartir".
+    await _tap(tester, find.text('Cobertura en evento'));
+    await _tap(tester, find.text('Compartir').last);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // El diálogo moderno del servicio: la tarjeta que abre el selector.
+    expect(find.text('Compartir con el cliente'), findsOneWidget);
+    await _tap(tester, find.text('Compartir una carpeta del Drive').last);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // El selector se abre DENTRO de la carpeta compartida: se ven sus
+    // subcarpetas…
+    expect(find.text('Fiesta'), findsOneWidget);
+    expect(find.text('SesionPrevia'), findsOneWidget);
+    // …y NADA de fuera de ella (ni las otras carpetas del drive ni la raíz).
+    expect(find.text('Privado'), findsNothing);
+    expect(find.text('Cliente'), findsNothing);
+    expect(find.text('Mi Drive'), findsNothing);
+    expect(find.text('Subir un nivel'), findsNothing);
+    // La carpeta compartida es la raíz del selector y así se anuncia.
+    expect(find.text('ReynaCoot'), findsOneWidget);
+
+    // Se elige la subcarpeta y se guarda: la ruta queda completa.
+    await _tap(tester, find.text('Fiesta'));
+    await _tap(tester, find.text('Compartir esta carpeta'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Ya en el diálogo del servicio: la carpeta con su botón de DESVINCULAR.
+    expect(find.text('ReynaCoot/Fiesta'), findsOneWidget);
+    expect(find.text('Desvincular'), findsOneWidget);
+    await _tap(tester, find.text('Guardar'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(posts, hasLength(1));
+    expect(posts.first['action'], 'actualizar-servicio-share');
+    expect(posts.first['folder'], 'ReynaCoot/Fiesta');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('en el CELULAR el selector de la carpeta no se desborda y '
+      'avisa de dónde se elige', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    final paths = _Shared(['ReynaCoot']);
+    await _pump(
+      tester,
+      posts: posts,
+      paths: paths,
+      size: const Size(430, 800),
+    );
+
+    // La tarjeta de la carpeta compartida con el cliente (con su botón de
+    // desvincular) también cabe en el teléfono.
+    await _tap(tester, find.text('Drive'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('ReynaCoot'), findsOneWidget);
+    expect(find.text('Desvincular'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await _tap(tester, find.text('Servicios'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tap(tester, find.text('Cobertura en evento'));
+    await _tap(tester, find.text('Compartir').last);
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tap(tester, find.text('Compartir una carpeta del Drive').last);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // El aviso de alcance y las subcarpetas de la carpeta compartida.
+    expect(find.text('Carpeta del Drive'), findsWidgets);
+    expect(
+      find.text('Solo lo que está dentro del Drive del cliente'),
+      findsOneWidget,
+    );
+    expect(find.text('Fiesta'), findsOneWidget);
+    expect(find.text('SesionPrevia'), findsOneWidget);
+    // Nada se sale de la pantalla del teléfono.
+    expect(tester.takeException(), isNull);
   });
 }

@@ -15,7 +15,11 @@ import android.widget.RemoteViewsService
  *
  * No consulta nada: lee los eventos que la app empujó y los pinta agrupados por
  * día — el rótulo de fecha ("HOY · 16 OCT") aparece SOLO en el primer evento de
- * cada jornada, tal como los ordena la app.
+ * cada jornada.
+ *
+ * El rótulo NO se copia de lo que empujó la app: se recalcula aquí con la hora
+ * del teléfono ([EventWidgetClock]) y se descarta lo que ya pasó, así el widget
+ * sigue diciendo la verdad aunque la app lleve días cerrada.
  */
 class EventWidgetService : RemoteViewsService() {
     override fun onGetViewFactory(intent: Intent): RemoteViewsFactory =
@@ -32,7 +36,7 @@ private class EventRowsFactory(private val context: Context) :
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
-        rows = EventWidgetProvider.readEvents(context)
+        rows = EventWidgetProvider.shownEvents(context)
         dark = EventWidgetProvider.isDark(context)
     }
 

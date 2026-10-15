@@ -84,7 +84,14 @@ class _StoragePageState extends State<StoragePage> {
     final scheme = Theme.of(context).colorScheme;
     final info = _info;
     final used = _num(info?['usedBytes']);
-    final limit = _num(info?['limitBytes']);
+    // Si el servidor del Drive todavía no manda la cuota, se usa el MISMO
+    // valor por defecto que él (180 GB): así nunca se muestra una cuota en
+    // cero ni se parte de un divisor inválido.
+    final rawLimit = _num(info?['limitBytes']);
+    // 180 GB en bytes, como DOUBLE: el ternario no puede mezclar `double` con
+    // `int` (devolvía `num` y rompía el tipo de la variable).
+    const fallbackLimit = 180 * 1024 * 1024 * 1024.0;
+    final limit = rawLimit > 0 ? rawLimit : fallbackLimit;
     final usedPct = limit > 0 ? (used / limit).clamp(0.0, 1.0) : 0.0;
 
     return PageContainer(
@@ -94,13 +101,10 @@ class _StoragePageState extends State<StoragePage> {
           'cuota y lo que queda libre.',
       icon: Icons.sd_storage_outlined,
       expand: false,
-      actions: [
-        OutlinedButton.icon(
-          onPressed: _loading ? null : _load,
-          icon: const Icon(Icons.refresh, size: 18),
-          label: const Text('Actualizar'),
-        ),
-      ],
+      // El botón de ACTUALIZAR ya no vive en el encabezado: va como botón de
+      // imagen en la esquina de la tarjeta de presentación (igual que en el
+      // Drive), que es donde se busca.
+      actions: const [],
       stats: [
         if (info != null) ...[
           StatPill(
@@ -156,7 +160,8 @@ class _StoragePageState extends State<StoragePage> {
     final limitFree = _num(info['limitFreeBytes']);
     final files = (info['files'] as num?)?.toInt() ?? 0;
     final folders = (info['folders'] as num?)?.toInt() ?? 0;
-    final limitGb = (info['limitGb'] as num?)?.toInt();
+    // La cuota en GB que se rotula (180 GB por defecto, igual que el servidor).
+    final limitGb = (info['limitGb'] as num?)?.toInt() ?? 180;
     final root = (info['root'] ?? '').toString();
 
     final diskFree = totalBytes == null || freeBytes == null
@@ -176,8 +181,18 @@ class _StoragePageState extends State<StoragePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        FadeSlideIn(child: _usageCard(scheme, used, limit, usedPct, barColor,
-            limitFree, limitGb)),
+        FadeSlideIn(
+          child: _usageCard(scheme, used, limit, usedPct, barColor, limitFree,
+              limitGb, diskTotal, diskFree),
+        ),
+        const SizedBox(height: 14),
+        // Gráficas del espacio: la barra de la cuota partida en usada/libre
+        // y el resto de los porcentajes, para ver de un vistazo cómo va.
+        PopIn(
+          delayMs: 70,
+          child: _chartsCard(
+              scheme, used, limit, usedPct, diskTotal, diskFree, limitFree),
+        ),
         const SizedBox(height: 14),
         LayoutBuilder(builder: (context, box) {
           final boxes = <Widget>[
@@ -242,7 +257,7 @@ class _StoragePageState extends State<StoragePage> {
         const SizedBox(height: 14),
         Text(
           'La cuota es SOLO una referencia de esta carpeta: hoy son '
-          '${limitGb ?? 180} GB y se puede cambiar en el servidor del Drive '
+          '$limitGb GB y se puede cambiar en el servidor del Drive '
           'con la variable DRIVE_LIMIT_GB, sin tocar la app. "Libre en el '
           'disco" es el espacio real del disco donde vive la carpeta.',
           style: TextStyle(
@@ -252,20 +267,31 @@ class _StoragePageState extends State<StoragePage> {
     );
   }
 
-  Widget _usageCard(ColorScheme scheme, double used, double limit,
-      double usedPct, Color barColor, double limitFree, int? limitGb) {
+  Widget _usageCard(
+    ColorScheme scheme,
+    double used,
+    double limit,
+    double usedPct,
+    Color barColor,
+    double limitFree,
+    int? limitGb,
+    double? diskTotal,
+    double? diskFree,
+  ) {
+    final phone = MediaQuery.sizeOf(context).width < 620;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: EdgeInsets.all(phone ? 14 : 18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: phone ? 38 : 44,
+                  height: phone ? 38 : 44,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
@@ -275,39 +301,76 @@ class _StoragePageState extends State<StoragePage> {
                     ),
                     borderRadius: BorderRadius.circular(13),
                   ),
-                  child:
-                      const Icon(Icons.sd_storage, color: Colors.white, size: 22),
+                  child: Icon(Icons.sd_storage,
+                      color: Colors.white, size: phone ? 19 : 22),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Carpeta de fotos',
                         style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w800),
+                            fontSize: phone ? 13.5 : 15,
+                            fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         '${hsBytes(used)} de ${hsBytes(limit)} ocupados',
                         style: TextStyle(
-                            fontSize: 12.5, color: scheme.onSurfaceVariant),
+                            fontSize: phone ? 11.5 : 12.5,
+                            color: scheme.onSurfaceVariant),
                       ),
                     ],
                   ),
                 ),
-                Text(
-                  '${(usedPct * 100).round()} %',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: barColor,
+                // BOTÓN DE IMAGEN de actualizar, arriba a la derecha de la
+                // tarjeta de presentación (el mismo gesto que en el Drive).
+                Tooltip(
+                  message: 'Actualizar el espacio',
+                  child: IconButton(
+                    onPressed: _loading ? null : _load,
+                    visualDensity: VisualDensity.compact,
+                    icon: _loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(Icons.refresh_rounded,
+                            size: 20, color: scheme.onSurfaceVariant),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            SizedBox(height: phone ? 10 : 14),
+            // El nÚmero grande es el % DE LA CUOTA (180 GB), que es el limite
+            // que maneja el estudio; el disco va aparte y en letra chica.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${(usedPct * 100).round()} %',
+                  style: TextStyle(
+                    fontSize: phone ? 26 : 32,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                    color: barColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'de la cuota de ${hsBytes(limit)}',
+                    style: TextStyle(
+                        fontSize: phone ? 11.5 : 12.5,
+                        color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             _UsageBar(used: used, limit: limit, color: barColor),
             const SizedBox(height: 12),
             Wrap(
@@ -330,8 +393,104 @@ class _StoragePageState extends State<StoragePage> {
                     label: 'Cuota $limitGb GB',
                     tint: scheme.onSurfaceVariant,
                   ),
+                if (diskFree != null)
+                  _MiniTag(
+                    icon: Icons.sd_card_outlined,
+                    label: 'Libre en el disco ${hsBytes(diskFree)}',
+                    tint: diskFree < limitFree
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF10B981),
+                  ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Tarjeta de GRÁFICAS: barras de porcentaje de la cuota y del disco, más
+  /// la barra partida usado | libre. Todo calculado con lo que reporta el
+  /// servidor (nunca con números inventados).
+  Widget _chartsCard(
+    ColorScheme scheme,
+    double used,
+    double limit,
+    double usedPct,
+    double? diskTotal,
+    double? diskFree,
+    double limitFree,
+  ) {
+    final diskUsedPct = (diskTotal != null && diskTotal > 0 && diskFree != null)
+        ? ((diskTotal - diskFree) / diskTotal).clamp(0.0, 1.0)
+        : null;
+    final freePct = (1 - usedPct).clamp(0.0, 1.0);
+    final rows = <Widget>[
+      _PercentBar(
+        icon: Icons.pie_chart_outline,
+        label: 'Cuota usada',
+        detail: '${hsBytes(used)} de ${hsBytes(limit)}',
+        value: usedPct,
+        color: usedPct >= .85
+            ? const Color(0xFFEF4444)
+            : usedPct >= .7
+                ? const Color(0xFFF59E0B)
+                : AppColors.brand,
+      ),
+      _PercentBar(
+        icon: Icons.donut_large_outlined,
+        label: 'Cuota libre',
+        detail: 'Quedan ${hsBytes(limitFree)} de ${hsBytes(limit)}',
+        value: freePct,
+        color: const Color(0xFF10B981),
+      ),
+      if (diskUsedPct != null)
+        _PercentBar(
+          icon: Icons.storage_rounded,
+          label: 'Disco usado',
+          detail: '${hsBytes(diskTotal! - diskFree!)} de ${hsBytes(diskTotal)}',
+          value: diskUsedPct,
+          color: const Color(0xFF8B5CF6),
+        ),
+      if (diskFree != null && diskTotal != null && diskTotal > 0)
+        _PercentBar(
+          icon: Icons.sd_card_outlined,
+          label: 'Disco libre',
+          detail: 'Quedan ${hsBytes(diskFree)} en el disco',
+          value: (diskFree / diskTotal).clamp(0.0, 1.0),
+          color: const Color(0xFF14B8A6),
+        ),
+    ];
+    final phone = MediaQuery.sizeOf(context).width < 620;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: EdgeInsets.all(phone ? 14 : 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bar_chart_rounded, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Porcentajes del espacio',
+                    style: TextStyle(
+                        fontSize: phone ? 12.5 : 13.5,
+                        fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            // Barra PARTIDA: lo usado contra lo libre de la cuota.
+            _SplitBar(scheme, used, limit),
+            const SizedBox(height: 14),
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              PopIn(delayMs: 60 + i * 50, child: rows[i]),
+            ],
           ],
         ),
       ),
@@ -416,6 +575,160 @@ class _UsageBar extends StatelessWidget {
   }
 }
 
+/// Barra PARTIDA de la cuota: la parte usada a la izquierda y la libre a la
+/// derecha, con sus porcentajes escritos encima.
+class _SplitBar extends StatelessWidget {
+  const _SplitBar(this.scheme, this.used, this.limit);
+
+  final ColorScheme scheme;
+  final double used;
+  final double limit;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = limit <= 0 ? 1.0 : limit;
+    var pct = ((used / total) * 100).round();
+    if (used > 0 && pct == 0) pct = 1;
+    pct = pct.clamp(0, 100);
+    final usedColor = pct >= 85
+        ? const Color(0xFFEF4444)
+        : pct >= 70
+            ? const Color(0xFFF59E0B)
+            : AppColors.brand;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            height: 22,
+            child: Row(
+              children: [
+                if (pct > 0)
+                  Expanded(
+                    flex: pct,
+                    child: ColoredBox(
+                      color: usedColor,
+                      child: Center(
+                        child: Text(
+                          '$pct %',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (pct < 100)
+                  Expanded(
+                    flex: 100 - pct,
+                    child: ColoredBox(
+                      color: const Color(0xFF10B981).withValues(alpha: .18),
+                      child: Center(
+                        child: Text(
+                          '${100 - pct} % libre',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF10B981),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Usado',
+                style: TextStyle(
+                    fontSize: 10.5, color: scheme.onSurfaceVariant),
+              ),
+            ),
+            Text(
+              'Libre',
+              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Fila de una gráfica de porcentaje: icono + etiqueta + barra + % grande.
+class _PercentBar extends StatelessWidget {
+  const _PercentBar({
+    required this.icon,
+    required this.label,
+    required this.detail,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String detail;
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final pct = value.clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ),
+            Text(
+              '${(pct * 100).round()} %',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(5),
+          child: LinearProgressIndicator(
+            value: pct,
+            minHeight: 8,
+            color: color,
+            backgroundColor: color.withValues(alpha: .14),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          detail,
+          style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
 /// Caja de un dato del almacenamiento (icono + etiqueta + valor).
 class _DataBox extends StatelessWidget {
   const _DataBox({
@@ -435,47 +748,52 @@ class _DataBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Móvil: la letra de la tarjeta baja un punto (y el rótulo medio) sin
+    // llegar a ilegible.
+    final phone = MediaQuery.sizeOf(context).width < 620;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(phone ? 12 : 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  width: 30,
-                  height: 30,
+                  width: 28,
+                  height: 28,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: tint.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(9),
                     border: Border.all(color: tint.withValues(alpha: .26)),
                   ),
-                  child: Icon(icon, size: 16, color: tint),
+                  child: Icon(icon, size: 15, color: tint),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: phone ? 10.5 : 11.5,
                         fontWeight: FontWeight.w700,
                         color: scheme.onSurfaceVariant),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: phone ? 8 : 10),
             Text(
               value,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: mono ? 12 : 17,
+                fontSize: mono
+                    ? (phone ? 11 : 12)
+                    : (phone ? 15 : 17),
                 fontWeight: FontWeight.w800,
                 height: 1.2,
               ),

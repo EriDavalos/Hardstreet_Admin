@@ -119,10 +119,10 @@ class _ServicesPageState extends State<ServicesPage> {
         // "Nuevo servicio" (create): sin el permiso, el botón no aparece.
         if (HsAccess.instance.degraded ||
             HsAccess.instance.can('Servicios', 'create'))
-          FilledButton.icon(
+          HsActionButton(
             onPressed: () => _openForm(),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Nuevo servicio'),
+            icon: Icons.add,
+            label: 'Nuevo servicio',
           ),
       ],
       child: Column(
@@ -316,25 +316,45 @@ class _ServiceCardState extends State<_ServiceCard> {
                 ),
               ),
               const SizedBox(width: 6),
-              Column(
-                children: [
-                  if (widget.canEdit)
-                    IconButton(
-                      tooltip: 'Personalizar',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: widget.onEdit,
-                      icon: const Icon(Icons.tune_rounded, size: 18),
+              // CELULAR: las acciones del servicio van en el menú "⋮" (en
+              // escritorio se mantienen los dos botones de icono). Sin
+              // permisos para ninguna, el menú NO se dibuja.
+              if (hsRowCompact(context))
+                HsRowMenu(
+                  actions: [
+                    HsMenuAction(
+                      icon: Icons.tune_rounded,
+                      label: 'Personalizar',
+                      onTap: widget.canEdit ? widget.onEdit : null,
                     ),
-                  if (widget.canDelete)
-                    IconButton(
-                      tooltip: 'Eliminar',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: widget.onDelete,
-                      icon: Icon(Icons.delete_outline_rounded,
-                          size: 18, color: scheme.error),
+                    HsMenuAction(
+                      icon: Icons.delete_outline_rounded,
+                      label: 'Eliminar',
+                      onTap: widget.canDelete ? widget.onDelete : null,
+                      destructive: true,
                     ),
-                ],
-              ),
+                  ],
+                )
+              else
+                Column(
+                  children: [
+                    if (widget.canEdit)
+                      IconButton(
+                        tooltip: 'Personalizar',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: widget.onEdit,
+                        icon: const Icon(Icons.tune_rounded, size: 18),
+                      ),
+                    if (widget.canDelete)
+                      IconButton(
+                        tooltip: 'Eliminar',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: widget.onDelete,
+                        icon: Icon(Icons.delete_outline_rounded,
+                            size: 18, color: scheme.error),
+                      ),
+                  ],
+                ),
             ],
           ),
         ),

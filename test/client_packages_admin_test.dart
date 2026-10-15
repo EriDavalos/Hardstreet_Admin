@@ -255,10 +255,14 @@ void main() {
       (tester) async {
     await _pumpDialog(tester, posts: [], size: const Size(820, 780));
 
-    final panel = tester.getTopLeft(find.text('PAQUETES DEL CLIENTE'));
+    // Ya no hay columna lateral: la barra de pestañas queda ARRIBA y el
+    // contenido debajo (y la etiqueta "Paquetes del cliente" se quitó).
     final tab = tester.getTopLeft(find.text('Servicios'));
-    expect(tab.dy, greaterThan(panel.dy),
-        reason: 'en ventana angosta la ficha va arriba y las pestañas debajo');
+    expect(tab.dy, lessThan(320), reason: 'la barra de pestañas va arriba');
+    expect(find.text('PAQUETES DEL CLIENTE'), findsNothing);
+
+    // La ficha del paquete es una pestaña más en esta ventana.
+    await _tap(tester, find.text('Paquete'));
     expect(find.text('Finalizar paquete'), findsOneWidget);
     // Abonar ya NO vive en la ficha: está en la pestaña Movimientos.
     expect(find.text('Abonar'), findsNothing);
@@ -278,31 +282,38 @@ void main() {
     expect(find.text('MXN \$12,000'), findsOneWidget);
   });
 
-  testWidgets('teléfono: las acciones del servicio van en UNA fila horizontal',
+  testWidgets('teléfono: el servicio se EXPANDE y sus acciones van en UNA fila',
       (tester) async {
     await _pumpDialog(tester, posts: [], size: const Size(430, 760));
     await _tap(tester, find.text('Servicios'));
 
-    // Las acciones de cada servicio quedan en la MISMA línea (en el celular
-    // NO se apilan en vertical). El mock trae dos servicios: uno pendiente
-    // (Completar / Añadir nota / Editar enlace) y uno ya entregado
-    // (Reabrir / Editar nota / Agregar enlace).
-    for (final row in const [
-      ['Completar servicio', 'Añadir nota', 'Editar enlace'],
-      ['Reabrir', 'Editar nota', 'Agregar enlace'],
-    ]) {
-      final dy = tester.getCenter(find.text(row.first)).dy;
-      for (final label in row.skip(1)) {
-        expect(tester.getCenter(find.text(label)).dy, dy,
-            reason: '«$label» comparte la fila de «${row.first}»');
-      }
-      // Y van en orden horizontal (no una encima de otra).
-      for (var i = 1; i < row.length; i++) {
-        expect(
-          tester.getCenter(find.text(row[i])).dx,
-          greaterThan(tester.getCenter(find.text(row[i - 1])).dx),
-        );
-      }
+    // Completar es discreto en el celular: botón de IMAGEN (solo el tooltip),
+    // sin el texto ni el verde de antes.
+    expect(find.byTooltip('Completar servicio'), findsOneWidget);
+    expect(find.text('Completar servicio'), findsNothing);
+
+    // Tocar la tarjeta (un servicio PENDIENTE) la despliega: ahí salen sus
+    // datos y sus opciones, sin tener que terminarlo primero.
+    await _tap(tester, find.text('Cobertura en evento'));
+    expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
+
+    // Las acciones quedan en la MISMA línea y en orden horizontal (en el
+    // celular NO se apilan en vertical).
+    // El servicio del mock ya trae su liga base: la acción dice "Editar".
+    const row = ['Añadir nota', 'Editar enlace', 'Compartir'];
+    for (final label in row) {
+      expect(find.text(label), findsOneWidget);
+    }
+    final dy = tester.getCenter(find.text(row.first)).dy;
+    for (final label in row.skip(1)) {
+      expect(tester.getCenter(find.text(label)).dy, dy,
+          reason: '«$label» comparte la fila de «${row.first}»');
+    }
+    for (var i = 1; i < row.length; i++) {
+      expect(
+        tester.getCenter(find.text(row[i])).dx,
+        greaterThan(tester.getCenter(find.text(row[i - 1])).dx),
+      );
     }
     expect(tester.takeException(), isNull);
   });
@@ -330,8 +341,9 @@ void main() {
     // Ficha del paquete en foco (el vigente): el flyer representativo con
     // precio, más el dinero y el avance.
     expect(find.text('Boda - Premium'), findsWidgets);
-    expect(find.text('Actual'), findsOneWidget);
     expect(find.text('EN ADMINISTRACIÓN'), findsOneWidget);
+    // El estado del paquete vigente, en su distintivo del flyer.
+    expect(find.text('En proceso'), findsOneWidget);
     expect(find.text('MXN \$12,000'), findsOneWidget);
     // El flyer lleva el tier y la categoría del catálogo.
     expect(find.text('PREMIUM'), findsOneWidget);
@@ -374,6 +386,9 @@ void main() {
       (tester) async {
     await _pumpDialog(tester, posts: []);
 
+    // Se vuelve al selector de paquetes (la flecha del encabezado) y se elige
+    // el otro paquete del cliente.
+    await _tap(tester, find.byTooltip('Todos los paquetes'));
     await _tap(tester, find.text('XV Años - Gold'));
 
     expect(find.text('Paquete terminado · consulta'), findsOneWidget);
@@ -562,8 +577,22 @@ void main() {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
-    // El servicio del paquete muestra la liga base de su carpeta.
+    // La tarjeta del servicio se despliega al tocarla (funciona igual con el
+    // servicio PENDIENTE: no hace falta completarlo para ver su información).
+    await _tap(tester, find.text('Cobertura en evento'));
+    // La liga base de su carpeta se ve tal cual, sin terminarlo.
     expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
+
+    // Completar el servicio es una acción DISCRETA (contorno), no el botón
+    // relleno de color de antes.
+    expect(
+      find.ancestor(
+        of: find.text('Completar servicio'),
+        matching: find.byType(OutlinedButton),
+      ),
+      findsOneWidget,
+      reason: 'completar va con contorno, como "Asignar del catálogo"',
+    );
 
     // Editar la liga manda la acción al backend con el servicio correcto.
     await _tap(tester, find.text('Editar enlace'));
@@ -615,19 +644,24 @@ void main() {
     expect(find.text('Repartir pago'), findsOneWidget);
 
     await _tap(tester, find.text('Repartir pago'));
-    // El título de la sección se dibuja en MAYÚSCULAS (FormSection).
-    expect(find.text('¿CÓMO SE REPARTE?'), findsOneWidget);
-    expect(find.text('Partes iguales'), findsOneWidget);
-    expect(find.text('Por numeración'), findsOneWidget);
-
-    // Monto total y los dos destinatarios (un colaborador y un empleado).
-    await tester.enterText(find.widgetWithText(TextField, 'Total'), '900');
-    await tester.pump(const Duration(milliseconds: 200));
+    // 1) PRIMERO se eligen las personas (ya no salen todas por defecto)…
+    expect(find.text('1. ELIGE A QUIÉNES SE LES PAGA'), findsOneWidget);
+    // …y el modo de reparto aparece DESPUÉS de marcar gente.
+    expect(find.text('2. ¿CÓMO SE REPARTE?'), findsNothing);
     await _tap(tester, find.text('Yusef Ali'));
     await _tap(tester, find.text('Marta Soto'));
 
+    // Los dos modos, con partes iguales por defecto.
+    expect(find.text('2. ¿CÓMO SE REPARTE?'), findsOneWidget);
+    expect(find.text('Partes iguales'), findsOneWidget);
+    expect(find.text('Por numeración'), findsOneWidget);
+
+    // Monto total a repartir.
+    await tester.enterText(find.widgetWithText(TextField, 'Total'), '900');
+    await tester.pump(const Duration(milliseconds: 200));
+
     // La previsualización dice cuánto le toca a cada uno.
-    expect(find.text('A cada uno de 2 le toca'), findsOneWidget);
+    expect(find.text('A cada uno de los elegidos le toca'), findsOneWidget);
     expect(find.text('MXN \$450'), findsWidgets);
 
     await _tap(tester, find.text('Repartir'));
@@ -647,6 +681,9 @@ void main() {
 
     await _tap(tester, find.text('Movimientos'));
     await _tap(tester, find.text('Repartir pago'));
+    // Primero las personas, después el modo de reparto.
+    await _tap(tester, find.text('Yusef Ali'));
+    await _tap(tester, find.text('Marta Soto'));
     await _tap(tester, find.text('Por numeración'));
 
     // Un monto por destinatario (el campo del concepto va al final).

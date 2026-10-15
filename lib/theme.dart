@@ -9,6 +9,12 @@ class AppColors {
   static const sidebarDark = Color(0xFF0F1420);
   static const surfaceDark = Color(0xFF151B29);
   static const cardDark = Color(0xFF1A2233);
+
+  /// Estados: algo que YA funciona (verde) y algo que necesita atención
+  /// (ámbar). Los usa, por ejemplo, la píldora de estado de las carpetas
+  /// compartidas ("Disponible" / "Apagada ahora").
+  static const ok = Color(0xFF16A34A);
+  static const warn = Color(0xFFD97706);
 }
 
 class AppTheme {
