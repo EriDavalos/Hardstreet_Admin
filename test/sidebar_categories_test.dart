@@ -12,6 +12,8 @@ import 'package:hardstreet_admin/drive_service.dart';
 import 'package:hardstreet_admin/hs_access.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
+import 'package:hardstreet_admin/pages/admin_pages.dart';
+import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
 
 Map<String, dynamic> _mod(
   String key,
@@ -35,7 +37,7 @@ Map<String, dynamic> _mod(
 /// (que existe pero SIN "Ver": debe desaparecer del menú) y "Mi paquete"
 /// (el módulo del cliente, `my_package`), cuyo permiso se controla con
 /// [miPaqueteRead] para comprobar que también se oculta sin "Ver".
-void _installMock({bool miPaqueteRead = true}) {
+void _installMock({bool miPaqueteRead = true, bool dashboardRead = true}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -44,7 +46,8 @@ void _installMock({bool miPaqueteRead = true}) {
         jsonEncode({
           'isAdmin': false,
           'modules': [
-            _mod('dashboard', 'Dashboard', order: 1),
+            _mod('dashboard', 'Dashboard',
+                order: 1, actions: dashboardRead ? const ['read'] : const []),
             // El módulo del cliente: se llama "Mi paquete" (antes "Dashboard
             // Cliente") y exige "Ver" como cualquier otro.
             _mod('my_package', 'Mi paquete',
@@ -211,6 +214,50 @@ void main() {
     // Los demás módulos con permiso siguen ahí.
     expect(find.text('Archivos'), findsWidgets);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('al entrar se abre el PRIMER módulo permitido, no el Dashboard',
+      (tester) async {
+    late Directory tmp;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('hardstreet_start_section');
+    });
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final previous = HsApi.client;
+    // Sin "Ver" en Dashboard: el primer módulo accesible es "Mi paquete".
+    _installMock(dashboardRead: false);
+    addTearDown(() {
+      HsApi.client = previous;
+      HsAccess.reset();
+      tmp.deleteSync(recursive: true);
+    });
+    SharedPreferences.setMockInitialValues({});
+    HsAccess.reset();
+
+    await tester.pumpWidget(
+      DriveScope(
+        drive: DriveService.testRoot(tmp),
+        child: MaterialApp(
+          home: AdminHome(
+            dark: false,
+            onToggleTheme: () {},
+            onLogout: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    // El Dashboard NO se abre (no tiene "Ver") y entra "Mi paquete", que es el
+    // primero de la lista con permiso.
+    expect(find.byType(ClientDashboardPage), findsOneWidget);
+    expect(find.byType(DashboardPage), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -2,6 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_constants.dart';
+
+/// Una carpeta compartida con el cliente, tal como se VE: [shown] es el nombre
+/// con el que aparece en su Drive y [real] los segmentos REALES del Drive
+/// (`XV/ReynaCoot` → se ve `ReynaCoot`, se abre `XV/ReynaCoot`).
+///
+/// Existe porque compartir una carpeta ANIDADA montaba antes su carpeta padre:
+/// el cliente veía la `XV` del estudio (con todo lo que hubiera dentro) en vez
+/// de su carpeta `ReynaCoot`.
+typedef SharedRoot = ({String shown, List<String> real});
+
 /// Elemento del Drive: carpeta o imagen.
 @immutable
 class DriveItem {
@@ -56,6 +67,66 @@ bool drivePathsOverlap(String a, String b) {
   return x.startsWith('$y/') || y.startsWith('$x/');
 }
 
+/// ¿[host] es "de casa"? (localhost o una IP privada). El Drive interno puede
+/// estar publicado con DDNS, pero también se pruebe desde la red local.
+bool _isLocalDriveHost(String host) {
+  final h = host.toLowerCase();
+  if (h.isEmpty) return false;
+  if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return true;
+  if (h.endsWith('.local') || h.endsWith('.lan')) return true;
+  final parts = h.split('.');
+  if (parts.length != 4) return false;
+  final a = int.tryParse(parts[0]);
+  final b = int.tryParse(parts[1]);
+  if (a == null || b == null) return false;
+  if (a == 10) return true;
+  if (a == 192 && b == 168) return true;
+  if (a == 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+/// ¿[url] es una foto del servidor del DRIVE (el interno)?
+///
+/// El Drive es el ÚNICO servidor que sabe entregar una versión REDIMENSIONADA
+/// de una foto (`/thumb/<ruta>?w=N`), así que hay que reconocerlo bien: cuenta
+/// su host ([AppConstants.apiBase], o uno de casa) y que la ruta traiga
+/// `/files/`. Una URL de CUALQUIER otro sitio no se toca nunca (se usa su
+/// enlace real): antes bastaba con que la ruta llevara `/files/` y una foto de
+/// fuera terminaba pidiéndose como miniatura al servidor equivocado.
+bool isDriveImageUrl(String url) {
+  final clean = url.trim();
+  if (clean.isEmpty) return false;
+  final uri = Uri.tryParse(clean);
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
+  if (!uri.pathSegments.contains('files')) return false;
+  final host = uri.host.toLowerCase();
+  final driveHost =
+      (Uri.tryParse(AppConstants.apiBase)?.host ?? '').toLowerCase();
+  if (driveHost.isNotEmpty && host == driveHost) return true;
+  return _isLocalDriveHost(host);
+}
+
+/// URL para VER una foto del contenido del sitio:
+///
+///   * foto del Drive interno → la versión REDIMENSIONADA del servidor
+///     (`<servidor>/thumb/<ruta>?w=N`): pesa unos KB en vez de varios MB, así
+///     las miniaturas del panel aparecen al instante;
+///   * cualquier otro enlace (una foto de otro sitio, una ruta del propio
+///     sitio como `images/…`) → se devuelve TAL CUAL.
+String driveImagePreview(String url, {int width = 320}) {
+  final clean = url.trim();
+  if (!isDriveImageUrl(clean)) return clean;
+  final uri = Uri.parse(clean);
+  final segments = uri.pathSegments;
+  final i = segments.indexOf('files');
+  if (i < 0 || i == segments.length - 1) return clean;
+  // La ruta se vuelve a codificar: los nombres reales pueden traer espacios,
+  // acentos o `#` (y `uri.path` los entrega ya decodificados).
+  final path = segments.sublist(i + 1).map(Uri.encodeComponent).join('/');
+  final w = width.clamp(32, 2048);
+  return '${uri.scheme}://${uri.authority}/thumb/$path?w=$w';
+}
+
 /// Estados de conexión con el servidor del drive.
 enum DriveConn { checking, online, offline }
 
@@ -87,12 +158,18 @@ class DriveUploadJob {
     required this.name,
     required this.thumb,
     required this.total,
+    this.batch = '',
   });
 
   final String id;
   final String name;
   final String thumb; // ruta LOCAL del archivo fuente (miniatura)
   final int total; // bytes totales (0 = indeterminado)
+
+  /// Lote al que pertenece: todas las fotos de UNA subida comparten el mismo
+  /// valor. El panel mide el progreso del LOTE ("50/100 fotos"), así que las
+  /// fotos de una subida anterior no se mezclan con las de la actual.
+  final String batch;
   int sent = 0; // bytes enviados
   String status = 'uploading'; // uploading | done | error | cancelled
   String? error;
@@ -167,31 +244,100 @@ abstract class DriveBase extends ChangeNotifier {
   // ---------- Alcance COMPARTIDO (drive del cliente) ----------
   ///
   /// Cuando el usuario es un CLIENTE, su drive se limita a las carpetas que
-  /// el estudio le comparte en sus paquetes comprados:
-  ///   * en la RAÍZ solo se ven esas carpetas (nada más);
-  ///   * dentro de una de ellas se navega con normalidad.
+  /// el estudio le comparte:
+  ///   * en la RAÍZ se ve UNA carpeta por cada compartido, con SU nombre;
+  ///   * dentro de una compartida se navega con normalidad;
+  ///   * lo demás del estudio NO existe para él: ni las carpetas hermanas.
+  ///
+  /// La carpeta compartida se ve por SU NOMBRE aunque viva anidada en el Drive:
+  /// si se le comparte `XV/ReynaCoot`, el cliente ve la carpeta `ReynaCoot` (y
+  /// dentro el contenido de `XV/ReynaCoot`) — NO la carpeta `XV` con todo lo
+  /// que el estudio tenga ahí dentro. `XV` es solo el camino hacia ella y no se
+  /// muestra ni se puede tocar.
   ///
   /// [scoped] = false (equipo del estudio) muestra el drive completo.
   bool scoped = false;
 
-  /// Nombres de las carpetas RAÍZ compartidas con este usuario.
+  /// Nombres con los que se VE cada carpeta compartida en la raíz del cliente
+  /// (`XV/ReynaCoot` → `ReynaCoot`).
   List<String> sharedRoots = const [];
 
+  /// Carpetas compartidas tal como se VEN: [shown] es el nombre visible y
+  /// [real] los segmentos REALES del Drive.
+  List<SharedRoot> sharedRootEntries = const [];
+
+  /// ¿[segments] es una carpeta compartida o está DENTRO de una?
+  bool isInsideShared(List<String> segments) {
+    if (!scoped) return true;
+    for (final e in sharedRootEntries) {
+      if (_isPrefix(e.real, segments)) return true;
+    }
+    return false;
+  }
+
+  /// ¿[segments] lleva a alguna carpeta compartida? (es el camino hacia una:
+  /// p. ej. la `XV` que contiene a `XV/ReynaCoot`). Solo se usa para no perder
+  /// el hilo si el cliente ya venía navegando por ahí.
+  bool _leadsToShared(List<String> segments) {
+    if (!scoped) return true;
+    for (final e in sharedRootEntries) {
+      if (_isPrefix(segments, e.real)) return true;
+    }
+    return false;
+  }
+
   /// ¿La carpeta actual (o la raíz) está dentro de lo compartido?
-  bool get insideSharedRoots =>
-      !scoped || (path.isNotEmpty && sharedRoots.contains(path.first));
+  bool get insideSharedRoots => !scoped || isInsideShared(path);
+
+  /// Cuántos niveles del inicio de [path] son SOLO el camino hacia la carpeta
+  /// compartida (no se muestran: el cliente no tiene por qué saber de qué
+  /// carpeta del estudio salió la suya).
+  int get hiddenPathPrefix {
+    if (!scoped || path.isEmpty) return 0;
+    for (final e in sharedRootEntries) {
+      if (_isPrefix(e.real, path) && !_samePath(e.real, path)) {
+        return e.real.length - 1;
+      }
+    }
+    return 0;
+  }
 
   /// Listado filtrado por el alcance compartido.
   @protected
   List<DriveItem> applySharedScope(List<DriveItem> value) {
     if (!scoped) return value;
     if (path.isEmpty) {
-      final allowed = sharedRoots.toSet();
-      return value
-          .where((i) => i.isFolder && allowed.contains(i.name))
-          .toList(growable: false);
+      // La raíz del cliente: una entrada por carpeta compartida, con SU
+      // nombre, aunque la carpeta viva anidada en el Drive del estudio.
+      final byName = {for (final i in value) i.name: i};
+      return [
+        for (final e in sharedRootEntries)
+          DriveItem(
+            name: e.shown,
+            isFolder: true,
+            modified: byName[e.real.first]?.modified,
+            // El conteo del ancestro no dice nada de la carpeta compartida:
+            // solo se hereda cuando la compartida ES ese primer nivel.
+            childCount: e.real.length == 1
+                ? (byName[e.real.first]?.childCount ?? 0)
+                : 0,
+          ),
+      ];
     }
-    return insideSharedRoots ? value : const <DriveItem>[];
+    if (isInsideShared(path)) return value;
+    if (!_leadsToShared(path)) return const <DriveItem>[];
+    // De camino a la carpeta compartida (p. ej. la `XV` que la contiene): solo
+    // se ofrece el SIGUIENTE paso hacia ella. Lo demás de esa carpeta del
+    // estudio no se ve.
+    final next = <String>{};
+    for (final e in sharedRootEntries) {
+      if (_isPrefix(path, e.real) && e.real.length > path.length) {
+        next.add(e.real[path.length]);
+      }
+    }
+    return value
+        .where((i) => i.isFolder && next.contains(i.name))
+        .toList(growable: false);
   }
 
   /// Para las implementaciones: reemplaza el listado actual.
@@ -202,34 +348,70 @@ abstract class DriveBase extends ChangeNotifier {
 
   /// Fija el alcance compartido del cliente y refresca si cambió.
   ///
-  /// [roots] son carpetas raíz (se conserva el primer nivel de cada ruta).
-  /// Con [isClient] = false el drive vuelve a mostrarse completo.
+  /// [roots] son las carpetas compartidas con SU ruta del Drive (`XV/ReynaCoot`
+  /// o `Bodas/Ana Ruiz`): cada una se muestra como una carpeta propia, con el
+  /// nombre de la última parte de su ruta. Con [isClient] = false el drive
+  /// vuelve a mostrarse completo.
   Future<void> setSharedRoots(
     List<String> roots, {
     required bool isClient,
   }) async {
-    final clean = <String>[];
+    final entries = <SharedRoot>[];
+    final used = <String>{};
     for (final r in roots) {
-      final first = drivePathNormalize(r).split('/').firstOrNull;
-      if (first != null && first.isNotEmpty && !clean.contains(first)) {
-        clean.add(first);
+      final real = _segments(r);
+      if (real.isEmpty) continue;
+      if (entries.any((e) => _samePath(e.real, real))) continue;
+      // El nombre visible es el de la carpeta compartida. Si dos compartidas
+      // se llaman igual, se distingue con su carpeta padre («Coot (XV)»)
+      // para que el cliente no confunda una con otra.
+      var shown = real.last;
+      if (used.contains(shown) && real.length > 1) {
+        shown = '${real.last} (${real[real.length - 2]})';
       }
+      var n = 2;
+      while (used.contains(shown)) {
+        shown = '${real.last} ($n)';
+        n++;
+      }
+      used.add(shown);
+      entries.add((shown: shown, real: real));
     }
-    if (scoped == isClient && _sameList(sharedRoots, clean)) return;
+    if (scoped == isClient && _sameEntries(sharedRootEntries, entries)) return;
     scoped = isClient;
-    sharedRoots = clean;
-    // Fuera de lo compartido: se regresa a la raíz.
-    if (path.isNotEmpty && !sharedRoots.contains(path.first)) {
+    sharedRootEntries = List.unmodifiable(entries);
+    sharedRoots = [for (final e in entries) e.shown];
+    // Fuera de lo compartido (ni dentro, ni de camino): se regresa a la raíz.
+    if (path.isNotEmpty && !isInsideShared(path) && !_leadsToShared(path)) {
       path = const [];
       setSearch(null);
     }
     await refresh();
   }
 
-  static bool _sameList(List<String> a, List<String> b) {
+  /// Segmentos de una ruta del Drive ('XV/ReynaCoot' → ['XV','ReynaCoot']).
+  static List<String> _segments(String path) => drivePathNormalize(path)
+      .split('/')
+      .where((s) => s.isNotEmpty)
+      .toList(growable: false);
+
+  static bool _isPrefix(List<String> prefix, List<String> full) {
+    if (prefix.length > full.length) return false;
+    for (var i = 0; i < prefix.length; i++) {
+      if (prefix[i] != full[i]) return false;
+    }
+    return true;
+  }
+
+  static bool _samePath(List<String> a, List<String> b) =>
+      _isPrefix(a, b) && a.length == b.length;
+
+  static bool _sameEntries(List<SharedRoot> a, List<SharedRoot> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
+      if (a[i].shown != b[i].shown || !_samePath(a[i].real, b[i].real)) {
+        return false;
+      }
     }
     return true;
   }
@@ -342,6 +524,8 @@ abstract class DriveBase extends ChangeNotifier {
   /// Subidas de la sesión (activas, terminadas y con error) — no bloquea la UI.
   final List<DriveUploadJob> uploadJobs = [];
 
+  int _uploadBatchSeq = 0;
+
   /// Descargas de la sesión (activas, terminadas y con error) — también en
   /// segundo plano: el panel de transferencias las muestra al lado.
   final List<DriveDownloadJob> downloadJobs = [];
@@ -370,29 +554,58 @@ abstract class DriveBase extends ChangeNotifier {
   /// En la raíz de un drive compartido solo se abren las carpetas
   /// COMPARTIDAS (nada de la raíz completa).
   bool canOpenFolderNamed(String name) =>
-      !scoped || path.isNotEmpty || sharedRoots.contains(name);
+      !scoped || path.isNotEmpty || _entryShown(name) != null;
+
+  /// La carpeta compartida que se VE con el nombre [shown] (null si ninguna).
+  SharedRoot? _entryShown(String shown) {
+    for (final e in sharedRootEntries) {
+      if (e.shown == shown) return e;
+    }
+    return null;
+  }
 
   Future<void> openFolder(String name) async {
     if (!canOpenFolderNamed(name)) return;
-    path = [...path, name];
+    if (scoped && path.isEmpty) {
+      // En la raíz del cliente lo que se toca es el NOMBRE con el que se ve la
+      // carpeta compartida: se entra a su ruta REAL del Drive (una compartida
+      // puede estar anidada: `ReynaCoot` → `XV/ReynaCoot`).
+      final entry = _entryShown(name);
+      path = entry == null ? [name] : List<String>.of(entry.real);
+    } else {
+      path = [...path, name];
+    }
     setSearch(null);
     await refresh();
   }
 
   Future<void> openPath(List<String> segments) async {
-    // Fuera de lo compartido no se entra: se queda en la raíz (donde solo
-    // se ven las carpetas compartidas).
-    if (scoped && segments.isNotEmpty && !sharedRoots.contains(segments.first)) {
+    // Fuera de lo compartido no se entra: se queda en su raíz (donde solo se
+    // ven las carpetas compartidas).
+    var target = List<String>.of(segments);
+    if (scoped && !isInsideShared(target)) {
       if (path.isEmpty) return;
-      segments = const [];
+      target = <String>[];
     }
-    path = List.of(segments);
+    path = target;
     setSearch(null);
     await refresh();
   }
 
   Future<void> goUp() async {
     if (path.isEmpty) return;
+    if (scoped) {
+      for (final e in sharedRootEntries) {
+        if (_samePath(e.real, path)) {
+          // Desde la carpeta compartida se vuelve a SU raíz (el listado de lo
+          // que le comparten), no a la carpeta del estudio que la contiene.
+          path = const [];
+          setSearch(null);
+          await refresh();
+          return;
+        }
+      }
+    }
     path = path.sublist(0, path.length - 1);
     setSearch(null);
     await refresh();
@@ -441,6 +654,26 @@ abstract class DriveBase extends ChangeNotifier {
   String thumbSource(DriveItem item, {int width = 320}) =>
       absolutePathOf(item);
 
+  /// Miniatura de [item] dentro de una carpeta CONCRETA [rel] (en segmentos),
+  /// sin depender de la carpeta que el drive está mostrando ahora mismo.
+  ///
+  /// Existe porque hay pantallas que navegan POR SU CUENTA sin mover el drive
+  /// (el selector de fotos del módulo Sitio web): pedían la miniatura del
+  /// archivo homónimo en la carpeta que tuviera abierta el módulo Archivos, así
+  /// que dentro de una subcarpeta no salía ninguna foto. Con el drive LOCAL
+  /// había un segundo problema: `thumbSource` devuelve una ruta del disco y esa
+  /// ruta se le pasaba a `Image.network` (tampoco se veía nada): por eso aquí
+  /// se usa [DriveThumb], que resuelve las dos cosas.
+  String thumbSourceIn(List<String> rel, DriveItem item, {int width = 320}) {
+    final saved = path;
+    path = List<String>.of(rel);
+    try {
+      return thumbSource(item, width: width);
+    } finally {
+      path = saved;
+    }
+  }
+
   /// Fuente para el visor. [previewWidth] pide una versión reducida
   /// (el visor muestra el preview al instante y la original no se baja).
   String fullSource(DriveItem item, {int? previewWidth}) =>
@@ -470,6 +703,55 @@ abstract class DriveBase extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Lote nuevo de subida: TODAS las fotos que se registren hasta el siguiente
+  /// lote lo comparten (el panel cuenta "subidas / a subir" de ESE lote).
+  String newUploadBatch() =>
+      'b${++_uploadBatchSeq}-${DateTime.now().microsecondsSinceEpoch}';
+
+  /// Lote más reciente con trabajos (null si no hay subidas).
+  String? get currentUploadBatch =>
+      uploadJobs.isEmpty ? null : uploadJobs.first.batch;
+
+  /// Las fotos del lote más reciente: lo que el panel muestra y cuenta.
+  ///
+  /// Es la lista COMPLETA del lote, incluidas las que todavía esperan su turno
+  /// en la cola: con 100 fotos el panel tiene que ver 100, no 30.
+  List<DriveUploadJob> get currentUploadJobs {
+    final batch = currentUploadBatch;
+    if (batch == null || batch.isEmpty) return uploadJobs;
+    return [
+      for (final j in uploadJobs)
+        if (j.batch == batch) j,
+    ];
+  }
+
+  /// Cuántos trabajos TERMINADOS de lotes ANTERIORES se recuerdan (el lote en
+  /// curso se conserva completo).
+  static const int kMaxFinishedUploadJobs = 30;
+
+  /// Suelta historial: los trabajos ya terminados de lotes anteriores.
+  ///
+  /// Los que están EN COLA o EN VUELO no se sueltan NUNCA (el panel muestra el
+  /// lote completo y su progreso). Antes se recortaba la lista a los 30 más
+  /// recientes y, al subir 100 fotos, las que esperaban turno desaparecían del
+  /// panel — con ellas, el total del lote y su porcentaje.
+  void _trimUploadJobs() {
+    final current = currentUploadBatch;
+    final stale = <int>[];
+    for (var i = 0; i < uploadJobs.length; i++) {
+      final j = uploadJobs[i];
+      if (j.status != 'uploading' && j.batch != current) stale.add(i);
+    }
+    var excess = stale.length - kMaxFinishedUploadJobs;
+    if (excess <= 0) return;
+    // Los MÁS VIEJOS primero: los índices mayores son los últimos de la lista.
+    for (final i in stale.reversed) {
+      if (excess <= 0) break;
+      excess--;
+      uploadJobs.removeAt(i);
+    }
+  }
+
   /// Aviso de progreso (llamar al avanzar bytes enviados).
   void notifyUploadProgress() => notifyListeners();
 
@@ -477,9 +759,7 @@ abstract class DriveBase extends ChangeNotifier {
     job.status = error == null ? 'done' : 'error';
     job.error = error;
     if (error == null) job.sent = job.total;
-    if (uploadJobs.length > 30) {
-      uploadJobs.removeRange(30, uploadJobs.length);
-    }
+    _trimUploadJobs();
     notifyListeners();
   }
 

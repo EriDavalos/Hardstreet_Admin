@@ -183,12 +183,126 @@ class SiteSectionState {
       jsonEncode(a) == jsonEncode(b);
 }
 
+/// Una SECCIÓN AGREGADA a la página: otra copia de una plantilla.
+///
+/// Las secciones de fábrica existen una vez en el HTML y su contenido se guarda
+/// por GANCHO (`texts` / `images` globales). Una copia no tiene ganchos propios
+/// en el HTML, así que lleva todo dentro: su nombre de instancia ([id]), de qué
+/// plantilla es ([key]) y lo que se escribió para ELLA (`texts`, `images` y
+/// `props`). La web levanta la copia clonando la sección original y le aplica
+/// esto encima.
+class SiteExtraSection {
+  const SiteExtraSection({
+    required this.id,
+    required this.key,
+    this.visible = true,
+    this.order = 0,
+    this.texts = const {},
+    this.images = const {},
+    this.props = const {},
+  });
+
+  /// Nombre de la instancia: `gallery-2` para la primera galería agregada.
+  final String id;
+
+  /// Plantilla de la que es copia (`gallery`).
+  final String key;
+
+  final bool visible;
+  final int order;
+
+  /// Textos de ESTA copia (gancho → valor), ya resueltos.
+  final Map<String, String> texts;
+  final Map<String, String> images;
+  final Map<String, dynamic> props;
+
+  SiteExtraSection copyWith({
+    bool? visible,
+    int? order,
+    Map<String, String>? texts,
+    Map<String, String>? images,
+    Map<String, dynamic>? props,
+  }) =>
+      SiteExtraSection(
+        id: id,
+        key: key,
+        visible: visible ?? this.visible,
+        order: order ?? this.order,
+        texts: texts ?? this.texts,
+        images: images ?? this.images,
+        props: props ?? this.props,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'key': key,
+        'visible': visible,
+        'order': order,
+        if (texts.isNotEmpty) 'texts': texts,
+        if (images.isNotEmpty) 'images': images,
+        if (props.isNotEmpty) 'props': props,
+      };
+
+  /// Lee una copia guardada (null si le falta lo indispensable: `id` y `key`).
+  static SiteExtraSection? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final m = raw.cast<String, dynamic>();
+    final id = '${m['id'] ?? ''}'.trim();
+    final key = '${m['key'] ?? ''}'.trim();
+    if (id.isEmpty || key.isEmpty) return null;
+    final texts = <String, String>{};
+    for (final e in _texts(m['texts']).entries) {
+      final v = '${e.value ?? ''}'.trim();
+      if (v.isNotEmpty) texts[e.key] = v;
+    }
+    final images = <String, String>{};
+    for (final e in _texts(m['images']).entries) {
+      final v = '${e.value ?? ''}'.trim();
+      if (v.isNotEmpty) images[e.key] = v;
+    }
+    return SiteExtraSection(
+      id: id,
+      key: key,
+      visible: m['visible'] is bool ? m['visible'] as bool : true,
+      order: (m['order'] as num?)?.toInt() ?? 0,
+      texts: texts,
+      images: images,
+      props: m['props'] is Map
+          ? (m['props'] as Map).cast<String, dynamic>()
+          : const {},
+    );
+  }
+
+  static Map<String, dynamic> _texts(Object? v) => v is Map
+      ? {for (final e in v.entries) '${e.key}': e.value}
+      : const <String, dynamic>{};
+
+  @override
+  bool operator ==(Object other) =>
+      other is SiteExtraSection &&
+      other.id == id &&
+      other.key == key &&
+      other.visible == visible &&
+      other.order == order &&
+      jsonEncode(other.texts) == jsonEncode(texts) &&
+      jsonEncode(other.images) == jsonEncode(images) &&
+      jsonEncode(other.props) == jsonEncode(props);
+
+  @override
+  int get hashCode => Object.hash(id, key, visible, order,
+      jsonEncode(texts), jsonEncode(images), jsonEncode(props));
+
+  @override
+  String toString() => 'SiteExtraSection($id de $key)';
+}
+
 /// Documento del contenido de la portada (lo que va y viene por la API).
 class SiteContent {
   const SiteContent({
     this.texts = const {},
     this.images = const {},
     this.sections = const {},
+    this.extraSections = const [],
   });
 
   /// Sólo los textos CAMBIADOS (clave → valor).
@@ -200,14 +314,21 @@ class SiteContent {
   /// Todas las secciones: visibilidad y orden.
   final Map<String, SiteSectionState> sections;
 
+  /// Las secciones AGREGADAS (copias): una segunda galería, otro divisor…
+  final List<SiteExtraSection> extraSections;
+
   /// Un documento vacío: la portada se ve tal como la trae el HTML.
   static const SiteContent empty = SiteContent();
 
-  bool get isEmpty => texts.isEmpty && images.isEmpty && sections.isEmpty;
+  bool get isEmpty =>
+      texts.isEmpty && images.isEmpty && sections.isEmpty && extraSections.isEmpty;
 
   /// Cuántos campos se han cambiado (para las píldoras del encabezado).
   int get editedCount =>
-      texts.length + images.length + sections.values.where((s) => !s.visible).length;
+      texts.length +
+      images.length +
+      sections.values.where((s) => !s.visible).length +
+      extraSections.length;
 
   /// ¿Es el MISMO contenido? (valor a valor: `==` de dos mapas de Dart compara
   /// la identidad de las claves, no lo que llevan dentro, así que no sirve para
@@ -215,7 +336,17 @@ class SiteContent {
   bool sameAs(SiteContent other) =>
       _sameMap(texts, other.texts) &&
       _sameMap(images, other.images) &&
-      _sameMap(sections, other.sections);
+      _sameMap(sections, other.sections) &&
+      _sameExtras(extraSections, other.extraSections);
+
+  /// Las copias son iguales si lo son una a una (y en el mismo orden).
+  static bool _sameExtras(List<SiteExtraSection> a, List<SiteExtraSection> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   static bool _sameMap<V>(Map<String, V> a, Map<String, V> b) {
     if (a.length != b.length) return false;
@@ -229,11 +360,13 @@ class SiteContent {
     Map<String, String>? texts,
     Map<String, String>? images,
     Map<String, SiteSectionState>? sections,
+    List<SiteExtraSection>? extraSections,
   }) =>
       SiteContent(
         texts: texts ?? this.texts,
         images: images ?? this.images,
         sections: sections ?? this.sections,
+        extraSections: extraSections ?? this.extraSections,
       );
 
   /// Un texto editado (o null si sigue el de fábrica).
@@ -255,6 +388,8 @@ class SiteContent {
         if (images.isNotEmpty) 'images': images,
         if (sections.isNotEmpty)
           'sections': {for (final e in sections.entries) e.key: e.value.toJson()},
+        if (extraSections.isNotEmpty)
+          'extraSections': [for (final e in extraSections) e.toJson()],
       };
 
   /// Lee lo guardado (tolerante: lo que falte o venga raro se ignora).
@@ -281,8 +416,19 @@ class SiteContent {
           : const SiteSectionState(visible: true, order: 0);
       sections[entry.key] = SiteSectionState.fromJson(entry.value, fallback);
     }
-    return SiteContent(texts: texts, images: images, sections: sections);
+    final extras = <SiteExtraSection>[];
+    for (final raw in _list(m['extraSections'])) {
+      final extra = SiteExtraSection.fromJson(raw);
+      // Dos copias con el mismo nombre dejarían la página con dos secciones
+      // iguales: la segunda se ignora.
+      if (extra != null && !extras.any((e) => e.id == extra.id)) extras.add(extra);
+    }
+    return SiteContent(
+        texts: texts, images: images, sections: sections, extraSections: extras);
   }
+
+  static List<Object?> _list(Object? v) =>
+      v is List ? v.toList(growable: false) : const [];
 
   /// Igual que [fromJson] pero desde el texto que devuelve la API.
   static SiteContent fromJsonText(Object? text) {

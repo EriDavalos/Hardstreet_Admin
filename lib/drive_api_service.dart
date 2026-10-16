@@ -182,7 +182,9 @@ class DriveApiService extends DriveBase {
   Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
     if (sources.isEmpty) return 0;
     // 1. Registrar TODOS los trabajos primero: el panel muestra la lista
-    //    completa al 0% desde el primer frame.
+    //    completa al 0% desde el primer frame. Todos van en el MISMO lote, que
+    //    es el que el panel cuenta ("50/100 fotos").
+    final batch = newUploadBatch();
     final pending = <(DriveUploadJob, String, String)>[];
     var i = 0;
     for (final s in sources) {
@@ -195,6 +197,7 @@ class DriveApiService extends DriveBase {
         name: fileName,
         thumb: s, // miniatura del archivo LOCAL mientras sube
         total: f.lengthSync(),
+        batch: batch,
       );
       i++;
       addUploadJob(job);
@@ -452,7 +455,9 @@ class DriveApiService extends DriveBase {
   @override
   Future<List<DriveItem>> listFolderItems(List<String> rel) async {
     try {
-      final r = await http
+      // Con el cliente INYECTABLE ([client]), no con `http` global: es el mismo
+      // en producción y así las pruebas pueden mirarlo sin tocar la red.
+      final r = await client
           .get(
             _u('/api/drive', {'path': rel.join('/')}),
             headers: _authHeaders,

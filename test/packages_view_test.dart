@@ -12,6 +12,10 @@ import 'package:hardstreet_admin/pages/packages_page.dart';
 /// mismo catálogo: en CARDS (el flyer de la web, por defecto) o en FILAS (más
 /// compacto, para comparar). Aquí se comprueba el conmutador y que cada vista
 /// pinte de verdad lo suyo.
+///
+/// Además: el diseño de las cards se personaliza ABAJO (la barra del final),
+/// no en el encabezado, y las cards dejan claro que se EDITEDAN (botón "Editar"
+/// y toda la tarjeta clicable).
 
 const _packages = [
   {
@@ -47,8 +51,11 @@ void _installMock() {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
     if (path.endsWith('/api/admin/packages')) {
-      return http.Response(jsonEncode({'packages': _packages}), 200,
-          headers: headers);
+      return http.Response(
+        jsonEncode({'packages': _packages}),
+        200,
+        headers: headers,
+      );
     }
     if (path.endsWith('/api/tiers')) {
       return http.Response(
@@ -81,10 +88,14 @@ void _installMock() {
   });
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  Brightness brightness = Brightness.light,
+  Size size = const Size(1240, 1000),
+}) async {
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(1240, 1000);
-  await tester.binding.setSurfaceSize(const Size(1240, 1000));
+  tester.view.physicalSize = size;
+  await tester.binding.setSurfaceSize(size);
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
@@ -92,7 +103,10 @@ Future<void> _pump(WidgetTester tester) async {
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
-    const MaterialApp(home: Scaffold(body: PackagesPage())),
+    MaterialApp(
+      theme: ThemeData(brightness: brightness),
+      home: const Scaffold(body: PackagesPage()),
+    ),
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -114,44 +128,52 @@ Future<void> _toggle(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('por defecto el catálogo se ve en CARDS (el flyer de la web)',
-      (tester) async {
+  testWidgets('por defecto el catálogo se ve en CARDS (el flyer de la web)', (
+    tester,
+  ) async {
     await _pump(tester);
 
     expect(find.text('Boda Full'), findsOneWidget);
     expect(find.text('XV Años Gold'), findsOneWidget);
-    // El card trae su botón dorado "PERSONALIZAR" y el precio del flyer.
-    expect(find.text('PERSONALIZAR'), findsNWidgets(2));
+    // El card trae su botón de edición y el precio del flyer.
+    expect(find.text('Editar'), findsNWidgets(2));
     expect(find.text('Desde'), findsNWidgets(2));
     // El conmutador ofrece pasar a filas.
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
+    // El diseño se personaliza ABAJO: la barra vive junto al catálogo.
+    expect(find.byKey(const ValueKey('packages-design-bar')), findsOneWidget);
   });
 
-  testWidgets('el conmutador cambia a FILAS y vuelve, sin perder el catálogo',
-      (tester) async {
+  testWidgets('el conmutador cambia a FILAS y vuelve, sin perder el catálogo', (
+    tester,
+  ) async {
     await _pump(tester);
-    expect(find.text('PERSONALIZAR'), findsNWidgets(2));
+    expect(find.text('Editar'), findsNWidgets(2));
 
     await _toggle(tester);
 
     // Vista de filas: mismo catálogo, presentación compacta (sin CTA grande).
     expect(find.byIcon(Icons.grid_view_rounded), findsOneWidget);
-    expect(find.text('PERSONALIZAR'), findsNothing);
+    expect(find.text('Editar'), findsNothing);
+    expect(find.byIcon(Icons.edit_rounded), findsNWidgets(2));
     expect(find.text('Boda Full'), findsOneWidget);
     expect(find.text('XV Años Gold'), findsOneWidget);
-    expect(find.text('PREMIUM'), findsOneWidget);   // badge del tier
-    expect(find.text('BODAS'), findsOneWidget);     // categoría
-    expect(find.text('2'), findsWidgets);           // servicios incluidos
+    expect(find.text('PREMIUM'), findsOneWidget); // badge del tier
+    expect(find.text('BODAS'), findsOneWidget); // categoría
+    expect(find.text('2'), findsWidgets); // servicios incluidos
     expect(find.textContaining('servicio'), findsWidgets);
 
     // Y se puede volver a los cards.
     await _toggle(tester);
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
-    expect(find.text('PERSONALIZAR'), findsNWidgets(2));
+    expect(find.text('Editar'), findsNWidgets(2));
+    // La barra de diseño sigue disponible en las dos vistas.
+    expect(find.byKey(const ValueKey('packages-design-bar')), findsOneWidget);
   });
 
-  testWidgets('el buscador sigue filtrando en la vista de filas',
-      (tester) async {
+  testWidgets('el buscador sigue filtrando en la vista de filas', (
+    tester,
+  ) async {
     await _pump(tester);
     await _toggle(tester);
 
@@ -162,4 +184,20 @@ void main() {
     expect(find.text('XV Años Gold'), findsOneWidget);
     expect(find.text('Boda Full'), findsNothing);
   });
+
+  // El módulo se usa en claro y en oscuro: el catálogo tiene que pintarse
+  // entero (cards y filas) sin desbordes ni excepciones de layout.
+  for (final brightness in [Brightness.light, Brightness.dark]) {
+    testWidgets('cards y filas se pintan sin errores en modo $brightness', (
+      tester,
+    ) async {
+      await _pump(tester, brightness: brightness);
+      expect(find.text('Editar'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+
+      await _toggle(tester);
+      expect(find.text('Boda Full'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

@@ -10,7 +10,7 @@ class AppConstants {
   /// Se puede sobreescribir al compilar con: --dart-define=DRIVE_API=http://ip:4000
   static const String apiBase = String.fromEnvironment(
     'DRIVE_API',
-    defaultValue: 'http://oriongo.ddns.net:4000',
+    defaultValue: 'https://oriongo.ddns.net',
   );
 
   /// Base del API de administración/CRUD (Hardstreet-Backend en Vercel):
@@ -26,7 +26,7 @@ class AppConstants {
   /// pubspec.yaml o pásala con --dart-define=SP_VERSION=x.y.z al compilar.
   static const String buildVersion = String.fromEnvironment(
     'SP_VERSION',
-    defaultValue: '1.0.6',
+    defaultValue: '1.0.8',
   );
 
   /// Override opcional (útil en desarrollo): --dart-define=APP_VERSION=x.y.z

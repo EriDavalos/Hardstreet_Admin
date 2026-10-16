@@ -182,7 +182,7 @@ void main() {
       if (request.url.path.endsWith('/api/local/agent/wait')) {
         waited.add(request.url.path);
         if (waited.length > 1) {
-          // La sesión dejó de servir: el agente se detiene solo.
+          // El servidor del drive no reconoce la sesión.
           return http.Response('{}', 401);
         }
         return http.Response(
@@ -209,17 +209,97 @@ void main() {
     agent.start();
     expect(agent.running, isTrue);
 
-    // Se espera a que conteste (y a que se detenga al recibir el 401).
+    // Se espera a que conteste y a que el 401 quede EXPLICADO.
     for (var i = 0; i < 200 && agent.served == 0; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    for (var i = 0;
+        i < 200 && agent.problem.value != ShareProblem.session;
+        i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
 
     expect(agent.served, 1);
     expect(replies, hasLength(1));
     expect(replies.single.url.path, endsWith('/api/local/agent/reply'));
     expect(replies.single.url.queryParameters['id'], 'a1');
     expect(replies.single.url.queryParameters['status'], '200');
-    expect(agent.running, isFalse, reason: 'con 401 no sigue preguntando');
+
+    // Un 401 NO apaga el servicio: el switch se queda donde el usuario lo
+    // puso y la tarjeta explica el motivo (antes se apagaba solo y parecía
+    // que el switch no obedecía).
+    expect(agent.problem.value, ShareProblem.session);
+    expect(agent.running, isTrue);
+    expect(agent.serving.value, isTrue);
+
+    // Y no es un bucle apretado: entre reintentos hay una espera.
+    final before = waited.length;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(waited.length - before, lessThan(20),
+        reason: 'espera entre reintentos (antes preguntaba sin parar)');
+
+    agent.stop();
+    expect(agent.running, isFalse);
+    expect(agent.serving.value, isFalse);
+    expect(agent.problem.value, isNull, reason: 'apagado a propósito');
+  });
+
+  test('un servidor del drive VIEJO se explica y no se golpea sin parar',
+      () async {
+    final waited = <String>[];
+    final agent = LocalShareAgent.instance;
+    agent.retryDelay = const Duration(milliseconds: 20);
+    // Servidor del drive sin los endpoints del agente.
+    agent.client = MockClient((request) async {
+      waited.add(request.url.path);
+      return http.Response('Not Found', 404);
+    });
+
+    agent.start();
+    for (var i = 0;
+        i < 200 && agent.problem.value != ShareProblem.oldServer;
+        i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(agent.problem.value, ShareProblem.oldServer);
+    expect(agent.running, isTrue, reason: 'sigue encendido y reintentando');
+
+    final before = waited.length;
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(waited.length - before, lessThan(20),
+        reason: 'con 404 se espera antes de volver a preguntar');
+    agent.stop();
+  });
+
+  test('en el navegador/celular el servicio lo DICE en vez de no hacer nada',
+      () async {
+    final agent = LocalShareAgent.instance;
+    agent.debugSupported = false;
+    addTearDown(() => agent.debugSupported = null);
+
+    final started = await agent.setManual(true);
+
+    expect(started, isFalse, reason: 'no puede servir carpetas del equipo');
+    expect(agent.running, isFalse);
+    expect(agent.serving.value, isFalse);
+    expect(agent.problem.value, ShareProblem.unsupported);
+    expect(agent.manualOn, isFalse);
+  });
+
+  test('el 204 sin trabajo no pregunta en bucle apretado', () async {
+    final waited = <String>[];
+    final agent = LocalShareAgent.instance;
+    agent.client = MockClient((request) async {
+      waited.add(request.url.path);
+      return http.Response('', 204);
+    });
+
+    agent.start();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    // Con un servidor que contesta 204 al instante, el agente deja respirar
+    // (~1 s): en 300 ms solo pudo preguntar una vez, no cientos.
+    expect(waited.length, lessThan(4));
+    expect(agent.problem.value, isNull);
+    agent.stop();
   });
 }

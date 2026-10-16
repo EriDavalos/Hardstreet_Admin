@@ -60,28 +60,97 @@ void main() {
     // header, no solo la activa).
     expect(find.byKey(const ValueKey('uploads_card')), findsOneWidget);
     expect(find.text('Subiendo 2 fotos…'), findsOneWidget);
-    expect(find.text('1 completada'), findsOneWidget);
-    // Progreso global: 400 de 1000 bytes en curso -> 40 %.
-    expect(find.text('40 %'), findsOneWidget);
-    // Fila en carga con su porcentaje individual.
+    expect(find.text('1 de 2 fotos'), findsOneWidget);
+    // Progreso del LOTE: 1 de 2 fotos subidas -> 50% subidas y "1/2 fotos"
+    // (no los bytes en curso: lo que se quiere saber es cuántas faltan).
+    expect(find.text('50% subidas'), findsOneWidget);
+    expect(find.text('1/2 fotos'), findsOneWidget);
+    // La fila en carga sigue con su porcentaje individual (por bytes).
     expect(find.text('40%'), findsOneWidget);
     expect(find.text('lista.jpg'), findsOneWidget);
 
     // Avance en TIEMPO REAL: sin await entre medias, solo notificaciones.
+    // La BARRA del lote no se mueve (0 fotos nuevas terminadas), pero la fila
+    // de esa foto sí.
     uploading.sent = 900;
     drive.notifyUploadProgress();
     await tester.pump();
-    expect(find.text('90 %'), findsOneWidget);
+    expect(find.text('50% subidas'), findsOneWidget);
     expect(find.text('90%'), findsOneWidget);
 
-    // Al terminar: pasa a "completadas" y permite limpiar.
+    // Al terminar: el lote queda al 100% y permite limpiar.
     drive.finishUploadJob(uploading);
     await tester.pump();
     expect(find.text('2 subidas completadas'), findsOneWidget);
+    expect(find.text('100% subidas'), findsOneWidget);
+    expect(find.text('2/2 fotos'), findsOneWidget);
 
     drive.clearFinishedUploads();
     await tester.pump();
     expect(find.byKey(const ValueKey('uploads_card')), findsNothing);
+  });
+
+  testWidgets('Un lote de 100 fotos: se ven (y cuentan) todas, no 30',
+      (WidgetTester tester) async {
+    late Directory tmp;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('hardstreet_batch_test');
+    });
+    addTearDown(() => tmp.delete(recursive: true));
+
+    final drive = DriveService.testRoot(tmp);
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+    );
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)));
+
+    // Un lote de 100 fotos, TODAS registradas de una (como hace el drive al
+    // subir una selección grande): ninguna puede perderse de la lista.
+    final batch = drive.newUploadBatch();
+    for (var i = 0; i < 100; i++) {
+      drive.addUploadJob(DriveUploadJob(
+        id: 'u$i',
+        name: 'foto-$i.jpg',
+        thumb: '',
+        total: 10,
+        batch: batch,
+      ));
+    }
+    await tester.pump();
+
+    expect(find.text('Subiendo 100 fotos…'), findsOneWidget);
+    expect(find.text('0 de 100 fotos'), findsOneWidget);
+    expect(find.text('0% subidas'), findsOneWidget);
+    expect(find.text('0/100 fotos'), findsOneWidget);
+
+    // Se van terminando: la lista conserva las 31 hechas Y las 69 en cola (antes
+    // el panel recortaba a 30 y las que esperaban turno desaparecían).
+    for (var i = 0; i < 31; i++) {
+      drive.finishUploadJob(drive.uploadJobById('u$i')!);
+    }
+    await tester.pump();
+
+    expect(drive.uploadJobs.length, 100,
+        reason: 'las fotos del lote no se pueden soltar de la lista');
+    expect(drive.uploadJobs.where((j) => j.status == 'uploading').length, 69);
+    expect(find.text('Subiendo 69 fotos…'), findsNothing,
+        reason: 'el encabezado cuenta el lote COMPLETO (100), no las activas');
+    expect(find.text('Subiendo 100 fotos…'), findsOneWidget);
+    expect(find.text('31 de 100 fotos'), findsOneWidget);
+    expect(find.text('31% subidas'), findsOneWidget);
+    expect(find.text('31/100 fotos'), findsOneWidget);
+
+    // Termina el lote: 100/100.
+    for (var i = 31; i < 100; i++) {
+      drive.finishUploadJob(drive.uploadJobById('u$i')!);
+    }
+    await tester.pump();
+    expect(find.text('100 subidas completadas'), findsOneWidget);
+    expect(find.text('100% subidas'), findsOneWidget);
+    expect(find.text('100/100 fotos'), findsOneWidget);
   });
 
   testWidgets('Fila con error: muestra el motivo y el botón Resubir',

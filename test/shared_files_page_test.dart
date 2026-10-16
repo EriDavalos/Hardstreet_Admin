@@ -725,6 +725,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('sin soporte (navegador/celular) el switch se DESHABILITA y '
+      'dice por qué', (tester) async {
+    // El navegador (y el celular) no pueden leer el disco de la computadora:
+    // antes el switch se dejaba tocar y no hacía nada —parecía roto—; ahora va
+    // deshabilitado y la tarjeta explica qué hacer.
+    final agent = LocalShareAgent.instance;
+    agent.debugSupported = false;
+    agent.client =
+        MockClient((_) async => throw http.ClientException('sin red'));
+    addTearDown(() async {
+      agent.stop();
+      agent.debugSupported = null;
+    });
+
+    _installMock();
+    await _pump(tester);
+
+    final card = find.byKey(const ValueKey('share-service-card'));
+    expect(card, findsOneWidget);
+    final sw = tester.widget<Switch>(
+        find.descendant(of: card, matching: find.byType(Switch)));
+    expect(sw.onChanged, isNull, reason: 'no se puede encender desde aquí');
+    expect(sw.value, isFalse);
+    // Y la salida concreta, en la propia tarjeta.
+    expect(
+      find.textContaining('no se pueden servir carpetas de esta computadora'),
+      findsWidgets,
+    );
+    expect(find.textContaining('app de escritorio'), findsWidgets);
+    expect(agent.problem.value, ShareProblem.unsupported);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('un servidor viejo que dice "ya no está activa" también se '
       'explica', (tester) async {
     // El servidor del drive todavía sin actualizar contesta 404 con "La carpeta

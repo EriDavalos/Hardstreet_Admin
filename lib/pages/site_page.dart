@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../app_constants.dart';
 import '../app_platform.dart';
-import '../drive_base.dart';
+import '../drive_api_service.dart';
+import '../drive_base.dart' show driveImagePreview;
 import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
@@ -12,6 +13,7 @@ import '../theme.dart';
 import '../web_content.dart';
 import '../web_sections.dart';
 import '../widgets/common.dart';
+import '../widgets/drive_thumb.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/site_section_preview.dart';
@@ -159,6 +161,14 @@ class _SitePageState extends State<SitePage> {
   /// Visibilidad elegida por sección.
   final Map<String, bool> _visible = {};
 
+  /// Las secciones AGREGADAS: nombre de la copia (`gallery-2`) → plantilla de
+  /// la que es copia (`gallery`).
+  ///
+  /// Las de fábrica no están aquí: su nombre de instancia ES el de su
+  /// plantilla, así que todo lo de siempre (`_props['gallery']`, el gancho
+  /// `gallery_title`…) sigue valiendo tal cual.
+  final Map<String, String> _extraKeys = {};
+
   /// Tarjetas abiertas (las que muestran sus campos).
   final Set<String> _open = <String>{};
 
@@ -236,11 +246,151 @@ class _SitePageState extends State<SitePage> {
   }
 
   void _resetSections() {
+    _clearExtras();
     _order = kOrderableSectionTemplates.map((t) => t.key).toList();
     _visible
       ..clear()
       ..addEntries(
           kSiteSectionTemplates.map((t) => MapEntry(t.key, t.defaultVisible)));
+  }
+
+  // ---------------------------------------------------------------
+  // Secciones AGREGADAS (copias de una plantilla)
+  // ---------------------------------------------------------------
+
+  /// ¿[instance] es una copia agregada (`gallery-2`) y no una de fábrica?
+  bool _isExtra(String instance) => _extraKeys.containsKey(instance);
+
+  /// Clave de la plantilla de una sección montada (de fábrica o copia).
+  String _templateKey(String instance) => _extraKeys[instance] ?? instance;
+
+  /// Plantilla de una sección montada (null si ya no existe).
+  SiteSectionTemplate? _templateOf(String instance) =>
+      siteSectionTemplate(_templateKey(instance));
+
+  /// Cómo se llama una copia en el panel ("Galería 2").
+  String _labelOf(String instance) {
+    final t = _templateOf(instance);
+    final base = t?.label ?? instance;
+    if (!_isExtra(instance)) return base;
+    return '$base ${_copyNumber(instance)}';
+  }
+
+  /// El número de una copia: `gallery-2` → 2.
+  int _copyNumber(String instance) {
+    final i = instance.lastIndexOf('-');
+    final n = i < 0 ? null : int.tryParse(instance.substring(i + 1));
+    return n ?? 2;
+  }
+
+  /// Clave del control de un gancho en una sección: las de fábrica guardan su
+  /// control por gancho (`gallery_title`); cada copia, por gancho Y copia
+  /// (`gallery-2::gallery_title`), porque varias copias comparten ganchos.
+  String _hookKey(String instance, String hook) =>
+      _isExtra(instance) ? '$instance::$hook' : hook;
+
+  /// Monta una sección AGREGADA con sus propios controles.
+  ///
+  /// [copyFrom] (sólo al agregarla) copia las OPCIONES que tenga ahora la
+  /// sección original, para que la copia arranque igual y se edite desde ahí.
+  /// Los textos e imágenes no se copian: si la copia no los toca, se resuelven
+  /// con los de la sección original (y al guardar quedan fijos en la copia).
+  void _mountExtra(
+    String id,
+    String key, {
+    String? copyFrom,
+    Map<String, String>? texts,
+    Map<String, String>? images,
+    Map<String, dynamic>? props,
+  }) {
+    _extraKeys[id] = key;
+    for (final f in kSiteTexts.where((f) => f.sectionKey == key)) {
+      _texts['$id::${f.key}'] = TextEditingController(text: texts?[f.key] ?? '');
+    }
+    for (final f in kSiteImages.where((f) => f.sectionKey == key)) {
+      _images['$id::${f.key}'] =
+          TextEditingController(text: images?[f.key] ?? '');
+    }
+    _props[id] = _mutableProps(key, props ?? _props[copyFrom ?? '']);
+    _visible[id] = true;
+  }
+
+  /// Suelta una sección AGREGADA (sus controles incluidos).
+  void _disposeInstance(String id) {
+    for (final f in kSiteTexts) {
+      _texts.remove('$id::${f.key}')?.dispose();
+    }
+    for (final f in kSiteImages) {
+      _images.remove('$id::${f.key}')?.dispose();
+    }
+    _extraKeys.remove(id);
+    _props.remove(id);
+    _visible.remove(id);
+    _open.remove(id);
+    _order.remove(id);
+  }
+
+  /// Quita TODAS las secciones agregadas.
+  void _clearExtras() {
+    for (final id in _extraKeys.keys.toList()) {
+      _disposeInstance(id);
+    }
+  }
+
+  /// Agrega una COPIA de una plantilla ("Agregar sección").
+  Future<void> _addSection() async {
+    final t = await showHsModal<SiteSectionTemplate>(
+      context: context,
+      builder: (_) => _SectionCatalogDialog(copies: _copiesOf()),
+    );
+    if (t == null) return;
+    final id = siteExtraSectionId(t.key, _order);
+    setState(() {
+      _mountExtra(id, t.key, copyFrom: t.key);
+      // Entra justo debajo de la sección de la que es copia: se ve al lado y de
+      // ahí se mueve a donde tenga que ir.
+      final i = _order.indexOf(t.key);
+      _order.insert(i < 0 ? _order.length : i + 1, id);
+      _open.add(id);
+    });
+    HsToast.success('${_labelOf(id)} agregada',
+        details: 'Edítala y presiona "Guardar cambios" para que la web la '
+            'muestre.');
+  }
+
+  /// Cuántas copias hay ya de cada plantilla (para el catálogo).
+  Map<String, int> _copiesOf() {
+    final out = <String, int>{};
+    for (final key in _extraKeys.values) {
+      out[key] = (out[key] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /// Quita una sección agregada (pregunta antes: se pierde lo escrito en ella).
+  Future<void> _removeSection(String id) async {
+    final ok = await showHsModal<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('¿Quitar "${_labelOf(id)}"?'),
+        content: Text(
+          'La sección se quita de la página y se pierde lo que tenga escrito.\n\n'
+          'La sección de fábrica de la que se copió no se toca.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Quitar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _disposeInstance(id));
   }
 
   // ---------------------------------------------------------------
@@ -280,21 +430,35 @@ class _SitePageState extends State<SitePage> {
           for (var i = 0; i < kOrderableSectionTemplates.length; i++)
             kOrderableSectionTemplates[i].key: i,
         };
-        _order = kOrderableSectionTemplates.map((t) => t.key).toList()
-          ..sort((a, b) {
-            final oa = stored[a]?.order;
-            final ob = stored[b]?.order;
-            if (oa != null || ob != null) {
-              final ra = oa ?? 1000 + factory[a]!;
-              final rb = ob ?? 1000 + factory[b]!;
-              if (ra != rb) return ra.compareTo(rb);
-            }
-            return factory[a]!.compareTo(factory[b]!);
-          });
+        // Las secciones AGREGADAS: cada copia con sus controles y su contenido.
+        _clearExtras();
+        for (final extra in content.extraSections) {
+          _mountExtra(extra.id, extra.key,
+              texts: extra.texts, images: extra.images, props: extra.props);
+          _visible[extra.id] = extra.visible;
+        }
+        final extraOrder = {
+          for (final e in content.extraSections) e.id: e.order,
+        };
+        // El orden de una copia es el que guardó el panel; el de una sección de
+        // fábrica, el de siempre (su `order` o su sitio en el HTML).
+        int rank(String id) {
+          final explicit = extraOrder[id] ?? stored[id]?.order;
+          if (explicit != null) return explicit;
+          return 1000 + (factory[_templateKey(id)] ?? 0);
+        }
+
+        _order = [
+          ...kOrderableSectionTemplates.map((t) => t.key),
+          ..._extraKeys.keys,
+        ]..sort((a, b) => rank(a).compareTo(rank(b)));
         _visible
           ..clear()
           ..addEntries(kSiteSectionTemplates.map((t) => MapEntry(
               t.key, stored[t.key]?.visible ?? t.defaultVisible)));
+        for (final extra in content.extraSections) {
+          _visible[extra.id] = extra.visible;
+        }
         // Recién cargado no hay nada "sin guardar": lo guardado se recuerda tal
         // como lo MANDARÍAMOS (con todas las secciones).
         _saved = _document(full: _stored);
@@ -340,6 +504,9 @@ class _SitePageState extends State<SitePage> {
     final sections = <String, SiteSectionState>{};
     for (var i = 0; i < _order.length; i++) {
       final key = _order[i];
+      // Las copias no van aquí: tienen su propio apartado (`extraSections`),
+      // porque el HTML no tiene ganchos para ellas.
+      if (_isExtra(key)) continue;
       final props = full
           ? {...siteSectionDefaults(key), ...(_props[key] ?? const {})}
           : _changedProps(key);
@@ -348,6 +515,30 @@ class _SitePageState extends State<SitePage> {
         order: i + 1,
         props: props,
       );
+    }
+    // Las AGREGADAS viajan COMPLETAS (textos, imágenes y opciones): no tienen
+    // nada de fábrica donde caer si falta un dato, y así la web las pinta tal
+    // como se ven aquí.
+    final extras = <SiteExtraSection>[];
+    for (var i = 0; i < _order.length; i++) {
+      final id = _order[i];
+      final key = _extraKeys[id];
+      if (key == null) continue;
+      extras.add(SiteExtraSection(
+        id: id,
+        key: key,
+        visible: _visible[id] ?? true,
+        order: i + 1,
+        texts: {
+          for (final f in kSiteTexts.where((f) => f.sectionKey == key))
+            f.key: _textValue(id, f),
+        },
+        images: {
+          for (final f in kSiteImages.where((f) => f.sectionKey == key))
+            f.key: _imageValue(id, f),
+        },
+        props: {...siteSectionDefaults(key), ...(_props[id] ?? const {})},
+      ));
     }
     // Las secciones fijas (pie y marca) sólo viajan si se tocó su contenido.
     for (final t in kSiteSectionTemplates.where((t) => !t.orderable)) {
@@ -362,7 +553,12 @@ class _SitePageState extends State<SitePage> {
         );
       }
     }
-    return SiteContent(texts: texts, images: images, sections: sections);
+    return SiteContent(
+      texts: texts,
+      images: images,
+      sections: sections,
+      extraSections: extras,
+    );
   }
 
   /// Opciones de una sección que DIFIEREN de las de fábrica.
@@ -528,19 +724,39 @@ class _SitePageState extends State<SitePage> {
   // Valores para la miniatura
   // ---------------------------------------------------------------
 
+  /// El texto de un gancho en UNA sección: lo que se escribió ahí, lo que tenga
+  /// la sección de la que se copió (si es una copia que no lo tocó) o el de
+  /// fábrica.
+  String _textValue(String instance, SiteTextField f) {
+    final own = _texts[_hookKey(instance, f.key)]!.text.trim();
+    if (own.isNotEmpty) return own;
+    if (_isExtra(instance)) {
+      final src = (_texts[f.key]?.text ?? '').trim();
+      if (src.isNotEmpty) return src;
+    }
+    return f.def;
+  }
+
+  /// Igual que [_textValue] para las imágenes.
+  String _imageValue(String instance, SiteImageField f) {
+    final own = _images[_hookKey(instance, f.key)]!.text.trim();
+    if (own.isNotEmpty) return own;
+    if (_isExtra(instance)) {
+      final src = (_images[f.key]?.text ?? '').trim();
+      if (src.isNotEmpty) return src;
+    }
+    return f.def;
+  }
+
   /// Textos de una sección ya resueltos (lo editado, o el de fábrica).
   Map<String, String> _values(String section) => {
-        for (final f in kSiteTexts.where((f) => f.sectionKey == section))
-          f.key: _texts[f.key]!.text.trim().isEmpty
-              ? f.def
-              : _texts[f.key]!.text.trim(),
+        for (final f in kSiteTexts.where((f) => f.sectionKey == _templateKey(section)))
+          f.key: _textValue(section, f),
       };
 
   Map<String, String> _imageValues(String section) => {
-        for (final f in kSiteImages.where((f) => f.sectionKey == section))
-          f.key: _images[f.key]!.text.trim().isEmpty
-              ? f.def
-              : _images[f.key]!.text.trim(),
+        for (final f in kSiteImages.where((f) => f.sectionKey == _templateKey(section)))
+          f.key: _imageValue(section, f),
       };
 
   // ---------------------------------------------------------------
@@ -579,7 +795,7 @@ class _SitePageState extends State<SitePage> {
             label: hidden == 1 ? '1 sección oculta' : '$hidden secciones ocultas'),
         StatPill(
             icon: Icons.view_carousel_outlined,
-            label: '${kSiteSectionTemplates.length} secciones'),
+            label: '${_order.length + kSiteSectionTemplates.where((t) => !t.orderable).length} secciones'),
         StatPill(
             icon: _stored ? Icons.cloud_done_outlined : Icons.description_outlined,
             label: _stored ? 'En la base de datos' : 'En el HTML del sitio'),
@@ -711,45 +927,101 @@ class _SitePageState extends State<SitePage> {
         ),
       );
 
-  /// Las tarjetas: las movibles en su orden y, al final, las fijas.
+  /// Las tarjetas: las movibles en su orden (de fábrica y AGREGADAS) y, al
+  /// final, las fijas.
   List<Widget> _sectionsList(ColorScheme scheme) {
     final out = <Widget>[];
     for (var i = 0; i < _order.length; i++) {
-      final key = _order[i];
-      final t = siteSectionTemplate(key);
+      final instance = _order[i];
+      final t = _templateOf(instance);
       if (t == null) continue;
       out.add(_sectionCard(
         scheme,
         t,
+        instance: instance,
         position: i,
         total: _order.length,
       ));
       out.add(const SizedBox(height: 12));
     }
+    // Agregar otra copia de una sección: va justo después de las movibles, que
+    // son las que se pueden repetir.
+    out.add(_addSectionBar(scheme));
+    out.add(const SizedBox(height: 12));
     for (final t in kSiteSectionTemplates.where((t) => !t.orderable)) {
-      out.add(_sectionCard(scheme, t, position: null));
+      out.add(_sectionCard(scheme, t, instance: t.key, position: null));
       out.add(const SizedBox(height: 12));
     }
     return out;
   }
 
+  /// Botón para agregar otra copia de una sección ("Agregar sección").
+  Widget _addSectionBar(ColorScheme scheme) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: scheme.primary.withValues(alpha: .35),
+            width: 1.2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.add_box_outlined, size: 20, color: scheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Agregar una sección',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Pon más bloques a la página: una galería más, otro divisor '
+                    'de fotos, más testimonios… Se agregan con lo que tenga la '
+                    'sección de la que se copian y después se editan aparte.',
+                    style: TextStyle(
+                        fontSize: 11.5, height: 1.3, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              key: const ValueKey('site-add-section'),
+              onPressed: _loading ? null : _addSection,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Agregar sección'),
+            ),
+          ],
+        ),
+      );
+
   /// Una SECCIÓN: cabecera, miniatura y (si está abierta) sus campos.
+  ///
+  /// [instance] es la sección MONTADA: la clave de la plantilla (`gallery`) o
+  /// el nombre de una copia agregada (`gallery-2`).
   Widget _sectionCard(
     ColorScheme scheme,
     SiteSectionTemplate t, {
+    required String instance,
     required int? position,
     int total = 0,
   }) {
-    final open = _open.contains(t.key);
-    final visible = _visible[t.key] ?? t.defaultVisible;
-    final edited = sitePropsChanged(t.key, _props[t.key] ?? const {}) +
+    final isExtra = _isExtra(instance);
+    final open = _open.contains(instance);
+    final visible = _visible[instance] ?? t.defaultVisible;
+    final edited = sitePropsChanged(t.key, _props[instance] ?? const {}) +
         kSiteTexts
             .where((f) => f.sectionKey == t.key)
-            .where((f) => _texts[f.key]!.text.trim().isNotEmpty)
+            .where((f) => _texts[_hookKey(instance, f.key)]!.text.trim().isNotEmpty)
             .length +
         kSiteImages
             .where((f) => f.sectionKey == t.key)
-            .where((f) => _images[f.key]!.text.trim().isNotEmpty)
+            .where((f) => _images[_hookKey(instance, f.key)]!.text.trim().isNotEmpty)
             .length;
 
     // Es un Material (y no un Container con decoration) porque adentro hay
@@ -758,8 +1030,9 @@ class _SitePageState extends State<SitePage> {
     // Material (si no, se pintarían por detrás y quedarían invisibles).
     return Material(
       // Clave estable por sección: las pruebas (y los atajos) la usan para
-      // saber de qué tarjeta es cada cosa.
-      key: ValueKey('site-section-${t.key}'),
+      // saber de qué tarjeta es cada cosa (una copia lleva su nombre: la
+      // segunda galería es `site-section-gallery-2`).
+      key: ValueKey('site-section-$instance'),
       clipBehavior: Clip.antiAlias,
       color: scheme.surface,
       shape: RoundedRectangleBorder(
@@ -797,7 +1070,7 @@ class _SitePageState extends State<SitePage> {
                         children: [
                           Flexible(
                             child: Text(
-                              t.label,
+                              _labelOf(instance),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -805,6 +1078,12 @@ class _SitePageState extends State<SitePage> {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          if (isExtra)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: _tag(scheme, 'Agregada', Icons.add_box_outlined,
+                                  color: scheme.primary),
+                            ),
                           _tag(scheme, 'Plantilla', Icons.dashboard_customize_outlined),
                           if (position != null) ...[
                             const SizedBox(width: 6),
@@ -837,30 +1116,41 @@ class _SitePageState extends State<SitePage> {
                   IconButton(
                     tooltip: 'Subir',
                     visualDensity: VisualDensity.compact,
-                    onPressed: position == 0 ? null : () => _move(t.key, -1),
+                    onPressed:
+                        position == 0 ? null : () => _move(instance, -1),
                     icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 20),
                   ),
                   IconButton(
                     tooltip: 'Bajar',
                     visualDensity: VisualDensity.compact,
-                    onPressed:
-                        position == total - 1 ? null : () => _move(t.key, 1),
+                    onPressed: position == total - 1
+                        ? null
+                        : () => _move(instance, 1),
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
                   ),
                   Tooltip(
                     message: visible ? 'Ocultar sección' : 'Mostrar sección',
                     child: Switch.adaptive(
                       value: visible,
-                      onChanged: (v) => setState(() => _visible[t.key] = v),
+                      onChanged: (v) => setState(() => _visible[instance] = v),
                     ),
                   ),
+                  if (isExtra)
+                    IconButton(
+                      key: ValueKey('site-remove-$instance'),
+                      tooltip: 'Quitar esta sección',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _removeSection(instance),
+                      icon: Icon(Icons.delete_outline,
+                          size: 20, color: scheme.error),
+                    ),
                 ],
                 TextButton.icon(
                   onPressed: () => setState(() {
                     if (open) {
-                      _open.remove(t.key);
+                      _open.remove(instance);
                     } else {
-                      _open.add(t.key);
+                      _open.add(instance);
                     }
                   }),
                   icon: Icon(
@@ -877,9 +1167,9 @@ class _SitePageState extends State<SitePage> {
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             child: SiteSectionPreview(
               section: t.key,
-              values: _values(t.key),
-              images: _imageValues(t.key),
-              props: _props[t.key] ?? const {},
+              values: _values(instance),
+              images: _imageValues(instance),
+              props: _props[instance] ?? const {},
               gold: _goldColor,
             ),
           ),
@@ -892,7 +1182,7 @@ class _SitePageState extends State<SitePage> {
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _fields(scheme, t),
+                children: _fields(scheme, t, instance),
               ),
             ),
           ],
@@ -926,7 +1216,7 @@ class _SitePageState extends State<SitePage> {
 
   // ---------------- Campos de una sección ----------------
 
-  List<Widget> _fields(ColorScheme scheme, SiteSectionTemplate t) {
+  List<Widget> _fields(ColorScheme scheme, SiteSectionTemplate t, String instance) {
     final out = <Widget>[];
     final texts = kSiteTexts.where((f) => f.sectionKey == t.key).toList();
     final images = kSiteImages.where((f) => f.sectionKey == t.key).toList();
@@ -934,13 +1224,13 @@ class _SitePageState extends State<SitePage> {
     if (texts.isNotEmpty) {
       out.add(_groupHeader('TEXTOS'));
       for (final f in texts) {
-        out.add(_textField(scheme, f));
+        out.add(_textField(scheme, f, instance));
       }
     }
     if (images.isNotEmpty) {
       out.add(_groupHeader('IMÁGENES'));
       for (final f in images) {
-        out.add(_imageField(scheme, f));
+        out.add(_imageField(scheme, f, instance));
       }
     }
     for (final p in t.props) {
@@ -956,17 +1246,17 @@ class _SitePageState extends State<SitePage> {
       }
       switch (p.kind) {
         case SitePropKind.stats:
-          out.add(_statsEditor(scheme, t.key));
+          out.add(_statsEditor(scheme, instance));
         case SitePropKind.testimonials:
-          out.add(_testimonialsEditor(scheme, t.key));
+          out.add(_testimonialsEditor(scheme, instance));
         case SitePropKind.gallery:
-          out.add(_galleryEditor(scheme, t.key));
+          out.add(_galleryEditor(scheme, instance));
         case SitePropKind.toggle:
-          out.add(_toggleEditor(scheme, t.key, p));
+          out.add(_toggleEditor(scheme, instance, p));
         case SitePropKind.number:
-          out.add(_numberEditor(scheme, t.key, p));
+          out.add(_numberEditor(scheme, instance, p));
         case SitePropKind.text:
-          out.add(_propTextField(scheme, t.key, p));
+          out.add(_propTextField(scheme, instance, p));
       }
       out.add(const SizedBox(height: 4));
     }
@@ -1002,16 +1292,15 @@ class _SitePageState extends State<SitePage> {
             ),
           ],
         ),
-      );
-
-  Widget _textField(ColorScheme scheme, SiteTextField f) => Padding(
+      );  Widget _textField(ColorScheme scheme, SiteTextField f, String instance) =>
+      Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: TextField(
-                controller: _texts[f.key],
+                controller: _texts[_hookKey(instance, f.key)],
                 minLines: f.multiline ? 3 : 1,
                 maxLines: f.multiline ? 6 : 2,
                 onChanged: (_) => setState(() {}),
@@ -1027,22 +1316,24 @@ class _SitePageState extends State<SitePage> {
             ),
             const SizedBox(width: 6),
             _restoreButton(
-              active: _texts[f.key]!.text.trim().isNotEmpty,
+              active: _texts[_hookKey(instance, f.key)]!.text.trim().isNotEmpty,
               tooltip: 'Volver al texto original',
-              onTap: () => setState(() => _texts[f.key]!.text = ''),
+              onTap: () =>
+                  setState(() => _texts[_hookKey(instance, f.key)]!.text = ''),
             ),
           ],
         ),
       );
 
-  Widget _imageField(ColorScheme scheme, SiteImageField f) => Padding(
+  Widget _imageField(ColorScheme scheme, SiteImageField f, String instance) =>
+      Padding(
         padding: const EdgeInsets.only(bottom: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: TextField(
-                controller: _images[f.key],
+                controller: _images[_hookKey(instance, f.key)],
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   labelText: f.label,
@@ -1056,23 +1347,27 @@ class _SitePageState extends State<SitePage> {
             const SizedBox(width: 6),
             IconButton(
               tooltip: 'Elegir una foto del Drive',
-              onPressed: () => _pickImagesFor(_images[f.key]!),
+              onPressed: () =>
+                  _pickImagesFor(_images[_hookKey(instance, f.key)]!),
               icon: const Icon(Icons.folder_open_rounded, size: 18),
             ),
             _restoreButton(
-              active: _images[f.key]!.text.trim().isNotEmpty,
+              active: _images[_hookKey(instance, f.key)]!.text.trim().isNotEmpty,
               tooltip: 'Volver a la imagen original',
-              onTap: () => setState(() => _images[f.key]!.text = ''),
+              onTap: () =>
+                  setState(() => _images[_hookKey(instance, f.key)]!.text = ''),
             ),
             const SizedBox(width: 10),
-            _thumb(_images[f.key]!.text.trim().isEmpty
-                ? f.def
-                : _images[f.key]!.text.trim()),
+            _thumb(_imageValue(instance, f)),
           ],
         ),
       );
 
   /// Miniatura: sólo se puede ver la imagen si es una URL accesible.
+  ///
+  /// Las fotos del Drive se piden REDIMENSIONADAS al servidor del Drive
+  /// (`/thumb/…?w=N`, unos KB) en vez de bajar la original de varios MB; los
+  /// enlaces de otros sitios se usan tal cual ([driveImagePreview]).
   Widget _thumb(String path) {
     final scheme = Theme.of(context).colorScheme;
     final isUrl = path.startsWith('http://') || path.startsWith('https://');
@@ -1087,7 +1382,7 @@ class _SitePageState extends State<SitePage> {
       ),
       child: isUrl
           ? Image.network(
-              path,
+              driveImagePreview(path, width: 160),
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => _thumbFallback(scheme),
             )
@@ -1642,6 +1937,10 @@ class _DrivePhotoPickerState extends State<_DrivePhotoPicker> {
     }
   }
 
+  /// Ancho de la miniatura que se le pide al servidor del Drive (la MISMA
+  /// carpeta en la que se está navegando: ver [DriveBase.thumbSourceIn]).
+  static const int _thumbWidth = 480;
+
   /// URL pública de una foto (`<drive>/files/<ruta>`), sin token.
   String _urlFor(DriveItem item) {
     final segments = [..._rel, item.name]
@@ -1650,99 +1949,89 @@ class _DrivePhotoPickerState extends State<_DrivePhotoPicker> {
     return '${AppConstants.apiBase.replaceAll(RegExp(r'/$'), '')}/files/$segments';
   }
 
+  /// Entra a una carpeta del Drive (también vale para volver con las migas).
+  void _open(List<String> rel) {
+    setState(() => _rel = List<String>.of(rel));
+    _load();
+  }
+
+  /// Elige o quita una foto.
+  void _toggle(String url) {
+    setState(() {
+      if (!_picked.remove(url)) _picked.add(url);
+    });
+  }
+
+  /// Previsualiza UNA foto en grande (versión reducida del servidor, la misma
+  /// que usará la página) y permite elegirla sin cerrar el selector.
+  Future<void> _preview(DriveItem item) async {
+    final url = _urlFor(item);
+    await showHsModal<void>(
+      context: context,
+      builder: (_) => _DrivePhotoPreviewDialog(
+        name: item.name,
+        src: widget.drive.thumbSourceIn(_rel, item, width: 900),
+        isRemote: widget.drive is DriveApiService,
+        picked: _picked.contains(url),
+        onToggle: () => _toggle(url),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final folders = _items.where((i) => i.isFolder).toList();
     final photos = _items.where((i) => !i.isFolder).toList();
     return AlertDialog(
-      title: const Text('Fotos del Drive'),
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+      title: Row(
+        children: [
+          Icon(Icons.photo_library_outlined, size: 20, color: scheme.primary),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('Fotos del Drive')),
+          if (_picked.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: scheme.primary.withValues(alpha: .35)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle, size: 14, color: scheme.primary),
+                  const SizedBox(width: 5),
+                  Text(
+                    '${_picked.length} elegida${_picked.length == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
       content: SizedBox(
-        width: 560,
-        height: 460,
+        width: 780,
+        height: 560,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                if (_rel.isNotEmpty)
-                  IconButton(
-                    tooltip: 'Subir un nivel',
-                    onPressed: () {
-                      setState(() => _rel = _rel.sublist(0, _rel.length - 1));
-                      _load();
-                    },
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 18),
-                  ),
-                Expanded(
-                  child: Text(
-                    _rel.isEmpty ? 'Mi Drive' : _rel.join(' / '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
-                  ),
-                ),
-                Text(
-                  '${_picked.length} elegida${_picked.length == 1 ? '' : 's'}',
-                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
+            _pathBar(scheme),
+            const SizedBox(height: 12),
+            Expanded(child: _body(scheme, folders, photos)),
             const SizedBox(height: 8),
             Text(
               'Las fotos se enlazan desde el servidor del Drive '
               '(${AppConstants.apiBase}): para verlas en la página tienen que '
               'poder abrirse sin iniciar sesión.',
               style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? Center(child: Text(_error!, textAlign: TextAlign.center))
-                      : ListView(
-                          children: [
-                            for (final f in folders)
-                              ListTile(
-                                dense: true,
-                                leading: Icon(Icons.folder_rounded, color: scheme.primary),
-                                title: Text(f.name, style: const TextStyle(fontSize: 13)),
-                                onTap: () {
-                                  setState(() => _rel = [..._rel, f.name]);
-                                  _load();
-                                },
-                              ),
-                            for (final p in photos)
-                              CheckboxListTile(
-                                dense: true,
-                                value: _picked.contains(_urlFor(p)),
-                                onChanged: (v) => setState(() {
-                                  if (v == true) {
-                                    _picked.add(_urlFor(p));
-                                  } else {
-                                    _picked.remove(_urlFor(p));
-                                  }
-                                }),
-                                secondary: SizedBox(
-                                  width: 44,
-                                  height: 34,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Image.network(
-                                      widget.drive.thumbSource(p, width: 120),
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) => _thumbFallback(scheme),
-                                    ),
-                                  ),
-                                ),
-                                title: Text(p.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13)),
-                              ),
-                          ],
-                        ),
             ),
           ],
         ),
@@ -1762,9 +2051,519 @@ class _DrivePhotoPickerState extends State<_DrivePhotoPicker> {
     );
   }
 
-  Widget _thumbFallback(ColorScheme scheme) => Center(
-        child: Icon(Icons.image_outlined, size: 16, color: scheme.onSurfaceVariant),
+  /// Dónde estás parado: subir un nivel y las migas de pan (cada tramo se puede
+  /// tocar para volver a él de un salto).
+  Widget _pathBar(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 3, 10, 3),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .6)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Subir un nivel',
+            visualDensity: VisualDensity.compact,
+            onPressed: _rel.isEmpty
+                ? null
+                : () => _open(_rel.sublist(0, _rel.length - 1)),
+            icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+          ),
+          Icon(Icons.folder_open_rounded, size: 17, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              // El tramo donde estás siempre a la vista.
+              reverse: true,
+              child: Row(
+                children: [
+                  _crumb(scheme, 'Mi Drive', const []),
+                  for (var i = 0; i < _rel.length; i++) ...[
+                    Icon(Icons.chevron_right_rounded,
+                        size: 16, color: scheme.onSurfaceVariant),
+                    _crumb(scheme, _rel[i], _rel.sublist(0, i + 1)),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _crumb(ColorScheme scheme, String label, List<String> rel) {
+    final here = rel.length == _rel.length;
+    return TextButton(
+      onPressed: here ? null : () => _open(rel),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        minimumSize: const Size(0, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: here ? FontWeight.w800 : FontWeight.w600,
+          color: here ? scheme.onSurface : scheme.primary,
+        ),
+      ),
+    );
+  }
+
+  /// Carpetas (franja de arriba) y fotos (cuadrícula con miniatura grande).
+  Widget _body(
+      ColorScheme scheme, List<DriveItem> folders, List<DriveItem> photos) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined, size: 34, color: scheme.error),
+            const SizedBox(height: 8),
+            Text(_error!, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Reintentar'),
+            ),
+          ],
+        ),
       );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (folders.isNotEmpty) ...[
+          _sectionLabel(scheme, 'CARPETAS', folders.length),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 74,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: folders.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, i) => _folderCard(scheme, folders[i]),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        _sectionLabel(scheme, 'FOTOS', photos.length),
+        const SizedBox(height: 8),
+        Expanded(
+          child: photos.isEmpty
+              ? Center(
+                  child: Text(
+                    'En esta carpeta no hay fotos',
+                    style:
+                        TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+                  ),
+                )
+              : GridView.builder(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    // Miniaturas GRANDES: se ve de qué foto se trata sin abrirla.
+                    maxCrossAxisExtent: 176,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: .80,
+                  ),
+                  itemCount: photos.length,
+                  itemBuilder: (context, i) => _photoCard(scheme, photos[i]),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionLabel(ColorScheme scheme, String label, int count) => Row(
+        children: [
+          Container(
+            width: 3,
+            height: 13,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10.5,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text('$count',
+              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant)),
+        ],
+      );
+
+  /// Una carpeta (icono + nombre) que se abre al tocarla.
+  Widget _folderCard(ColorScheme scheme, DriveItem folder) => SizedBox(
+        width: 196,
+        child: Material(
+          color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            key: ValueKey('drive-folder-${folder.name}'),
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _open([..._rel, folder.name]),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(9, 6, 6, 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.folder_rounded,
+                        size: 19, color: scheme.primary),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          folder.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12.5, fontWeight: FontWeight.w700),
+                        ),
+                        if (folder.childCount > 0)
+                          Text(
+                            '${folder.childCount} elemento'
+                            '${folder.childCount == 1 ? '' : 's'}',
+                            style: TextStyle(
+                                fontSize: 10.5, color: scheme.onSurfaceVariant),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 18, color: scheme.onSurfaceVariant),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  /// Una foto: la miniatura (grande) elige o quita la foto y el botón de la
+  /// esquina la previsualiza.
+  Widget _photoCard(ColorScheme scheme, DriveItem photo) {
+    final url = _urlFor(photo);
+    final selected = _picked.contains(url);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary
+                    : scheme.outlineVariant.withValues(alpha: .7),
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Miniatura de LA CARPETA que se está viendo ([_rel]), no la que
+                // tenga abierta el módulo Archivos, y con el widget del drive
+                // (resuelve imagen remota y archivo local, y avisa si falló en
+                // vez de dejar el recuadro vacío).
+                DriveThumb(
+                  source:
+                      widget.drive.thumbSourceIn(_rel, photo, width: _thumbWidth),
+                  isRemote: widget.drive is DriveApiService,
+                  big: true,
+                ),
+                // La celda entera elige o quita la foto. Va ENCIMA de la
+                // miniatura: si no, el "toca para reintentar" de la miniatura
+                // se quedaría con el toque y la foto nunca se elegiría.
+                InkWell(
+                  key: ValueKey('drive-photo-${photo.name}'),
+                  onTap: () => _toggle(url),
+                  child: const SizedBox.expand(),
+                ),
+                Positioned(
+                  right: 4,
+                  bottom: 4,
+                  child: _overlayButton(
+                    key: ValueKey('drive-photo-preview-${photo.name}'),
+                    icon: Icons.zoom_out_map_rounded,
+                    tooltip: 'Previsualizar',
+                    onTap: () => _preview(photo),
+                  ),
+                ),
+                if (selected)
+                  Positioned(
+                    left: 5,
+                    top: 5,
+                    child: _overlayIcon(Icons.check_circle, scheme.primary),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          photo.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11.5),
+        ),
+      ],
+    );
+  }
+
+  /// Botón flotante sobre la foto (se lee sobre cualquier imagen).
+  Widget _overlayButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    Key? key,
+  }) =>
+      Material(
+        key: key,
+        color: Colors.black.withValues(alpha: .55),
+        shape: const CircleBorder(),
+        child: IconButton(
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+          iconSize: 16,
+          color: Colors.white,
+          onPressed: onTap,
+          icon: Icon(icon),
+        ),
+      );
+
+  Widget _overlayIcon(IconData icon, Color color) => Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .55),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, size: 16, color: color),
+      );
+}
+
+/// Vista previa de UNA foto del Drive: la imagen en grande (la versión reducida
+/// del servidor, la misma que usará la página) y su botón para elegirla o
+/// quitarla sin cerrar el selector.
+class _DrivePhotoPreviewDialog extends StatefulWidget {
+  const _DrivePhotoPreviewDialog({
+    required this.name,
+    required this.src,
+    required this.isRemote,
+    required this.picked,
+    required this.onToggle,
+  });
+
+  final String name;
+
+  /// Miniatura grande del servidor (`/thumb/…?w=900`).
+  final String src;
+  final bool isRemote;
+  final bool picked;
+  final VoidCallback onToggle;
+
+  @override
+  State<_DrivePhotoPreviewDialog> createState() =>
+      _DrivePhotoPreviewDialogState();
+}
+
+class _DrivePhotoPreviewDialogState extends State<_DrivePhotoPreviewDialog> {
+  late bool _picked = widget.picked;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+      title: Row(
+        children: [
+          Icon(Icons.image_outlined, size: 19, color: scheme.primary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              widget.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            key: const ValueKey('drive-photo-preview-image'),
+            width: 660,
+            height: 420,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: .7)),
+            ),
+            child: DriveThumb(
+              source: widget.src,
+              isRemote: widget.isRemote,
+              big: true,
+              contain: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Vista previa en tamaño reducido: la foto completa se ve en la '
+            'página.',
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('drive-photo-preview-close'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+        FilledButton.tonalIcon(
+          key: const ValueKey('drive-photo-preview-toggle'),
+          onPressed: () => setState(() {
+            _picked = !_picked;
+            widget.onToggle();
+          }),
+          icon: Icon(
+            _picked ? Icons.remove_circle_outline : Icons.add_circle_outline,
+            size: 18,
+          ),
+          label: Text(_picked ? 'Quitar' : 'Elegir esta foto'),
+        ),
+      ],
+    );
+  }
+}
+
+/// CATÁLOGO de secciones que se pueden AGREGAR a la página.
+///
+/// Son las plantillas repetibles (`kRepeatableSectionTemplates`): una galería
+/// más, otro divisor de fotos, más testimonios… La copia se pinta con lo que
+/// tenga la sección original y se edita aparte.
+class _SectionCatalogDialog extends StatelessWidget {
+  const _SectionCatalogDialog({required this.copies});
+
+  /// Cuántas copias hay ya de cada plantilla (para avisar en la tarjeta).
+  final Map<String, int> copies;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Agregar sección'),
+      content: SizedBox(
+        width: 520,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Text(
+              'La sección nueva se agrega con los textos, las imágenes y las '
+              'opciones que tenga ahora la sección de la que se copia. Después '
+              'se edita aparte, sin tocar la original.',
+              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 10),
+            for (final t in kRepeatableSectionTemplates)
+              Container(
+                // Clave por plantilla: las pruebas (y los atajos) agregan
+                // secciones sin depender del texto.
+                key: ValueKey('site-add-${t.key}'),
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: .3),
+                  borderRadius: BorderRadius.circular(12),
+                  border:
+                      Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(t.icon, size: 18, color: scheme.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t.label,
+                            style: const TextStyle(
+                                fontSize: 13.5, fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            t.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11.5, height: 1.3, color: scheme.onSurfaceVariant),
+                          ),
+                          if ((copies[t.key] ?? 0) > 0) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              'Ya hay ${copies[t.key]} agregada'
+                              '${copies[t.key] == 1 ? '' : 's'} en la página',
+                              style: TextStyle(fontSize: 11, color: scheme.primary),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      key: ValueKey('site-add-${t.key}-go'),
+                      onPressed: () => Navigator.of(context).pop(t),
+                      child: const Text('Agregar'),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+      ],
+    );
+  }
 }
 
 /// Permiso con el que se muestra/edita el módulo (nombre EXACTO en la BD).

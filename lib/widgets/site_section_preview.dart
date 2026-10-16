@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../drive_base.dart';
 import '../web_sections.dart';
 
 // ==================================================================
 // HARD STREET ADMIN — MINIATURA DE UNA SECCIÓN DEL SITIO
+// ==================================================================
+// Las fotos que vienen del Drive se piden REDIMENSIONADAS al servidor del
+// Drive (`/thumb/…?w=N`): una miniatura no tiene por qué bajar la original de
+// varios MB. Los enlaces de fuera se usan tal cual (`driveImagePreview`).
 // ==================================================================
 // El módulo "Sitio web" muestra cada sección como una tarjeta con su
 // PREVISUALIZACIÓN: un dibujo en miniatura de cómo se ve esa parte de la
@@ -24,7 +29,7 @@ class SiteSectionPreview extends StatelessWidget {
     required this.images,
     required this.props,
     this.gold = const Color(0xFFC9A96E),
-    this.height = 132,
+    this.height = 148,
   });
 
   /// Clave de la sección (`hero`, `about`…).
@@ -76,7 +81,7 @@ class SiteSectionPreview extends StatelessWidget {
         return Center(
           child: Text(
             siteSectionTemplate(section)?.label ?? section,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
           ),
         );
     }
@@ -88,7 +93,7 @@ class SiteSectionPreview extends StatelessWidget {
   String _v(String key) => values[key] ?? '';
 
   /// Titular de dos líneas (`|` separa la segunda, que va en dorado).
-  List<Widget> _titleLines(String raw, {double size = 13}) {
+  List<Widget> _titleLines(String raw, {double size = 14.5}) {
     final parts = raw.split('|');
     return [
       _line(parts[0].trim(), size: size),
@@ -96,7 +101,7 @@ class SiteSectionPreview extends StatelessWidget {
     ];
   }
 
-  Widget _line(String text, {double size = 13, Color color = Colors.white}) =>
+  Widget _line(String text, {double size = 14.5, Color color = Colors.white}) =>
       Text(
         text,
         maxLines: 1,
@@ -116,7 +121,7 @@ class SiteSectionPreview extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          fontSize: 8,
+          fontSize: 9.5,
           letterSpacing: 1.4,
           fontWeight: FontWeight.w800,
           color: gold,
@@ -159,7 +164,7 @@ class SiteSectionPreview extends StatelessWidget {
       ),
       child: remote
           ? Image.network(
-              url,
+              driveImagePreview(url, width: 320),
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Center(
                 child: Icon(icon, size: 18, color: Colors.white38),
@@ -207,7 +212,7 @@ class SiteSectionPreview extends StatelessWidget {
                   ),
                   child: Text(
                     _v('hero_cta'),
-                    style: TextStyle(fontSize: 9, color: gold, fontWeight: FontWeight.w700),
+                    style: TextStyle(fontSize: 10.5, color: gold, fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
@@ -232,7 +237,7 @@ class SiteSectionPreview extends StatelessWidget {
               children: [
                 _eyebrow(_v('about_label')),
                 const SizedBox(height: 3),
-                ..._titleLines(_v('about_title'), size: 11),
+                ..._titleLines(_v('about_title'), size: 12.5),
                 const SizedBox(height: 6),
                 _textLine(scheme),
                 const SizedBox(height: 4),
@@ -248,7 +253,7 @@ class SiteSectionPreview extends StatelessWidget {
                             Text(
                               '${s.value}+',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w800,
                                 color: gold,
                               ),
@@ -258,7 +263,7 @@ class SiteSectionPreview extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  fontSize: 7.5, color: Colors.white54),
+                                  fontSize: 9, color: Colors.white54),
                             ),
                           ],
                         ),
@@ -287,7 +292,7 @@ class SiteSectionPreview extends StatelessWidget {
         children: [
           _eyebrow(_v('gallery_label')),
           const SizedBox(height: 2),
-          _line(_v('gallery_title'), size: 11),
+          _line(_v('gallery_title'), size: 12.5),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -314,7 +319,7 @@ class SiteSectionPreview extends StatelessWidget {
                       ),
                       child: i < shows.length && _isHttp(shows[i])
                           ? Image.network(
-                              shows[i],
+                              driveImagePreview(shows[i], width: 320),
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => _photoFallback(),
                             )
@@ -349,7 +354,7 @@ class SiteSectionPreview extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 7.5,
+            fontSize: 8.5,
             fontWeight: FontWeight.w700,
             color: active ? gold : Colors.white60,
           ),
@@ -389,7 +394,7 @@ class SiteSectionPreview extends StatelessWidget {
         children: [
           _eyebrow(_v('services_label')),
           const SizedBox(height: 2),
-          _line(_v('services_title'), size: 11),
+          _line(_v('services_title'), size: 12.5),
           const SizedBox(height: 8),
           Expanded(
             child: Row(
@@ -414,7 +419,7 @@ class SiteSectionPreview extends StatelessWidget {
                           const Spacer(),
                           Text(
                             '$perSlide características',
-                            style: const TextStyle(fontSize: 7.5, color: Colors.white38),
+                            style: const TextStyle(fontSize: 8.5, color: Colors.white38),
                           ),
                         ],
                       ),
@@ -447,16 +452,16 @@ class SiteSectionPreview extends StatelessWidget {
         children: [
           _eyebrow(_v('packages_label')),
           const SizedBox(height: 2),
-          _line(_v('packages_title'), size: 11),
+          _line(_v('packages_title'), size: 12.5),
           if (grouped) ...[
             const SizedBox(height: 6),
             Row(
               children: [
-                Text('Boda', style: TextStyle(fontSize: 9, color: gold, fontWeight: FontWeight.w700)),
+                Text('Boda', style: TextStyle(fontSize: 10, color: gold, fontWeight: FontWeight.w700)),
                 const SizedBox(width: 6),
                 Expanded(child: _textLine(scheme, height: 2)),
                 const SizedBox(width: 6),
-                const Text('3 paquetes', style: TextStyle(fontSize: 7, color: Colors.white38)),
+                const Text('3 paquetes', style: TextStyle(fontSize: 8.5, color: Colors.white38)),
               ],
             ),
           ],
@@ -496,7 +501,7 @@ class SiteSectionPreview extends StatelessWidget {
             ),
             child: Text(
               ['Premium', 'Gold', 'Basic'][i],
-              style: TextStyle(fontSize: 6.5, fontWeight: FontWeight.w800, color: accent),
+              style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: accent),
             ),
           ),
           const SizedBox(height: 5),
@@ -506,7 +511,7 @@ class SiteSectionPreview extends StatelessWidget {
           const Spacer(),
           Text(
             'Desde',
-            style: TextStyle(fontSize: 6.5, color: accent.withValues(alpha: .9)),
+            style: TextStyle(fontSize: 8, color: accent.withValues(alpha: .9)),
           ),
         ],
       ),
@@ -523,7 +528,7 @@ class SiteSectionPreview extends StatelessWidget {
         children: [
           _eyebrow(_v('testimonials_label')),
           const SizedBox(height: 2),
-          Center(child: _line(_v('testimonials_title'), size: 11)),
+          Center(child: _line(_v('testimonials_title'), size: 12.5)),
           const SizedBox(height: 8),
           Expanded(
             child: Container(
@@ -545,19 +550,19 @@ class SiteSectionPreview extends StatelessWidget {
                         : 'Los comentarios que escribas aquí se muestran en el carrusel.',
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 8.5, height: 1.35, color: Colors.white70),
+                    style: const TextStyle(fontSize: 9.5, height: 1.35, color: Colors.white70),
                   ),
                   const Spacer(),
                   Text(
                     first?.name.isNotEmpty == true
                         ? first!.name
                         : '${items.length} comentarios',
-                    style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: gold),
+                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: gold),
                   ),
                   if (first != null && first.role.isNotEmpty)
                     Text(
                       first.role,
-                      style: const TextStyle(fontSize: 7, color: Colors.white38),
+                      style: const TextStyle(fontSize: 8, color: Colors.white38),
                     ),
                 ],
               ),
@@ -583,7 +588,7 @@ class SiteSectionPreview extends StatelessWidget {
         children: [
           _eyebrow(_v('contact_label')),
           const SizedBox(height: 2),
-          _line(_v('contact_title'), size: 11),
+          _line(_v('contact_title'), size: 12.5),
           const SizedBox(height: 6),
           for (final r in rows.take(3))
             Padding(
@@ -597,7 +602,7 @@ class SiteSectionPreview extends StatelessWidget {
                       r.$2,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 8.5, color: Colors.white70),
+                      style: const TextStyle(fontSize: 9.5, color: Colors.white70),
                     ),
                   ),
                 ],
@@ -613,7 +618,7 @@ class SiteSectionPreview extends StatelessWidget {
             child: Center(
               child: Text(
                 _v('contact_cta'),
-                style: TextStyle(fontSize: 7.5, color: gold, fontWeight: FontWeight.w700),
+                style: TextStyle(fontSize: 8.5, color: gold, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -638,7 +643,7 @@ class SiteSectionPreview extends StatelessWidget {
                     _v('footer_about'),
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 8, height: 1.4, color: Colors.white54),
+                    style: const TextStyle(fontSize: 9, height: 1.4, color: Colors.white54),
                   ),
                   const Spacer(),
                   Container(height: 1, color: Colors.white.withValues(alpha: .08)),
@@ -647,7 +652,7 @@ class SiteSectionPreview extends StatelessWidget {
                     _v('footer_copyright'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 7, color: Colors.white38),
+                    style: const TextStyle(fontSize: 8, color: Colors.white38),
                   ),
                 ],
               ),
@@ -665,7 +670,7 @@ class SiteSectionPreview extends StatelessWidget {
                 children: [
                   _imageBox(_v('logo'), width: 60, height: 46, icon: Icons.image_outlined),
                   const SizedBox(height: 6),
-                  const Text('Barra', style: TextStyle(fontSize: 8, color: Colors.white54)),
+                  const Text('Barra', style: TextStyle(fontSize: 9, color: Colors.white54)),
                 ],
               ),
             ),
@@ -675,7 +680,7 @@ class SiteSectionPreview extends StatelessWidget {
                 children: [
                   _imageBox(_v('footer_logo'), width: 60, height: 46, icon: Icons.image_outlined),
                   const SizedBox(height: 6),
-                  const Text('Pie', style: TextStyle(fontSize: 8, color: Colors.white54)),
+                  const Text('Pie', style: TextStyle(fontSize: 9, color: Colors.white54)),
                 ],
               ),
             ),

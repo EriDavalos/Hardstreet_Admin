@@ -192,10 +192,11 @@ class _PackagesPageState extends State<PackagesPage> {
         return false;
       }
       if (q.isEmpty) return true;
-      final hay = '${p['name'] ?? ''} ${p['subtitle'] ?? ''} '
-              '${p['description'] ?? ''} ${p['categoryName'] ?? ''} '
-              '${p['tierName'] ?? ''}'
-          .toLowerCase();
+      final hay =
+          '${p['name'] ?? ''} ${p['subtitle'] ?? ''} '
+                  '${p['description'] ?? ''} ${p['categoryName'] ?? ''} '
+                  '${p['tierName'] ?? ''}'
+              .toLowerCase();
       return hay.contains(q);
     }).toList();
   }
@@ -204,8 +205,11 @@ class _PackagesPageState extends State<PackagesPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final compact = MediaQuery.sizeOf(context).width < 620;
-    final catalogValue =
-        _packages.fold<num>(0, (a, p) => a + ((p['price'] as num?) ?? 0));
+    final canDesign = _canDesign;
+    final catalogValue = _packages.fold<num>(
+      0,
+      (a, p) => a + ((p['price'] as num?) ?? 0),
+    );
 
     return PageContainer(
       title: 'Paquetes',
@@ -215,12 +219,14 @@ class _PackagesPageState extends State<PackagesPage> {
       icon: Icons.card_giftcard_rounded,
       stats: [
         StatPill(
-            icon: Icons.inventory_2_outlined,
-            label: '${_packages.length} paquetes'),
+          icon: Icons.inventory_2_outlined,
+          label: '${_packages.length} paquetes',
+        ),
         if (_services.isNotEmpty)
           StatPill(
-              icon: Icons.miscellaneous_services_outlined,
-              label: '${_services.length} servicios'),
+            icon: Icons.miscellaneous_services_outlined,
+            label: '${_services.length} servicios',
+          ),
         StatPill(icon: Icons.payments_outlined, label: _money(catalogValue)),
       ],
       actions: [
@@ -232,15 +238,9 @@ class _PackagesPageState extends State<PackagesPage> {
             icon: Icons.add_card,
             label: 'Nuevo paquete',
           ),
-        // "Diseñar" (update): abre el diseñador de las tarjetas de la web.
-        if (HsAccess.instance.degraded ||
-            HsAccess.instance.can('Paquetes', 'update'))
-          HsActionButton(
-            onPressed: _openDesigner,
-            icon: Icons.style_outlined,
-            label: 'Diseñar cards',
-            primary: false,
-          ),
+        // El DISEÑO de las cards ya no vive aquí arriba: se personaliza ABAJO,
+        // junto al catálogo que se está mirando (ver `_designBar`), donde se ve
+        // el resultado de lo que se cambia.
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -302,8 +302,11 @@ class _PackagesPageState extends State<PackagesPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined,
-                        size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -336,9 +339,11 @@ class _PackagesPageState extends State<PackagesPage> {
                       child: _PackageRow(
                         pkg: _filtered[i],
                         design: _design,
-                        canEdit: HsAccess.instance.degraded ||
+                        canEdit:
+                            HsAccess.instance.degraded ||
                             HsAccess.instance.can('Paquetes', 'update'),
-                        canDelete: HsAccess.instance.degraded ||
+                        canDelete:
+                            HsAccess.instance.degraded ||
                             HsAccess.instance.can('Paquetes', 'delete'),
                         onEdit: () => _openForm(_filtered[i]),
                         onDelete: () => _delete(_filtered[i]),
@@ -348,52 +353,168 @@ class _PackagesPageState extends State<PackagesPage> {
               ],
             )
           else
-            LayoutBuilder(builder: (context, box) {
-              final cols = box.maxWidth > 1100
-                  ? 3
-                  : box.maxWidth > 660
-                      ? 2
-                      : 1;
-              return Column(
-                children: [
-                  for (var i = 0; i < _filtered.length; i += cols)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (var j = 0; j < cols; j++) ...[
-                            if (j > 0) const SizedBox(width: 14),
-                            Expanded(
-                              child: (i + j) < _filtered.length
-                                  ? StaggeredItem(
-                                      index: i + j,
-                                      child: _WebPackageCard(
-                                        pkg: _filtered[i + j],
-                                        design: _design,
-                                        canEdit: HsAccess.instance.degraded ||
-                                            HsAccess.instance
-                                                .can('Paquetes', 'update'),
-                                        canDelete: HsAccess.instance.degraded ||
-                                            HsAccess.instance
-                                                .can('Paquetes', 'delete'),
-                                        onEdit: () =>
-                                            _openForm(_filtered[i + j]),
-                                        onDelete: () =>
-                                            _delete(_filtered[i + j]),
-                                      ),
-                                    )
-                                  : const SizedBox.shrink(),
-                            ),
+            LayoutBuilder(
+              builder: (context, box) {
+                final cols = box.maxWidth > 1100
+                    ? 3
+                    : box.maxWidth > 660
+                    ? 2
+                    : 1;
+                return Column(
+                  children: [
+                    for (var i = 0; i < _filtered.length; i += cols)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var j = 0; j < cols; j++) ...[
+                              if (j > 0) const SizedBox(width: 14),
+                              Expanded(
+                                child: (i + j) < _filtered.length
+                                    ? StaggeredItem(
+                                        index: i + j,
+                                        child: _WebPackageCard(
+                                          pkg: _filtered[i + j],
+                                          design: _design,
+                                          canEdit:
+                                              HsAccess.instance.degraded ||
+                                              HsAccess.instance.can(
+                                                'Paquetes',
+                                                'update',
+                                              ),
+                                          canDelete:
+                                              HsAccess.instance.degraded ||
+                                              HsAccess.instance.can(
+                                                'Paquetes',
+                                                'delete',
+                                              ),
+                                          onEdit: () =>
+                                              _openForm(_filtered[i + j]),
+                                          onDelete: () =>
+                                              _delete(_filtered[i + j]),
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                ],
-              );
-            }),
+                  ],
+                );
+              },
+            ),
+          // Personalizar el DISEÑO de las cards: abajo, después del catálogo
+          // (y con la muestra de los tiers que se están usando).
+          if (canDesign) ...[const SizedBox(height: 6), _designBar(scheme)],
           if (compact) const SizedBox(height: 8),
         ],
+      ),
+    );
+  }
+
+  /// ¿Puedo personalizar el diseño de las cards? (mismo permiso que editar un
+  /// paquete: el diseño es parte del módulo).
+  bool get _canDesign =>
+      HsAccess.instance.degraded || HsAccess.instance.can('Paquetes', 'update');
+
+  /// Barra de DISEÑO: abre el diseñador de las cards de la web.
+  ///
+  /// Va al final del catálogo a propósito: se personaliza mirando los paquetes
+  /// que se acaban de ver, y arriba el encabezado se queda con lo importante
+  /// (buscar, filtrar y crear).
+  Widget _designBar(ColorScheme scheme) {
+    final gold = hsHexColor(_design.gold);
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: const ValueKey('packages-design-bar'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: _openDesigner,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: gold.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: gold.withValues(alpha: .35)),
+                ),
+                child: Icon(Icons.style_outlined, size: 19, color: gold),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Diseño de las cards',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Forma, densidad, colores de cada tier y qué se muestra '
+                      '(precio, servicios, botón…). Lo que se guarde aquí es lo '
+                      'que ve la web.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.3,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Muestra en vivo de los colores de cada tier.
+                    Row(
+                      children: [
+                        for (final tier in const ['basic', 'gold', 'premium'])
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: hsHexColor(
+                                      _design.tierOf(tier).accent,
+                                    ),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  kTierLabels[tier] ?? tier,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.tonalIcon(
+                onPressed: _openDesigner,
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                label: const Text('Personalizar'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -445,10 +566,107 @@ class _PackagesPageState extends State<PackagesPage> {
   }
 }
 
-/// Tarjeta de paquete con el diseño EXACTO de la web (renderPackageCard):
-/// flyer oscuro con línea superior degradada dorada, badge de tier,
-/// categoría con icono, nombre, subtítulo en itálica, lista de servicios
-/// con iconos, precio "Desde" y CTA con borde dorado.
+/// Colores de la tarjeta de un paquete SEGÚN EL TEMA del panel.
+///
+/// La tarjeta imita el flyer de la web (oscuro, con el acento del tier), pero
+/// el módulo también se usa en CLARO: ahí el fondo es la superficie del tema
+/// con un tinte del acento y los textos son los del tema (antes se quedaba
+/// oscura también en claro y desentonaba). El acento del tier se conserva —es
+/// la identidad del paquete— oscurecido solo lo justo para leerse.
+class _CardPalette {
+  const _CardPalette({
+    required this.dark,
+    required this.bg,
+    required this.onCard,
+    required this.muted,
+    required this.faint,
+    required this.accent,
+    required this.accentSoft,
+    required this.border,
+    required this.divider,
+    required this.footerBg,
+    required this.badgeBg,
+    required this.badgeGradient,
+    required this.badgeText,
+  });
+
+  final bool dark;
+  final Color bg;
+
+  /// Texto principal de la tarjeta.
+  final Color onCard;
+
+  /// Textos secundarios (subtítulo, descripción, servicios).
+  final Color muted;
+
+  /// Etiquetas pequeñas ("Desde", moneda).
+  final Color faint;
+
+  /// Acento legible sobre [bg] (borde, precio, checks, botón).
+  final Color accent;
+  final Color accentSoft;
+  final Color border;
+  final Color divider;
+  final Color footerBg;
+  final Color? badgeBg;
+  final LinearGradient? badgeGradient;
+  final Color badgeText;
+}
+
+/// Arma la paleta de la tarjeta con el tema actual y el tier del DISEÑO.
+_CardPalette _cardPalette(
+  ThemeData theme,
+  HsTierLook look,
+  SiteTierDesign tier,
+) {
+  final scheme = theme.colorScheme;
+  final dark = theme.brightness == Brightness.dark;
+  // Sobre el fondo claro, el acento del tier necesita un poco más de cuerpo:
+  // se oscurece SOLO para textos e iconos (bordes y tintes usan el puro).
+  final accent = dark
+      ? look.accent
+      : Color.lerp(look.accent, Colors.black, .30)!;
+  final accentSoft = dark
+      ? look.accentSoft
+      : Color.lerp(look.accentSoft, Colors.black, .22)!;
+  return _CardPalette(
+    dark: dark,
+    bg: dark
+        ? Color.alphaBlend(look.dark.withValues(alpha: .94), scheme.surface)
+        : Color.alphaBlend(look.accent.withValues(alpha: .05), scheme.surface),
+    onCard: dark ? Colors.white : scheme.onSurface,
+    muted: dark ? Colors.white.withValues(alpha: .58) : scheme.onSurfaceVariant,
+    faint: dark
+        ? Colors.white.withValues(alpha: .42)
+        : scheme.onSurfaceVariant.withValues(alpha: .8),
+    accent: accent,
+    accentSoft: accentSoft,
+    border: look.accent.withValues(
+      alpha: dark ? tier.borderAlpha : (tier.borderAlpha + .18).clamp(0.0, 1.0),
+    ),
+    divider: dark
+        ? Colors.white.withValues(alpha: .07)
+        : scheme.outlineVariant.withValues(alpha: .55),
+    footerBg: look.accent.withValues(alpha: dark ? .05 : .07),
+    badgeBg: tier.badgeFilled
+        ? null
+        : look.accent.withValues(alpha: dark ? .12 : .14),
+    badgeGradient: tier.badgeFilled
+        ? LinearGradient(colors: [look.accent, look.accentSoft])
+        : null,
+    badgeText: tier.badgeFilled ? look.dark : accentSoft,
+  );
+}
+
+/// Tarjeta de paquete con la IDENTIDAD de la web (renderPackageCard): línea
+/// superior degradada, badge de tier, categoría con icono, nombre serif,
+/// subtítulo en itálica, servicios con checks y precio "Desde".
+///
+/// Dos diferencias a propósito con el flyer:
+///   * los colores salen del TEMA del panel ([_CardPalette]): en claro la
+///     tarjeta es clara con el acento del tier, en oscuro sigue el flyer;
+///   * el pie lleva un botón "Editar" (y la tarjeta entera abre el paquete):
+///     en el panel las tarjetas SON el contenido editable, y hay que verlo.
 class _WebPackageCard extends StatefulWidget {
   const _WebPackageCard({
     required this.pkg,
@@ -478,6 +696,7 @@ class _WebPackageCardState extends State<_WebPackageCard> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final pkg = widget.pkg;
     final tier = (pkg['tierName'] ?? '').toString();
     // Cada tier tiene su propio look (Premium = oro sobre negro,
@@ -494,8 +713,9 @@ class _WebPackageCardState extends State<_WebPackageCard> {
         .where((s) => s.isNotEmpty)
         .toList();
     // Cuántos servicios se listan antes de resumir en "+N más…" (0 = todos).
-    final shownServices =
-        card.servicesLimit <= 0 ? services.length : card.servicesLimit;
+    final shownServices = card.servicesLimit <= 0
+        ? services.length
+        : card.servicesLimit;
     final categoryName = (pkg['categoryName'] ?? '').toString();
     final price = (pkg['price'] as num?) ?? 0;
     final currency = (pkg['currency'] ?? 'MXN').toString();
@@ -510,318 +730,360 @@ class _WebPackageCardState extends State<_WebPackageCard> {
 
     final canEdit = widget.canEdit;
     final canDelete = widget.canDelete;
+    final pal = _cardPalette(theme, look, tierLook);
+    final radius = BorderRadius.circular(card.radius.clamp(10.0, 24.0));
 
     return MouseRegion(
+      cursor: canEdit ? SystemMouseCursors.click : MouseCursor.defer,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 280),
         curve: Curves.easeOutCubic,
         // Hover (solo desktop): se eleva como .package-card:hover de la web.
         transform: Matrix4.translationValues(
-            0, _hover && card.hoverLift ? -6 : 0, 0),
-        child: Container(
+          0,
+          _hover && card.hoverLift ? -4 : 0,
+          0,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          // Sombra suave: da profundidad sin ensuciar (más marcada en hover).
+          boxShadow: card.shadow
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: pal.dark
+                          ? (_hover ? .42 : .26)
+                          : (_hover ? .18 : .09),
+                    ),
+                    blurRadius: _hover ? 28 : 14,
+                    offset: Offset(0, _hover ? 12 : 6),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: pal.bg,
           clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: look.dark,
-            borderRadius: BorderRadius.circular(card.radius),
-            border: Border.all(
+          shape: RoundedRectangleBorder(
+            borderRadius: radius,
+            side: BorderSide(
               color: card.borderWidth <= 0
                   ? Colors.transparent
-                  : look.accent.withValues(alpha: tierLook.borderAlpha),
-              width: card.borderWidth,
+                  : pal.border.withValues(
+                      alpha: (_hover ? pal.border.a + .25 : pal.border.a).clamp(
+                        .12,
+                        1.0,
+                      ),
+                    ),
+              width: (_hover ? card.borderWidth + 1 : card.borderWidth).clamp(
+                1.0,
+                3.0,
+              ),
             ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Línea superior degradada dorada (el ::before de la web).
-              if (card.lineTop)
-                Container(
-                  height: 2.2,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.transparent,
-                        look.premium ? look.accentSoft : look.accent,
-                        Colors.transparent,
-                      ],
+          child: InkWell(
+            // Toda la tarjeta abre el paquete: lo primero que se entiende es
+            // que estos bloques se editan. El pie repite la acción con su
+            // botón, para quien prefiera un botón de verdad.
+            onTap: canEdit ? widget.onEdit : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Línea superior degradada dorada (el ::before de la web).
+                if (card.lineTop)
+                  Container(
+                    height: 2.4,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.transparent,
+                          look.premium ? look.accentSoft : look.accent,
+                          Colors.transparent,
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(pad, 14, pad, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ===== Badge de tier + acciones =====
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),                          decoration: BoxDecoration(
-                            gradient: tierLook.badgeFilled
-                                ? LinearGradient(
-                                    colors: [look.accent, look.accentSoft])
-                                : null,
-                            color: tierLook.badgeFilled
-                                ? null
-                                : look.accent.withValues(alpha: .12),
-                            borderRadius: BorderRadius.circular(6),
-                            border: tierLook.badgeFilled
-                                ? null
-                                : Border.all(
-                                    color: look.accent.withValues(alpha: .35)),
-                          ),
-                          child: Text(
-                            tier.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 10,
-                              letterSpacing: 2,
-                              fontWeight: FontWeight.w800,
-                              color: tierLook.badgeFilled
-                                  ? look.dark
-                                  : look.accentSoft,
+                Padding(
+                  padding: EdgeInsets.fromLTRB(pad, 14, pad, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ===== Badge de tier + acciones =====
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: pal.badgeGradient,
+                              color: pal.badgeBg,
+                              borderRadius: BorderRadius.circular(6),
+                              border: pal.badgeGradient != null
+                                  ? null
+                                  : Border.all(
+                                      color: look.accent.withValues(alpha: .35),
+                                    ),
+                            ),
+                            child: Text(
+                              tier.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 10,
+                                letterSpacing: 2,
+                                fontWeight: FontWeight.w800,
+                                color: pal.badgeText,
+                              ),
                             ),
                           ),
-                        ),
-                        const Spacer(),
-                        // CELULAR: las acciones del paquete van en el menú "⋮"
-                        // (en escritorio se mantienen los botones fantasma).
-                        // Sin permisos para ninguna, el menú NO se dibuja.
-                        if (hsRowCompact(context))
-                          HsRowMenu(
-                            actions: [
-                              HsMenuAction(
-                                icon: Icons.tune_rounded,
-                                label: 'Personalizar',
-                                onTap: canEdit ? widget.onEdit : null,
-                              ),
-                              HsMenuAction(
+                          const Spacer(),
+                          // CELULAR: las acciones del paquete van en el menú "⋮"
+                          // (en escritorio se mantienen los botones fantasma).
+                          // Sin permisos para ninguna, el menú NO se dibuja.
+                          if (hsRowCompact(context))
+                            HsRowMenu(
+                              actions: [
+                                HsMenuAction(
+                                  icon: Icons.edit_rounded,
+                                  label: 'Editar paquete',
+                                  onTap: canEdit ? widget.onEdit : null,
+                                ),
+                                HsMenuAction(
+                                  icon: Icons.delete_outline_rounded,
+                                  label: 'Eliminar',
+                                  onTap: canDelete ? widget.onDelete : null,
+                                  destructive: true,
+                                ),
+                              ],
+                            )
+                          else ...[
+                            if (canDelete)
+                              _IconGhost(
                                 icon: Icons.delete_outline_rounded,
-                                label: 'Eliminar',
-                                onTap: canDelete ? widget.onDelete : null,
-                                destructive: true,
+                                tooltip: 'Eliminar',
+                                color: pal.muted,
+                                onTap: widget.onDelete,
+                              ),
+                            if (canEdit) ...[
+                              const SizedBox(width: 4),
+                              _IconGhost(
+                                icon: Icons.edit_rounded,
+                                tooltip: 'Editar paquete',
+                                color: pal.accent,
+                                onTap: widget.onEdit,
                               ),
                             ],
-                          )
-                        else ...[
-                          if (canDelete)
-                            _IconGhost(
-                              icon: Icons.delete_outline_rounded,
-                              onTap: widget.onDelete,
-                            ),
-                          if (canEdit) ...[
-                            const SizedBox(width: 6),
-                            _IconGhost(
-                              icon: Icons.tune_rounded,
-                              onTap: widget.onEdit,
-                            ),
                           ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    // ===== Categoría con icono =====
-                    if (card.showCategory)
-                    Row(
-                      children: [
-                        Text(_categoryIcon(categoryName),
-                            style: const TextStyle(fontSize: 15)),
-                        const SizedBox(width: 8),
+                      ),
+                      const SizedBox(height: 14),
+                      // ===== Categoría con icono =====
+                      if (card.showCategory)
+                        Row(
+                          children: [
+                            Text(
+                              _categoryIcon(categoryName),
+                              style: const TextStyle(fontSize: 15),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                categoryName.toUpperCase(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  letterSpacing: 2.2,
+                                  fontWeight: FontWeight.w700,
+                                  color: pal.accent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 10),
+                      // ===== Nombre + subtítulo (estilo web serif/itálica) =====
+                      Text(
+                        card.uppercaseNames
+                            ? (pkg['name'] ?? '').toString().toUpperCase()
+                            : (pkg['name'] ?? '').toString(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: pal.onCard,
+                          height: 1.2,
+                          fontFamily: card.serifNames ? 'serif' : null,
+                        ),
+                      ),
+                      if (card.showSubtitle &&
+                          (pkg['subtitle'] ?? '').toString().isNotEmpty) ...[
+                        const SizedBox(height: 4),
                         Text(
-                          categoryName.toUpperCase(),
+                          (pkg['subtitle'] ?? '').toString(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 10.5,
-                            letterSpacing: 2.2,
-                            fontWeight: FontWeight.w700,
-                            color: look.accent.withValues(alpha: .85),
+                            fontSize: 12.5,
+                            fontStyle: FontStyle.italic,
+                            color: pal.muted,
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 10),
-                    // ===== Nombre + subtítulo (estilo web serif/itálica) =====
-                    Text(
-                      card.uppercaseNames
-                          ? (pkg['name'] ?? '').toString().toUpperCase()
-                          : (pkg['name'] ?? '').toString(),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        height: 1.2,
-                        fontFamily: card.serifNames ? 'serif' : null,
-                      ),
-                    ),
-                    if (card.showSubtitle &&
-                        (pkg['subtitle'] ?? '').toString().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        (pkg['subtitle'] ?? '').toString(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontStyle: FontStyle.italic,
-                          color: Colors.white.withValues(alpha: .55),
+                      if ((pkg['description'] ?? '').toString().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          (pkg['description'] ?? '').toString(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: pal.muted,
+                          ),
                         ),
-                      ),
-                    ],
-                    if ((pkg['description'] ?? '').toString().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        (pkg['description'] ?? '').toString(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.4,
-                          color: Colors.white.withValues(alpha: .45),
+                      ],
+                      const SizedBox(height: 12),
+                      Divider(height: 1, color: pal.divider),
+                      const SizedBox(height: 10),
+                      // ===== Servicios incluidos =====
+                      if (card.showServiceCount)
+                        Text(
+                          '${services.length} servicio${services.length == 1 ? '' : 's'} incluido${services.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            letterSpacing: 1.4,
+                            fontWeight: FontWeight.w700,
+                            color: pal.faint,
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Divider(
-                      height: 1,
-                      color: Colors.white.withValues(alpha: .07),
-                    ),
-                    const SizedBox(height: 10),
-                    // ===== Servicios incluidos =====
-                    if (card.showServiceCount)
-                    Text(
-                      '${services.length} servicio${services.length == 1 ? '' : 's'} incluido${services.length == 1 ? '' : 's'}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        letterSpacing: 1.4,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white.withValues(alpha: .45),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (card.showServices)
-                      for (final name in services.take(shownServices))
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.check_rounded,
-                                size: 15,
-                                color: look.accent,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    height: 1.35,
-                                    color: Colors.white.withValues(alpha: .78),
+                      const SizedBox(height: 6),
+                      if (card.showServices)
+                        for (final name in services.take(shownServices))
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.check_rounded,
+                                  size: 15,
+                                  color: pal.accent,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      height: 1.35,
+                                      color: pal.onCard.withValues(
+                                        alpha: pal.dark ? .78 : .88,
+                                      ),
+                                    ),
                                   ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      if (card.showServices && services.length > shownServices)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            '+${services.length - shownServices} más…',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontStyle: FontStyle.italic,
+                              color: pal.faint,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 14),
+                    ],
+                  ),
+                ),
+                // ===== Pie: precio + acción del PANEL =====
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+                  decoration: BoxDecoration(
+                    color: pal.footerBg,
+                    border: Border(top: BorderSide(color: pal.divider)),
+                  ),
+                  child: Row(
+                    children: [
+                      // El precio se oculta si el diseño lo apaga (el precio se
+                      // diseña en el diseñador, no aquí).
+                      if (card.showPrice)
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                card.priceLabel,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  letterSpacing: 1.5,
+                                  fontStyle: FontStyle.italic,
+                                  color: pal.faint,
+                                ),
+                              ),
+                              Text(
+                                priceLabel,
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                  color: pal.accent,
+                                  fontFamily: 'serif',
+                                ),
+                              ),
+                              Text(
+                                currency,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  letterSpacing: 1.2,
+                                  color: pal.faint,
                                 ),
                               ),
                             ],
                           ),
-                        ),
-                    if (card.showServices && services.length > shownServices)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          '+${services.length - shownServices} más…',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.white.withValues(alpha: .4),
+                        )
+                      else
+                        const Spacer(),
+                      // Botón del PANEL: abre el paquete para editarlo. Se
+                      // llama "Editar" (no el CTA de la web) para que quede
+                      // claro que esto es un formulario, no el catálogo.
+                      if (canEdit)
+                        FilledButton.icon(
+                          onPressed: widget.onEdit,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: look.accent.withValues(
+                              alpha: pal.dark ? .18 : .16,
+                            ),
+                            foregroundColor: pal.accent,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
+                          icon: const Icon(Icons.edit_rounded, size: 16),
+                          label: const Text('Editar'),
                         ),
-                      ),
-                    const SizedBox(height: 14),
-                  ],
-                ),
-              ),
-              // ===== Footer: precio + CTA (fondo tintado como la web) =====
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-                decoration: BoxDecoration(
-                  color: look.accent.withValues(alpha: .05),
-                  border: Border(
-                    top: BorderSide(
-                      color: Colors.white.withValues(alpha: .07),
-                    ),
+                    ],
                   ),
                 ),
-                child: Row(
-                  children: [
-                    // El precio se oculta si el diseño lo apaga; el botón del
-                    // pie es la acción del PANEL (Personalizar), no el CTA de la
-                    // web — ese se diseña en el diseñador.
-                    if (!card.showPrice) const Spacer(),
-                    if (card.showPrice)
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            card.priceLabel,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              letterSpacing: 1.5,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white.withValues(alpha: .45),
-                            ),
-                          ),
-                          Text(
-                            priceLabel,
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              color: look.accent,
-                              fontFamily: 'serif',
-                            ),
-                          ),
-                          Text(
-                            currency,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              letterSpacing: 1.2,
-                              color: Colors.white.withValues(alpha: .4),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // CTA "Personalizar": borde dorado, como .pkg-cta.
-                    OutlinedButton.icon(
-                      onPressed: canEdit ? widget.onEdit : null,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: look.accentSoft,
-                        side: BorderSide(
-                          color: look.accent.withValues(
-                              alpha: canEdit ? .75 : .25),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 11.5,
-                          letterSpacing: 1.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      icon: const Icon(Icons.tune_rounded, size: 15),
-                      label: const Text('PERSONALIZAR'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -864,8 +1126,10 @@ class _PackageRowState extends State<_PackageRow> {
   Widget build(BuildContext context) {
     final pkg = widget.pkg;
     final card = widget.design.card;
-    final look =
-        _lookFromDesign(widget.design, (pkg['tierName'] ?? '').toString());
+    final look = _lookFromDesign(
+      widget.design,
+      (pkg['tierName'] ?? '').toString(),
+    );
     final tierAlpha = widget.design
         .tierOf((pkg['tierName'] ?? '').toString())
         .borderAlpha;
@@ -879,253 +1143,294 @@ class _PackageRowState extends State<_PackageRow> {
     final currency = (pkg['currency'] ?? 'MXN').toString();
     final priceLabel = hsMoney(price, '').trim();
     final compact = hsRowCompact(context);
+    final theme = Theme.of(context);
+    // Mismos colores que la tarjeta, según el tema (en claro la fila también
+    // se aclara: antes se quedaba negra en modo light).
+    final pal = _cardPalette(
+      theme,
+      look,
+      widget.design.tierOf((pkg['tierName'] ?? '').toString()),
+    );
+    final radius = BorderRadius.circular(card.radius.clamp(10, 22));
 
     return MouseRegion(
+      cursor: widget.canEdit ? SystemMouseCursors.click : MouseCursor.defer,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
         transform: Matrix4.translationValues(
-            0, _hover && card.hoverLift ? -2 : 0, 0),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: look.dark,
-          borderRadius: BorderRadius.circular(card.radius.clamp(6, 22)),
-          border: Border.all(
-            color: card.borderWidth <= 0
-                ? Colors.transparent
-                : look.accent.withValues(
-                    alpha: _hover
-                        ? tierAlpha.clamp(.2, 1)
-                        : (tierAlpha * .55).clamp(.08, 1),
-                  ),
-            width: card.borderWidth,
-          ),
+          0,
+          _hover && card.hoverLift ? -2 : 0,
+          0,
         ),
-        child: Row(
-          children: [
-            // Barra de acento del tier (la "línea" del flyer, ahora vertical).
-            Container(width: 3, height: 72, color: look.accent),
-            const SizedBox(width: 14),
-            // Icono de la categoría.
-            Container(
-              width: 40,
-              height: 40,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: look.accent.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: look.accent.withValues(alpha: .28)),
-              ),
-              child: Text(_categoryIcon(categoryName),
-                  style: const TextStyle(fontSize: 17)),
+        child: Material(
+          color: pal.bg,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: radius,
+            side: BorderSide(
+              color: card.borderWidth <= 0
+                  ? Colors.transparent
+                  : pal.border.withValues(
+                      alpha: _hover
+                          ? tierAlpha.clamp(.35, 1)
+                          : (tierAlpha * .55).clamp(.10, 1),
+                    ),
+              width: _hover ? card.borderWidth + 1 : card.borderWidth,
             ),
-            const SizedBox(width: 12),
-            // Categoría + nombre + subtítulo.
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
+          ),
+          child: InkWell(
+            onTap: widget.canEdit ? widget.onEdit : null,
+            child: Row(
+              children: [
+                // Barra de acento del tier (la "línea" del flyer, ahora vertical).
+                Container(width: 3, height: 72, color: pal.accent),
+                const SizedBox(width: 14),
+                // Icono de la categoría.
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: pal.accent.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: pal.accent.withValues(alpha: .28),
+                    ),
+                  ),
+                  child: Text(
+                    _categoryIcon(categoryName),
+                    style: const TextStyle(fontSize: 17),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Categoría + nombre + subtítulo.
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (card.showCategory)
-                      Flexible(
-                        child: Text(
-                          // La categoría va SIEMPRE en mayúsculas: así la pinta
-                          // la web (.pkg-category-name); el interruptor del
-                          // diseñador solo afecta al NOMBRE del paquete.
-                          categoryName.toUpperCase(),
+                      Row(
+                        children: [
+                          if (card.showCategory)
+                            Flexible(
+                              child: Text(
+                                // La categoría va SIEMPRE en mayúsculas: así la pinta
+                                // la web (.pkg-category-name); el interruptor del
+                                // diseñador solo afecta al NOMBRE del paquete.
+                                categoryName.toUpperCase(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  letterSpacing: 1.8,
+                                  fontWeight: FontWeight.w700,
+                                  color: pal.accent,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: pal.badgeGradient,
+                              color: pal.badgeBg,
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              (pkg['tierName'] ?? '').toString().toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 9,
+                                letterSpacing: 1.2,
+                                fontWeight: FontWeight.w800,
+                                color: pal.badgeText,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        card.uppercaseNames
+                            ? (pkg['name'] ?? '').toString().toUpperCase()
+                            : (pkg['name'] ?? '').toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: pal.onCard,
+                          fontFamily: card.serifNames ? 'serif' : null,
+                        ),
+                      ),
+                      if (card.showSubtitle && subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          subtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 10,
-                            letterSpacing: 1.8,
-                            fontWeight: FontWeight.w700,
-                            color: look.accent.withValues(alpha: .9),
+                            fontSize: 11.5,
+                            fontStyle: FontStyle.italic,
+                            color: pal.muted,
                           ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // Servicios incluidos (solo si hay espacio).
+                if (!compact && card.showServices)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_outline_rounded,
+                          size: 15,
+                          color: pal.accent,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${services.length}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: pal.onCard,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          services.length == 1 ? 'servicio' : 'servicios',
+                          style: TextStyle(fontSize: 11, color: pal.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                // Precio (si el diseño lo apaga, no se reserva el hueco).
+                if (card.showPrice)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        card.priceLabel,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          letterSpacing: 1.2,
+                          fontStyle: FontStyle.italic,
+                          color: pal.faint,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: look.accent.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(5),
+                      Text(
+                        priceLabel,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: pal.accent,
+                          fontFamily: 'serif',
                         ),
-                        child: Text(
-                          (pkg['tierName'] ?? '').toString().toUpperCase(),
-                          style: TextStyle(
-                            fontSize: 9,
-                            letterSpacing: 1.2,
-                            fontWeight: FontWeight.w800,
-                            color: look.accentSoft,
-                          ),
+                      ),
+                      Text(
+                        currency,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          letterSpacing: 1,
+                          color: pal.faint,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    card.uppercaseNames
-                        ? (pkg['name'] ?? '').toString().toUpperCase()
-                        : (pkg['name'] ?? '').toString(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                      fontFamily: card.serifNames ? 'serif' : null,
-                    ),
-                  ),
-                  if (card.showSubtitle && subtitle.isNotEmpty) ...[
-                    const SizedBox(height: 1),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.white.withValues(alpha: .5),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Servicios incluidos (solo si hay espacio).
-            if (!compact && card.showServices)
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle_outline_rounded,
-                        size: 15, color: look.accent.withValues(alpha: .8)),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${services.length}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white.withValues(alpha: .8),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      services.length == 1 ? 'servicio' : 'servicios',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: .45),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            // Precio (si el diseño lo apaga, no se reserva el hueco).
-            if (card.showPrice)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  card.priceLabel,
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    letterSpacing: 1.2,
-                    fontStyle: FontStyle.italic,
-                    color: Colors.white.withValues(alpha: .45),
-                  ),
-                ),
-                Text(
-                  priceLabel,
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: look.accent,
-                    fontFamily: 'serif',
-                  ),
-                ),
-                Text(
-                  currency,
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    letterSpacing: 1,
-                    color: Colors.white.withValues(alpha: .4),
-                  ),
+                const SizedBox(width: 10),
+                // Acciones (mismo criterio que el card: ⋮ en móvil).
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: compact
+                      ? HsRowMenu(
+                          actions: [
+                            HsMenuAction(
+                              icon: Icons.edit_rounded,
+                              label: 'Editar paquete',
+                              onTap: widget.canEdit ? widget.onEdit : null,
+                            ),
+                            HsMenuAction(
+                              icon: Icons.delete_outline_rounded,
+                              label: 'Eliminar',
+                              onTap: widget.canDelete ? widget.onDelete : null,
+                              destructive: true,
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.canDelete)
+                              _IconGhost(
+                                icon: Icons.delete_outline_rounded,
+                                color: pal.muted,
+                                tooltip: 'Eliminar',
+                                onTap: widget.onDelete,
+                              ),
+                            if (widget.canEdit) ...[
+                              const SizedBox(width: 4),
+                              _IconGhost(
+                                icon: Icons.edit_rounded,
+                                color: pal.accent,
+                                tooltip: 'Editar paquete',
+                                onTap: widget.onEdit,
+                              ),
+                            ],
+                          ],
+                        ),
                 ),
               ],
             ),
-            const SizedBox(width: 10),
-            // Acciones (mismo criterio que el card: ⋮ en móvil).
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: compact
-                  ? HsRowMenu(
-                      actions: [
-                        HsMenuAction(
-                          icon: Icons.tune_rounded,
-                          label: 'Personalizar',
-                          onTap: widget.canEdit ? widget.onEdit : null,
-                        ),
-                        HsMenuAction(
-                          icon: Icons.delete_outline_rounded,
-                          label: 'Eliminar',
-                          onTap: widget.canDelete ? widget.onDelete : null,
-                          destructive: true,
-                        ),
-                      ],
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.canDelete)
-                          _IconGhost(
-                            icon: Icons.delete_outline_rounded,
-                            onTap: widget.onDelete,
-                          ),
-                        if (widget.canEdit) ...[
-                          const SizedBox(width: 6),
-                          _IconGhost(
-                            icon: Icons.tune_rounded,
-                            onTap: widget.onEdit,
-                          ),
-                        ],
-                      ],
-                    ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// Botón fantasma (icono) sobre el flyer oscuro.
+/// Botón fantasma (icono) de las acciones de un paquete.
+///
+/// El COLOR lo decide quien lo usa (la paleta de la tarjeta), para que se lea
+/// igual de bien sobre el flyer oscuro que sobre la tarjeta clara del tema.
 class _IconGhost extends StatelessWidget {
-  const _IconGhost({required this.icon, required this.onTap});
+  const _IconGhost({
+    required this.icon,
+    required this.onTap,
+    this.color,
+    this.tooltip,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
+  final Color? color;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    final button = InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(9),
       child: Padding(
-        padding: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(7),
         child: Icon(
           icon,
           size: 17,
-          color: Colors.white.withValues(alpha: .55),
+          color: color ?? Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
   }
 }
 
@@ -1184,8 +1489,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     final p = widget.pkg ?? const {};
     _name = TextEditingController(text: (p['name'] ?? '').toString());
     _subtitle = TextEditingController(text: (p['subtitle'] ?? '').toString());
-    _description =
-        TextEditingController(text: (p['description'] ?? '').toString());
+    _description = TextEditingController(
+      text: (p['description'] ?? '').toString(),
+    );
     _price = TextEditingController(
       text: p['price'] == null
           ? ''
@@ -1299,8 +1605,10 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     };
     try {
       if (_editing) {
-        await HsApi.updatePackage(
-            {'id': (widget.pkg!['id'] as num).toInt(), ...body});
+        await HsApi.updatePackage({
+          'id': (widget.pkg!['id'] as num).toInt(),
+          ...body,
+        });
       } else {
         await HsApi.createPackage(body);
       }
@@ -1330,8 +1638,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     return FormDialog(
       icon: _editing ? Icons.tune_rounded : Icons.add_card,
       title: _editing ? 'Personalizar paquete' : 'Nuevo paquete',
-      subtitle:
-          'Este paquete aparece en la web ("Nuestros Paquetes") y se asigna a clientes.',
+      subtitle: 'Este paquete aparece en la web ("Nuestros Paquetes") y se asigna a clientes.',
       saving: _saving,
       error: _error,
       saveLabel: _editing ? 'Guardar cambios' : 'Crear paquete',
@@ -1371,131 +1678,136 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
         if (_tab == 1) ...[
           _servicesSection(scheme),
         ] else ...[
-        FormSection(
-          label: 'Datos del paquete',
-          child: Column(
-            children: [
-              TextField(
-                controller: _name,
-                autofocus: !_editing,
-                onChanged: (_) => setState(() {}),
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  labelText: 'Nombre',
-                  prefixIcon: Icon(Icons.card_giftcard_outlined, size: 20),
+          FormSection(
+            label: 'Datos del paquete',
+            child: Column(
+              children: [
+                TextField(
+                  controller: _name,
+                  autofocus: !_editing,
+                  onChanged: (_) => setState(() {}),
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre',
+                    prefixIcon: Icon(Icons.card_giftcard_outlined, size: 20),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _subtitle,
-                onChanged: (_) => setState(() {}),
-                textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
-                  labelText: 'Subtítulo (corto, para la tarjeta)',
-                  prefixIcon: Icon(Icons.short_text, size: 20),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _subtitle,
+                  onChanged: (_) => setState(() {}),
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Subtítulo (corto, para la tarjeta)',
+                    prefixIcon: Icon(Icons.short_text, size: 20),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _description,
-                maxLines: 3,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
-                  labelText: 'Descripción',
-                  alignLabelWithHint: true,
-                  prefixIcon: Icon(Icons.notes, size: 20),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _description,
+                  maxLines: 3,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Descripción',
+                    alignLabelWithHint: true,
+                    prefixIcon: Icon(Icons.notes, size: 20),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        FormSection(
-          label: 'Precio',
-          child: TextField(
-            controller: _price,
-            onChanged: (_) => setState(() {}),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Precio (MXN)',
-              prefixIcon: Icon(Icons.payments_outlined, size: 20),
+              ],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        FormSection(
-          label: 'Clasificación',
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: _tierId,
-                      decoration: const InputDecoration(
-                        labelText: 'Tier',
-                        prefixIcon: Icon(Icons.military_tech_outlined, size: 20),
-                      ),
-                      items: [
-                        for (final t in widget.tiers)
-                          DropdownMenuItem<int>(
-                            value: (t['id'] as num).toInt(),
-                            child: Text((t['name'] ?? '').toString()),
-                          ),
-                      ],
-                      onChanged: (v) => setState(() => _tierId = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: _categoryId,
-                      decoration: const InputDecoration(
-                        labelText: 'Categoría',
-                        prefixIcon: Icon(Icons.category_outlined, size: 20),
-                      ),
-                      items: [
-                        for (final c in widget.categories)
-                          DropdownMenuItem<int>(
-                            value: (c['id'] as num).toInt(),
-                            child: Text((c['name'] ?? '').toString()),
-                          ),
-                      ],
-                      onChanged: (v) => setState(() => _categoryId = v),
-                    ),
-                  ),
-                ],
+          const SizedBox(height: 16),
+          FormSection(
+            label: 'Precio',
+            child: TextField(
+              controller: _price,
+              onChanged: (_) => setState(() {}),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
-              const SizedBox(height: 12),
-              CheckboxListTile(
-                value: _isExtern,
-                onChanged: (v) => setState(() => _isExtern = v ?? false),
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Paquete externo (servicio destacado de la web)',
-                  style: TextStyle(fontSize: 13.5),
-                ),
-                subtitle: const Text(
-                  'Los externos aparecen en el carrusel "Nuestros servicios".',
-                  style: TextStyle(fontSize: 11.5),
-                ),
+              decoration: const InputDecoration(
+                labelText: 'Precio (MXN)',
+                prefixIcon: Icon(Icons.payments_outlined, size: 20),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        FormSection(
-          label: 'Imagen para la web (opcional)',
-          child: TextField(
-            controller: _urlImage,
-            decoration: const InputDecoration(
-              labelText: 'Ruta de imagen (ej. images/banner.jpg)',
-              prefixIcon: Icon(Icons.image_outlined, size: 20),
             ),
           ),
-        ),
+          const SizedBox(height: 16),
+          FormSection(
+            label: 'Clasificación',
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: _tierId,
+                        decoration: const InputDecoration(
+                          labelText: 'Tier',
+                          prefixIcon: Icon(
+                            Icons.military_tech_outlined,
+                            size: 20,
+                          ),
+                        ),
+                        items: [
+                          for (final t in widget.tiers)
+                            DropdownMenuItem<int>(
+                              value: (t['id'] as num).toInt(),
+                              child: Text((t['name'] ?? '').toString()),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _tierId = v),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: _categoryId,
+                        decoration: const InputDecoration(
+                          labelText: 'Categoría',
+                          prefixIcon: Icon(Icons.category_outlined, size: 20),
+                        ),
+                        items: [
+                          for (final c in widget.categories)
+                            DropdownMenuItem<int>(
+                              value: (c['id'] as num).toInt(),
+                              child: Text((c['name'] ?? '').toString()),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _categoryId = v),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: _isExtern,
+                  onChanged: (v) => setState(() => _isExtern = v ?? false),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text(
+                    'Paquete externo (servicio destacado de la web)',
+                    style: TextStyle(fontSize: 13.5),
+                  ),
+                  subtitle: const Text(
+                    'Los externos aparecen en el carrusel "Nuestros servicios".',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          FormSection(
+            label: 'Imagen para la web (opcional)',
+            child: TextField(
+              controller: _urlImage,
+              decoration: const InputDecoration(
+                labelText: 'Ruta de imagen (ej. images/banner.jpg)',
+                prefixIcon: Icon(Icons.image_outlined, size: 20),
+              ),
+            ),
+          ),
         ], // fin de la pestaña Datos
       ],
     );
@@ -1529,8 +1841,10 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
             children: [
               if (tier.isNotEmpty)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: gold.withValues(alpha: .18),
                     borderRadius: BorderRadius.circular(999),
@@ -1576,8 +1890,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFFB9C2D0)),
+                style: const TextStyle(fontSize: 12, color: Color(0xFFB9C2D0)),
               ),
             ),
           const SizedBox(height: 10),
@@ -1591,9 +1904,10 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: soft),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: soft,
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
@@ -1602,7 +1916,10 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
               Text(
                 '${_serviceIds.length} servicios',
                 style: TextStyle(
-                    fontSize: 11.5, fontWeight: FontWeight.w700, color: soft),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: soft,
+                ),
               ),
             ],
           ),
@@ -1618,8 +1935,8 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     final list = q.isEmpty
         ? _services
         : _services.where((s) {
-            final hay =
-                '${s['name'] ?? ''} ${s['description'] ?? ''}'.toLowerCase();
+            final hay = '${s['name'] ?? ''} ${s['description'] ?? ''}'
+                .toLowerCase();
             return hay.contains(q);
           }).toList();
     return FormSection(
@@ -1669,10 +1986,14 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                     visualDensity: VisualDensity.compact,
                     minimumSize: Size.zero,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                   ),
-                  child: const Text('Limpiar',
-                      style: TextStyle(fontSize: 11.5)),
+                  child: const Text(
+                    'Limpiar',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
                 ),
             ],
           ),
@@ -1751,7 +2072,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                   Text(
                     (s['name'] ?? 'Servicio').toString(),
                     style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w800),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   if ((s['description'] ?? '').toString().trim().isNotEmpty)
                     Padding(
@@ -1836,11 +2159,11 @@ class _FormTabButton extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon,
-                    size: 16,
-                    color: selected
-                        ? AppColors.brand
-                        : scheme.onSurfaceVariant),
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? AppColors.brand : scheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 7),
                 Text(
                   label,
@@ -1853,8 +2176,10 @@ class _FormTabButton extends StatelessWidget {
                 if (badge != null && badge != '0') ...[
                   const SizedBox(width: 6),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.brand.withValues(alpha: .15),
                       borderRadius: BorderRadius.circular(999),

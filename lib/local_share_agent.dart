@@ -28,6 +28,28 @@ import 'hs_api.dart';
 //   * Si la sesión no sirve (401/403) o el usuario cierra sesión, se detiene.
 // ==================================================================
 
+/// Motivos por los que el servicio de compartir NO está sirviendo.
+///
+/// Existe porque "no me deja prender el switch" casi SIEMPRE tiene un motivo
+/// concreto, y antes se veía como si el switch no obedeciera: la app en el
+/// navegador (no puede leer el disco), el servidor del drive que no reconoce
+/// la sesión, o un servidor viejo sin los endpoints del agente. El módulo
+/// muestra el motivo en la propia tarjeta del switch.
+enum ShareProblem {
+  /// Esta plataforma (navegador, celular) no puede servir carpetas del equipo.
+  unsupported,
+
+  /// El servidor del drive no reconoce la sesión (contesta 401/403).
+  session,
+
+  /// El servidor del drive no tiene los endpoints del agente (404/405/501):
+  /// es una versión vieja y hay que actualizarlo.
+  oldServer,
+
+  /// El servidor del drive contestó con un error suyo (5xx).
+  server,
+}
+
 /// Respuesta que el agente manda al servidor: bytes crudos + cómo interpretarlos.
 @immutable
 class AgentReply {
@@ -85,14 +107,30 @@ class LocalShareAgent {
   int _served = 0;
   int get served => _served;
 
+  /// Solo PRUEBAS: fuerza si esta plataforma puede servir carpetas.
+  @visibleForTesting
+  bool? debugSupported;
+
   /// El agente solo tiene sentido en una COMPUTADORA: es la que tiene las
   /// carpetas. En el celular/web no hay nada que compartir (además el módulo
   /// allí es de solo lectura).
-  bool get supported => !kIsWeb && !isAndroidPlatform;
+  bool get supported => debugSupported ?? (!kIsWeb && !isAndroidPlatform);
+
+  /// POR QUÉ el servicio no está sirviendo ahora mismo (null = sin problema).
+  ///
+  /// Lo pinta la tarjeta del switch: encender y que no pase nada visible era
+  /// justo lo que hacía pensar que el switch estaba roto.
+  final ValueNotifier<ShareProblem?> problem =
+      ValueNotifier<ShareProblem?>(null);
 
   /// Arranca el agente (idempotente). No lanza: si falla, reintenta.
   void start() {
-    if (_running || !supported) return;
+    if (!supported) {
+      problem.value = ShareProblem.unsupported;
+      return;
+    }
+    if (_running) return;
+    problem.value = null;
     _running = true;
     serving.value = true;
     unawaited(_loop());
@@ -105,6 +143,10 @@ class LocalShareAgent {
     // La espera entre reintentos se CANCELA: si no, al apagarlo quedaba un
     // temporizador colgado esperando para volver a preguntar.
     _cancelSleep();
+    // Apagado a propósito: los motivos pasajeros (sesión, servidor) dejan de
+    // mostrarse. El de "esta plataforma no puede servir carpetas" NO depende
+    // del switch: apagarlo no cambia que el navegador no vea el disco.
+    if (problem.value != ShareProblem.unsupported) problem.value = null;
     if (!_running) return;
     _running = false;
     serving.value = false;
@@ -134,21 +176,31 @@ class LocalShareAgent {
   /// Es distinto que compartir una carpeta: encendido aquí, el servicio sigue
   /// esperando peticiones mientras la app esté abierta —aunque ahora mismo no
   /// haya ninguna carpeta compartida— y se vuelve a encender al abrir la app.
-  Future<void> setManual(bool on) async {
-    if (!supported) return;
+  /// Devuelve `false` si esta plataforma no puede servir carpetas (navegador,
+  /// celular): en ese caso deja el motivo en [problem] para poder explicarlo.
+  Future<bool> setManual(bool on) async {
+    if (!supported) {
+      problem.value = ShareProblem.unsupported;
+      return false;
+    }
     _manual = on;
     if (on) {
+      problem.value = null;
       start();
     } else {
       stop();
     }
     await AppSettings.instance.setShareServing(on);
+    return true;
   }
 
   /// Lee la preferencia del switch (al entrar al panel) y, si estaba
   /// encendido, arranca el servicio sin esperar a nada más.
   bool loadManualPreference() {
-    if (!supported) return false;
+    if (!supported) {
+      problem.value = ShareProblem.unsupported;
+      return false;
+    }
     _manual = AppSettings.instance.shareServing;
     if (_manual) start();
     return _manual;
@@ -191,29 +243,57 @@ class LocalShareAgent {
       };
 
   /// Bucle del agente: pregunta por trabajo, contesta y vuelve a preguntar.
+  ///
+  /// Reglas del bucle (todas nacieron de fallas reales):
+  ///   * el switch manda: una sesión rechazada o un servidor viejo NO apagan
+  ///     el servicio —antes un 401 lo apagaba de golpe y el switch se caía
+  ///     solo, justo cuando el usuario acababa de encenderlo—; se explica el
+  ///     motivo y se SIGUE intentando;
+  ///   * nunca se pregunta en bucle apretado: cualquier respuesta que no sea
+  ///     trabajo contesta con una espera ([retryDelay]);
+  ///   * un 5xx o una red caída son pasajeros: se reintenta sin gritar.
   Future<void> _loop() async {
     while (_running) {
+      final watch = Stopwatch()..start();
       try {
         final r = await client
             .post(_u('/api/local/agent/wait'), headers: _headers)
             .timeout(const Duration(seconds: 40));
         if (!_running) return;
-        if (r.statusCode == 200) {
+        watch.stop();
+        final code = r.statusCode;
+        if (code == 200) {
+          problem.value = null;
           await _serve(r.body);
           continue;
         }
-        if (r.statusCode == 401 || r.statusCode == 403) {
-          // La sesión ya no sirve: se detiene hasta el próximo login (y el
-          // switch lo refleja: el servicio ya no está sirviendo).
-          _running = false;
-          serving.value = false;
-          return;
+        if (code == 204) {
+          // Nada pendiente. Si el servidor contestó AL INSTANTE (no esperó),
+          // eso no es una espera: se deja respirar antes de volver a preguntar
+          // para no golpearlo en bucle apretado. Tras una espera de verdad, se
+          // vuelve a preguntar enseguida.
+          problem.value = null;
+          if (watch.elapsedMilliseconds < 1000) {
+            await _sleep(const Duration(seconds: 1));
+          }
+          continue;
         }
-        // 204 (nada pendiente) u otro: se vuelve a preguntar enseguida.
+        if (code == 401 || code == 403) {
+          problem.value = ShareProblem.session;
+        } else if (code == 404 || code == 405 || code == 501) {
+          problem.value = ShareProblem.oldServer;
+        } else if (code >= 500) {
+          problem.value = ShareProblem.server;
+        } else {
+          problem.value = null;
+        }
       } catch (_) {
-        // Sin red o servidor caído: se espera y se reintenta.
+        // Sin red o servidor caído: se espera y se reintenta (es pasajero, no
+        // se deja un motivo en pantalla por eso).
         await _sleep(retryDelay);
+        continue;
       }
+      await _sleep(retryDelay);
     }
   }
 

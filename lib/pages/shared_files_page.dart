@@ -251,11 +251,14 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       final path = '${r['path'] ?? ''}';
       final i = out.indexWhere((o) => '${o['path']}' == path);
       if (i < 0) {
-        out.add({...r, 'owners': List<Map<String, dynamic>>.from(
-          ((r['owners'] as List?) ?? const [])
-              .whereType<Map>()
-              .map((e) => e.cast<String, dynamic>()),
-        )});
+        out.add({
+          ...r,
+          'owners': List<Map<String, dynamic>>.from(
+            ((r['owners'] as List?) ?? const []).whereType<Map>().map(
+              (e) => e.cast<String, dynamic>(),
+            ),
+          ),
+        });
       } else {
         final owners = (out[i]['owners'] as List).cast<Map<String, dynamic>>();
         for (final o in ((r['owners'] as List?) ?? const []).whereType<Map>()) {
@@ -351,7 +354,8 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         setState(() {
           _localItems = const [];
           _localLoading = false;
-          _localError = 'Esa carpeta está en la computadora de quien la '
+          _localError =
+              'Esa carpeta está en la computadora de quien la '
               'comparte: se abre cuando su aplicación esté abierta';
         });
         return;
@@ -404,38 +408,83 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   /// panel esté abierto (y lo recuerda para la próxima vez); apagado, los demás
   /// solo verán "Apagada ahora" aunque la carpeta siga compartida.
   Future<void> _setServing(bool on) async {
-    await LocalShareAgent.instance.setManual(on);
+    final ok = await LocalShareAgent.instance.setManual(on);
     if (!mounted) return;
+    if (!ok) {
+      // Esta plataforma no puede servir carpetas de la computadora: se dice,
+      // en vez de dejar un switch que parece no obedecer.
+      HsToast.info(
+        'No se puede desde aquí',
+        details: _shareProblemText(ShareProblem.unsupported),
+      );
+      setState(() {});
+      return;
+    }
     if (on) {
-      HsToast.success('Servicio de compartir encendido',
-          details: 'Tu computadora sirve tus carpetas mientras el panel esté '
-              'abierto.');
+      HsToast.success(
+        'Servicio de compartir encendido',
+        details:
+            'Tu computadora sirve tus carpetas mientras el panel esté '
+            'abierto.',
+      );
     } else {
-      HsToast.info('Servicio de compartir apagado',
-          details: 'Tus carpetas de esta computadora dejan de verse.');
+      HsToast.info(
+        'Servicio de compartir apagado',
+        details: 'Tus carpetas de esta computadora dejan de verse.',
+      );
     }
     // El estado de cada carpeta cambia al encender o apagar el servicio.
     unawaited(_refreshStatuses());
     setState(() {});
   }
 
+  /// Por qué el servicio de compartir NO está sirviendo (o por qué puede no
+  /// servir) dicho en claro. "No me deja prender el switch" casi siempre
+  /// tiene un motivo concreto: la app en el navegador, el servidor del drive
+  /// sin sesión/base de datos, o un servidor viejo sin los endpoints.
+  static String? _shareProblemText(ShareProblem? p) => switch (p) {
+    ShareProblem.unsupported =>
+      'Desde el navegador (o el celular) no se '
+          'pueden servir carpetas de esta computadora: abre el panel en la '
+          'app de escritorio para compartirlas.',
+    ShareProblem.session =>
+      'El servidor del drive no reconoce tu sesión '
+          '(contesta 401): sigue encendido y se reintenta, pero nadie verá '
+          'tus carpetas hasta que el servidor del drive tenga su base de '
+          'datos (DRIVE_DB) y tu sesión siga activa.',
+    ShareProblem.oldServer =>
+      'El servidor del drive todavía no trae los '
+          'endpoints para servir carpetas de tu computadora (contesta 404): '
+          'actualízalo (hardstreet-drive) para que tus carpetas se vean.',
+    ShareProblem.server =>
+      'El servidor del drive está contestando con '
+          'errores (5xx): se sigue reintentando. Revisa que esté arriba.',
+    null => null,
+  };
+
   /// El switch del servicio en pantalla ANGOSTA: un botón de imagen con su
   /// tooltip (la tarjeta completa no cabe ahí sin desbordar el módulo).
   Widget _serviceSwitchButton(ColorScheme scheme, {required bool compact}) {
     final agent = LocalShareAgent.instance;
-    return ValueListenableBuilder<bool>(
-      valueListenable: agent.serving,
-      builder: (context, on, _) {
+    return ListenableBuilder(
+      // El servicio se enciende y se apaga SOLO (sesión, servidor viejo): hay
+      // que enterarse de las dos cosas, el estado y el motivo.
+      listenable: Listenable.merge([agent.serving, agent.problem]),
+      builder: (context, _) {
+        final on = agent.serving.value;
         final tint = on ? AppColors.ok : AppColors.warn;
         return Tooltip(
-          message: on
-              ? 'Servicio de compartir ENCENDIDO: tu computadora sirve tus '
-                  'carpetas mientras el panel esté abierto. Toca para apagarlo.'
+          message: !agent.supported
+              ? 'Servicio de compartir: solo desde la app de escritorio'
+              : on
+              ? 'Servicio de compartir ENCENDIDO: tu computadora sirve '
+                    'tus carpetas mientras el panel esté abierto. Toca para '
+                    'apagarlo.'
               : 'Servicio de compartir APAGADO: tus carpetas de esta '
-                  'computadora no se sirven. Toca para encenderlo.',
+                    'computadora no se sirven. Toca para encenderlo.',
           child: IconButton.filledTonal(
             key: const ValueKey('share-service-switch-compact'),
-            onPressed: () => _setServing(!on),
+            onPressed: agent.supported ? () => _setServing(!on) : null,
             icon: Icon(
               on
                   ? Icons.wifi_tethering_rounded
@@ -453,30 +502,39 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   Widget _serviceCard(ColorScheme scheme) {
     final agent = LocalShareAgent.instance;
     final local = _myFolders.where((f) => f['local'] == true).length;
-    return ValueListenableBuilder<bool>(
-      valueListenable: agent.serving,
-      builder: (context, on, _) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([agent.serving, agent.problem]),
+      builder: (context, _) {
+        final on = agent.serving.value;
         final tint = on ? AppColors.ok : AppColors.warn;
-        final detail = on
+        // Sin soporte (navegador/celular) NO se describe el apagado: lo único
+        // que hay que leer es el motivo, que ya dice qué hacer.
+        final detail = !agent.supported
+            ? ''
+            : on
             ? (agent.served > 0
-                ? 'Tu computadora está sirviendo tus carpetas compartidas: ha '
-                    'contestado ${agent.served} '
-                    '${agent.served == 1 ? 'petición' : 'peticiones'}. '
-                    'Sigue encendido mientras el panel esté abierto.'
-                : 'Tu computadora está lista para servir tus carpetas '
-                    'compartidas mientras el panel esté abierto.')
+                  ? 'Tu computadora está sirviendo tus carpetas compartidas: ha '
+                        'contestado ${agent.served} '
+                        '${agent.served == 1 ? 'petición' : 'peticiones'}. '
+                        'Sigue encendido mientras el panel esté abierto.'
+                  : 'Tu computadora está lista para servir tus carpetas '
+                        'compartidas mientras el panel esté abierto.')
             : (local > 0
-                ? 'Está apagado: lo que compartes de esta computadora '
-                    '($local ${local == 1 ? 'carpeta' : 'carpetas'}) no se ve '
-                    'hasta que lo enciendas.'
-                : 'Apagado: las carpetas de esta computadora no se sirven. '
-                    'Enciéndelo cuando compartas una.');
+                  ? 'Está apagado: lo que compartes de esta computadora '
+                        '($local ${local == 1 ? 'carpeta' : 'carpetas'}) no se ve '
+                        'hasta que lo enciendas.'
+                  : 'Apagado: las carpetas de esta computadora no se sirven. '
+                        'Enciéndelo cuando compartas una.');
         // Si el rol no puede compartir, se dice AQUÍ mismo: es lo primero que
         // hay que saber cuando "no me deja compartir".
         final permission = _canShare
             ? ''
             : ' Tu rol no tiene permiso para compartir carpetas: pídelo en el '
-                'módulo Roles.';
+                  'módulo Roles.';
+        // Y el motivo del servicio (si lo hay): es lo que explica por qué el
+        // switch no sirve de nada aunque esté encendido.
+        final hold = _shareProblemText(agent.problem.value);
+        final problemLine = hold == null ? '' : ' $hold';
         return Container(
           // Clave estable: las pruebas (y los atajos) la usan para encontrar el
           // switch del servicio sin depender del diseño.
@@ -509,28 +567,41 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 13.5, fontWeight: FontWeight.w800),
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        _ServingPill(on: on, tint: tint),
+                        _ServingPill(
+                          on: on,
+                          tint: tint,
+                          label: !agent.supported
+                              ? 'No disponible'
+                              : hold == null
+                              ? null
+                              : 'Con problemas',
+                        ),
                       ],
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '$detail$permission',
+                      '$detail$permission$problemLine',
                       style: TextStyle(
-                          fontSize: 11.5,
-                          height: 1.3,
-                          color: scheme.onSurfaceVariant),
+                        fontSize: 11.5,
+                        height: 1.3,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 4),
+              // Sin soporte (navegador/celular) el switch va DESHABILITADO y la
+              // tarjeta dice por qué: un switch que no hace nada parecía roto.
               Switch.adaptive(
                 value: on,
-                onChanged: (v) => _setServing(v),
+                onChanged: agent.supported ? (v) => _setServing(v) : null,
               ),
             ],
           ),
@@ -595,11 +666,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     final shareId = (r?['shareId'] as num?)?.toInt() ?? 0;
     if (shareId <= 0) return;
     try {
-      final where = await _local.download(
-        shareId,
-        [..._localPath, name],
-        name,
-      );
+      final where = await _local.download(shareId, [..._localPath, name], name);
       if (where == null) return;
       HsToast.success(
         where.isEmpty ? 'Descargado: $name' : 'Descargado en $where',
@@ -767,7 +834,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                     '${selected.length} seleccionado'
                     '${selected.length == 1 ? '' : 's'}',
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   if (list.isEmpty)
@@ -778,7 +847,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                             ? 'No hay otros usuarios activos con los que compartir.'
                             : 'Ningún usuario coincide con la búsqueda.',
                         style: TextStyle(
-                            fontSize: 12, color: scheme.onSurfaceVariant),
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     )
                   else
@@ -789,8 +860,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                           for (final c in list)
                             CheckboxListTile(
                               dense: true,
-                              value:
-                                  selected.contains((c['id'] as num?)?.toInt()),
+                              value: selected.contains(
+                                (c['id'] as num?)?.toInt(),
+                              ),
                               onChanged: (v) {
                                 final id = (c['id'] as num?)?.toInt() ?? 0;
                                 setSt(() {
@@ -998,9 +1070,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                         children: [
                           Text(
                             'Archivos compartidos',
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
+                            style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w800,
                                   fontSize: isCompact ? 19 : null,
@@ -1010,12 +1080,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                           Text(
                             _readOnly
                                 ? 'Las carpetas que te comparten otros '
-                                    'usuarios. Se ven y se descargan aquí.'
+                                      'usuarios. Se ven y se descargan aquí.'
                                 : 'Comparte una CARPETA DE TU COMPUTADORA con '
-                                    'otros usuarios y abre las que te comparten.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
+                                      'otros usuarios y abre las que te comparten.',
+                            style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(color: scheme.onSurfaceVariant),
                           ),
                         ],
@@ -1242,20 +1310,22 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     final folders = inside
         ? _localItems.where((i) => i.isFolder).length
         : current.length;
-    final images = inside
-        ? _localItems.where((i) => !i.isFolder).length
-        : 0;
+    final images = inside ? _localItems.where((i) => !i.isFolder).length : 0;
     final people = _view == _SharedView.shared
         ? current
-            .expand((r) => ((r['owners'] as List?) ?? const []).whereType<Map>())
-            .map((o) => '${o['id']}')
-            .toSet()
-            .length
+              .expand(
+                (r) => ((r['owners'] as List?) ?? const []).whereType<Map>(),
+              )
+              .map((o) => '${o['id']}')
+              .toSet()
+              .length
         : current
-            .expand((m) => ((m['targets'] as List?) ?? const []).whereType<Map>())
-            .map((t) => '${t['targetId']}')
-            .toSet()
-            .length;
+              .expand(
+                (m) => ((m['targets'] as List?) ?? const []).whereType<Map>(),
+              )
+              .map((t) => '${t['targetId']}')
+              .toSet()
+              .length;
 
     return [
       _CountPill(
@@ -1333,9 +1403,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         isCompact,
         entries: [
           for (final r in received)
-            if (_matches(
-                '${r['path']} ${_ownerNames(r).join(' ')}'))
-              r,
+            if (_matches('${r['path']} ${_ownerNames(r).join(' ')}')) r,
         ],
         empty: EmptyState(
           icon: Icons.inbox_outlined,
@@ -1343,7 +1411,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           message: _filter != null
               ? 'Ninguna carpeta coincide con la búsqueda.'
               : 'Las carpetas que otros usuarios compartan contigo aparecerán '
-                  'aquí para verlas y descargarlas.',
+                    'aquí para verlas y descargarlas.',
         ),
         onOpen: _openReceived,
       );
@@ -1361,10 +1429,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         message: _filter != null
             ? 'Ninguna carpeta coincide con la búsqueda.'
             : _canPickFolder
-                ? 'Elige una carpeta de tu computadora y a qué usuarios '
-                    'quieres compartírsela. La misma carpeta puede ir a varios.'
-                : 'Cuando compartas una carpeta desde la computadora, aquí '
-                    'verás a quiénes se la compartiste.',
+            ? 'Elige una carpeta de tu computadora y a qué usuarios '
+                  'quieres compartírsela. La misma carpeta puede ir a varios.'
+            : 'Cuando compartas una carpeta desde la computadora, aquí '
+                  'verás a quiénes se la compartiste.',
         actionLabel: _canPickFolder ? 'Compartir carpeta' : null,
         onAction: _canPickFolder ? _shareNewFolder : null,
       ),
@@ -1385,12 +1453,18 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       return LayoutBuilder(
         builder: (context, constraints) {
           final minCard = isCompact ? 150.0 : 190.0;
-          final crossCount =
-              (constraints.maxWidth / minCard).floor().clamp(2, 8);
+          final crossCount = (constraints.maxWidth / minCard).floor().clamp(
+            2,
+            8,
+          );
           return GridView.builder(
             controller: _scrollController,
             padding: EdgeInsets.fromLTRB(
-                isCompact ? 14 : 24, 4, isCompact ? 14 : 24, 24),
+              isCompact ? 14 : 24,
+              4,
+              isCompact ? 14 : 24,
+              24,
+            ),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossCount,
               mainAxisSpacing: 12,
@@ -1405,9 +1479,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
               onOpen: () => onOpen(entries[i]),
               onUnshare: _view == _SharedView.mine && _canUnshare
                   ? () => _unshareAll(
-                        '${entries[i]['path'] ?? ''}',
-                        _targetIds(entries[i]),
-                      )
+                      '${entries[i]['path'] ?? ''}',
+                      _targetIds(entries[i]),
+                    )
                   : null,
             ),
           );
@@ -1417,7 +1491,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     return ListView.builder(
       controller: _scrollController,
       padding: EdgeInsets.fromLTRB(
-          isCompact ? 14 : 24, 4, isCompact ? 14 : 24, 24),
+        isCompact ? 14 : 24,
+        4,
+        isCompact ? 14 : 24,
+        24,
+      ),
       itemCount: entries.length,
       itemBuilder: (context, i) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -1428,9 +1506,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           onOpen: () => onOpen(entries[i]),
           onUnshare: _view == _SharedView.mine && _canUnshare
               ? () => _unshareAll(
-                    '${entries[i]['path'] ?? ''}',
-                    _targetIds(entries[i]),
-                  )
+                  '${entries[i]['path'] ?? ''}',
+                  _targetIds(entries[i]),
+                )
               : null,
         ),
       ),
@@ -1447,7 +1525,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     return ListView(
       controller: _scrollController,
       padding: EdgeInsets.fromLTRB(
-          isCompact ? 14 : 24, 4, isCompact ? 14 : 24, 24),
+        isCompact ? 14 : 24,
+        4,
+        isCompact ? 14 : 24,
+        24,
+      ),
       children: [
         if (_view == _SharedView.mine) ...[
           _shareCard(scheme, open),
@@ -1455,7 +1537,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         ],
         // En "Compartido conmigo" se dice de un vistazo de dónde se está
         // sirviendo la carpeta que se acaba de abrir.
-        if (_view == _SharedView.shared && !_localLoading && _openStatus != null)
+        if (_view == _SharedView.shared &&
+            !_localLoading &&
+            _openStatus != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: _openStatusStrip(scheme),
@@ -1524,18 +1608,17 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
               children: [
                 _typeChip(
                   scheme,
-                  local
-                      ? 'Carpeta de tu computadora'
-                      : 'Carpeta de tu Drive',
+                  local ? 'Carpeta de tu computadora' : 'Carpeta de tu Drive',
                 ),
                 const Spacer(),
                 Text(
                   '${targets.length} '
                   '${targets.length == 1 ? 'usuario' : 'usuarios'}',
                   style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: scheme.onSurfaceVariant),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -1546,7 +1629,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
               Text(
                 'Nadie la recibe ahora mismo.',
                 style: TextStyle(
-                    fontSize: 12.5, color: scheme.onSurfaceVariant),
+                  fontSize: 12.5,
+                  color: scheme.onSurfaceVariant,
+                ),
               )
             else
               Wrap(
@@ -1574,14 +1659,13 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                   ),
                 if (_canUnshare)
                   OutlinedButton.icon(
-                    onPressed: () => _unshareAll(
-                      '${open['path'] ?? ''}',
-                      _targetIds(open),
-                    ),
+                    onPressed: () =>
+                        _unshareAll('${open['path'] ?? ''}', _targetIds(open)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: scheme.error,
-                      side:
-                          BorderSide(color: scheme.error.withValues(alpha: .55)),
+                      side: BorderSide(
+                        color: scheme.error.withValues(alpha: .55),
+                      ),
                     ),
                     icon: const Icon(Icons.link_off_rounded, size: 16),
                     label: const Text('Dejar de compartir'),
@@ -1677,10 +1761,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         for (final f in files) ...[
           _LocalTile(
             item: f,
-            thumb: _local.thumbUrl(
-              (_open!['shareId'] as num?)?.toInt() ?? 0,
-              [..._localPath, f.name],
-            ),
+            thumb: _local.thumbUrl((_open!['shareId'] as num?)?.toInt() ?? 0, [
+              ..._localPath,
+              f.name,
+            ]),
             onTap: () => _viewLocalImage(f),
             onDownload: () => _downloadLocal(f.name),
           ),
@@ -1794,7 +1878,9 @@ class _ViewTabs extends StatelessWidget {
             value: _SharedView.shared,
             icon: const Icon(Icons.inbox_outlined, size: 18),
             label: Text(
-              compact ? 'Recibidos ($received)' : 'Compartido conmigo ($received)',
+              compact
+                  ? 'Recibidos ($received)'
+                  : 'Compartido conmigo ($received)',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1900,10 +1986,7 @@ class _FolderCard extends StatelessWidget {
                         ),
                       ),
                       const Spacer(),
-                      _EntryMenu(
-                        onOpen: onOpen,
-                        onUnshare: onUnshare,
-                      ),
+                      _EntryMenu(onOpen: onOpen, onUnshare: onUnshare),
                     ],
                   ),
                 ),
@@ -1916,19 +1999,17 @@ class _FolderCard extends StatelessWidget {
                         path,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleSmall
+                        style: Theme.of(context).textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        local ? 'Carpeta de su computadora' : 'Carpeta del Drive',
+                        local
+                            ? 'Carpeta de su computadora'
+                            : 'Carpeta del Drive',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
+                        style: Theme.of(context).textTheme.bodySmall
                             ?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                       if (people.isNotEmpty) ...[
@@ -2026,11 +2107,11 @@ class _FolderRow extends StatelessWidget {
                     Text(
                       people.isEmpty
                           ? (local
-                              ? 'Carpeta de su computadora'
-                              : 'Carpeta del Drive')
+                                ? 'Carpeta de su computadora'
+                                : 'Carpeta del Drive')
                           : (shared
-                              ? 'Compartida por ${people.join(', ')}'
-                              : 'Con ${people.join(', ')}'),
+                                ? 'Compartida por ${people.join(', ')}'
+                                : 'Con ${people.join(', ')}'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -2054,8 +2135,11 @@ class _FolderRow extends StatelessWidget {
                   tooltip: 'Dejar de compartir',
                   visualDensity: VisualDensity.compact,
                   onPressed: onUnshare,
-                  icon: Icon(Icons.link_off_rounded,
-                      size: 18, color: scheme.error),
+                  icon: Icon(
+                    Icons.link_off_rounded,
+                    size: 18,
+                    color: scheme.error,
+                  ),
                 ),
             ],
           ),
@@ -2154,10 +2238,7 @@ class _LocalTile extends StatelessWidget {
 
 /// Menú "⋮" de una carpeta compartida.
 class _EntryMenu extends StatelessWidget {
-  const _EntryMenu({
-    required this.onOpen,
-    this.onUnshare,
-  });
+  const _EntryMenu({required this.onOpen, this.onUnshare});
 
   final VoidCallback onOpen;
   final VoidCallback? onUnshare;
@@ -2169,11 +2250,7 @@ class _EntryMenu extends StatelessWidget {
       tooltip: 'Opciones',
       padding: EdgeInsets.zero,
       splashRadius: 18,
-      icon: Icon(
-        Icons.more_vert,
-        size: 18,
-        color: scheme.onSurfaceVariant,
-      ),
+      icon: Icon(Icons.more_vert, size: 18, color: scheme.onSurfaceVariant),
       onSelected: (v) {
         if (v == 'open') onOpen();
         if (v == 'unshare') onUnshare?.call();
@@ -2290,7 +2367,10 @@ class _PersonChip extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w700, color: tint),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: tint,
+            ),
           ),
         ],
       ),
@@ -2317,25 +2397,43 @@ class _PersonChip extends StatelessWidget {
   // El MOTIVO manda sobre el "de dónde": si el servidor dijo por qué no puede
   // servirla, eso es lo que hay que leer primero (da igual si la respuesta
   // llegó como estado o como el 404 de un servidor viejo).
+  // La base está configurada pero NO responde (o le falta la migración): no es
+  // "la carpeta ya no está compartida", y hay que poder verificarlo en la
+  // pantalla, que es donde se lee el motivo.
+  if (status.reason == 'share-db') {
+    return (
+      label: 'La base de datos no responde',
+      icon: Icons.storage_rounded,
+      color: AppColors.warn,
+      hint:
+          status.detail ??
+          'El servidor del drive no pudo consultar los compartidos en su '
+              'base de datos: revisa que DRIVE_DB apunte a la misma base del '
+              'panel.',
+    );
+  }
   if (status.reason == 'no-db' || !status.hasDatabase) {
     return (
       label: 'Servidor sin base de datos',
       icon: Icons.storage_rounded,
       color: AppColors.warn,
-      hint: status.detail ??
+      hint:
+          status.detail ??
           'El servidor del drive no tiene configurada la base de datos '
               '(DRIVE_DB): sin ella no puede resolver las carpetas '
               'compartidas.',
     );
   }
-  if (status.reason == 'share-missing') {
+  if (status.reason == 'share-missing' || status.reason == 'share-revoked') {
     return (
       label: 'Ya no está compartida',
       icon: Icons.link_off_rounded,
       color: AppColors.warn,
-      hint: status.detail ??
+      hint:
+          status.detail ??
           'Ese compartido ya no está activo: pídele a quien te lo '
-              'compartió que lo vuelva a compartir.',
+              'compartió que lo vuelva a compartir. Si acaba de compartirlo, '
+              'espera unos segundos y vuelve a intentar.',
     );
   }
   switch (status.servedFrom) {
@@ -2344,7 +2442,8 @@ class _PersonChip extends StatelessWidget {
         label: 'Disponible',
         icon: Icons.cloud_done_outlined,
         color: AppColors.ok,
-        hint: 'La carpeta está en el servidor del drive: se ve desde '
+        hint:
+            'La carpeta está en el servidor del drive: se ve desde '
             'cualquier lugar, sin depender de la computadora de nadie.',
       );
     case 'agent':
@@ -2352,7 +2451,8 @@ class _PersonChip extends StatelessWidget {
         label: 'En línea',
         icon: Icons.computer_rounded,
         color: AppColors.ok,
-        hint: 'Es una carpeta de la computadora de quien la comparte y su '
+        hint:
+            'Es una carpeta de la computadora de quien la comparte y su '
             'aplicación está abierta ahora mismo: se puede ver y descargar.',
       );
     case 'offline':
@@ -2360,7 +2460,8 @@ class _PersonChip extends StatelessWidget {
         label: 'Apagada ahora',
         icon: Icons.power_off_rounded,
         color: AppColors.warn,
-        hint: 'La carpeta está en la computadora de quien la comparte y su '
+        hint:
+            'La carpeta está en la computadora de quien la comparte y su '
             'aplicación no está abierta: se abrirá cuando la vuelva a abrir.',
       );
     case 'unavailable':
@@ -2368,7 +2469,8 @@ class _PersonChip extends StatelessWidget {
         label: 'No disponible',
         icon: Icons.error_outline_rounded,
         color: AppColors.warn,
-        hint: status.detail ??
+        hint:
+            status.detail ??
             'El servidor del drive no pudo abrir esta carpeta compartida.',
       );
     default:
@@ -2376,7 +2478,8 @@ class _PersonChip extends StatelessWidget {
         label: 'Sin comprobar',
         icon: Icons.help_outline_rounded,
         color: scheme.onSurfaceVariant,
-        hint: status.detail ??
+        hint:
+            status.detail ??
             'No se pudo preguntar al servidor del drive; la carpeta se '
                 'intentará abrir igual.',
       );
@@ -2385,33 +2488,43 @@ class _PersonChip extends StatelessWidget {
 
 /// Píldora "Encendido / Apagado" del servicio de compartir.
 class _ServingPill extends StatelessWidget {
-  const _ServingPill({required this.on, required this.tint});
+  const _ServingPill({required this.on, required this.tint, this.label});
 
   final bool on;
   final Color tint;
 
+  /// Texto alternativo (p. ej. "Con problemas"): el servicio está encendido,
+  /// pero el servidor del drive no lo deja servir todavía.
+  final String? label;
+
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: tint.withValues(alpha: .12),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: tint.withValues(alpha: .32)),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: tint.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: tint.withValues(alpha: .32)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          on ? Icons.bolt_rounded : Icons.power_off_rounded,
+          size: 12,
+          color: tint,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(on ? Icons.bolt_rounded : Icons.power_off_rounded,
-                size: 12, color: tint),
-            const SizedBox(width: 4),
-            Text(
-              on ? 'Encendido' : 'Apagado',
-              style: TextStyle(
-                  fontSize: 10.5, fontWeight: FontWeight.w800, color: tint),
-            ),
-          ],
+        const SizedBox(width: 4),
+        Text(
+          label ?? (on ? 'Encendido' : 'Apagado'),
+          style: TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+            color: tint,
+          ),
         ),
-      );
+      ],
+    ),
+  );
 }
 
 /// Píldora con el estado de un compartido (de un vistazo, sin abrirla).

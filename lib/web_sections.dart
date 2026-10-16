@@ -75,6 +75,7 @@ class SiteSectionTemplate {
     this.props = const [],
     this.orderable = true,
     this.defaultVisible = true,
+    this.repeatable = false,
   });
 
   /// `data-hs-section="key"` en el HTML ('' para las que no son una sección).
@@ -93,6 +94,15 @@ class SiteSectionTemplate {
   /// ¿Se puede ocultar y reordenar? (la marca y el pie van siempre).
   final bool orderable;
   final bool defaultVisible;
+
+  /// ¿Se puede AGREGAR OTRA COPIA de esta sección a la página?
+  ///
+  /// El panel ofrece "Agregar sección" con estas plantillas: la nueva copia se
+  /// pinta con lo que tenga la sección original y después se edita aparte (una
+  /// segunda galería, otro divisor de fotos…). Las que se pintan con los datos
+  /// del catálogo (paquetes, lo que ofrecemos) no se repiten: repetirlas sería
+  /// mostrar dos veces la misma lista.
+  final bool repeatable;
 }
 
 /// Las secciones del sitio, en el orden de fábrica.
@@ -113,6 +123,7 @@ const List<SiteSectionTemplate> kSiteSectionTemplates = [
     description: 'Quién está detrás: la foto, la historia y los números '
         '(proyectos, años de experiencia, clientes).',
     icon: Icons.badge_outlined,
+    repeatable: true,
     props: [
       SitePropField(
         key: 'stats',
@@ -128,6 +139,7 @@ const List<SiteSectionTemplate> kSiteSectionTemplates = [
     description: 'Las fotos que se muestran, por categoría del catálogo. Cada '
         'categoría puede tener sus propias fotos (del Drive o por URL).',
     icon: Icons.photo_library_outlined,
+    repeatable: true,
     props: [
       SitePropField(
         key: 'mode',
@@ -143,6 +155,7 @@ const List<SiteSectionTemplate> kSiteSectionTemplates = [
     description: 'La franja con fondo fijo y una frase en cursiva entre la '
         'galería y los servicios.',
     icon: Icons.landscape_outlined,
+    repeatable: true,
   ),
   SiteSectionTemplate(
     key: 'services',
@@ -182,6 +195,7 @@ const List<SiteSectionTemplate> kSiteSectionTemplates = [
     description: 'Lo que dicen los clientes: los comentarios se escriben aquí '
         'y se muestran en el carrusel de la página.',
     icon: Icons.format_quote_rounded,
+    repeatable: true,
     props: [
       SitePropField(
         key: 'items',
@@ -280,6 +294,27 @@ SiteSectionTemplate? siteSectionTemplate(String key) {
 /// Las plantillas que se pueden ocultar y reordenar.
 List<SiteSectionTemplate> get kOrderableSectionTemplates =>
     kSiteSectionTemplates.where((t) => t.orderable).toList(growable: false);
+
+/// Las plantillas que se pueden AGREGAR otra vez a la página ("Agregar
+/// sección"): una segunda galería, otro divisor de fotos, más testimonios…
+List<SiteSectionTemplate> get kRepeatableSectionTemplates =>
+    kSiteSectionTemplates.where((t) => t.repeatable).toList(growable: false);
+
+/// Clave de una sección AGREGADA. La primera copia de la galería es
+/// `gallery-2` (la `gallery` a secas es la de fábrica), y así en adelante.
+///
+/// Es el identificador que viaja en el documento (`id`) y el que la web pone
+/// en `data-hs-section`: por eso tiene que ser único en TODA la página.
+String siteExtraSectionId(String key, Iterable<String> used) {
+  final taken = used.toSet();
+  for (var n = 2;; n++) {
+    final id = '$key-$n';
+    if (!taken.contains(id)) return id;
+  }
+}
+
+/// ¿Es [id] una sección AGREGADA de [key]? (`gallery-2` de `gallery`).
+bool siteIdIsExtra(String id, String key) => id != key && id.startsWith('$key-');
 
 /// Opciones de fábrica de una sección.
 Map<String, dynamic> siteSectionDefaults(String key) =>

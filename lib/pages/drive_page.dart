@@ -2072,16 +2072,23 @@ class _Breadcrumbs extends StatelessWidget {
       );
     }
 
-    final children = <Widget>[
-      crumb(
-        'Mi Drive',
-        () => drive.openPath(const []),
-        current: drive.path.isEmpty,
-        target: const [],
-      ),
-    ];
-    for (var i = 0; i < drive.path.length; i++) {
-      children.add(separator);
+    // El cliente NO ve el camino hacia su carpeta compartida: si vive anidada
+    // (`XV/ReynaCoot`), las migas empiezan en SU carpeta (`ReynaCoot`), no en
+    // la carpeta del estudio que la contiene.
+    final hidden = drive.hiddenPathPrefix;
+    final children = <Widget>[];
+    if (hidden == 0) {
+      children.add(
+        crumb(
+          'Mi Drive',
+          () => drive.openPath(const []),
+          current: drive.path.isEmpty,
+          target: const [],
+        ),
+      );
+    }
+    for (var i = hidden; i < drive.path.length; i++) {
+      if (children.isNotEmpty) children.add(separator);
       final t = drive.path.sublist(0, i + 1);
       children.add(
         crumb(
@@ -3588,13 +3595,17 @@ class _ActivityPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final uploads = drive.uploadJobs.length;
+    // Las fotos del LOTE en curso (no el historial de otros lotes).
+    final uploadJobs = drive.currentUploadJobs;
+    final uploads = uploadJobs.length;
+    final uploaded =
+        uploadJobs.where((j) => j.status == 'done').length;
     final downloads = drive.downloadJobs.length;
 
     // ---- Oculta: pastilla compacta para volver a abrirla ----
     if (!open) {
       final parts = [
-        if (uploads > 0) '$uploads subida${uploads == 1 ? '' : 's'}',
+        if (uploads > 0) '$uploaded/$uploads fotos',
         if (downloads > 0) '$downloads descarga${downloads == 1 ? '' : 's'}',
         if (notices.isNotEmpty)
           '${notices.length} aviso${notices.length == 1 ? '' : 's'}',
@@ -3766,18 +3777,19 @@ class _UploadsCard extends StatelessWidget {
 
   Widget _buildCard(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final jobs = drive.uploadJobs;
+    // SOLO el lote más reciente: las fotos de una subida anterior no se mezclan
+    // con las de la actual, y las que esperan turno en la cola cuentan como
+    // "a subir" (con 100 fotos el panel muestra las 100).
+    final jobs = drive.currentUploadJobs;
     // Conteos SIEMPRE visibles: en carga / completadas / con error.
     final active = jobs.where((j) => j.status == 'uploading').length;
     final done = jobs.where((j) => j.status == 'done').length;
     final failed = jobs.where((j) => j.status == 'error').length;
-    // Progreso GLOBAL: bytes enviados vs. totales de los archivos en carga.
-    final totalBytes = jobs.fold<int>(
-        0, (a, j) => j.status == 'uploading' ? a + j.total : a);
-    final sentBytes = jobs.fold<int>(
-        0, (a, j) => j.status == 'uploading' ? a + j.sent : a);
-    final globalPct =
-        totalBytes > 0 ? (sentBytes / totalBytes).clamp(0.0, 1.0) : null;
+    // Progreso del LOTE: FOTOS subidas / fotos a subir ("50/100 fotos"), que es
+    // lo que se quiere saber al cargar un montón de archivos: los bytes de cada
+    // foto no dicen cuántas faltan.
+    final total = jobs.length;
+    final globalPct = total > 0 ? (done / total).clamp(0.0, 1.0) : null;
     return Material(
       key: const ValueKey('uploads_card'),
       elevation: 10,
@@ -3813,13 +3825,13 @@ class _UploadsCard extends StatelessWidget {
                       children: [
                         Text(
                           active > 0
-                              ? 'Subiendo ${jobs.length} '
-                                  '${jobs.length == 1 ? 'foto' : 'fotos'}…'
+                              ? 'Subiendo $total '
+                                  '${total == 1 ? 'foto' : 'fotos'}…'
                               : failed > 0
                                   ? '$done completada${done == 1 ? '' : 's'} · '
                                       '$failed con error${failed == 1 ? '' : 's'}'
-                                  : '${jobs.length} subida${jobs.length == 1 ? '' : 's'} '
-                                      'completada${jobs.length == 1 ? '' : 's'}',
+                                  : '$total subida${total == 1 ? '' : 's'} '
+                                      'completada${total == 1 ? '' : 's'}',
                           style: Theme.of(context)
                               .textTheme
                               .titleSmall
@@ -3827,7 +3839,7 @@ class _UploadsCard extends StatelessWidget {
                         ),
                         if (active > 0)
                           Text(
-                            '$done completada${done == 1 ? '' : 's'}'
+                            '$done de $total fotos'
                             '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}',
                             style: TextStyle(
                               fontSize: 11.5,
@@ -3857,8 +3869,8 @@ class _UploadsCard extends StatelessWidget {
                 ],
               ),
             ),
-            // Barra de progreso GLOBAL (todos los archivos en carga).
-            if (active > 0 && globalPct != null)
+            // Barra de progreso del LOTE: fotos subidas / fotos a subir.
+            if (globalPct != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
                 child: Row(
@@ -3874,11 +3886,20 @@ class _UploadsCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '${(globalPct * 100).toStringAsFixed(0)} %',
+                      '${(globalPct * 100).toStringAsFixed(0)}% subidas',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '$done/$total fotos',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],

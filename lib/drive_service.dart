@@ -155,6 +155,8 @@ class DriveService extends DriveBase {
   @override
   Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
     if (sources.isEmpty) return 0;
+    // Un LOTE por subida: el panel cuenta "subidas / a subir" de este lote.
+    final batch = newUploadBatch();
     final pending = <(DriveUploadJob, File)>[];
     var i = 0;
     for (final src in sources) {
@@ -167,6 +169,7 @@ class DriveService extends DriveBase {
         name: fileName,
         thumb: src,
         total: f.lengthSync(),
+        batch: batch,
       );
       i++;
       addUploadJob(job);

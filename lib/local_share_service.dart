@@ -98,38 +98,58 @@ class LocalShareStatus {
   /// compartido se dio de baja.
   factory LocalShareStatus.unavailable(String why) {
     final msg = why.trim();
-    final noDb = RegExp(r'base de datos|DRIVE_DB', caseSensitive: false)
-        .hasMatch(msg);
+    // Motivos del SERVICIO (el compartido) y motivos de la BASE de datos: son
+    // problemas distintos y el panel los nombra distinto (culpar a la carpeta
+    // por una base que no responde es justo el error que se está corrigiendo).
     final gone = RegExp(
-            r'no existe|ya no está|no está compartida|ya no está activa',
-            caseSensitive: false)
-        .hasMatch(msg);
+      r'no existe|ya no está|no está compartida|ya no está activa|'
+      r'dado de baja|no encuentra el compartido',
+      caseSensitive: false,
+    ).hasMatch(msg);
+    final dbDown = RegExp(
+      r'no pudo consultar los compartidos',
+      caseSensitive: false,
+    ).hasMatch(msg);
+    final noDb = RegExp(
+      r'base de datos|DRIVE_DB',
+      caseSensitive: false,
+    ).hasMatch(msg);
+    // El problema es de la base SOLO si el mensaje no habla del compartido.
+    final dbProblem = !gone && (dbDown || noDb);
     return LocalShareStatus(
       servedFrom: 'unavailable',
-      hasDatabase: !noDb,
-      reason: gone ? 'share-missing' : noDb ? 'no-db' : null,
+      hasDatabase: !dbProblem,
+      reason: gone
+          ? 'share-missing'
+          : dbDown
+          ? 'share-db'
+          : noDb
+          ? 'no-db'
+          : null,
       detail: msg.isEmpty ? null : msg,
     );
   }
 
   static LocalShareStatus fromJson(Map<String, dynamic> m) => LocalShareStatus(
-        servedFrom: '${m['servedFrom'] ?? 'unknown'}',
-        onServer: m['onServer'] == true,
-        ownerOnline: m['online'] == true,
-        localFolder: m['local'] == true,
-        hasDatabase: m['db'] != false,
-        reason: m['reason'] == null ? null : '${m['reason']}',
-        detail: m['detail'] == null ? null : '${m['detail']}',
-      );
+    servedFrom: '${m['servedFrom'] ?? 'unknown'}',
+    onServer: m['onServer'] == true,
+    ownerOnline: m['online'] == true,
+    localFolder: m['local'] == true,
+    hasDatabase: m['db'] != false,
+    reason: m['reason'] == null ? null : '${m['reason']}',
+    detail: m['detail'] == null ? null : '${m['detail']}',
+  );
 
   /// Sin poder preguntar (red, servidor viejo): se intenta servir igual.
-  static const LocalShareStatus unknown = LocalShareStatus(servedFrom: 'unknown');
+  static const LocalShareStatus unknown = LocalShareStatus(
+    servedFrom: 'unknown',
+  );
 }
 
 class LocalShareService {
   LocalShareService({String? baseUrl, http.Client? client})
-      : base = baseUrl ?? AppConstants.apiBase,
-        _client = client ?? http.Client();
+    : base = baseUrl ?? AppConstants.apiBase,
+      _client = client ?? http.Client();
 
   final String base;
 
@@ -140,8 +160,8 @@ class LocalShareService {
   static String get _token => HsSession.token ?? '';
 
   static Map<String, String> get _headers => {
-        if (_token.isNotEmpty) 'Apikey': _token,
-      };
+    if (_token.isNotEmpty) 'Apikey': _token,
+  };
 
   Uri _u(String p, Map<String, String> q) =>
       Uri.parse('$base$p').replace(queryParameters: q);
@@ -170,7 +190,10 @@ class LocalShareService {
   Future<LocalShareStatus> status(int shareId) async {
     try {
       final r = await _client
-          .get(_u('/api/local/status', {'share': '$shareId'}), headers: _headers)
+          .get(
+            _u('/api/local/status', {'share': '$shareId'}),
+            headers: _headers,
+          )
           .timeout(const Duration(seconds: 8));
       if (r.statusCode == 200) {
         final data = jsonDecode(r.body);
@@ -180,14 +203,16 @@ class LocalShareService {
       // Contestó que NO puede servirla: se muestra el motivo que manda (y si
       // venía sin JSON, uno genérico con el código HTTP).
       return LocalShareStatus.unavailable(
-          _why(r, 'El servidor del drive respondió HTTP ${r.statusCode}'));
+        _why(r, 'El servidor del drive respondió HTTP ${r.statusCode}'),
+      );
     } catch (_) {
       return LocalShareStatus.unknown;
     }
   }
 
   /// El nombre de dónde se sirve (compatibilidad: `server`/`agent`/`offline`).
-  Future<String> source(int shareId) async => (await status(shareId)).servedFrom;
+  Future<String> source(int shareId) async =>
+      (await status(shareId)).servedFrom;
 
   /// Contenido de [path] (subcarpetas de la carpeta compartida [shareId]).
   Future<LocalShareListing> list(int shareId, List<String> path) async {
@@ -205,11 +230,13 @@ class LocalShareService {
     final items = <LocalShareItem>[];
     for (final e in raw) {
       if (e is! Map) continue;
-      items.add(LocalShareItem(
-        name: '${e['name'] ?? ''}',
-        isFolder: e['isFolder'] == true,
-        size: (e['size'] as num?)?.toInt(),
-      ));
+      items.add(
+        LocalShareItem(
+          name: '${e['name'] ?? ''}',
+          isFolder: e['isFolder'] == true,
+          size: (e['size'] as num?)?.toInt(),
+        ),
+      );
     }
     return LocalShareListing(items: items);
   }
@@ -312,9 +339,9 @@ class LocalShareDrive extends DriveBase {
   List<String> listFolders(List<String> rel) => const [];
 
   Never _readOnly() => throw UnsupportedError(
-        'Una carpeta compartida de la computadora de otra persona es de '
-        'solo lectura: se puede ver y descargar, no modificar',
-      );
+    'Una carpeta compartida de la computadora de otra persona es de '
+    'solo lectura: se puede ver y descargar, no modificar',
+  );
 
   @override
   Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) =>
@@ -331,18 +358,20 @@ class LocalShareDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) =>
-      _readOnly();
+    List<String> names,
+    List<String> targetPath,
+  ) => _readOnly();
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) =>
-      _readOnly();
+    List<String> names,
+    List<String> targetPath,
+  ) => _readOnly();
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) =>
-      _readOnly();
+    List<String> names,
+  ) => _readOnly();
 
   @override
   Future<void> retryUpload(String jobId) => _readOnly();

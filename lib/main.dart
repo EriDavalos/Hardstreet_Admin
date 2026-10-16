@@ -164,7 +164,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       if (_sessionRestored) RemindersService.instance.start();
       // Si este usuario comparte carpetas de SU computadora, la app empieza a
       // servirlas (agente): así los demás las ven mientras la app esté abierta.
-      if (_sessionRestored) unawaited(LocalShareAgent.instance.syncWithShares());
+      if (_sessionRestored)
+        unawaited(LocalShareAgent.instance.syncWithShares());
     });
     // Chequeo periódico mientras la app siga abierta (por si el servidor
     // publica una versión nueva en caliente). En web/tests se omite.
@@ -350,7 +351,10 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
           child: _introDone
-              ? KeyedSubtree(key: const ValueKey('hs-home'), child: _home(context))
+              ? KeyedSubtree(
+                  key: const ValueKey('hs-home'),
+                  child: _home(context),
+                )
               : StartupIntro(
                   key: const ValueKey('hs-intro'),
                   onDone: () => setState(() => _introDone = true),
@@ -398,9 +402,12 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       notes: info.notes,
       onDownload: () async {
         final plat = isAndroidPlatform ? 'android' : 'windows';
-        final url = info.downloads[plat] ??
-            info.downloads.values.firstWhere((u) => u.isNotEmpty,
-                orElse: () => '');
+        final url =
+            info.downloads[plat] ??
+            info.downloads.values.firstWhere(
+              (u) => u.isNotEmpty,
+              orElse: () => '',
+            );
         // Mismo modal de actualización (descarga interna con barra de
         // progreso + instalación); NO abre el navegador.
         final ctx = _navKey.currentContext;
@@ -469,6 +476,31 @@ class _VersionErrorScreen extends StatelessWidget {
   }
 }
 
+/// Nombre del MÓDULO (permiso de la BD) que respalda cada sección.
+///
+/// Se usa para saber a qué secciones se tiene acceso SIN depender del menú
+/// dibujado: elegir el módulo de arranque y reaccionar cuando los permisos
+/// cambian. El orden es el del panel (mismo criterio que el sidebar).
+const Map<_Section, String> _kSectionModules = {
+  _Section.dashboard: 'Dashboard',
+  _Section.clientDashboard: 'Mi paquete',
+  _Section.drive: 'Archivos',
+  _Section.sharedFiles: 'Archivos compartidos',
+  _Section.agendas: 'Agendas',
+  _Section.finance: 'Finanzas',
+  _Section.storage: 'Almacenamiento',
+  _Section.connection: 'Conexión',
+  _Section.users: 'Usuarios',
+  _Section.roles: 'Roles',
+  _Section.clients: 'Clientes',
+  _Section.packages: 'Paquetes',
+  _Section.services: 'Servicios',
+  _Section.activity: 'Actividad',
+  _Section.site: kSiteModuleName,
+  _Section.settings: 'Configuraciones',
+  _Section.reports: 'Reportes',
+};
+
 /// Índices de las secciones del panel.
 enum _Section {
   dashboard,
@@ -511,8 +543,19 @@ class AdminHome extends StatefulWidget {
 }
 
 class _AdminHomeState extends State<AdminHome> {
-  // El DASHBOARD es la sección inicial del panel.
+  // Sección visible. Arranca en Dashboard, pero en cuanto se conocen los
+  // permisos se salta al PRIMER módulo que el rol puede ver (ver
+  // [_pickStartSection]): el Dashboard solo si es el primero permitido.
   _Section _section = _Section.dashboard;
+
+  /// El arranque se decide UNA vez (si no, cada rebuild volvería a saltar).
+  bool _startPicked = false;
+
+  /// Orden REAL del menú en la última build (lo fija la BD): es de donde sale
+  /// el "primer módulo" y el respaldo cuando la sección actual deja de ser
+  /// visible.
+  List<_Section?> _menuOrder = const [];
+
   bool _sidebarOpen = false;
 
   /// El alcance compartido del drive se pide UNA vez (necesita el contexto
@@ -537,10 +580,9 @@ class _AdminHomeState extends State<AdminHome> {
     try {
       final info = await HsApi.myDriveDirectories();
       if (!mounted) return;
-      await _drive.setSharedRoots(
-        [for (final p in info.paths) (p['path'] ?? '').toString()],
-        isClient: info.isClient,
-      );
+      await _drive.setSharedRoots([
+        for (final p in info.paths) (p['path'] ?? '').toString(),
+      ], isClient: info.isClient);
     } catch (_) {
       // Sin permiso/sin red: no se toca el alcance del drive.
     }
@@ -580,8 +622,10 @@ class _AdminHomeState extends State<AdminHome> {
         _ => true,
       };
       if (!canSee) {
+        // La sección actual ya no es visible: se cae al PRIMER módulo permitido
+        // (mismo criterio que el arranque), no siempre a Archivos/Dashboard.
         setState(() {
-          _section = _canSee('Archivos') ? _Section.drive : _Section.dashboard;
+          _section = _firstAllowedSection();
         });
       }
     };
@@ -615,6 +659,42 @@ class _AdminHomeState extends State<AdminHome> {
     if (mounted) setState(() {});
   }
 
+  /// Primer módulo PERMITIDO según el orden del panel (no el del dibujo: se
+  /// calcula con los permisos, así sirve incluso antes de la primera build
+  /// del menú). Respaldo final: Dashboard, que siempre existe.
+  _Section _firstAllowedSection() {
+    // Primero el orden REAL del menú (lo fija la BD y ya viene filtrado por
+    // permisos); si todavía no hay menú dibujado, el orden del panel.
+    for (final s in _menuOrder) {
+      if (s != null && _canSee(_kSectionModules[s] ?? '')) return s;
+    }
+    for (final entry in _kSectionModules.entries) {
+      if (_canSee(entry.value)) return entry.key;
+    }
+    return _Section.dashboard;
+  }
+
+  /// Elige con qué sección se ABRE la app: el primer módulo del menú que el rol
+  /// puede ver (con el orden que manda la BD). Si todavía no hay permisos
+  /// (degraded) o el menú está vacío, se espera a la siguiente build.
+  ///
+  /// Se aplica en un post-frame para no tocar el estado durante el build: el
+  /// Dashboard puede verse un instante y de inmediato entra el módulo real.
+  void _pickStartSection(
+    bool degraded,
+    List<_Section?> menu,
+    bool catalogReady,
+  ) {
+    if (_startPicked) return;
+    if (degraded || !catalogReady || menu.isEmpty) return;
+    _startPicked = true;
+    final target = _firstAllowedSection();
+    if (target == _section) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _section = target);
+    });
+  }
+
   /// ¿Se muestra el módulo [name]? Exige "Ver" (read) según la BD, TAMBIÉN
   /// para Admin (si su rol no tiene "Ver" en un módulo, desaparece).
   /// Sin datos (backend viejo / sin conexión) el menú queda completo.
@@ -634,8 +714,8 @@ class _AdminHomeState extends State<AdminHome> {
   /// rechazar.
   bool _visibleModule(String module) =>
       (module == 'Actividad' || module == 'Archivos compartidos')
-          ? _canSee(module)
-          : _showModule(module);
+      ? _canSee(module)
+      : _showModule(module);
 
   @override
   Widget build(BuildContext context) {
@@ -840,8 +920,7 @@ class _AdminHomeState extends State<AdminHome> {
     for (final (_, section, module, dest) in entries) {
       String? header;
       if (useCatalog) {
-        final category =
-            (access.metaOf(module)?.categoryName ?? '').trim();
+        final category = (access.metaOf(module)?.categoryName ?? '').trim();
         if (category.isNotEmpty) {
           // Encabezado solo al ABRIR una categoría nueva.
           if (category != prevCategory) header = category;
@@ -850,32 +929,20 @@ class _AdminHomeState extends State<AdminHome> {
       } else {
         header = dest.header; // modo degradado: encabezados estáticos
       }
-      destinations.add(AdminDestination(
-        icon: dest.icon,
-        label: dest.label,
-        header: header ?? AdminDestination.headerNone,
-      ));
+      destinations.add(
+        AdminDestination(
+          icon: dest.icon,
+          label: dest.label,
+          header: header ?? AdminDestination.headerNone,
+        ),
+      );
       visibleSections.add(section);
     }
-    final titles = {
-      _Section.dashboard: 'Dashboard',
-      _Section.clientDashboard: 'Mi paquete',
-      _Section.drive: 'Archivos',
-      _Section.sharedFiles: 'Archivos compartidos',
-      _Section.connection: 'Conexión',
-      _Section.users: 'Usuarios',
-      _Section.roles: 'Roles',
-      _Section.clients: 'Clientes',
-      _Section.packages: 'Paquetes',
-      _Section.services: 'Servicios',
-      _Section.activity: 'Actividad',
-      _Section.site: 'Sitio web',
-      _Section.storage: 'Almacenamiento',
-      _Section.agendas: 'Agendas',
-      _Section.finance: 'Finanzas',
-      _Section.settings: 'Configuraciones',
-      _Section.reports: 'Reportes',
-    };
+    // El menú ya está armado: con él se decide el arranque (y el respaldo si
+    // los permisos cambian). `useCatalog` evita elegir con un menú incompleto
+    // mientras el catálogo de módulos todavía no llega.
+    _menuOrder = visibleSections;
+    _pickStartSection(access.degraded, visibleSections, useCatalog);
 
     Widget body;
     switch (_section) {
@@ -913,14 +980,11 @@ class _AdminHomeState extends State<AdminHome> {
           // "Entrar a mi Drive": si la liga del paquete apunta a ESTE drive,
           // entra a esa carpeta y salta a la sección Archivos.
           onOpenDrive: (segments) {
-            if (segments.isNotEmpty) {
-              _drive.path = List<String>.of(segments);
-            } else {
-              _drive.path = const [];
-            }
-            // Carga ESA carpeta (y descarta lo que estaba a la vista: si no,
-            // la sección Archivos abriría con el contenido de otra carpeta).
-            _drive.refresh();
+            // Se pasa por openPath: respeta el alcance del CLIENTE (una carpeta
+            // de fuera de lo compartido lo dejaría en su raíz en vez de abrir
+            // un listado vacío) y carga ESA carpeta (descarta lo que estaba a
+            // la vista: si no, Archivos abriría con el contenido de otra).
+            unawaited(_drive.openPath(segments));
             setState(() => _section = _Section.drive);
           },
         );
@@ -976,7 +1040,7 @@ class _AdminHomeState extends State<AdminHome> {
     }
 
     return AdminShell(
-      title: titles[_section]!,
+      title: _kSectionModules[_section] ?? 'Dashboard',
       selectedIndex: () {
         // Índice DENTRO de los destinos visibles (el sidebar filtra módulos
         // sin permiso, así que el índice del enum ya no coincide).
