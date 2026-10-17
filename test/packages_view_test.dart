@@ -8,14 +8,16 @@ import 'package:http/testing.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
 
-/// El módulo Paquetes se puede ver de dos formas y las DOS deben mostrar el
-/// mismo catálogo: en CARDS (el flyer de la web, por defecto) o en FILAS (más
-/// compacto, para comparar). Aquí se comprueba el conmutador y que cada vista
-/// pinte de verdad lo suyo.
+/// El módulo Paquetes abre en la GALERÍA de categorías y de ahí se entra a los
+/// paquetes (de todo el catálogo o de una categoría). Ya dentro, el listado se
+/// puede ver de dos formas y las DOS deben mostrar el mismo catálogo: en CARDS
+/// (el flyer de la web, por defecto) o en FILAS (más compacto, para comparar).
+/// Aquí se comprueba el conmutador y que cada vista pinte de verdad lo suyo.
 ///
-/// Además: el diseño de las cards se personaliza ABAJO (la barra del final),
-/// no en el encabezado, y las cards dejan claro que se EDITEDAN (botón "Editar"
-/// y toda la tarjeta clicable).
+/// Además: el diseño de las cards se personaliza AL INICIO del catálogo (la
+/// barra va antes de las tarjetas, para no tener que bajar toda la lista), y
+/// las cards dejan claro que se EDITAN (botón "Editar" y toda la tarjeta
+/// clicable).
 
 const _packages = [
   {
@@ -110,6 +112,16 @@ Future<void> _pump(
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+  // El módulo abre en la GALERÍA de categorías: esta prueba es del LISTADO, así
+  // que se entra a "Todo el catálogo" (la vista de cards/filas).
+  await _openCatalog(tester);
+}
+
+/// Entra al listado de paquetes desde la galería de categorías.
+Future<void> _openCatalog(WidgetTester tester) async {
+  await tester.tap(find.text('TODO EL CATÁLOGO'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// Cambia de vista con el botón del encabezado del listado.
@@ -140,8 +152,14 @@ void main() {
     expect(find.text('Desde'), findsNWidgets(2));
     // El conmutador ofrece pasar a filas.
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
-    // El diseño se personaliza ABAJO: la barra vive junto al catálogo.
-    expect(find.byKey(const ValueKey('packages-design-bar')), findsOneWidget);
+    // El diseño se personaliza AL INICIO: la barra se ve antes que las cards.
+    final bar = find.byKey(const ValueKey('packages-design-bar'));
+    expect(bar, findsOneWidget);
+    expect(
+      tester.getTopLeft(bar).dy,
+      lessThan(tester.getTopLeft(find.text('Boda Full')).dy),
+      reason: 'la barra de diseño debe estar por encima del catálogo',
+    );
   });
 
   testWidgets('el conmutador cambia a FILAS y vuelve, sin perder el catálogo', (
@@ -167,8 +185,13 @@ void main() {
     await _toggle(tester);
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
     expect(find.text('Editar'), findsNWidgets(2));
-    // La barra de diseño sigue disponible en las dos vistas.
-    expect(find.byKey(const ValueKey('packages-design-bar')), findsOneWidget);
+    // La barra de diseño sigue disponible (y arriba) en las dos vistas.
+    final bar = find.byKey(const ValueKey('packages-design-bar'));
+    expect(bar, findsOneWidget);
+    expect(
+      tester.getTopLeft(bar).dy,
+      lessThan(tester.getTopLeft(find.text('Boda Full')).dy),
+    );
   });
 
   testWidgets('el buscador sigue filtrando en la vista de filas', (
@@ -183,6 +206,28 @@ void main() {
 
     expect(find.text('XV Años Gold'), findsOneWidget);
     expect(find.text('Boda Full'), findsNothing);
+  });
+
+  testWidgets('la card tiene un tamaño MÁXIMO (450 × 675) y no se estira', (
+    tester,
+  ) async {
+    // Pantalla muy ancha: sin tope, las tres columnas darían cards enormes.
+    await _pump(tester, size: const Size(2400, 1400));
+
+    final cards = find.byType(WebPackageCard);
+    expect(cards, findsNWidgets(2));
+    for (final card in cards.evaluate()) {
+      final size = tester.getSize(find.byWidget(card.widget));
+      expect(size.width, lessThanOrEqualTo(kPackageCardMaxWidth));
+      expect(size.height, lessThanOrEqualTo(kPackageCardMaxHeight));
+    }
+    // Con espacio de sobra, la card se queda en su ancho máximo (no se
+    // encoge ni se estira) y la fila la centra.
+    expect(
+      tester.getSize(cards.first).width,
+      moreOrLessEquals(kPackageCardMaxWidth, epsilon: 1),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   // El módulo se usa en claro y en oscuro: el catálogo tiene que pintarse

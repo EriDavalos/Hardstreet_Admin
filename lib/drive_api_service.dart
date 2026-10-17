@@ -14,6 +14,8 @@ export 'drive_base.dart'
     show
         DriveBase,
         DriveItem,
+        driveImagePreview,
+        driveRelPath,
         kImageExtensions,
         DriveConn,
         DriveBusy,
@@ -29,8 +31,7 @@ export 'drive_base.dart'
 /// (ver/crear/editar/eliminar/descargar). Sin token el servidor puede
 /// rechazar la petición (según su configuración).
 class DriveApiService extends DriveBase {
-  DriveApiService({String? baseUrl})
-    : base = baseUrl ?? AppConstants.apiBase {
+  DriveApiService({String? baseUrl}) : base = baseUrl ?? AppConstants.apiBase {
     refresh();
   }
 
@@ -105,8 +106,68 @@ class DriveApiService extends DriveBase {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  /// true cuando el último refresco se OMITIÓ por no haber sesión todavía.
+  /// La app lo consulta para pedir el listado en cuanto entra la sesión.
+  bool waitingSession = false;
+
+  /// Publica en el servidor del drive las fotos del Drive que tiene que poder
+  /// abrir la WEB SIN SESIÓN (la portada del sitio y la imagen de cada
+  /// paquete).
+  ///
+  /// El servidor del drive exige permiso de lectura para `/files/…`, y la
+  /// página pública no tiene sesión: por eso guardamos la lista de fotos
+  /// publicadas y sólo ésas se sirven sin token. [scope] agrupa la lista por
+  /// módulo ("sitio", "paquetes"): al enviarla se REEMPLAZA la de ese módulo,
+  /// así una foto que se quitó de un paquete deja de estar publicada.
+  ///
+  /// Es silencioso a propósito: un servidor viejo (sin el endpoint) o sin
+  /// red no debe romper el módulo que la llama; sus fotos se verán en el
+  /// panel (que sí lleva token) aunque la web todavía no.
+  static Future<int> publishPublicPhotos(
+    String scope,
+    Iterable<Object?> urls,
+  ) async {
+    final paths = <String>{};
+    for (final u in urls) {
+      final rel = driveRelPath('${u ?? ''}');
+      if (rel != null) paths.add(rel);
+    }
+    if (_apikey.isEmpty) return 0;
+    try {
+      final base = AppConstants.apiBase.replaceAll(RegExp(r'/$'), '');
+      final r = await client
+          .post(
+            Uri.parse('$base/api/public-photos'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'scope': scope,
+              'paths': paths.take(2000).toList(growable: false),
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return 0;
+      final data = jsonDecode(r.body);
+      return data is Map ? _asInt(data['count']) ?? 0 : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   @override
   Future<void> refresh() async {
+    // SIN sesión NO se llama al servidor. El cliente del drive se crea al
+    // construir la app (antes del login o de restaurar la sesión) y su primer
+    // refresco salía sin `Apikey`: el servidor lo rechaza y el módulo Archivos
+    // quedaba con "No se pudo iniciar el almacenamiento" hasta que el usuario
+    // recargaba. Aquí se deja en blanco y sin error (la página muestra su
+    // cargador); AdminHome vuelve a pedir el listado en cuanto entra la sesión.
+    if (_apikey.isEmpty) {
+      waitingSession = true;
+      loading = false;
+      error = null;
+      return;
+    }
+    waitingSession = false;
     // TICKET del refresco: si mientras carga el usuario se va a otra carpeta
     // (o se refresca otra vez), lo que llegue después se DESCARTA. Si no, las
     // fotos de la carpeta que se dejó aparecerían encima de la nueva.
@@ -116,10 +177,7 @@ class DriveApiService extends DriveBase {
     notifyListeners();
     try {
       final r = await client
-          .get(
-            _u('/api/drive', {'path': ticket.path}),
-            headers: _authHeaders,
-          )
+          .get(_u('/api/drive', {'path': ticket.path}), headers: _authHeaders)
           .timeout(const Duration(seconds: 8));
       if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
       final data = jsonDecode(r.body) as Map<String, dynamic>;
@@ -141,6 +199,7 @@ class DriveApiService extends DriveBase {
         );
         (it.isFolder ? folders : files).add(it);
       }
+      // El alcance compartido (y los conteos) los aplica [applyRefresh].
       if (!applyRefresh(ticket, [...folders, ...files])) return;
       conn = DriveConn.online;
     } catch (e) {
@@ -179,7 +238,10 @@ class DriveApiService extends DriveBase {
   /// Con [overwrite] borra primero el existente con el mismo nombre.
   /// Los trabajos con `cancelled = true` se saltan o se abortan en vuelo.
   @override
-  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async {
     if (sources.isEmpty) return 0;
     // 1. Registrar TODOS los trabajos primero: el panel muestra la lista
     //    completa al 0% desde el primer frame. Todos van en el MISMO lote, que
@@ -230,17 +292,18 @@ class DriveApiService extends DriveBase {
                 'path': path.join('/'),
                 'names': [fileName],
               });
-            } catch (_) {/* si no existía, sigue */}
+            } catch (_) {
+              /* si no existía, sigue */
+            }
           }
           await _uploadOne(client, job, s, fileName);
         });
         if (ok) saved++;
       }
     }
+
     try {
-      await Future.wait(
-        List.generate(kUploadParallel, (_) => worker()),
-      );
+      await Future.wait(List.generate(kUploadParallel, (_) => worker()));
     } finally {
       client.close();
       await refresh();
@@ -421,10 +484,7 @@ class DriveApiService extends DriveBase {
   Future<List<String>> listChildFolders(List<String> rel) async {
     try {
       final r = await http
-          .get(
-            _u('/api/drive', {'path': rel.join('/')}),
-            headers: _authHeaders,
-          )
+          .get(_u('/api/drive', {'path': rel.join('/')}), headers: _authHeaders)
           .timeout(const Duration(seconds: 8));
       if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
       final data = jsonDecode(r.body) as Map<String, dynamic>;
@@ -450,6 +510,28 @@ class DriveApiService extends DriveBase {
     return (jsonDecode(r.body) as Map).cast<String, dynamic>();
   }
 
+  /// Cuántos elementos hay DENTRO de cada carpeta compartida.
+  ///
+  /// El listado de la raíz del cliente solo trae las carpetas de primer nivel
+  /// del estudio, así que el contenido de una compartida anidada
+  /// (`XV/ReynaCoot`) no se puede deducir: se pregunta al servidor, en
+  /// paralelo y sin romper nada si una falla.
+  @override
+  Future<Map<String, int>> sharedRootCounts(List<SharedRoot> entries) async {
+    final nested = entries.where((e) => e.real.length > 1).toList();
+    if (nested.isEmpty) return const {};
+    final out = <String, int>{};
+    await Future.wait(nested.map((e) async {
+      try {
+        final items = await listFolderItems(e.real);
+        out[e.real.join('/')] = items.length;
+      } catch (_) {
+        // Sin dato: la tarjeta no muestra conteo (mejor eso que un 0 falso).
+      }
+    }));
+    return out;
+  }
+
   /// CONTENIDO directo de [rel] (carpetas y archivos) consultado al servidor,
   /// SIN mover el estado del drive. Lo usa el selector de fotos del cliente.
   @override
@@ -458,10 +540,7 @@ class DriveApiService extends DriveBase {
       // Con el cliente INYECTABLE ([client]), no con `http` global: es el mismo
       // en producción y así las pruebas pueden mirarlo sin tocar la red.
       final r = await client
-          .get(
-            _u('/api/drive', {'path': rel.join('/')}),
-            headers: _authHeaders,
-          )
+          .get(_u('/api/drive', {'path': rel.join('/')}), headers: _authHeaders)
           .timeout(const Duration(seconds: 8));
       if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
       final data = jsonDecode(r.body) as Map<String, dynamic>;
@@ -471,15 +550,17 @@ class DriveApiService extends DriveBase {
         if (e is! Map) continue;
         final name = e['name']?.toString() ?? '';
         if (name.isEmpty) continue;
-        out.add(DriveItem(
-          name: name,
-          isFolder: e['isFolder'] == true,
-          modified: e['modified'] == null
-              ? null
-              : DateTime.tryParse(e['modified'].toString()),
-          size: (e['size'] as num?)?.toInt(),
-          childCount: (e['childCount'] as num?)?.toInt() ?? 0,
-        ));
+        out.add(
+          DriveItem(
+            name: name,
+            isFolder: e['isFolder'] == true,
+            modified: e['modified'] == null
+                ? null
+                : DateTime.tryParse(e['modified'].toString()),
+            size: (e['size'] as num?)?.toInt(),
+            childCount: (e['childCount'] as num?)?.toInt() ?? 0,
+          ),
+        );
       }
       return out;
     } catch (e) {
@@ -508,13 +589,13 @@ class DriveApiService extends DriveBase {
   Future<List<int>> downloadZip(
     List<String> names, {
     void Function(int received, int total)? onProgress,
+    List<String>? from,
   }) async {
+    // [from] = la carpeta de la que salen los nombres (null = la que el drive
+    // está mostrando): el selector de fotos navega por su cuenta.
     final req = http.Request('POST', _u('/api/zip'))
-      ..headers.addAll({
-        'Content-Type': 'application/json',
-        ..._authHeaders,
-      })
-      ..body = jsonEncode({'path': path.join('/'), 'names': names});
+      ..headers.addAll({'Content-Type': 'application/json', ..._authHeaders})
+      ..body = jsonEncode({'path': (from ?? path).join('/'), 'names': names});
 
     final client = http.Client();
     try {
@@ -566,7 +647,9 @@ class DriveApiService extends DriveBase {
 
     // HEAD: tamaño y soporte de rangos (con token: el servidor valida leer)
     final head = await http
-        .head(_u('/files/$rel', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}))
+        .head(
+          _u('/files/$rel', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}),
+        )
         .timeout(const Duration(seconds: 10));
     final total = int.tryParse(head.headers['content-length'] ?? '') ?? 0;
     final lastModified = head.headers['last-modified'] ?? '';
@@ -736,10 +819,7 @@ class DriveApiService extends DriveBase {
         .post(
           _u(p),
           body: jsonEncode(body),
-          headers: {
-            'Content-Type': 'application/json',
-            ..._authHeaders,
-          },
+          headers: {'Content-Type': 'application/json', ..._authHeaders},
         )
         .timeout(const Duration(seconds: 30));
     if (r.statusCode != 200) {

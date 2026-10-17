@@ -26,6 +26,11 @@ class DriveService extends DriveBase {
 
   static const rootName = 'HardStreetDrive';
 
+  /// Es una carpeta real del equipo: sus imágenes se leen del disco
+  /// (`Image.file`), no por HTTP.
+  @override
+  bool get isRemote => false;
+
   /// Raíz absoluta del drive (p.ej. ...\Documents\HardStreetDrive).
   Directory? _root;
   Directory get root {
@@ -116,6 +121,21 @@ class DriveService extends DriveBase {
         notifyListeners();
       }
     }
+  }
+
+  /// Cuenta lo que hay dentro de cada carpeta compartida que no esté ya en el
+  /// listado de la raíz (las anidadas: `XV/ReynaCoot`), para que la tarjeta del
+  /// cliente diga cuántos elementos tiene de verdad.
+  @override
+  Future<Map<String, int>> sharedRootCounts(List<SharedRoot> entries) async {
+    final out = <String, int>{};
+    for (final e in entries) {
+      if (e.real.length < 2) continue; // ya viene en el listado de la raíz
+      final dir = Directory(_absolute(e.real));
+      if (!dir.existsSync()) continue;
+      out[e.real.join('/')] = _countChildren(dir);
+    }
+    return out;
   }
 
   int _countChildren(Directory dir) {
@@ -490,4 +510,10 @@ class DriveService extends DriveBase {
   /// Ruta absoluta de un archivo/carpeta para previsualizarlo.
   @override
   String absolutePathOf(DriveItem item) => _absolute([...path, item.name]);
+
+  /// Ruta absoluta de un archivo que vive en OTRA carpeta [rel] (el selector
+  /// de fotos navega por su cuenta, sin mover la carpeta que se está viendo).
+  @override
+  String absolutePathIn(List<String> rel, DriveItem item) =>
+      _absolute([...rel, item.name]);
 }

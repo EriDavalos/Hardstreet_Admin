@@ -43,33 +43,34 @@ class SiteTierDesign {
     String? dark,
     bool? badgeFilled,
     double? borderAlpha,
-  }) =>
-      SiteTierDesign(
-        accent: accent ?? this.accent,
-        accentSoft: accentSoft ?? this.accentSoft,
-        dark: dark ?? this.dark,
-        badgeFilled: badgeFilled ?? this.badgeFilled,
-        borderAlpha: borderAlpha ?? this.borderAlpha,
-      );
+  }) => SiteTierDesign(
+    accent: accent ?? this.accent,
+    accentSoft: accentSoft ?? this.accentSoft,
+    dark: dark ?? this.dark,
+    badgeFilled: badgeFilled ?? this.badgeFilled,
+    borderAlpha: borderAlpha ?? this.borderAlpha,
+  );
 
   Map<String, dynamic> toJson() => {
-        'accent': accent,
-        'accentSoft': accentSoft,
-        'dark': dark,
-        'badgeFilled': badgeFilled,
-        'borderAlpha': borderAlpha,
-      };
+    'accent': accent,
+    'accentSoft': accentSoft,
+    'dark': dark,
+    'badgeFilled': badgeFilled,
+    'borderAlpha': borderAlpha,
+  };
 
-  static SiteTierDesign fromJson(Map<String, dynamic> j, SiteTierDesign fallback) =>
-      fallback.copyWith(
-        accent: _hex(j['accent']) ?? fallback.accent,
-        accentSoft: _hex(j['accentSoft']) ?? fallback.accentSoft,
-        dark: _hex(j['dark']) ?? fallback.dark,
-        badgeFilled: j['badgeFilled'] is bool
-            ? j['badgeFilled'] as bool
-            : fallback.badgeFilled,
-        borderAlpha: (j['borderAlpha'] as num?)?.toDouble() ?? fallback.borderAlpha,
-      );
+  static SiteTierDesign fromJson(
+    Map<String, dynamic> j,
+    SiteTierDesign fallback,
+  ) => fallback.copyWith(
+    accent: _hex(j['accent']) ?? fallback.accent,
+    accentSoft: _hex(j['accentSoft']) ?? fallback.accentSoft,
+    dark: _hex(j['dark']) ?? fallback.dark,
+    badgeFilled: j['badgeFilled'] is bool
+        ? j['badgeFilled'] as bool
+        : fallback.badgeFilled,
+    borderAlpha: (j['borderAlpha'] as num?)?.toDouble() ?? fallback.borderAlpha,
+  );
 }
 
 /// Diseño de las TARJETAS de paquete (lo que edita el diseñador).
@@ -94,6 +95,12 @@ class SiteCardDesign {
     this.showCta = true,
     this.priceLabel = 'Desde',
     this.ctaLabel = 'Cotizar',
+    this.imageMode = 'none',
+    this.imageHeight = 150,
+    this.imageFade = .7,
+    this.animMode = 'up',
+    this.animMs = 600,
+    this.animStagger = 100,
   });
 
   /// Columnas del catálogo en la web (1..4).
@@ -143,6 +150,28 @@ class SiteCardDesign {
   /// Texto del botón ("Cotizar", "Solicitar"…).
   final String ctaLabel;
 
+  /// FOTO del paquete dentro de la tarjeta:
+  /// `none` sin foto · `top` banda arriba · `bg` de fondo (la foto se ve y
+  /// encima lleva el degradado del color de la tarjeta).
+  final String imageMode;
+
+  /// Alto de la banda de la foto (`top`), en px.
+  final double imageHeight;
+
+  /// Fuerza del degradado que oscurece la foto de fondo (`bg`, 0..1): 0 deja
+  /// la foto limpia y 1 la tapa casi del todo para que el texto se lea.
+  final double imageFade;
+
+  /// Entrada de las tarjetas del catálogo:
+  /// `up` subir · `fade` aparecer · `zoom` acercar · `none` sin animación.
+  final String animMode;
+
+  /// Duración de esa entrada, en ms.
+  final int animMs;
+
+  /// Retardo entre tarjeta y tarjeta (el efecto escalonado), en ms.
+  final int animStagger;
+
   SiteCardDesign copyWith({
     int? columns,
     double? gap,
@@ -163,50 +192,67 @@ class SiteCardDesign {
     bool? showCta,
     String? priceLabel,
     String? ctaLabel,
-  }) =>
-      SiteCardDesign(
-        columns: columns ?? this.columns,
-        gap: gap ?? this.gap,
-        radius: radius ?? this.radius,
-        borderWidth: borderWidth ?? this.borderWidth,
-        padding: padding ?? this.padding,
-        lineTop: lineTop ?? this.lineTop,
-        hoverLift: hoverLift ?? this.hoverLift,
-        shadow: shadow ?? this.shadow,
-        serifNames: serifNames ?? this.serifNames,
-        uppercaseNames: uppercaseNames ?? this.uppercaseNames,
-        showCategory: showCategory ?? this.showCategory,
-        showSubtitle: showSubtitle ?? this.showSubtitle,
-        showServiceCount: showServiceCount ?? this.showServiceCount,
-        showServices: showServices ?? this.showServices,
-        servicesLimit: servicesLimit ?? this.servicesLimit,
-        showPrice: showPrice ?? this.showPrice,
-        showCta: showCta ?? this.showCta,
-        priceLabel: priceLabel ?? this.priceLabel,
-        ctaLabel: ctaLabel ?? this.ctaLabel,
-      );
+    String? imageMode,
+    double? imageHeight,
+    double? imageFade,
+    String? animMode,
+    int? animMs,
+    int? animStagger,
+  }) => SiteCardDesign(
+    columns: columns ?? this.columns,
+    gap: gap ?? this.gap,
+    radius: radius ?? this.radius,
+    borderWidth: borderWidth ?? this.borderWidth,
+    padding: padding ?? this.padding,
+    lineTop: lineTop ?? this.lineTop,
+    hoverLift: hoverLift ?? this.hoverLift,
+    shadow: shadow ?? this.shadow,
+    serifNames: serifNames ?? this.serifNames,
+    uppercaseNames: uppercaseNames ?? this.uppercaseNames,
+    showCategory: showCategory ?? this.showCategory,
+    showSubtitle: showSubtitle ?? this.showSubtitle,
+    showServiceCount: showServiceCount ?? this.showServiceCount,
+    showServices: showServices ?? this.showServices,
+    servicesLimit: servicesLimit ?? this.servicesLimit,
+    showPrice: showPrice ?? this.showPrice,
+    showCta: showCta ?? this.showCta,
+    priceLabel: priceLabel ?? this.priceLabel,
+    ctaLabel: ctaLabel ?? this.ctaLabel,
+    imageMode: imageMode ?? this.imageMode,
+    imageHeight: imageHeight ?? this.imageHeight,
+    imageFade: imageFade ?? this.imageFade,
+    animMode: animMode ?? this.animMode,
+    animMs: animMs ?? this.animMs,
+    animStagger: animStagger ?? this.animStagger,
+  );
 
   Map<String, dynamic> toJson() => {
-        'columns': columns,
-        'gap': gap,
-        'radius': radius,
-        'borderWidth': borderWidth,
-        'padding': padding,
-        'lineTop': lineTop,
-        'hoverLift': hoverLift,
-        'shadow': shadow,
-        'serifNames': serifNames,
-        'uppercaseNames': uppercaseNames,
-        'showCategory': showCategory,
-        'showSubtitle': showSubtitle,
-        'showServiceCount': showServiceCount,
-        'showServices': showServices,
-        'servicesLimit': servicesLimit,
-        'showPrice': showPrice,
-        'showCta': showCta,
-        'priceLabel': priceLabel,
-        'ctaLabel': ctaLabel,
-      };
+    'columns': columns,
+    'gap': gap,
+    'radius': radius,
+    'borderWidth': borderWidth,
+    'padding': padding,
+    'lineTop': lineTop,
+    'hoverLift': hoverLift,
+    'shadow': shadow,
+    'serifNames': serifNames,
+    'uppercaseNames': uppercaseNames,
+    'showCategory': showCategory,
+    'showSubtitle': showSubtitle,
+    'showServiceCount': showServiceCount,
+    'showServices': showServices,
+    'servicesLimit': servicesLimit,
+    'showPrice': showPrice,
+    'showCta': showCta,
+    'priceLabel': priceLabel,
+    'ctaLabel': ctaLabel,
+    'imageMode': imageMode,
+    'imageHeight': imageHeight,
+    'imageFade': imageFade,
+    'animMode': animMode,
+    'animMs': animMs,
+    'animStagger': animStagger,
+  };
 
   static SiteCardDesign fromJson(Map<String, dynamic> j, SiteCardDesign f) =>
       f.copyWith(
@@ -229,6 +275,12 @@ class SiteCardDesign {
         showCta: _bool(j['showCta'], f.showCta),
         priceLabel: _text(j['priceLabel'], f.priceLabel),
         ctaLabel: _text(j['ctaLabel'], f.ctaLabel),
+        imageMode: _choice(j['imageMode'], kDesignImageModes, f.imageMode),
+        imageHeight: _num(j['imageHeight'], f.imageHeight),
+        imageFade: _num(j['imageFade'], f.imageFade),
+        animMode: _choice(j['animMode'], kDesignAnimModes, f.animMode),
+        animMs: _int(j['animMs'], f.animMs),
+        animStagger: _int(j['animStagger'], f.animStagger),
       );
 }
 
@@ -286,26 +338,22 @@ class SiteDesign {
     String? goldLight,
     SiteCardDesign? card,
     Map<String, SiteTierDesign>? tiers,
-  }) =>
-      SiteDesign(
-        gold: gold ?? this.gold,
-        goldLight: goldLight ?? this.goldLight,
-        card: card ?? this.card,
-        tiers: tiers ?? this.tiers,
-      );
+  }) => SiteDesign(
+    gold: gold ?? this.gold,
+    goldLight: goldLight ?? this.goldLight,
+    card: card ?? this.card,
+    tiers: tiers ?? this.tiers,
+  );
 
   /// Cambia la paleta de UN tier (devuelve un diseño nuevo).
-  SiteDesign withTier(String key, SiteTierDesign value) => copyWith(
-        tiers: {...tiers, key.trim().toLowerCase(): value},
-      );
+  SiteDesign withTier(String key, SiteTierDesign value) =>
+      copyWith(tiers: {...tiers, key.trim().toLowerCase(): value});
 
   Map<String, dynamic> toJson() => {
-        'brand': {'gold': gold, 'goldLight': goldLight},
-        'card': card.toJson(),
-        'tiers': {
-          for (final e in tiers.entries) e.key: e.value.toJson(),
-        },
-      };
+    'brand': {'gold': gold, 'goldLight': goldLight},
+    'card': card.toJson(),
+    'tiers': {for (final e in tiers.entries) e.key: e.value.toJson()},
+  };
 
   /// Diseño a partir de lo que devuelve la API (tolerante: lo que falte, se
   /// queda con el default; así un documento a medias nunca deja la web rara).
@@ -318,8 +366,9 @@ class SiteDesign {
     final tiers = <String, SiteTierDesign>{};
     for (final e in defaults.tiers.entries) {
       final stored = (tiersJson[e.key] as Map?)?.cast<String, dynamic>();
-      tiers[e.key] =
-          stored == null ? e.value : SiteTierDesign.fromJson(stored, e.value);
+      tiers[e.key] = stored == null
+          ? e.value
+          : SiteTierDesign.fromJson(stored, e.value);
     }
     return defaults.copyWith(
       gold: _hex(brand['gold']) ?? defaults.gold,
@@ -356,6 +405,22 @@ double _num(Object? v, double fallback) =>
     v is num ? v.toDouble() : double.tryParse('$v') ?? fallback;
 
 bool _bool(Object? v, bool fallback) => v is bool ? v : fallback;
+
+/// Color del velo que oscurece la FOTO DE FONDO de una tarjeta (`bg`).
+///
+/// Es NEGRO en los dos lados —aquí y en la web (`site.js` → `HS_PHOTO_FADE`)—:
+/// sobre la foto, un velo negro es lo que hace resaltar el texto.
+const String kPhotoFadeColor = '#000000';
+
+/// Valores permitidos de un campo de opciones (foto, animación).
+const List<String> kDesignImageModes = ['none', 'top', 'bg'];
+const List<String> kDesignAnimModes = ['up', 'fade', 'zoom', 'none'];
+
+/// Una opción guardada: si no es una de las válidas, se queda con el default.
+String _choice(Object? v, List<String> allowed, String fallback) {
+  final s = (v ?? '').toString().trim();
+  return allowed.contains(s) ? s : fallback;
+}
 
 String _text(Object? v, String fallback) {
   final s = (v ?? '').toString().trim();

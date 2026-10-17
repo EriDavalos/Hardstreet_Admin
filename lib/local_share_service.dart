@@ -331,9 +331,17 @@ class LocalShareDrive extends DriveBase {
   String thumbSource(DriveItem item, {int width = 320}) =>
       service.thumbUrl(shareId, _segments(item), width: width);
 
+  /// Preview del VISOR.
+  ///
+  /// Se le pide al servidor la versión REDIMENSIONADA (`/api/local/thumb`,
+  /// que la genera una vez y la guarda en caché) en vez del original: el
+  /// original puede ser una foto de 10 MB que, además, tiene que viajar desde
+  /// la computadora de quien comparte si su carpeta es de su PC. Así el visor
+  /// abre al instante y el original se pide sólo si se descarga.
   @override
-  String fullSource(DriveItem item, {int? previewWidth}) =>
-      service.fileUrl(shareId, _segments(item));
+  String fullSource(DriveItem item, {int? previewWidth}) => previewWidth == null
+      ? service.fileUrl(shareId, _segments(item))
+      : service.thumbUrl(shareId, _segments(item), width: previewWidth);
 
   @override
   List<String> listFolders(List<String> rel) => const [];

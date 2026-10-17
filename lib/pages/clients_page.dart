@@ -1680,19 +1680,27 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       _snack('No se pudo identificar el servicio');
       return;
     }
-    final out = await showDialog<(String, String)>(
+    final out = await showDialog<_ServiceShare>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _ServiceShareDialog(
         serviceName: (svc['name'] ?? 'Servicio').toString(),
         folder: (svc['shareFolder'] ?? '').toString(),
         link: (svc['shareLink'] ?? '').toString(),
+        pickPhotos: svc['pickPhotos'] == true,
+        showFolder: svc['showFolder'] != false,
         onPickFolder: () => _pickDriveFolder(insideShared: true),
       ),
     );
     if (out == null) return;
     await _run(
-      () => HsApi.updateServiceShare(serviceId, folder: out.$1, link: out.$2),
+      () => HsApi.updateServiceShare(
+        serviceId,
+        folder: out.folder,
+        link: out.link,
+        pickPhotos: out.pickPhotos,
+        showFolder: out.showFolder,
+      ),
     );
   }
 
@@ -3722,6 +3730,10 @@ class _ServiceTileState extends State<_ServiceTile> {
     final shareFolder = (s['shareFolder'] ?? '').toString().trim();
     final shareLink = (s['shareLink'] ?? '').toString().trim();
     final items = (s['items'] as num?)?.toInt() ?? 0;
+    // OPCIONES que le salen al CLIENTE para este servicio (las enciende el
+    // estudio al compartir): antes «elegir fotos» salía en todos.
+    final pickPhotos = s['pickPhotos'] == true;
+    final showFolder = s['showFolder'] != false;
     // ¿Se puede desplegar la tarjeta? SIEMPRE que haya algo dentro: los datos
     // del servicio (nota, enlaces, lo compartido…) o, si se administra, sus
     // OPCIONES (añadir nota/enlace, compartir). Antes solo se desplegaba si el
@@ -3904,6 +3916,27 @@ class _ServiceTileState extends State<_ServiceTile> {
                             label: shareLink,
                             tooltip: 'Copiar la liga compartida',
                             onTap: () => widget.onCopy(shareLink),
+                          ),
+                        ],
+                        if (pickPhotos || (showFolder && shareFolder.isNotEmpty)) ...[
+                          const SizedBox(height: 7),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [
+                              if (pickPhotos)
+                                const _MiniPill(
+                                  icon: Icons.photo_library_outlined,
+                                  label: 'Elegir fotos',
+                                  color: _kViolet,
+                                ),
+                              if (showFolder && shareFolder.isNotEmpty)
+                                const _MiniPill(
+                                  icon: Icons.folder_open_outlined,
+                                  label: 'Abrir carpeta',
+                                  color: _kGreen,
+                                ),
+                            ],
                           ),
                         ],
                         if (items > 0) ...[
@@ -6308,17 +6341,43 @@ class _DriveFolderPickerState extends State<_DriveFolderPicker> {
 /// La carpeta se elige DENTRO del Drive del cliente (lo que ya tiene
 /// compartido): es lo único que él ve, así que el selector se abre en esa
 /// carpeta y no deja salir de ahí.
+/// Lo que devuelve el diálogo de compartir de un servicio: la carpeta, la liga
+/// y QUÉ opciones le salen al cliente en «Mi paquete».
+class _ServiceShare {
+  const _ServiceShare({
+    required this.folder,
+    required this.link,
+    required this.pickPhotos,
+    required this.showFolder,
+  });
+
+  final String folder;
+  final String link;
+
+  /// ¿El cliente puede elegir fotos de su Drive para este servicio?
+  final bool pickPhotos;
+
+  /// ¿Se le muestra «Abrir carpeta» (cuando hay carpeta compartida)?
+  final bool showFolder;
+}
+
 class _ServiceShareDialog extends StatefulWidget {
   const _ServiceShareDialog({
     required this.serviceName,
     required this.folder,
     required this.link,
+    required this.pickPhotos,
+    required this.showFolder,
     required this.onPickFolder,
   });
 
   final String serviceName;
   final String folder;
   final String link;
+
+  /// Opciones que le salen al cliente para ESTE servicio.
+  final bool pickPhotos;
+  final bool showFolder;
 
   /// Abre el selector de carpetas del Drive y devuelve la ruta elegida.
   final Future<List<String>?> Function() onPickFolder;
@@ -6331,6 +6390,8 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
   late final TextEditingController _link =
       TextEditingController(text: widget.link);
   late String _folder = widget.folder;
+  late bool _pickPhotos = widget.pickPhotos;
+  late bool _showFolder = widget.showFolder;
 
   @override
   void dispose() {
@@ -6344,7 +6405,14 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
     setState(() => _folder = segments.join('/'));
   }
 
-  void _save() => Navigator.of(context).pop((_folder, _link.text.trim()));
+  void _save() => Navigator.of(context).pop(
+        _ServiceShare(
+          folder: _folder,
+          link: _link.text.trim(),
+          pickPhotos: _pickPhotos,
+          showFolder: _showFolder,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -6384,7 +6452,72 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        FormSection(
+          label: 'Qué ve el cliente en «Mi paquete»',
+          child: Column(
+            children: [
+              _option(
+                icon: Icons.photo_library_outlined,
+                title: 'Elegir fotos',
+                subtitle: 'El cliente marca fotos de SU Drive para este '
+                    'servicio. Apagado, no le sale el botón.',
+                value: _pickPhotos,
+                onChanged: (v) => setState(() => _pickPhotos = v),
+              ),
+              const SizedBox(height: 4),
+              _option(
+                icon: Icons.folder_open_outlined,
+                title: 'Abrir carpeta',
+                subtitle: _folder.isEmpty
+                    ? 'Se verá cuando el servicio tenga una carpeta '
+                        'compartida.'
+                    : 'Acceso directo a la carpeta compartida del servicio.',
+                value: _showFolder,
+                onChanged: (v) => setState(() => _showFolder = v),
+              ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Interruptor de una opción del cliente: icono, título y para qué sirve.
+  Widget _option({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return SwitchListTile.adaptive(
+      contentPadding: EdgeInsets.zero,
+      value: value,
+      onChanged: onChanged,
+      secondary: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: (value ? AppColors.brand : scheme.onSurfaceVariant)
+              .withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(
+          icon,
+          size: 18,
+          color: value ? AppColors.brand : scheme.onSurfaceVariant,
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(fontSize: 11, height: 1.3, color: scheme.onSurfaceVariant),
+      ),
     );
   }
 

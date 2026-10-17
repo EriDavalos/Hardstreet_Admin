@@ -14,11 +14,12 @@ import 'package:hardstreet_admin/widgets/drive_thumb.dart';
 // ==================================================================
 // SELECTOR DE FOTOS DEL MÓDULO SITIO WEB
 // ==================================================================
-// El selector navega SU PROPIA carpeta (`_rel`) sin mover el drive (el módulo
-// Archivos sigue en la suya). Antes la miniatura se pedía con la carpeta del
-// DRIVE, así que dentro de una subcarpeta apuntaba a otro archivo (404) y el
-// recuadro salía vacío: eso es lo que se comprueba aquí, con el MISMO drive del
-// servidor que usa la app (con su cliente HTTP falso).
+// El Sitio web usa el MISMO selector de fotos que los demás módulos
+// (`widgets/drive_photo_picker.dart`): rejilla con miniatura, vista previa y
+// contador. Navega SU PROPIA carpeta sin mover el drive (el módulo Archivos
+// sigue en la suya) y la miniatura se pide con ESA carpeta: si se pidiera con la
+// del módulo Archivos, dentro de una subcarpeta apuntaría a otro archivo (404) y
+// el recuadro saldría vacío.
 // ==================================================================
 
 /// Drive del servidor con un cliente HTTP falso: el árbol XV/ReynaCoot.jpg y
@@ -101,6 +102,13 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// Entra a la carpeta XV dentro del selector.
+    Future<void> enterXV(WidgetTester tester) async {
+      await tester.tap(find.descendant(
+          of: find.byType(AlertDialog), matching: find.text('XV')));
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('dentro de una carpeta la miniatura es la de ESA carpeta',
         (tester) async {
       await pumpPicker(tester);
@@ -112,9 +120,7 @@ void main() {
 
       // Se entra a XV: la foto se ve con su miniatura (del servidor, con la
       // carpeta en la que está de verdad).
-      await tester.tap(find.descendant(
-          of: find.byType(AlertDialog), matching: find.text('XV')));
-      await tester.pumpAndSettle();
+      await enterXV(tester);
 
       final thumb = tester.widget<DriveThumb>(find.byType(DriveThumb));
       expect(thumb.source, contains('/thumb/XV/ReynaCoot.jpg'),
@@ -133,15 +139,13 @@ void main() {
         (tester) async {
       await pumpPicker(tester, size: const Size(1024, 720));
       await openPicker(tester);
-      await tester.tap(find.descendant(
-          of: find.byType(AlertDialog), matching: find.text('XV')));
-      await tester.pumpAndSettle();
+      await enterXV(tester);
 
       expect(find.byKey(const ValueKey('drive-photo-ReynaCoot.jpg')),
           findsOneWidget);
-      expect(find.text('CARPETAS'), findsNothing,
-          reason: 'dentro de XV ya no hay subcarpetas que mostrar');
-      expect(find.text('FOTOS'), findsOneWidget);
+      // Dentro de XV ya no hay subcarpetas que mostrar.
+      expect(find.byIcon(Icons.folder_rounded), findsNothing);
+      expect(find.text('Esta carpeta no tiene fotos.'), findsNothing);
       // Sin desbordes ni errores de "layout" en la ventana de verdad.
       expect(tester.takeException(), isNull);
     });
@@ -150,9 +154,7 @@ void main() {
         (tester) async {
       await pumpPicker(tester);
       await openPicker(tester);
-      await tester.tap(find.descendant(
-          of: find.byType(AlertDialog), matching: find.text('XV')));
-      await tester.pumpAndSettle();
+      await enterXV(tester);
 
       // El botón de previsualizar abre la foto en grande (la versión reducida
       // del servidor) sin salir del selector.
@@ -162,10 +164,8 @@ void main() {
 
       expect(find.byKey(const ValueKey('drive-photo-preview-image')),
           findsOneWidget);
-      final big = tester.widget<DriveThumb>(find.descendant(
-        of: find.byKey(const ValueKey('drive-photo-preview-image')),
-        matching: find.byType(DriveThumb),
-      ));
+      final big = tester.widget<DriveThumb>(
+          find.byKey(const ValueKey('drive-photo-preview-image')));
       expect(big.source, contains('/thumb/XV/ReynaCoot.jpg'));
       expect(big.contain, isTrue, reason: 'en el visor la foto no se recorta');
 
@@ -179,7 +179,7 @@ void main() {
 
       // …y el selector ya la cuenta como elegida.
       expect(find.text('1 elegida'), findsOneWidget);
-      await tester.tap(find.text('Agregar 1'));
+      await tester.tap(find.text('Usar estas fotos'));
       await tester.pumpAndSettle();
       expect(
         find.widgetWithText(
@@ -193,14 +193,12 @@ void main() {
         (tester) async {
       await pumpPicker(tester);
       await openPicker(tester);
-      await tester.tap(find.descendant(
-          of: find.byType(AlertDialog), matching: find.text('XV')));
-      await tester.pumpAndSettle();
+      await enterXV(tester);
 
       await tester.tap(find.byKey(
           const ValueKey('drive-photo-ReynaCoot.jpg')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Agregar 1'));
+      await tester.tap(find.text('Usar estas fotos'));
       await tester.pumpAndSettle();
 
       // El campo de la imagen quedó con la ruta pública del archivo.

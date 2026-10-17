@@ -7,7 +7,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | Módulo | Estado |
 |---|---|
 | **Archivos (Drive)** | ✅ Funcional — estilo Google Drive |
-| **Paquetes** | ✅ Catálogo estilo flyer (tier, categoría, servicios, imagen); el formulario tiene pestañas Datos / Servicios, vista previa en vivo y permite AGREGAR servicios sin salir |
+| **Paquetes** | ✅ DOS NIVELES en el mismo módulo: abre en la **galería de categorías** (portadas con su foto, cuántos paquetes y desde qué precio, más la de "Todo el catálogo" y el botón **Nueva categoría**) y al abrir una se ven SUS paquetes, editables, sin salir ni abrir un modal. Ya dentro, el catálogo estilo flyer (tier, categoría, servicios, imagen) con cards o filas; el formulario tiene pestañas Datos / Servicios, vista previa en vivo y permite AGREGAR servicios sin salir |
 | **Servicios** | ✅ Catálogo con icono, nombre, descripción y liga del Drive (opcional) |
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
 | **Finanzas** | ✅ Tabla con el dinero de cada paquete y de cada tipo de movimiento (se expande), gráfica por mes y registro de movimientos |
@@ -151,23 +151,34 @@ conoce el módulo, se muestra igual).
 
 Cada servicio de un paquete comprado puede compartir con el cliente TRES
 cosas, todas opcionales y **por servicio del paquete** (no globales del
-catálogo):
+catálogo). Se configuran en la pestaña Servicios del paquete, acción
+**Compartir**, y son también las OPCIONES que le salen al cliente:
 
 - **Carpeta del Drive**: se elige con el mismo selector que navega el Drive de
-  verdad (pestaña Servicios del paquete, acción **Compartir**).
+  verdad, **dentro** de lo que el cliente ya tiene compartido.
 - **Liga**: la URL que el cliente verá (p. ej. su álbum en línea).
 - **Selección de elementos/fotos**: la hace **el propio CLIENTE** desde "Mi
-  paquete": el botón **Elegir fotos** abre un navegador de SUS carpetas
-  compartidas y marca lo que quiere (se ve el contador de elegidos). Se guarda
+  paquete": el botón **Elegir fotos** abre el navegador de SUS carpetas
+  compartidas —el MISMO selector del Drive, con miniaturas, vista previa y
+  descarga— y marca lo que quiere (se ve el contador de elegidas). Se guarda
   la **LISTA de rutas** — nada se mueve ni se copia de carpeta — y las rutas
   tienen que caer dentro de lo que se le comparte (el backend lo revalida).
 
-En "Mi paquete" cada servicio muestra sus acciones en **UNA fila deslizable**
-(en el teléfono no se apilan): *Abrir carpeta*, *Ver liga* y *Mis fotos (N)*.
-El estudio ve lo compartido y cuántos elementos eligió el cliente en la
-pestaña Servicios del paquete.
+Los dos interruptores (**Elegir fotos** y **Abrir carpeta**) deciden qué le
+sale al cliente en cada servicio: antes *Elegir fotos* aparecía en TODOS y no
+se podía apagar. *Elegir fotos* nace **apagado** (se enciende donde hace
+falta); *Abrir carpeta* nace encendido y solo sale si el servicio tiene una
+carpeta compartida.
 
-Requiere las tablas `purchased_packages_services_shares` y
+En "Mi paquete" cada servicio muestra sus acciones en **UNA fila deslizable**
+(en el teléfono no se apilan): *Abrir carpeta*, *Ver liga* y *Mis fotos (N)*,
+cada una solo si su opción está encendida. El estudio ve lo compartido,
+cuántos elementos eligió el cliente y qué opciones tiene encendidas cada
+servicio en la pestaña Servicios del paquete.
+
+Requiere las tablas `purchased_packages_services_shares` (con las columnas
+`pick_photos` y `show_folder`: migración
+`Hardstreet-DB/2026-10-16_opciones_por_servicio.sql`) y
 `purchased_packages_services_items` (dump `Hardstreet-DB/hardstreet.sql`); sin
 ellas todo cae a "sin opciones" en vez de fallar.
 
@@ -192,7 +203,11 @@ El diálogo de alta/edición de paquete es visual e intuitivo:
 - **Vista previa en vivo** (arriba) del flyer: refleja nombre, subtítulo,
   precio, tier, categoría y número de servicios al escribir.
 - Pestaña **Datos**: nombre, subtítulo, descripción, precio, tier, categoría
-  e imagen para la web.
+  e imagen para la web. La imagen se puede escribir a mano (`images/…`) o
+  elegir del **Drive** con **Elegir una foto del Drive** (el mismo selector de
+  fotos de la app: rejilla con miniatura, vista previa y descarga); se guarda
+  su URL pública para que la web la abra sin sesión, y se ve su miniatura en
+  el propio formulario.
 - Pestaña **Servicios**: buscador, contador y **Agregar** — crea un servicio
   nuevo del catálogo sin salir del diálogo (queda seleccionado solo).
 
@@ -209,6 +224,55 @@ buscador (el mismo gesto que en el Drive):
   recorrer y comparar todo el catálogo sin perder la identidad de la marca. En
   el celular las acciones van al menú "⋮".
 
+### La FOTO del paquete en el panel
+
+La tarjeta del panel pinta la **misma foto que ve la web** (`url_image`), no un
+hueco: en banda arriba o de fondo, según lo que pida el diseño. Se pide al
+servidor del drive en tamaño de tarjeta (`/thumb/<ruta>?w=640`) y **con el
+token de la sesión en la URL**, porque `Image.network` no puede mandar
+cabeceras y sin él el servidor responde 403 (ésa era la razón de que las fotos
+"no cargaran"). Un paquete sin foto lo dice ("Sin foto · la web usa una del
+sitio"), que es lo que hace la página en ese caso.Tamaño MÁXIMO de una card: **450 × 675**. En pantallas anchas no se estiran sin
+fin (formato de flyer, 2:3); si el contenido no cabe a lo alto, se recorta el
+bloque del medio y el pie del precio sigue a la vista.
+
+Con la foto **de fondo**, los textos de la card van SIEMPRE en claro (aunque el
+panel esté en modo claro) y sobre ellos va un **velo negro**: encima de una foto
+el texto oscuro del tema claro se perdía, que es justo cuando "no se leían las
+letras".
+
+La web es **pública** y no tiene sesión, así que sus fotos (la imagen de cada
+paquete y las de la portada) no las podría abrir. El panel las **publica** en el
+servidor del drive: al abrir Paquetes manda las imágenes de los
+paquetes y al guardar Sitio web las de la portada
+(`POST /api/public-photos`, un alcance por módulo, que reemplaza sólo esa
+lista). Sólo esas rutas se sirven sin token; el resto del drive sigue igual de
+cerrado (ver `hardstreet-drive/README.md`).
+
+## Módulo Paquetes: la galería de categorías
+
+El módulo abre en la **galería** y de ahí se baja a los paquetes, todo en la
+misma pantalla (`lib/widgets/category_gallery.dart`):
+
+- **Portadas**: cada categoría con la foto que la representa, cuántos paquetes
+  tiene y desde qué precio salen. Una categoría sin paquetes se ve igual,
+  diciendo "Sin paquetes todavía"; si ningún paquete tiene foto, la portada usa
+  el emoji de la categoría en vez de un recuadro vacío. Al pasar el mouse la
+  portada **sube un poco** (el mismo gesto que las cards de paquetes), no se
+  agranda.
+- La primera portada es **Todo el catálogo**: los paquetes de todas las
+  categorías, para quien quiere verlo todo de una vez.
+- **Nueva categoría** (acción del encabezado, requiere *create* en Paquetes)
+  crea la categoría de verdad → `POST /api/admin/categories`. No se pide icono:
+  el panel y la web lo sacan del NOMBRE (Boda 💍, XV Años 👑…).
+- Al abrir una portada se ven **sus paquetes con `WebPackageCard`** (la misma
+  tarjeta del catálogo, editables) y una flecha para **volver a la galería**. El
+  buscador, los chips de categoría y los botones de diseño y "Nuevo paquete"
+  viven en ese nivel; al crear un paquete desde una categoría, el formulario ya
+  viene con ESA categoría elegida.
+- Las categorías que sólo aparecen en un paquete (una que todavía no esté
+  registrada) también salen, en vez de desaparecer.
+
 ## Diseñar las cards (Diseñador de paquetes)
 
 El botón **Diseñar cards** (en Paquetes, requiere permiso de *update*) abre el
@@ -220,6 +284,14 @@ vivo** de la tarjeta y de la fila, tal como quedarán en la web.
   pasar el mouse, tipografía del nombre (serif/MAYÚSCULAS), qué se muestra
   (categoría, subtítulo, cuántos servicios, lista, precio, botón), cuántos
   servicios se listan y los textos ("Desde"/"Cotizar"…).
+- **Foto del paquete**: sin foto, en **banda arriba** (con su alto) o **de
+  fondo**. De fondo, la foto se ve a TODO color y encima va un **velo NEGRO**
+  que oscurece más abajo y a la izquierda —donde van el nombre, los servicios y
+  el precio— para que el texto resalte; el control *Oscurecido de la foto
+  (degradado)* manda cuánto tapa (0 = foto limpia). Es el mismo velo en el
+  panel, en el diseñador y en la web (`site.js` → `hsPhotoFade` con negro). La
+  foto es la del paquete (pestaña *Datos* del formulario, y puede elegirse del
+  Drive).
 - Pestañas por **tier** (Premium / Gold / Basic): acento, acento claro, fondo,
   badge relleno o delineado y fuerza del borde, con **paletas listas** de un
   toque y la opción de copiar la paleta a los otros tiers.
@@ -233,6 +305,24 @@ el diseño del panel con el de la web y falla si alguien los separa.
 
 Los **colores de la marca** que se elijan aquí también tiñen el módulo: los
 chips de categoría y la minivista previa del formulario de paquete los usan.
+
+### La card del panel y la de la web son LA MISMA
+
+La tarjeta de la página se pinta con las medidas de la del panel: **un solo
+relleno** (el del diseño, en `.pkg-flyer-inner`; las secciones ya no suman el
+suyo), el **badge del tier en flujo arriba a la izquierda** (no flotando sobre
+la foto), categoría → nombre → subtítulo → **descripción** → línea completa
+fina → cuántos servicios → lista sin separadores entre filas → pie con el
+precio y el botón. El nombre va en blanco en TODOS los tiers (el degradado
+dorado del nombre era una de las diferencias) y el pie lleva el tinte del
+acento de su tier.
+
+Lo que NO se toca por paridad: la **animación de entrada** del catálogo
+(`reveal` + `hsPkgIn`, la que elige el diseñador) y la elevación al pasar el
+mouse, que son de la web; y el botón del pie, que en el panel es **Editar**
+(esto es un formulario) y en la web el CTA del diseño (*Cotizar*).
+`Hardstreet/tests/site-design.test.mjs` comprueba el marcado y el CSS de esas
+piezas.
 
 ## Módulo Sitio web (portada) — solo Windows
 
@@ -362,6 +452,19 @@ una carpeta entre ellas (una carpeta de su computadora o una de su Drive), y se
 navega **dentro del mismo módulo** —nunca salta al módulo Archivos— con el mismo
 diseño que el Drive y en **solo lectura** (se ve, se amplía y se descarga; no se
 escribe en la carpeta de otra persona).
+
+El contenido de la carpeta se presenta como en **Archivos**: grupos de
+**CARPETAS** e **IMÁGENES** con las mismas tarjetas (misma altura, mismo
+redondeo, misma separación) y las fotos en el mismo tamaño de miniatura (480 px,
+que el servidor reduce una vez y guarda en caché). Al abrir la carpeta se dejan
+**pedidas** las primeras miniaturas, así la cuadrícula aparece con las fotos en
+vez de ir llenándose a cuentagotas.
+
+El **visor** de una foto compartida pide el **preview redimensionado**
+(`/api/local/thumb?w=1600`), nunca el original: el original puede pesar 10 MB y,
+si la carpeta está en la computadora de su dueño, tiene que viajar por su app.
+El módulo trata estas carpetas como un drive **por red** (no como una carpeta
+del disco), que es lo que hace que sus miniaturas se pidan de verdad.
 
 Lo importante para que funcione: **una carpeta de TU computadora la sirve TU
 computadora**. La app abre una conexión SALIENTE al servidor del drive (long

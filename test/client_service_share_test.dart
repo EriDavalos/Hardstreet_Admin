@@ -89,7 +89,14 @@ class _FakeDrive extends DriveBase {
 
 /// Un paquete con UN servicio que ya trae carpeta compartida, liga y UNA foto
 /// elegida por el cliente.
-List<Map<String, dynamic>> _packages() => [
+///
+/// [pickPhotos] y [showFolder] son las OPCIONES que enciende el estudio POR
+/// SERVICIO: qué le sale al cliente en «Mi paquete».
+List<Map<String, dynamic>> _packages({
+  bool pickPhotos = true,
+  bool showFolder = true,
+}) =>
+    [
       {
         'id': 11,
         'name': 'Boda Ana & Luis',
@@ -113,6 +120,8 @@ List<Map<String, dynamic>> _packages() => [
             'status': {'id': 2, 'name': 'En proceso'},
             'shareFolder': 'ReynaCoot',
             'shareLink': 'https://ejemplo.mx/album',
+            'pickPhotos': pickPhotos,
+            'showFolder': showFolder,
             'items': 1,
             'service': {'id': 2, 'name': 'Álbum de fotos', 'icon': '', 'url': ''},
           },
@@ -122,14 +131,19 @@ List<Map<String, dynamic>> _packages() => [
 
 /// Mock: paquetes, carpetas compartidas y la SELECCIÓN de elementos.
 /// `saved` acumula los cuerpos de los PUT a /api/my/service-items.
-void _installMock({required List<Map<String, dynamic>> puts}) {
+void _installMock({
+  required List<Map<String, dynamic>> puts,
+  bool pickPhotos = true,
+  bool showFolder = true,
+}) {
   var items = <String>['ReynaCoot/portada.jpg'];
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final p = request.url.path;
 
     if (p.endsWith('/api/my/packages')) {
-      final packages = _packages();
+      final packages =
+          _packages(pickPhotos: pickPhotos, showFolder: showFolder);
       (packages.first['services'] as List).first['items'] = items.length;
       return http.Response(jsonEncode({'purchasedPackages': packages}), 200,
           headers: headers);
@@ -211,6 +225,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('elegir fotos sale SOLO si el servicio lo tiene encendido',
+      (tester) async {
+    // El estudio apagó «Elegir fotos» para este servicio: el botón no sale
+    // (antes salía en TODOS), y lo demás sigue igual.
+    _installMock(puts: [], pickPhotos: false);
+    await _pump(tester);
+
+    expect(find.text('Mis fotos (1)'), findsNothing);
+    expect(find.text('Elegir fotos'), findsNothing);
+    expect(find.text('Abrir carpeta'), findsOneWidget);
+    expect(find.text('Ver liga'), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('«Abrir carpeta» sale SOLO si el servicio lo tiene encendido',
+      (tester) async {
+    _installMock(puts: [], showFolder: false);
+    await _pump(tester);
+
+    expect(find.text('Abrir carpeta'), findsNothing);
+    // La carpeta sigue compartida (se ve en el Drive del cliente) y la liga
+    // sigue a la vista.
+    expect(find.text('Ver liga'), findsOneWidget);
+    expect(find.text('Mis fotos (1)'), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('"Abrir carpeta" entra a la carpeta compartida del servicio',
       (tester) async {
     _installMock(puts: []);
@@ -233,7 +276,7 @@ void main() {
 
     // El selector arranca en la raíz de lo compartido.
     expect(find.text('Elegir fotos · Álbum de fotos'), findsOneWidget);
-    expect(find.text('1 elegidos'), findsOneWidget);
+    expect(find.text('1 elegida'), findsOneWidget);
 
     // Entrar a la carpeta compartida y marcar OTRA foto (el nombre también
     // aparece en la tarjeta del Drive de la página: se toma el del diálogo).
@@ -241,7 +284,7 @@ void main() {
     expect(find.text('portada.jpg'), findsOneWidget);
     await _tap(tester, find.text('fiesta.jpg'));
 
-    expect(find.text('2 elegidos'), findsOneWidget);
+    expect(find.text('2 elegidas'), findsOneWidget);
 
     await _tap(tester, find.text('Guardar selección'));
 

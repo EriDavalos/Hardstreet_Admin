@@ -1028,10 +1028,13 @@ class _DrivePageState extends State<DrivePage> {
 
   void _open(DriveItem item) {
     if (item.isFolder) {
-      // IGNORAR toques mientras la carpeta anterior SIGUE cargando: la
-      // cuadrícula aún muestra el listado anterior y un segundo toque
-      // reabría el MISMO elemento → "Mi Drive / X / X".
-      if (widget.drive.loading) return;
+      // Un toque mientras la carpeta anterior SIGUE cargando se atiende: este
+      // freno dejaba el Drive sin responder a entrar en NINGUNA carpeta hasta
+      // que terminara la carga en curso (con muchas miniaturas en camino, un
+      // buen rato). Que el toque sea sobre un elemento del listado que se ve
+      // lo garantiza `DriveBase.openFolder` —navega desde la carpeta del
+      // listado en pantalla—, así que ya no hace falta: era él el que
+      // provocaba "Mi Drive / X / X".
       _clearSelection();
       widget.drive.openFolder(item.name);
     } else {
@@ -1272,13 +1275,19 @@ class _DrivePageState extends State<DrivePage> {
       },
       onDragExited: (_) => setState(() => _externalDrag = false),
       onDragDone: _handleExternalDrop,
-      child: Listener(
-      onPointerDown: _onContentPointerDown,
-      onPointerMove: _onContentPointerMove,
-      onPointerUp: _onContentPointerUp,
-      onPointerCancel: _onContentPointerUp,      child: Stack(
+      child: Stack(
       children: [
-        Column(
+        // El Listener va DENTRO del Stack y envuelve SOLO el contenido: las
+        // ventanas flotantes (actividad, barra de selección) quedan por encima
+        // y sus clics ya no se cuelan al fondo —antes, tocar la ventanita de
+        // actividad también seleccionaba tarjetas y hasta abría carpetas de
+        // detrás, y arrastrar en ella dibujaba la marquesina.
+        Listener(
+          onPointerDown: _onContentPointerDown,
+          onPointerMove: _onContentPointerMove,
+          onPointerUp: _onContentPointerUp,
+          onPointerCancel: _onContentPointerUp,
+          child: Column(
           children: [
             // ===== Header hero: tarjeta plana con degradado sutil y
             // círculos geométricos (mismo lenguaje visual que los módulos) ==
@@ -1633,6 +1642,7 @@ class _DrivePageState extends State<DrivePage> {
             ),
           ],
         ),
+        ),
         // ===== Recuadro de selección (marquesina) =====
         if (_marqueeRect != null)
           Positioned.fromRect(
@@ -1705,6 +1715,22 @@ class _DrivePageState extends State<DrivePage> {
               ),
             ),
           ),
+        // ===== Capa de fuera de la ventanita de actividad =====
+        // Con la ventanita ABIERTA se pone delante del contenido (la misma
+        // idea que el panel de la campanita de avisos): un clic de FUERA la
+        // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
+        // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
+        // la barra de selección para que esa barra siga funcionando.
+        if (_panelOpen &&
+            (drive.uploadJobs.isNotEmpty ||
+                drive.downloadJobs.isNotEmpty ||
+                _notices.isNotEmpty))
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _panelOpen = false),
+            ),
+          ),
         // ===== Barra de acciones de selección =====
         // Solo existe cuando hay selección: sin estado oculto que robe clics.
         if (_selectMode && _selected.isNotEmpty)
@@ -1756,10 +1782,12 @@ class _DrivePageState extends State<DrivePage> {
               notices: _notices,
               onToggle: () => setState(() => _panelOpen = !_panelOpen),
               onClearNotices: () => setState(() => _notices.clear()),
+              onDismissNotice: (i) => setState(() {
+                if (i >= 0 && i < _notices.length) _notices.removeAt(i);
+              }),
             ),
           ),
       ],
-      ),
       ),
       ),
     );
@@ -2073,20 +2101,19 @@ class _Breadcrumbs extends StatelessWidget {
     }
 
     // El cliente NO ve el camino hacia su carpeta compartida: si vive anidada
-    // (`XV/ReynaCoot`), las migas empiezan en SU carpeta (`ReynaCoot`), no en
-    // la carpeta del estudio que la contiene.
+    // (`XV/ReynaCoot`), las migas saltan la carpeta del estudio que la contiene
+    // y quedan «Mi Drive > ReynaCoot» (la raíz del cliente es donde están SUS
+    // carpetas compartidas), no «Mi Drive > XV > ReynaCoot».
     final hidden = drive.hiddenPathPrefix;
     final children = <Widget>[];
-    if (hidden == 0) {
-      children.add(
-        crumb(
-          'Mi Drive',
-          () => drive.openPath(const []),
-          current: drive.path.isEmpty,
-          target: const [],
-        ),
-      );
-    }
+    children.add(
+      crumb(
+        'Mi Drive',
+        () => drive.openPath(const []),
+        current: drive.path.isEmpty,
+        target: const [],
+      ),
+    );
     for (var i = hidden; i < drive.path.length; i++) {
       if (children.isNotEmpty) children.add(separator);
       final t = drive.path.sublist(0, i + 1);
@@ -2583,8 +2610,14 @@ class _FolderCard extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 2),
+                  // Sin conteo de verdad (una compartida anidada que el
+                  // listado de la raíz no puede contar) no se inventa un
+                  // "0 elementos": se dice que está compartida.
                   Text(
-                    '${item.childCount} elemento${item.childCount == 1 ? '' : 's'}',
+                    !item.countKnown
+                        ? 'Carpeta compartida'
+                        : '${item.childCount} '
+                            'elemento${item.childCount == 1 ? '' : 's'}',
                     style: Theme.of(context)
                         .textTheme
                         .bodySmall
@@ -2648,7 +2681,9 @@ class _ImageCard extends StatelessWidget {
                   children: [
                     DriveThumb(
                       source: src,
-                      isRemote: drive is DriveApiService,
+                      // El drive dice si sirve por RED (una carpeta compartida
+                      // también, aunque no sea el drive del servidor).
+                      isRemote: drive.isRemote,
                       localPreview: localPreview,
                       size: double.infinity,
                       big: true,
@@ -3042,7 +3077,7 @@ class _ListRow extends StatelessWidget {
                         borderRadius: BorderRadius.circular(6),
                         child: DriveThumb(
                           source: src,
-                          isRemote: drive is DriveApiService,
+                          isRemote: drive.isRemote,
                           localPreview: localPreview,
                           size: 40,
                         ),
@@ -3245,10 +3280,8 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _zoom.dispose();
     // Al cerrar el visor: fuera el original de RAM (queda en caché de disco).
-    final isRemote = widget.drive is DriveApiService;
-    if (isRemote) {
-      final api = widget.drive as DriveApiService;
-      ImageMemory.evict(api.absolutePathOf(widget.images[_index]));
+    if (widget.drive.isRemote) {
+      ImageMemory.evict(widget.drive.absolutePathOf(widget.images[_index]));
     } else {
       PaintingBinding.instance.imageCache.clear();
     }
@@ -3293,17 +3326,26 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   }
 
   /// Baja a caché de red los previews (1600px) de la foto actual ±2.
+  ///
+  /// Vale para CUALQUIER drive por red (también una carpeta compartida), no
+  /// sólo el del servidor: hace falta que la foto siguiente se vea sin esperar
+  /// y, en una carpeta compartida, el original puede tener que venir de la
+  /// computadora de su dueño (lento): mejor tener el preview listo antes.
   void _preloadNeighbors() {
-    if (widget.drive is! DriveApiService) return;
-    final api = widget.drive as DriveApiService;
+    final drive = widget.drive;
+    if (!drive.isRemote) return;
     for (var d = -2; d <= 2; d++) {
       final i = (_index + d) % widget.images.length;
       if (i < 0) continue;
       final item = widget.images[i];
       if (item.isFolder) continue;
+      // Sin `onError`: un preview que no se pueda bajar es sólo una
+      // optimización perdida (la foto de verdad tiene su propio reintento en
+      // la tarjeta), así que no debe ensuciar el registro ni la pantalla.
       precacheImage(
-        NetworkImage(api.fullSource(item, previewWidth: 1600)),
+        NetworkImage(drive.fullSource(item, previewWidth: 1600)),
         context,
+        onError: (_, _) {},
       );
     }
   }
@@ -3311,7 +3353,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   @override
   Widget build(BuildContext context) {
     final item = widget.images[_index];
-    final isRemote = widget.drive is DriveApiService;
+    final isRemote = widget.drive.isRemote;
     // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original.
     final src = widget.drive.fullSource(item, previewWidth: 1600);
     final total = widget.images.length;
@@ -3584,6 +3626,7 @@ class _ActivityPanel extends StatelessWidget {
     required this.notices,
     required this.onToggle,
     required this.onClearNotices,
+    this.onDismissNotice,
   });
 
   final bool open;
@@ -3592,20 +3635,21 @@ class _ActivityPanel extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback onClearNotices;
 
+  /// Quita UN aviso (el de la posición dada).
+  final ValueChanged<int>? onDismissNotice;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     // Las fotos del LOTE en curso (no el historial de otros lotes).
     final uploadJobs = drive.currentUploadJobs;
     final uploads = uploadJobs.length;
-    final uploaded =
-        uploadJobs.where((j) => j.status == 'done').length;
     final downloads = drive.downloadJobs.length;
 
     // ---- Oculta: pastilla compacta para volver a abrirla ----
     if (!open) {
       final parts = [
-        if (uploads > 0) '$uploaded/$uploads fotos',
+        if (uploads > 0) '$uploads foto${uploads == 1 ? '' : 's'}',
         if (downloads > 0) '$downloads descarga${downloads == 1 ? '' : 's'}',
         if (notices.isNotEmpty)
           '${notices.length} aviso${notices.length == 1 ? '' : 's'}',
@@ -3613,25 +3657,37 @@ class _ActivityPanel extends StatelessWidget {
       return Material(
         key: const ValueKey('activity_pill'),
         elevation: 10,
-        shadowColor: Colors.black.withValues(alpha: .25),
-        borderRadius: BorderRadius.circular(20),
+        shadowColor: Colors.black.withValues(alpha: .28),
+        borderRadius: BorderRadius.circular(999),
         color: scheme.surface,
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(999),
           onTap: onToggle,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+            padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.unfold_more_rounded,
-                    size: 15, color: scheme.primary),
+                Container(
+                  width: 20,
+                  height: 20,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .16),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.bolt_rounded,
+                      size: 13, color: scheme.primary),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   parts.join(' · '),
                   style: const TextStyle(
                       fontSize: 12, fontWeight: FontWeight.w700),
                 ),
+                const SizedBox(width: 6),
+                Icon(Icons.unfold_more_rounded,
+                    size: 15, color: scheme.onSurfaceVariant),
               ],
             ),
           ),
@@ -3639,123 +3695,348 @@ class _ActivityPanel extends StatelessWidget {
       );
     }
 
-    final screenH = MediaQuery.sizeOf(context).height;
-    return Material(
-      key: const ValueKey('activity_panel'),
-      elevation: 12,
-      shadowColor: Colors.black.withValues(alpha: .30),
-      borderRadius: BorderRadius.circular(16),
-      color: scheme.surface,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 360, maxHeight: screenH * .5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ---- Encabezado: título + limpiar avisos + ocultar ----
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 6, 4),
-              child: Row(
-                children: [
-                  Icon(Icons.notifications_outlined,
-                      size: 17, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Actividad',
-                      style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  if (notices.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Limpiar avisos',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: onClearNotices,
-                      icon: const Icon(Icons.clear_all_rounded, size: 18),
-                    ),
-                  IconButton(
-                    tooltip: 'Ocultar',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onToggle,
-                    icon: Icon(Icons.expand_more_rounded,
-                        size: 20, color: scheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Avisos PRIMERO: son lo más nuevo y el panel se abre
-                    // solito cuando llegan.
-                    if (notices.isNotEmpty) _noticesSection(scheme),
-                    if (notices.isNotEmpty &&
-                        (uploads > 0 || downloads > 0))
-                      const Divider(height: 16),
-                    if (uploads > 0)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-                        child: _UploadsCard(drive: drive),
-                      ),
-                    if (uploads > 0 && downloads > 0)
-                      const SizedBox(height: 10),
-                    if (downloads > 0)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-                        child: _DownloadsCard(drive: drive),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+    // Resumen del encabezado. Se cuida de no repetir EXACTAMENTE los textos
+    // de progreso ("1/2 fotos", "50% subidas"): cada cosa se dice una vez.
+    final resumen = [
+      if (notices.isNotEmpty)
+        '${notices.length} aviso${notices.length == 1 ? '' : 's'}',
+      if (uploads > 0) '$uploads foto${uploads == 1 ? '' : 's'}',
+      if (downloads > 0) '$downloads descarga${downloads == 1 ? '' : 's'}',
+    ].join(' · ');
 
-  /// Lista de avisos: icono + texto, ROJO si falló, VERDE si se cumplió.
-  Widget _noticesSection(ColorScheme scheme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < notices.length; i++) ...[
-            if (i > 0) const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final screenH = MediaQuery.sizeOf(context).height;
+    // El panel ABSORBE el puntero en TODA su superficie: sin esto, el clic
+    // atravesaba el hueco que queda entre los widgets (un texto o un margen no
+    // capturan toques) y caía en la cuadrícula de atrás, así que tocar la
+    // ventanita seleccionaba fotos sin querer.
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      child: Material(
+        key: const ValueKey('activity_panel'),
+        elevation: 18,
+        shadowColor: Colors.black.withValues(alpha: .45),
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        color: scheme.surface,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .5)),
+          ),
+          child: ConstrainedBox(
+            constraints:
+                BoxConstraints(maxWidth: 400, maxHeight: screenH * .58),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 1),
-                  child: Icon(
-                    notices[i].error
-                        ? Icons.error_outline
-                        : Icons.check_circle_outline,
-                    size: 15,
-                    color: notices[i].error ? scheme.error : Colors.green,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    notices[i].text,
-                    style: TextStyle(
-                      fontSize: 12.3,
-                      height: 1.35,
-                      color:
-                          notices[i].error ? scheme.error : scheme.onSurface,
+                _header(scheme, resumen),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Avisos PRIMERO: son lo más nuevo y el panel se abre
+                        // solito cuando llegan.
+                        if (notices.isNotEmpty) _noticesSection(scheme),
+                        if (uploads > 0) ...[
+                          if (notices.isNotEmpty) const SizedBox(height: 10),
+                          _UploadsCard(drive: drive),
+                        ],
+                        if (downloads > 0) ...[
+                          if (notices.isNotEmpty || uploads > 0)
+                            const SizedBox(height: 10),
+                          _DownloadsCard(drive: drive),
+                        ],
+                      ],
                     ),
                   ),
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Encabezado del panel: icono, título, resumen en vivo y acciones.
+  Widget _header(ColorScheme scheme, String resumen) {
+    // Punto EN VIVO: solo cuando hay algo transfiriéndose ahora mismo.
+    final working = drive.uploadJobs.any((j) => j.status == 'uploading') ||
+        drive.downloadJobs.any((j) => j.status == 'downloading');
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primary.withValues(alpha: .14),
+            scheme.primary.withValues(alpha: .01),
           ],
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .15),
+                  borderRadius: BorderRadius.circular(11),
+                  border:
+                      Border.all(color: scheme.primary.withValues(alpha: .28)),
+                ),
+                child: Icon(Icons.notifications_active_outlined,
+                    size: 18, color: scheme.primary),
+              ),
+              if (working)
+                Positioned(
+                  right: -1,
+                  top: -1,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: scheme.surface, width: 1.6),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Actividad',
+                      style:
+                          TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                    ),
+                    if (working) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        'en curso',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.green.withValues(alpha: .95),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (resumen.isNotEmpty)
+                  Text(
+                    resumen,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (notices.isNotEmpty)
+            IconButton(
+              tooltip: 'Limpiar avisos',
+              visualDensity: VisualDensity.compact,
+              onPressed: onClearNotices,
+              icon: Icon(Icons.delete_sweep_outlined,
+                  size: 19, color: scheme.onSurfaceVariant),
+            ),
+          IconButton(
+            tooltip: 'Ocultar',
+            visualDensity: VisualDensity.compact,
+            onPressed: onToggle,
+            icon: Icon(Icons.keyboard_arrow_down_rounded,
+                size: 22, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Lista de avisos: cada uno en su recuadro, ROJO si falló y VERDE si se
+  /// cumplió, con su botón para quitarlo de la lista.
+  Widget _noticesSection(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < notices.length; i++) ...[
+          if (i > 0) const SizedBox(height: 6),
+          _NoticeRow(
+            notice: notices[i],
+            onDismiss: onDismissNotice == null
+                ? null
+                : () => onDismissNotice!(i),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Un aviso del panel: recuadro tintado (verde/rojo), icono, texto y ✕ para
+/// descartarlo sin borrar los demás.
+class _NoticeRow extends StatelessWidget {
+  const _NoticeRow({required this.notice, this.onDismiss});
+
+  final _DriveNotice notice;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = notice.error ? scheme.error : Colors.green;
+    return Container(
+      padding: EdgeInsets.fromLTRB(10, 8, onDismiss == null ? 10 : 2, 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: color.withValues(alpha: .30)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              notice.error
+                  ? Icons.error_outline
+                  : Icons.check_circle_outline,
+              size: 16,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              notice.text,
+              style: TextStyle(
+                fontSize: 12.3,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: notice.error ? scheme.error : scheme.onSurface,
+              ),
+            ),
+          ),
+          if (onDismiss != null)
+            SizedBox(
+              width: 28,
+              height: 26,
+              child: IconButton(
+                tooltip: 'Descartar aviso',
+                padding: EdgeInsets.zero,
+                iconSize: 15,
+                onPressed: onDismiss,
+                icon: Icon(Icons.close_rounded,
+                    color: scheme.onSurfaceVariant),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Bloque de la ventanita: título con su icono, un subtítulo opcional y el
+/// contenido, todo dentro del MISMO marco. Antes cada bloque era una tarjeta
+/// con su sombra dentro de la tarjeta grande y se veía recargado.
+class _PanelSection extends StatelessWidget {
+  const _PanelSection({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.action,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget? action;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 9, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .30),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .40)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .15),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, size: 15, color: scheme.primary),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12.6, fontWeight: FontWeight.w800),
+                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty)
+                      Text(
+                        subtitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              ?action,
+            ],
+          ),
+          const SizedBox(height: 7),
+          child,
         ],
       ),
     );
@@ -3790,142 +4071,84 @@ class _UploadsCard extends StatelessWidget {
     // foto no dicen cuántas faltan.
     final total = jobs.length;
     final globalPct = total > 0 ? (done / total).clamp(0.0, 1.0) : null;
-    return Material(
+    return _PanelSection(
       key: const ValueKey('uploads_card'),
-      elevation: 10,
-      shadowColor: Colors.black.withValues(alpha: .25),
-      borderRadius: BorderRadius.circular(16),
-      color: scheme.surface,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380, maxHeight: 340),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
-              child: Row(
-                children: [
-                  Icon(
-                    active > 0
-                        ? Icons.cloud_upload_outlined
-                        : failed > 0
-                            ? Icons.error_outline
-                            : Icons.cloud_done_outlined,
-                    size: 18,
-                    color: active == 0 && failed > 0
-                        ? scheme.error
-                        : scheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          active > 0
-                              ? 'Subiendo $total '
-                                  '${total == 1 ? 'foto' : 'fotos'}…'
-                              : failed > 0
-                                  ? '$done completada${done == 1 ? '' : 's'} · '
-                                      '$failed con error${failed == 1 ? '' : 's'}'
-                                  : '$total subida${total == 1 ? '' : 's'} '
-                                      'completada${total == 1 ? '' : 's'}',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        if (active > 0)
-                          Text(
-                            '$done de $total fotos'
-                            '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (active > 0)
-                    TextButton.icon(
-                      onPressed: drive.cancelAllUploads,
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      icon: const Icon(Icons.cancel_outlined, size: 15),
-                      label: const Text('Cancelar todo',
-                          style: TextStyle(fontSize: 12)),
-                    )
-                  else
-                    IconButton(
-                      tooltip: 'Limpiar',
-                      onPressed: drive.clearFinishedUploads,
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-                ],
-              ),
+      icon: active > 0
+          ? Icons.cloud_upload_outlined
+          : failed > 0
+              ? Icons.error_outline
+              : Icons.cloud_done_outlined,
+      title: active > 0
+          ? 'Subiendo $total ${total == 1 ? 'foto' : 'fotos'}…'
+          : failed > 0
+              ? '$done completada${done == 1 ? '' : 's'} · '
+                  '$failed con error${failed == 1 ? '' : 's'}'
+              : '$total subida${total == 1 ? '' : 's'} '
+                  'completada${total == 1 ? '' : 's'}',
+      subtitle: active > 0
+          ? '$done de $total fotos'
+              '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}'
+          : null,
+      action: active > 0
+          ? TextButton.icon(
+              onPressed: drive.cancelAllUploads,
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              icon: const Icon(Icons.cancel_outlined, size: 15),
+              label: const Text('Cancelar todo', style: TextStyle(fontSize: 12)),
+            )
+          : IconButton(
+              tooltip: 'Limpiar',
+              visualDensity: VisualDensity.compact,
+              onPressed: drive.clearFinishedUploads,
+              icon: const Icon(Icons.close, size: 18),
             ),
-            // Barra de progreso del LOTE: fotos subidas / fotos a subir.
-            if (globalPct != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: globalPct,
-                          minHeight: 4,
-                        ),
-                      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Barra de progreso del LOTE: fotos subidas / fotos a subir.
+          if (globalPct != null)
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: globalPct,
+                      minHeight: 4,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${(globalPct * 100).toStringAsFixed(0)}% subidas',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$done/$total fotos',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            const Divider(height: 1),            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                itemCount: jobs.length,
-                itemBuilder: (context, i) {
-                  final job = jobs[i];
-                  return UploadJobTile(
-                    job: job,
-                    onCancel: job.status == 'uploading'
-                        ? () => drive.cancelUpload(job.id)
-                        : null,
-                    onRetry: job.status == 'error'
-                        ? () => drive.retryUpload(job.id)
-                        : null,
-                  );
-                },
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  '${(globalPct * 100).toStringAsFixed(0)}% subidas',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '$done/$total fotos',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          const SizedBox(height: 4),
+          for (final job in jobs)
+            UploadJobTile(
+              job: job,
+              onCancel: job.status == 'uploading'
+                  ? () => drive.cancelUpload(job.id)
+                  : null,
+              onRetry:
+                  job.status == 'error' ? () => drive.retryUpload(job.id) : null,
+            ),
+        ],
       ),
     );
   }
@@ -3953,14 +4176,24 @@ class UploadJobTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final pct = job.total > 0 ? (job.sent / job.total).clamp(0.0, 1.0) : null;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    final failed = job.status == 'error';
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .65),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: (failed ? scheme.error : scheme.outlineVariant)
+              .withValues(alpha: failed ? .45 : .35),
+        ),
+      ),
       child: Row(
         children: [
           DriveThumb(
             source: job.thumb,
             isRemote: false, // miniatura del archivo LOCAL
-            size: 42,
+            size: 40,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -3973,7 +4206,7 @@ class UploadJobTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -4134,123 +4367,79 @@ class _DownloadsCard extends StatelessWidget {
     final globalPct =
         totalBytes > 0 ? (gotBytes / totalBytes).clamp(0.0, 1.0) : null;
 
-    return Material(
+    return _PanelSection(
       key: const ValueKey('downloads_card'),
-      elevation: 10,
-      shadowColor: Colors.black.withValues(alpha: .25),
-      borderRadius: BorderRadius.circular(16),
-      color: scheme.surface,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380, maxHeight: 340),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
-              child: Row(
-                children: [
-                  Icon(
-                    active > 0
-                        ? Icons.downloading_outlined
-                        : failed > 0
-                            ? Icons.error_outline
-                            : Icons.download_done_outlined,
-                    size: 18,
-                    color: active == 0 && failed > 0
-                        ? scheme.error
-                        : scheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      active > 0
-                          ? 'Descargando $active '
-                              '${active == 1 ? 'archivo' : 'archivos'}…'
-                          : failed > 0
-                              ? '$done lista${done == 1 ? '' : 's'} · '
-                                  '$failed con error${failed == 1 ? '' : 'es'}'
-                              : '$done descarga${done == 1 ? '' : 's'} '
-                                  'completada${done == 1 ? '' : 's'}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  if (active > 0)
-                    TextButton.icon(
-                      onPressed: () {
-                        for (final j in jobs) {
-                          drive.cancelDownload(j.id);
-                        }
-                      },
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      icon: const Icon(Icons.cancel_outlined, size: 15),
-                      label:
-                          const Text('Cancelar', style: TextStyle(fontSize: 12)),
-                    )
-                  else
-                    IconButton(
-                      tooltip: 'Limpiar',
-                      onPressed: drive.clearFinishedDownloads,
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-                ],
-              ),
+      icon: active > 0
+          ? Icons.downloading_outlined
+          : failed > 0
+              ? Icons.error_outline
+              : Icons.download_done_outlined,
+      title: active > 0
+          ? 'Descargando $active ${active == 1 ? 'archivo' : 'archivos'}…'
+          : failed > 0
+              ? '$done lista${done == 1 ? '' : 's'} · '
+                  '$failed con error${failed == 1 ? '' : 'es'}'
+              : '$done descarga${done == 1 ? '' : 's'} '
+                  'completada${done == 1 ? '' : 's'}',
+      subtitle: active > 0 && globalPct != null
+          ? '${(globalPct * 100).toStringAsFixed(0)} % en curso'
+          : null,
+      action: active > 0
+          ? TextButton.icon(
+              onPressed: () {
+                for (final j in jobs) {
+                  drive.cancelDownload(j.id);
+                }
+              },
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              icon: const Icon(Icons.cancel_outlined, size: 15),
+              label: const Text('Cancelar', style: TextStyle(fontSize: 12)),
+            )
+          : IconButton(
+              tooltip: 'Limpiar',
+              visualDensity: VisualDensity.compact,
+              onPressed: drive.clearFinishedDownloads,
+              icon: const Icon(Icons.close, size: 18),
             ),
-            if (active > 0)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: globalPct,
-                          minHeight: 4,
-                        ),
-                      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (active > 0)
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: globalPct,
+                      minHeight: 4,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      globalPct == null
-                          ? '…'
-                          : '${(globalPct * 100).toStringAsFixed(0)} %',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: scheme.primary,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            const Divider(height: 1),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                itemCount: jobs.length,
-                itemBuilder: (context, i) {
-                  final job = jobs[i];
-                  return DownloadJobTile(
-                    job: job,
-                    onCancel: job.status == 'downloading'
-                        ? () => drive.cancelDownload(job.id)
-                        : null,
-                    onRetry: job.status == 'error'
-                        ? () => retryDriveDownload(context, drive, job)
-                        : null,
-                  );
-                },
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  globalPct == null
+                      ? '…'
+                      : '${(globalPct * 100).toStringAsFixed(0)} %',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          for (final job in jobs)
+            DownloadJobTile(
+              job: job,
+              onCancel: job.status == 'downloading'
+                  ? () => drive.cancelDownload(job.id)
+                  : null,
+              onRetry: job.status == 'error'
+                  ? () => retryDriveDownload(context, drive, job)
+                  : null,
+            ),
+        ],
       ),
     );
   }
@@ -4278,16 +4467,38 @@ class DownloadJobTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final pct =
         job.total > 0 ? (job.received / job.total).clamp(0.0, 1.0) : null;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    final failed = job.status == 'error';
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .65),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: (failed ? scheme.error : scheme.outlineVariant)
+              .withValues(alpha: failed ? .45 : .35),
+        ),
+      ),
       child: Row(
         children: [
-          Icon(
-            job.name.toLowerCase().endsWith('.zip')
-                ? Icons.folder_zip_outlined
-                : Icons.image_outlined,
-            size: 26,
-            color: scheme.primary.withValues(alpha: .75),
+          // Cuadro del tipo de archivo (una descarga no siempre es una foto
+          // que se pueda mirar: un ZIP no tiene miniatura).
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: .10),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: scheme.primary.withValues(alpha: .18)),
+            ),
+            child: Icon(
+              job.name.toLowerCase().endsWith('.zip')
+                  ? Icons.folder_zip_outlined
+                  : Icons.image_outlined,
+              size: 19,
+              color: scheme.primary.withValues(alpha: .85),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -4300,7 +4511,7 @@ class DownloadJobTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 4),

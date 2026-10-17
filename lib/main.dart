@@ -33,6 +33,7 @@ import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
+import 'widgets/brand_badge.dart';
 import 'widgets/force_update_dialog.dart';
 import 'widgets/hs_toast.dart';
 import 'widgets/startup_intro.dart';
@@ -164,8 +165,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       if (_sessionRestored) RemindersService.instance.start();
       // Si este usuario comparte carpetas de SU computadora, la app empieza a
       // servirlas (agente): así los demás las ven mientras la app esté abierta.
-      if (_sessionRestored)
+      if (_sessionRestored) {
         unawaited(LocalShareAgent.instance.syncWithShares());
+      }
     });
     // Chequeo periódico mientras la app siga abierta (por si el servidor
     // publica una versión nueva en caliente). En web/tests se omite.
@@ -429,6 +431,97 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   DriveApiService get _ownedDrive => _ownedDriveInstance ??= DriveApiService();
 }
 
+/// Pantalla de CARGA del panel: se ve mientras se leen los permisos del usuario
+/// (de ellos dependen el menú y el módulo con el que abre la app).
+///
+/// Existe para que el arranque no muestre un módulo y luego otro: el panel
+/// aparece YA en su módulo, o aquí si todavía no se sabe cuál es.
+class PanelLoadingScreen extends StatelessWidget {
+  const PanelLoadingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dark = scheme.brightness == Brightness.dark;
+    // Mismo fondo que la animación de arranque: la intro cede el paso a esta
+    // pantalla sin costura, sin un parpadeo blanco de por medio.
+    final background = dark ? const Color(0xFF0C111C) : const Color(0xFFF7F9FC);
+    return Scaffold(
+      backgroundColor: background,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const BrandBadge(size: 64, radius: 20, elevated: false),
+            const SizedBox(height: 22),
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.4,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Preparando tu panel…',
+              style: TextStyle(fontSize: 13.5, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pantalla cuando NO se pudieron leer los permisos: sin conexión con el
+/// servidor no se sabe qué módulos puede ver el usuario, así que no se dibuja
+/// el panel completo. Explica el problema y ofrece REINTENTAR.
+class PanelNoConnectionScreen extends StatelessWidget {
+  const PanelNoConnectionScreen({super.key, required this.onRetry});
+
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off_rounded, size: 72, color: scheme.error),
+              const SizedBox(height: 18),
+              Text(
+                'Falta la conexión',
+                style: Theme.of(context).textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'No se pudieron comprobar tus permisos, así que todavía no se '
+                'sabe qué módulos puede ver tu usuario.\n\n'
+                'Revisa tu conexión a internet e inténtalo de nuevo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Pantalla bloqueante cuando NO se pudo revisar la versión (sin conexión):
 /// explica el problema y ofrece REINTENTAR. No se puede saltar.
 class _VersionErrorScreen extends StatelessWidget {
@@ -577,14 +670,23 @@ class _AdminHomeState extends State<AdminHome> {
   /// sigue viendo el drive completo. Best effort: sin conexión o con un
   /// backend viejo, el drive se queda como estaba.
   Future<void> _loadDriveScope() async {
+    // El drive se guarda ANTES de cualquier await: después, el contexto puede
+    // estar desmontado y no se debe volver a mirar el árbol.
+    final drive = _drive;
     try {
       final info = await HsApi.myDriveDirectories();
       if (!mounted) return;
-      await _drive.setSharedRoots([
+      await drive.setSharedRoots([
         for (final p in info.paths) (p['path'] ?? '').toString(),
       ], isClient: info.isClient);
     } catch (_) {
       // Sin permiso/sin red: no se toca el alcance del drive.
+    }
+    // El drive remoto se crea al construir la app, ANTES de que exista la
+    // sesión: su primer refresco se omite a propósito (saldría sin `Apikey` y
+    // el servidor lo rechazaría). Ya con la sesión en marcha, se pide.
+    if (drive is DriveApiService && drive.waitingSession) {
+      unawaited(drive.refresh());
     }
   }
 
@@ -675,11 +777,15 @@ class _AdminHomeState extends State<AdminHome> {
   }
 
   /// Elige con qué sección se ABRE la app: el primer módulo del menú que el rol
-  /// puede ver (con el orden que manda la BD). Si todavía no hay permisos
-  /// (degraded) o el menú está vacío, se espera a la siguiente build.
+  /// puede ver (con el orden que manda la BD). Si todavía no hay permisos o el
+  /// menú está vacío, se espera a la siguiente build.
   ///
-  /// Se aplica en un post-frame para no tocar el estado durante el build: el
-  /// Dashboard puede verse un instante y de inmediato entra el módulo real.
+  /// Se fija AQUÍ, dentro del build que ya tiene el menú armado (y antes de
+  /// construir el cuerpo), no en un post-frame: el panel aparece DIRECTO en su
+  /// módulo. Antes se dibujaba el Dashboard un frame y el usuario veía el salto
+  /// de un módulo a otro (y su carga de datos a medias). El arranque se decide
+  /// UNA vez ([_startPicked]): asignar el campo sin setState es seguro porque su
+  /// efecto se usa más abajo, en este mismo build.
   void _pickStartSection(
     bool degraded,
     List<_Section?> menu,
@@ -688,11 +794,7 @@ class _AdminHomeState extends State<AdminHome> {
     if (_startPicked) return;
     if (degraded || !catalogReady || menu.isEmpty) return;
     _startPicked = true;
-    final target = _firstAllowedSection();
-    if (target == _section) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _section = target);
-    });
+    _section = _firstAllowedSection();
   }
 
   /// ¿Se muestra el módulo [name]? Exige "Ver" (read) según la BD, TAMBIÉN
@@ -720,6 +822,20 @@ class _AdminHomeState extends State<AdminHome> {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 720;
+    final access = HsAccess.instance;
+
+    // ARRANQUE: mientras no se conocen los permisos NO se dibuja ningún módulo.
+    // De ellos depende el menú Y con qué módulo abre la app; antes el Dashboard
+    // se dibujaba con los permisos aún cargando, empezaba a pedir sus datos y al
+    // llegar la respuesta la app saltaba al primer módulo permitido: ese cambio
+    // de módulo no se debe ver. La pantalla de carga tapa ese momento.
+    if (access.loading) return const PanelLoadingScreen();
+    // Tampoco se dibuja el panel completo si los permisos no se pudieron leer
+    // (sin conexión): mostrar todos los módulos como si el rol pudiera verlos es
+    // peor que decirlo claro y ofrecer reintentar.
+    if (access.degraded) {
+      return PanelNoConnectionScreen(onRetry: _loadPermissions);
+    }
 
     // Destinos visibles según permisos REALES del rol (HsAccess). TODOS exigen
     // "Ver" sobre su módulo — con el nombre EXACTO de la tabla modules
@@ -888,7 +1004,6 @@ class _AdminHomeState extends State<AdminHome> {
     // SUELTOS (sin categoría, como Dashboard) van primero; luego cada
     // categoría por su `order` (menor = arriba) con sus módulos por `order`.
     // Sin datos del backend se conserva el orden y los encabezados de siempre.
-    final access = HsAccess.instance;
     final useCatalog = !access.degraded && access.catalog.isNotEmpty;
 
     final allList = all.toList();

@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/drive_base.dart';
+import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
 
@@ -89,7 +91,7 @@ void _installMock({
 }
 
 Future<void> _pumpPage(WidgetTester tester,
-    {List<Map<String, dynamic>>? services}) async {
+    {List<Map<String, dynamic>>? services, bool withDrive = false}) async {
   await tester.binding.setSurfaceSize(const Size(1200, 900));
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = const Size(1200, 900);
@@ -99,11 +101,81 @@ Future<void> _pumpPage(WidgetTester tester,
   _installMock(posts: [], services: services);
   addTearDown(() => HsApi.client = previous);
 
+  const page = MaterialApp(home: Scaffold(body: PackagesPage()));
   await tester.pumpWidget(
-    const MaterialApp(home: Scaffold(body: PackagesPage())),
+    withDrive
+        ? DriveScope(drive: _FakeDrive(), child: page)
+        : page,
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+  // El módulo abre en la GALERÍA de categorías: se entra al catálogo completo
+  // para probar el formulario de paquete.
+  await _openCatalog(tester);
+}
+
+/// Entra al catálogo completo desde la galería de categorías.
+Future<void> _openCatalog(WidgetTester tester) async {
+  await tester.tap(find.text('TODO EL CATÁLOGO'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Drive de prueba sin red: una carpeta (`XV`) con una foto dentro.
+class _FakeDrive extends DriveBase {
+  static const Map<String, List<DriveItem>> tree = {
+    '': [DriveItem(name: 'XV', isFolder: true)],
+    'XV': [DriveItem(name: 'portada.jpg', isFolder: false, size: 2048)],
+  };
+
+  @override
+  Future<void> refresh() async {
+    updateItems(tree[path.join('/')] ?? const <DriveItem>[]);
+    loadedPath = pathLabel;
+    conn = DriveConn.online;
+  }
+
+  @override
+  Future<List<DriveItem>> listFolderItems(List<String> rel) async =>
+      tree[rel.join('/')] ?? const <DriveItem>[];
+
+  @override
+  List<String> listFolders(List<String> rel) => const <String>[];
+
+  @override
+  String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
+
+  @override
+  Future<int> uploadFromPaths(List<String> sources,
+          {bool overwrite = false}) async =>
+      0;
+
+  @override
+  Future<void> createFolder(String name) async {}
+
+  @override
+  Future<void> rename(DriveItem item, String newName) async {}
+
+  @override
+  Future<void> delete(DriveItem item) async {}
+
+  @override
+  Future<({int moved, List<String> errors})> moveItems(
+          List<String> names, List<String> targetPath) async =>
+      (moved: 0, errors: const <String>[]);
+
+  @override
+  Future<({int copied, List<String> errors})> copyItems(
+          List<String> names, List<String> targetPath) async =>
+      (copied: 0, errors: const <String>[]);
+
+  @override
+  Future<({int deleted, List<String> errors})> deleteItems(
+          List<String> names) async =>
+      (deleted: 0, errors: const <String>[]);
+
+  @override
+  Future<void> retryUpload(String jobId) async {}
 }
 
 Future<void> _tap(WidgetTester tester, Finder finder) async {
@@ -190,6 +262,33 @@ void main() {
     await _tap(tester, find.text('Crear paquete'));
 
     expect(find.text('Escribe el nombre del paquete'), findsOneWidget);
+  });
+
+  testWidgets('la foto del paquete se elige DEL DRIVE (su URL pública queda '
+      'en el campo)', (tester) async {
+    await _pumpPage(tester, withDrive: true);
+    await _openForm(tester);
+
+    // El botón del campo de la imagen abre el MISMO selector de fotos del Drive
+    // que usan los demás módulos (rejilla con miniatura, vista previa…).
+    await _tap(tester, find.text('Elegir una foto del Drive'));
+    expect(find.text('Foto del paquete'), findsOneWidget);
+
+    // Se entra a la carpeta y se elige la foto.
+    await tester.tap(find.descendant(
+        of: find.byType(AlertDialog), matching: find.text('XV')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tap(tester, find.byKey(const ValueKey('drive-photo-portada.jpg')));
+    await _tap(tester, find.text('Usar esta foto'));
+
+    // El campo queda con la URL PÚBLICA (sin sesión): es la que la web abre.
+    expect(
+      find.widgetWithText(
+          TextField, 'https://oriongo.ddns.net/files/XV/portada.jpg'),
+      findsWidgets,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('la vista previa refleja los datos y se puede AGREGAR un '

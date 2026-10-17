@@ -393,6 +393,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         _localItems = data.items;
         _localLoading = false;
       });
+      // Las miniaturas se dejan pedidas ya: al abrir la carpeta se ve la
+      // cuadrícula con las fotos en vez de ir apareciendo una por una.
+      _warmThumbs(data.items);
     } catch (e) {
       if (!mounted || ticket != _localTicket) return;
       setState(() {
@@ -1685,9 +1688,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       return const [ListSkeleton(lines: 3, cardHeight: 84)];
     }
     if (_localError != null) {
-      // Una carpeta de la COMPUTADORA del dueño solo se puede ver si el
-      // servidor del drive es el que puede abrir esa carpeta: si no, se dice
-      // (si no, el mensaje del servidor no explica nada).
+      // Una carpeta de la COMPUTADORA del dueño la sirve SU app (el servidor
+      // solo hace de puente): al fallar, se explica eso, y no que "el servidor
+      // tiene que poder abrirla" —eso era falso y mandaba a buscar el problema
+      // al lugar equivocado (el servidor NUNCA puede abrir la carpeta de otro
+      // equipo; para eso está la app del dueño).
       final local = _open!['local'] == true;
       return [
         Card(
@@ -1701,10 +1706,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                 if (local) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'Es una carpeta de la computadora de quien la comparte: el '
-                    'servidor del drive tiene que poder abrir esa misma '
-                    'carpeta para mostrarla aquí. Si no, compártela desde el '
-                    'Drive.',
+                    'Es una carpeta de la computadora de quien la comparte: la '
+                    'sirve SU aplicación, así que esa computadora tiene que '
+                    'estar encendida y con la aplicación abierta. Si sigue sin '
+                    'abrirse, pídele que la vuelva a compartir.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,
@@ -1738,62 +1743,80 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         ),
       ];
     }
-    final folders = items.where((i) => i.isFolder).toList();
-    final files = items.where((i) => !i.isFolder).toList();
+    // El contenido se pinta TAL CUAL lo hace el módulo Archivos: UNA sola
+    // cuadrícula, con las carpetas y las fotos mezcladas en el orden que manda
+    // el servidor (carpetas primero y, dentro de cada tipo, por nombre).
+    //
+    // Antes se partía en dos tramos con sus rótulos ("CARPETAS" / "IMÁGENES") y
+    // dos cuadrículas, que es algo que el Drive NO hace: sus carpetas y sus
+    // fotos van juntas en la misma rejilla.
     return [
-      if (folders.isNotEmpty) ...[
-        _groupHead(scheme, 'CARPETAS', Icons.folder_rounded),
-        const SizedBox(height: 8),
-        for (final f in folders) ...[
-          _LocalTile(
-            item: f,
-            thumb: null,
-            onTap: () => _enterLocalFolder(f),
-            onDownload: null,
+      _localGrid([
+        for (final i in items)
+          _LocalCard(
+            name: i.name,
+            folder: i.isFolder,
+            size: i.size,
+            thumb: i.isFolder ? null : _localThumb(i.name),
+            onTap: () => i.isFolder ? _enterLocalFolder(i) : _viewLocalImage(i),
+            onDownload: i.isFolder ? null : () => _downloadLocal(i.name),
           ),
-          const SizedBox(height: 8),
-        ],
-        const SizedBox(height: 6),
-      ],
-      if (files.isNotEmpty) ...[
-        _groupHead(scheme, 'IMÁGENES', Icons.image_outlined),
-        const SizedBox(height: 8),
-        for (final f in files) ...[
-          _LocalTile(
-            item: f,
-            thumb: _local.thumbUrl((_open!['shareId'] as num?)?.toInt() ?? 0, [
-              ..._localPath,
-              f.name,
-            ]),
-            onTap: () => _viewLocalImage(f),
-            onDownload: () => _downloadLocal(f.name),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ],
+      ]),
     ];
   }
 
-  Widget _groupHead(ColorScheme scheme, String label, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, size: 14, color: scheme.primary),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10.5,
-            letterSpacing: .7,
-            fontWeight: FontWeight.w800,
-            color: scheme.primary,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Divider(color: scheme.outlineVariant.withValues(alpha: .5)),
-        ),
-      ],
+  /// URL de la miniatura de una foto de la carpeta compartida abierta.
+  ///
+  /// Mismo tamaño que usa el módulo Archivos (480 px): el servidor la reduce
+  /// UNA vez y la guarda en su caché, así la cuadrícula abre con las fotos ya
+  /// listas en vez de con recuadros vacíos.
+  String _localThumb(String name, {int width = 480}) {
+    final shareId = (_open!['shareId'] as num?)?.toInt() ?? 0;
+    return _local.thumbUrl(shareId, [..._localPath, name], width: width);
+  }
+
+  /// Cuadrícula de tarjetas con las MISMAS medidas que el módulo Archivos
+  /// (tarjeta de 150-190 px, proporción 0.86 y 12 px de separación).
+  Widget _localGrid(List<Widget> cards) {
+    final compact = MediaQuery.sizeOf(context).width < 720;
+    final minCard = compact ? 150.0 : 190.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossCount = (constraints.maxWidth / minCard).floor().clamp(2, 8);
+        return GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: crossCount,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 0.86,
+          children: cards,
+        );
+      },
     );
+  }
+
+  /// Deja PEDIDAS las miniaturas de la carpeta abierta (las primeras [max]).
+  ///
+  /// Son las mismas direcciones que pide la cuadrícula: pedirlas al abrir la
+  /// carpeta hace que, al bajar con el dedo o la rueda, las fotos ya estén
+  /// (en RAM y en la caché del servidor) en vez de ir apareciendo una a una.
+  /// Se limita el número para no encolar toda una carpeta de cientos.
+  void _warmThumbs(List<LocalShareItem> items, {int max = 24}) {
+    var asked = 0;
+    for (final it in items) {
+      if (it.isFolder) continue;
+      if (asked >= max) break;
+      asked++;
+      // Con `onError` la miniatura que falte NO revienta la app ni ensucia el
+      // registro: la tarjeta ya tiene su propio marcador con "toca para
+      // reintentar".
+      precacheImage(
+        NetworkImage(_localThumb(it.name)),
+        context,
+        onError: (_, _) {},
+      );
+    }
   }
 
   Widget _typeChip(ColorScheme scheme, String label) {
@@ -2149,85 +2172,155 @@ class _FolderRow extends StatelessWidget {
   }
 }
 
-/// Elemento (carpeta o imagen) de una carpeta LOCAL compartida.
-class _LocalTile extends StatelessWidget {
-  const _LocalTile({
-    required this.item,
-    required this.thumb,
+/// Tarjeta de la cuadrícula de una carpeta compartida: la MISMA forma que las
+/// del módulo Archivos (carpeta con su cabecera degradada, o foto con su
+/// miniatura, su nombre, su peso y su botón de descargar).
+///
+/// Es de SOLO LECTURA: no hay renombrar, mover ni borrar, porque el servidor
+/// tampoco los ofrece para una carpeta que no es tuya.
+class _LocalCard extends StatefulWidget {
+  const _LocalCard({
+    required this.name,
+    required this.folder,
     required this.onTap,
-    required this.onDownload,
+    this.size,
+    this.thumb,
+    this.onDownload,
   });
 
-  final LocalShareItem item;
+  final String name;
+  final bool folder;
 
-  /// URL de la miniatura (solo imágenes).
+  /// Peso en bytes (solo fotos).
+  final int? size;
+
+  /// URL de la miniatura (solo fotos).
   final String? thumb;
   final VoidCallback onTap;
   final VoidCallback? onDownload;
 
   @override
+  State<_LocalCard> createState() => _LocalCardState();
+}
+
+class _LocalCardState extends State<_LocalCard> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-          child: Row(
+    final theme = Theme.of(context);
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        elevation: _hover ? 6 : null,
+        child: InkWell(
+          onTap: widget.onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: item.isFolder
-                    ? Icon(
-                        Icons.folder_rounded,
-                        color: scheme.primary,
-                        size: 26,
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: DriveThumb(
-                          source: thumb ?? '',
-                          isRemote: true,
-                          size: 40,
+              if (widget.folder)
+                Container(
+                  height: 52,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        scheme.primary.withValues(alpha: .24),
+                        scheme.primary.withValues(alpha: .07),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.folder_rounded,
+                          color: Colors.white,
+                          size: 20,
                         ),
                       ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13.5,
+                    ],
+                  ),
+                )
+              else
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      DriveThumb(
+                        source: widget.thumb ?? '',
+                        isRemote: true,
+                        size: double.infinity,
+                        big: true,
+                        rounded: false,
+                      ),
+                      if (widget.onDownload != null)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: Material(
+                            color: Colors.black.withValues(alpha: .45),
+                            shape: const CircleBorder(),
+                            child: IconButton(
+                              tooltip: 'Descargar',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: widget.onDownload,
+                              icon: const Icon(
+                                Icons.download_rounded,
+                                size: 17,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  widget.folder ? 14 : 12,
+                  widget.folder ? 12 : 8,
+                  widget.folder ? 14 : 12,
+                  widget.folder ? 12 : 10,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.folder
+                          ? 'Carpeta compartida'
+                          : widget.size == null
+                          ? 'Imagen'
+                          : hsBytes(widget.size!),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              if (!item.isFolder && item.size != null)
-                Text(
-                  hsBytes(item.size!),
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              if (onDownload != null)
-                IconButton(
-                  tooltip: 'Descargar',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onDownload,
-                  icon: const Icon(Icons.download_rounded, size: 18),
-                ),
-              if (item.isFolder)
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
             ],
           ),
         ),

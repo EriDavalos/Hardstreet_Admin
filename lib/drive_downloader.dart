@@ -35,6 +35,7 @@ Future<void> downloadDriveSelection(
   BuildContext context, {
   required DriveBase drive,
   required List<DriveItem> items,
+  List<String>? from,
 }) async {
   if (items.isEmpty) return;
   final messenger = ScaffoldMessenger.of(context);
@@ -56,6 +57,7 @@ Future<void> downloadDriveSelection(
     suggested,
     items: List<DriveItem>.of(items),
     targetPath: targetPath,
+    from: from,
   );
   unawaited(_runDownloadJob(drive, job, messenger));
 }
@@ -81,6 +83,7 @@ Future<void> _runDownloadJob(
     final bytes = await fetchDriveBytes(
       drive,
       job.items,
+      from: job.from,
       onProgress: (received, total) {
         if (job.cancelled) throw 'Cancelado';
         job.received = received;
@@ -162,27 +165,33 @@ Future<List<int>> fetchDriveBytes(
   DriveBase drive,
   List<DriveItem> items, {
   required void Function(int received, int total) onProgress,
+  List<String>? from,
 }) async {
   final single = items.length == 1 && !items.first.isFolder;
+  final folder = from == null
+      ? drive.path
+      : from.where((s) => s.isNotEmpty).toList(growable: false);
   if (single) {
     final item = items.first;
     if (drive is DriveApiService) {
-      final raw = await drive.downloadZip([item.name], onProgress: onProgress);
+      final raw = await drive.downloadZip([item.name],
+          from: folder, onProgress: onProgress);
       // El backend responde con un ZIP incluso para UN archivo: si se guardara
       // tal cual con la extensión de la foto, el archivo queda corrupto.
       return extractSingleFile(raw, item.name) ?? raw;
     }
-    final src = File(drive.absolutePathOf(item));
+    final src = File(drive.absolutePathIn(folder, item));
     if (!await src.exists()) throw 'El archivo ya no existe';
     return src.readAsBytes();
   }
   if (drive is DriveApiService) {
     return drive.downloadZip(
       items.map((i) => i.name).toList(),
+      from: folder,
       onProgress: onProgress,
     );
   }
-  return buildLocalZipBytes(drive as DriveService, items);
+  return buildLocalZipBytes(drive as DriveService, items, rel: folder);
 }
 
 /// Si [bytes] es un ZIP con UNA sola entrada de archivo, devuelve su
@@ -210,11 +219,12 @@ List<int>? extractSingleFile(List<int> bytes, String name) {
 /// (la UI no se congela). Público para poder verificar su contenido en test/.
 Future<List<int>> buildLocalZipBytes(
   DriveService drive,
-  List<DriveItem> items,
-) {
+  List<DriveItem> items, {
+  List<String>? rel,
+}) {
   final job = _ZipJob(
     root: drive.root.path,
-    rel: List<String>.of(drive.path),
+    rel: List<String>.of(rel ?? drive.path),
     names: items
         .map((i) => _ZipEntry(name: i.name, isFolder: i.isFolder))
         .toList(),

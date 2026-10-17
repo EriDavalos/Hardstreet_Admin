@@ -819,3 +819,22 @@ class HsRowMenu extends StatelessWidget {
     );
   }
 }
+
+/// Emoji de una categoría del catálogo (Boda 💍, XV Años 👑…).
+///
+/// Es el mismo rótulo que usa la web en la cabecera de cada tarjeta de
+/// paquete: así el módulo Paquetes, la galería de Categorías y la página
+/// hablan el mismo idioma (la web lo saca de `packages_categories.icon`, y
+/// cuando viene vacío usa el nombre, como aquí).
+String hsCategoryEmoji(String name) {
+  final n = name.toLowerCase();
+  if (n.contains('boda')) return '💍';
+  if (n.contains('xv')) return '👑';
+  if (n.contains('bautizo')) return '🕊️';
+  if (n.contains('gradu')) return '🎓';
+  if (n.contains('comercial')) return '💼';
+  if (n.contains('famil')) return '👨‍👩‍👧';
+  if (n.contains('matern')) return '🤰';
+  if (n.contains('retrato')) return '📸';
+  return '📷';
+}

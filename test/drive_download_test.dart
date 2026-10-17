@@ -31,6 +31,9 @@ class _FakeApiDrive extends DriveApiService {
 
   final List<int> zipBytes;
 
+  /// Última carpeta de la que se pidió el ZIP (null = la que el drive ve).
+  List<String>? lastFrom;
+
   @override
   Future<void> refresh() async {}
 
@@ -38,7 +41,9 @@ class _FakeApiDrive extends DriveApiService {
   Future<List<int>> downloadZip(
     List<String> names, {
     void Function(int received, int total)? onProgress,
+    List<String>? from,
   }) async {
+    lastFrom = from;
     onProgress?.call(zipBytes.length, zipBytes.length);
     return zipBytes;
   }
@@ -74,6 +79,20 @@ void main() {
       );
       expect(bytes, equals(_png),
           reason: 'guardar el ZIP con extensión .png corrompía el archivo');
+    });
+
+    test('la descarga pide la carpeta DE LA QUE sale la foto', () async {
+      // El selector de fotos navega por su cuenta: si la carpeta no viajara con
+      // la descarga, bajaría el archivo homónimo de la carpeta que el módulo
+      // Archivos tuviera abierta (o ninguno).
+      final drive = _FakeApiDrive(_zipOf({'foto.png': _png}));
+      await fetchDriveBytes(
+        drive,
+        const [DriveItem(name: 'foto.png', isFolder: false)],
+        from: const ['XV', 'ReynaCoot'],
+        onProgress: (_, _) {},
+      );
+      expect(drive.lastFrom, ['XV', 'ReynaCoot']);
     });
   });
 

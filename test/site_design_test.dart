@@ -67,6 +67,46 @@ Map<String, dynamic> readWebDesignDefaults() {
   return (jsonDecode(js) as Map).cast<String, dynamic>();
 }
 
+/// Abre el diseñador en una pantalla del tamaño pedido (en pantallas anchas el
+/// diálogo enseña controles y vista previa a la vez) y deja el diseño elegido
+/// en [onSaved].
+Future<void> _pumpDesigner(
+  WidgetTester tester, {
+  Size size = const Size(1300, 950),
+  void Function(SiteDesign?)? onSaved,
+}) async {
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = size;
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(tester.view.reset);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(MaterialApp(
+    home: Builder(
+      builder: (ctx) => Scaffold(
+        body: ElevatedButton(
+          onPressed: () async {
+            final d = await showPackageDesigner(ctx,
+                design: SiteDesign.defaults);
+            onSaved?.call(d);
+          },
+          child: const Text('abrir'),
+        ),
+      ),
+    ),
+  ));
+}
+
+/// Baja por los controles hasta que el widget exista (el ListView es perezoso:
+/// lo que queda fuera de pantalla no está construido).
+Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(
+    finder,
+    140,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   group('defaults del diseño (panel ⇄ web)', () {
     test('los defaults del panel son EXACTAMENTE los de la web', () {
@@ -190,7 +230,7 @@ void main() {
 
       // Pestaña de un tier: el badge del Gold arranca relleno y se apaga.
       expect(SiteDesign.defaults.tierOf('gold').badgeFilled, isTrue);
-      await tester.tap(find.text('Gold'));
+      await tester.tap(find.byKey(const ValueKey('design-tab-gold')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Badge relleno (degradado)'));
       await tester.pumpAndSettle();
@@ -203,6 +243,78 @@ void main() {
       // Y lo que no se tocó sigue igual.
       expect(result!.tierOf('premium').badgeFilled, isTrue);
       expect(result!.card, SiteDesign.defaults.card);
+    });
+
+    testWidgets(
+        'la vista previa (card y fila) enseña el tier que se está ajustando',
+        (tester) async {
+      await _pumpDesigner(tester, size: const Size(1300, 950));
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // De entrada la muestra va en Premium, en la CARD y en la FILA…
+      expect(find.text('PREMIUM'), findsOneWidget);
+      expect(find.text('Boda Full'), findsNWidgets(2));
+      // …y al abrir la pestaña de Gold, la CARD y la FILA se pintan con Gold
+      // (antes la fila salía siempre en Gold y la tarjeta siempre en Premium).
+      await tester.tap(find.byKey(const ValueKey('design-tab-gold')));
+      await tester.pumpAndSettle();
+      expect(find.text('PREMIUM'), findsNothing);
+      expect(find.text('GOLD'), findsOneWidget);
+      expect(find.text('XV Años Gold'), findsNWidgets(2));
+
+      // Y se puede mirar otro tier sin dejar de ajustar el que se edita.
+      await tester.tap(find.byKey(const ValueKey('design-preview-tier-basic')));
+      await tester.pumpAndSettle();
+      expect(find.text('BASIC'), findsOneWidget);
+      expect(find.text('Sesión Básica'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la foto y la animación elegidas se ven y se guardan',
+        (tester) async {
+      SiteDesign? result;
+      await _pumpDesigner(
+        tester,
+        size: const Size(1300, 950),
+        onSaved: (d) => result = d,
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Sin foto no hay hueco de foto en la vista previa.
+      expect(find.text('Foto del paquete'), findsNothing);
+
+      // Banda arriba: la foto aparece en la tarjeta (y su alto se ajusta).
+      await _scrollTo(tester, find.byKey(const ValueKey('design-image-top')));
+      await tester.tap(find.byKey(const ValueKey('design-image-top')));
+      await tester.pumpAndSettle();
+      expect(find.text('Foto del paquete'), findsOneWidget);
+      expect(find.text('Alto de la banda'), findsOneWidget);
+
+      // Animación: zoom, y se puede repetir desde la vista previa.
+      await _scrollTo(tester, find.byKey(const ValueKey('design-anim-zoom')));
+      await tester.tap(find.byKey(const ValueKey('design-anim-zoom')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Repetir'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(result!.card.imageMode, 'top');
+      expect(result!.card.animMode, 'zoom');
+      // Lo que no se tocó sigue con su valor de siempre.
+      expect(result!.card.animStagger, SiteDesign.defaults.card.animStagger);
+    });
+
+    test('un modo de foto o de animación desconocido cae al default', () {
+      final d = SiteDesign.fromJsonText(jsonEncode({
+        'card': {'imageMode': 'flotando', 'animMode': 'explotar', 'animMs': 'raro'},
+      }));
+      expect(d.card.imageMode, SiteDesign.defaults.card.imageMode);
+      expect(d.card.animMode, SiteDesign.defaults.card.animMode);
+      expect(d.card.animMs, SiteDesign.defaults.card.animMs);
     });
 
     testWidgets('cancelar no devuelve diseño (no se guarda nada)',

@@ -391,6 +391,21 @@ class HsApi {
         .toList();
   }
 
+  /// Crea una categoría del catálogo (Boda, XV Años, Bautizo…).
+  ///
+  /// Requiere permiso de CREAR en el módulo "Paquetes" (las categorías son
+  /// parte del catálogo, igual que en el menú).
+  static Future<void> createPackageCategory(String name) =>
+      post('/api/admin/categories', {'name': name});
+
+  /// Renombra una categoría del catálogo.
+  static Future<void> updatePackageCategory(Map<String, dynamic> body) =>
+      put('/api/admin/categories', body);
+
+  /// Da de baja una categoría (baja lógica: deja de listarse).
+  static Future<void> deletePackageCategory(int id) =>
+      delete('/api/admin/categories?id=$id');
+
   /// Servicios disponibles para incluir en paquetes:
   /// [{ id, name, description, icon, url }]
   static Future<List<Map<String, dynamic>>> services() async {
@@ -434,16 +449,23 @@ class HsApi {
   /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
   /// servicio del paquete (`serviceId` = id del servicio DEL PAQUETE). Las
   /// dos son opcionales; vacío = se quita esa opción.
+  /// Guarda las opciones de compartir de UN servicio del paquete: la carpeta y
+  /// la liga, y QUÉ le sale al cliente ([pickPhotos] = «Elegir fotos»,
+  /// [showFolder] = «Abrir carpeta»).
   static Future<void> updateServiceShare(
     int serviceId, {
     String folder = '',
     String link = '',
+    bool pickPhotos = false,
+    bool showFolder = true,
   }) =>
       post('/api/admin/package-progress', {
         'action': 'actualizar-servicio-share',
         'serviceId': serviceId,
         'folder': folder,
         'link': link,
+        'pickPhotos': pickPhotos,
+        'showFolder': showFolder,
       });
 
   /// Los elementos/fotos que YO (cliente) marqué para un servicio de mi

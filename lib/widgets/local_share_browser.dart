@@ -110,7 +110,9 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 13.5, fontWeight: FontWeight.w800),
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -153,8 +155,10 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
 
   Future<void> _download(LocalShareItem item) async {
     try {
-      final where =
-          await widget.service.download(widget.shareId, [..._path, item.name], item.name);
+      final where = await widget.service.download(widget.shareId, [
+        ..._path,
+        item.name,
+      ], item.name);
       if (where == null) return;
       HsToast.success('Descargado: ${item.name}');
     } catch (e) {
@@ -165,8 +169,6 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final folders = _items.where((i) => i.isFolder).toList();
-    final files = _items.where((i) => !i.isFolder).toList();
 
     return AlertDialog(
       title: Column(
@@ -183,7 +185,9 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w800),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
@@ -222,9 +226,10 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -260,42 +265,28 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
                 child: Text(
                   'Esta carpeta está vacía.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               )
             else
               Flexible(
-                child: ListView(
+                // Como el Drive: carpetas y fotos van JUNTAS en la misma
+                // cuadricula (antes se partian en dos tramos, primero las
+                // carpetas en filas y luego las fotos).
+                child: GridView.builder(
                   shrinkWrap: true,
-                  children: [
-                    for (final f in folders)
-                      ListTile(
-                        dense: true,
-                        leading:
-                            const Icon(Icons.folder_outlined, size: 20),
-                        title: Text(f.name,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () => _openItem(f),
-                      ),
-                    for (final img in files)
-                      ListTile(
-                        dense: true,
-                        leading: DriveThumb(
-                          source: widget.service.thumbUrl(
-                              widget.shareId, [..._path, img.name]),
-                          isRemote: true,
-                          size: 34,
-                        ),
-                        title: Text(img.name,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () => _openItem(img),
-                        trailing: IconButton(
-                          tooltip: 'Descargar',
-                          onPressed: () => _download(img),
-                          icon: const Icon(Icons.download_rounded, size: 18),
-                        ),
-                      ),
-                  ],
+                  padding: const EdgeInsets.only(bottom: 4),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 170,
+                    mainAxisExtent: 190,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount: _items.length,
+                  itemBuilder: (_, i) => _tile(_items[i]),
                 ),
               ),
           ],
@@ -312,4 +303,81 @@ class _LocalShareBrowserState extends State<_LocalShareBrowser> {
 
   List<String> _dropLast() =>
       _path.isEmpty ? const [] : _path.sublist(0, _path.length - 1);
+
+  /// Tarjeta de la cuadricula: carpeta o foto (la misma forma que el Drive).
+  Widget _tile(LocalShareItem item) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openItem(item),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: item.isFolder
+                  ? Container(
+                      color: scheme.surfaceContainerHighest.withValues(
+                        alpha: .35,
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.folder_rounded,
+                        size: 40,
+                        color: scheme.primary,
+                      ),
+                    )
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        DriveThumb(
+                          source: widget.service.thumbUrl(widget.shareId, [
+                            ..._path,
+                            item.name,
+                          ]),
+                          isRemote: true,
+                          size: double.infinity,
+                          big: true,
+                          rounded: false,
+                        ),
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: Material(
+                            color: Colors.black.withValues(alpha: .45),
+                            shape: const CircleBorder(),
+                            child: IconButton(
+                              tooltip: 'Descargar',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => _download(item),
+                              icon: const Icon(
+                                Icons.download_rounded,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(9, 6, 9, 8),
+              child: Text(
+                item.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

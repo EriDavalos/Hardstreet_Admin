@@ -34,9 +34,10 @@ class _FakeDrive extends DriveBase {
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
 
   @override
-  Future<int> uploadFromPaths(List<String> sources,
-          {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
 
   @override
   Future<void> createFolder(String name) async {}
@@ -49,18 +50,20 @@ class _FakeDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
 
   @override
   Future<void> retryUpload(String jobId) async {}
@@ -74,7 +77,8 @@ List<Map<String, dynamic>> _installMock({
   List<int> targets = const [],
 }) {
   final calls = <Map<String, dynamic>>[];
-  final sharedList = shared ??
+  final sharedList =
+      shared ??
       [
         {
           'id': 1,
@@ -143,42 +147,50 @@ class _DriveMock {
   final called = <String>[];
 
   LocalShareService service() => LocalShareService(
-        baseUrl: 'http://drive.test',
-        client: MockClient((request) async {
-          called.add(request.url.path);
-          final path = request.url.queryParameters['path'] ?? '';
-          Map<String, dynamic> body;
-          switch (path) {
-            case '':
-              body = {
-                'local': true,
-                'path': '',
-                'folders': [
-                  {'name': 'Bodas', 'isFolder': true},
-                  {'name': 'foto.jpg', 'isFolder': false, 'size': 1024},
-                ],
-              };
-              break;
-            case 'Bodas':
-              body = {
-                'local': true,
-                'path': 'Bodas',
-                'folders': [
-                  {'name': 'Ana', 'isFolder': true},
-                ],
-              };
-              break;
-            default:
-              body = {'local': true, 'path': path, 'folders': const []};
-          }
-          return http.Response(jsonEncode(body), 200,
-              headers: {'content-type': 'application/json'});
-        }),
+    baseUrl: 'http://drive.test',
+    client: MockClient((request) async {
+      called.add(request.url.path);
+      final path = request.url.queryParameters['path'] ?? '';
+      Map<String, dynamic> body;
+      switch (path) {
+        case '':
+          body = {
+            'local': true,
+            'path': '',
+            'folders': [
+              {'name': 'Bodas', 'isFolder': true},
+              {'name': 'foto.jpg', 'isFolder': false, 'size': 1024},
+            ],
+          };
+          break;
+        case 'Bodas':
+          body = {
+            'local': true,
+            'path': 'Bodas',
+            'folders': [
+              {'name': 'Ana', 'isFolder': true},
+            ],
+          };
+          break;
+        default:
+          body = {'local': true, 'path': path, 'folders': const []};
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
       );
+    }),
+  );
 }
 
 const _defaultCandidates = [
-  {'id': 4, 'name': 'Marta Soto', 'email': 'marta@x.com', 'role': 'Colaborador'},
+  {
+    'id': 4,
+    'name': 'Marta Soto',
+    'email': 'marta@x.com',
+    'role': 'Colaborador',
+  },
   {'id': 5, 'name': 'Ana Ruiz', 'email': 'ana@x.com', 'role': 'Cliente'},
 ];
 
@@ -235,10 +247,8 @@ Future<void> _tap(WidgetTester tester, Finder f) async {
 
 /// Texto DENTRO del diálogo abierto (los nombres también salen en las
 /// tarjetas de la página, detrás).
-Finder _inDialog(String text) => find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.text(text),
-    );
+Finder _inDialog(String text) =>
+    find.descendant(of: find.byType(AlertDialog), matching: find.text(text));
 
 void main() {
   setUp(() => HsApi.client = http.Client());
@@ -252,8 +262,9 @@ void main() {
     await LocalShareAgent.instance.setManual(false);
   });
 
-  testWidgets('el diseño es el del Drive: buscador, vista y cuadrícula',
-      (tester) async {
+  testWidgets('el diseño es el del Drive: buscador, vista y cuadrícula', (
+    tester,
+  ) async {
     _installMock();
     await _pump(tester);
 
@@ -273,8 +284,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('sin nada compartido invita a compartir una carpeta',
-      (tester) async {
+  testWidgets('sin nada compartido invita a compartir una carpeta', (
+    tester,
+  ) async {
     _installMock(shared: const [], received: const []);
     await _pump(tester);
 
@@ -317,35 +329,37 @@ void main() {
     expect((posts.first['userIds'] as List).toSet(), {4, 5});
   });
 
-  testWidgets('una carpeta LOCAL recibida se NAVEGA aquí mismo (solo lectura)',
-      (tester) async {
-    final mock = _DriveMock();
-    debugLocalShareService = mock.service;
-    _installMock();
-    await _pump(tester);
+  testWidgets(
+    'una carpeta LOCAL recibida se NAVEGA aquí mismo (solo lectura)',
+    (tester) async {
+      final mock = _DriveMock();
+      debugLocalShareService = mock.service;
+      _installMock();
+      await _pump(tester);
 
-    // Se abre la carpeta local desde su tarjeta.
-    await _tap(tester, find.text(r'D:\Eventos\2026'));
-    // Migas del Drive dentro de la carpeta.
-    expect(find.text('Compartido conmigo'), findsWidgets);
-    expect(find.text('Bodas'), findsOneWidget);
-    expect(find.text('foto.jpg'), findsOneWidget);
-    // SOLO LECTURA: no hay acciones de escritura en ninguna parte.
-    expect(find.byTooltip('Nueva carpeta'), findsNothing);
-    expect(find.byTooltip('Renombrar'), findsNothing);
-    expect(find.byTooltip('Eliminar'), findsNothing);
-    expect(find.byTooltip('Descargar'), findsWidgets);
-    expect(mock.called, contains('/api/local/list'));
+      // Se abre la carpeta local desde su tarjeta.
+      await _tap(tester, find.text(r'D:\Eventos\2026'));
+      // Migas del Drive dentro de la carpeta.
+      expect(find.text('Compartido conmigo'), findsWidgets);
+      expect(find.text('Bodas'), findsOneWidget);
+      expect(find.text('foto.jpg'), findsOneWidget);
+      // SOLO LECTURA: no hay acciones de escritura en ninguna parte.
+      expect(find.byTooltip('Nueva carpeta'), findsNothing);
+      expect(find.byTooltip('Renombrar'), findsNothing);
+      expect(find.byTooltip('Eliminar'), findsNothing);
+      expect(find.byTooltip('Descargar'), findsWidgets);
+      expect(mock.called, contains('/api/local/list'));
 
-    // Se entra a la subcarpeta: se pide al servidor del DRIVE con la subruta.
-    await _tap(tester, find.text('Bodas'));
-    expect(find.text('Ana'), findsOneWidget);
+      // Se entra a la subcarpeta: se pide al servidor del DRIVE con la subruta.
+      await _tap(tester, find.text('Bodas'));
+      expect(find.text('Ana'), findsOneWidget);
 
-    // Y se vuelve con las migas de pan.
-    await _tap(tester, find.text('Compartido conmigo').last);
-    expect(find.text('Estudio 2026'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      // Y se vuelve con las migas de pan.
+      await _tap(tester, find.text('Compartido conmigo').last);
+      expect(find.text('Estudio 2026'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('una carpeta recibida del DRIVE se navega AQUÍ MISMO (sin '
       'saltar al módulo Archivos)', (tester) async {
@@ -374,41 +388,62 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('dentro de la carpeta NO se separa en CARPETAS e IMÁGENES: se '
+      'muestran como en el Drive, en una sola cuadrícula', (tester) async {
+    final mock = _DriveMock();
+    debugLocalShareService = mock.service;
+    _installMock();
+    await _pump(tester);
+
+    await _tap(tester, find.text('Estudio 2026'));
+
+    // Las carpetas y las fotos están en la MISMA cuadrícula (un solo
+    // GridView) y en el orden que manda el servidor: carpetas y luego fotos.
+    expect(find.byType(GridView), findsOneWidget);
+    expect(find.text('Bodas'), findsOneWidget);
+    expect(find.text('foto.jpg'), findsOneWidget);
+    // Y NO hay rótulos de grupo: el Drive no los pone.
+    expect(find.text('CARPETAS'), findsNothing);
+    expect(find.text('IMÁGENES'), findsNothing);
+    expect(find.text('IMAGEN'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('una respuesta que llega TARDE no pinta el compartido que ya '
       'dejaste', (tester) async {
     // La carpeta del Drive (share=5) responde medio segundo después; la otra
     // (share=7) responde al instante.
     debugLocalShareService = () => LocalShareService(
-          baseUrl: 'http://drive.test',
-          client: MockClient((request) async {
-            final share = request.url.queryParameters['share'];
-            if (share == '5') {
-              await Future<void>.delayed(const Duration(milliseconds: 500));
-              return http.Response(
-                jsonEncode({
-                  'local': true,
-                  'path': '',
-                  'folders': [
-                    {'name': 'TARDIA', 'isFolder': true},
-                  ],
-                }),
-                200,
-                headers: {'content-type': 'application/json'},
-              );
-            }
-            return http.Response(
-              jsonEncode({
-                'local': true,
-                'path': '',
-                'folders': [
-                  {'name': 'RAPIDA', 'isFolder': true},
-                ],
-              }),
-              200,
-              headers: {'content-type': 'application/json'},
-            );
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        final share = request.url.queryParameters['share'];
+        if (share == '5') {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          return http.Response(
+            jsonEncode({
+              'local': true,
+              'path': '',
+              'folders': [
+                {'name': 'TARDIA', 'isFolder': true},
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'local': true,
+            'path': '',
+            'folders': [
+              {'name': 'RAPIDA', 'isFolder': true},
+            ],
           }),
+          200,
+          headers: {'content-type': 'application/json'},
         );
+      }),
+    );
     _installMock();
     await _pump(tester);
 
@@ -416,8 +451,10 @@ void main() {
     await tester.tap(find.text('Estudio 2026'), warnIfMissed: false);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.textContaining('Compartido conmigo').last,
-        warnIfMissed: false);
+    await tester.tap(
+      find.textContaining('Compartido conmigo').last,
+      warnIfMissed: false,
+    );
     await tester.pump();
     await tester.tap(find.text(r'D:\Eventos\2026'), warnIfMissed: false);
     await tester.pump();
@@ -436,16 +473,19 @@ void main() {
     // El servidor del drive es otro equipo (o la carpeta se movió): se dice
     // POR QUÉ no se ve, en vez de dejar la calle sin salida.
     debugLocalShareService = () => LocalShareService(
-          baseUrl: 'http://drive.test',
-          client: MockClient((request) async => http.Response(
-                jsonEncode({
-                  'error': 'La carpeta no existe (ni en el Drive ni en la '
-                      'computadora de quien la compartió)',
-                }),
-                404,
-                headers: {'content-type': 'application/json'},
-              )),
-        );
+      baseUrl: 'http://drive.test',
+      client: MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'error':
+                'La carpeta no existe (ni en el Drive ni en la '
+                'computadora de quien la compartió)',
+          }),
+          404,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
     _installMock();
     await _pump(tester);
 
@@ -455,9 +495,10 @@ void main() {
       find.textContaining('computadora de quien la compartió'),
       findsWidgets,
     );
-    // Y se explica qué hace falta para poder verla.
-    expect(find.textContaining('servidor del drive tiene que poder abrir'),
-        findsOneWidget);
+    // Y se explica qué hace falta para poder verla: la carpeta la sirve la app
+    // del dueño (el servidor solo hace de puente), así que se nombra eso y no
+    // que "el servidor tiene que poder abrirla".
+    expect(find.textContaining('la sirve SU aplicación'), findsOneWidget);
     expect(find.text('Reintentar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -497,8 +538,9 @@ void main() {
     expect(dels.first['userIds'], [4]);
   });
 
-  testWidgets('dejar de compartir una carpeta lo pide y lo manda',
-      (tester) async {
+  testWidgets('dejar de compartir una carpeta lo pide y lo manda', (
+    tester,
+  ) async {
     debugLocalShareService = _DriveMock().service;
     final calls = _installMock();
     await _pump(tester);
@@ -515,8 +557,9 @@ void main() {
     expect((dels.first['userIds'] as List), contains(4));
   });
 
-  testWidgets('en el CELULAR el módulo se ve completo y sin desbordes',
-      (tester) async {
+  testWidgets('en el CELULAR el módulo se ve completo y sin desbordes', (
+    tester,
+  ) async {
     // Pantalla real de teléfono (390 lógicos): el módulo debe caber sin
     // "overflow" (los avisos amarillos/negros de RenderFlex harían fallar
     // `takeException`). El ancho lógico se fija con la vista del tester.
@@ -545,14 +588,19 @@ void main() {
     // El switch del servicio sigue a mano, en botón de imagen (la tarjeta
     // completa no cabe en un teléfono).
     final agent = LocalShareAgent.instance;
-    agent.client =
-        MockClient((_) async => throw http.ClientException('sin red'));
+    agent.client = MockClient(
+      (_) async => throw http.ClientException('sin red'),
+    );
     agent.retryDelay = const Duration(seconds: 5);
     final sw = find.byKey(const ValueKey('share-service-switch-compact'));
     expect(sw, findsOneWidget);
 
     await _tap(tester, sw);
-    expect(agent.manualOn, isTrue, reason: 'desde el celular también se enciende');
+    expect(
+      agent.manualOn,
+      isTrue,
+      reason: 'desde el celular también se enciende',
+    );
 
     // Y se apaga otra vez: así el servicio no deja nada colgando al terminar.
     await _tap(tester, sw);
@@ -564,10 +612,7 @@ void main() {
     _installMock();
     await _pump(tester);
 
-    await tester.enterText(
-      find.byType(TextField).first,
-      'eventos',
-    );
+    await tester.enterText(find.byType(TextField).first, 'eventos');
     await tester.pump();
     expect(find.text('Estudio 2026'), findsNothing);
     expect(find.text(r'D:\Eventos\2026'), findsOneWidget);
@@ -575,11 +620,13 @@ void main() {
   });
 
   testWidgets('si el servidor falla ofrece reintentar', (tester) async {
-    HsApi.client = MockClient((request) async => http.Response(
-          jsonEncode({'ok': false, 'message': 'Módulo no disponible'}),
-          500,
-          headers: {'content-type': 'application/json'},
-        ));
+    HsApi.client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({'ok': false, 'message': 'Módulo no disponible'}),
+        500,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
     await _pump(tester);
 
     expect(find.text('Módulo no disponible'), findsOneWidget);
@@ -587,43 +634,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el listado MUESTRA de dónde se sirve cada carpeta',
-      (tester) async {
+  testWidgets('el listado MUESTRA de dónde se sirve cada carpeta', (
+    tester,
+  ) async {
     // El compartido 5 está en el servidor del drive (siempre disponible) y el
     // 7 en la computadora de su dueño con la app abierta: se dice en la
     // tarjeta, sin tener que abrirla para descubrirlo.
     debugLocalShareService = () => LocalShareService(
-          baseUrl: 'http://drive.test',
-          client: MockClient((request) async {
-            if (request.url.path == '/api/local/status') {
-              final share = request.url.queryParameters['share'];
-              return http.Response(
-                jsonEncode(share == '5'
-                    ? {
-                        'local': false,
-                        'onServer': true,
-                        'online': false,
-                        'db': true,
-                        'servedFrom': 'server',
-                      }
-                    : {
-                        'local': true,
-                        'onServer': false,
-                        'online': true,
-                        'db': true,
-                        'servedFrom': 'agent',
-                      }),
-                200,
-                headers: {'content-type': 'application/json'},
-              );
-            }
-            return http.Response(
-              jsonEncode({'local': true, 'path': '', 'folders': const []}),
-              200,
-              headers: {'content-type': 'application/json'},
-            );
-          }),
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/api/local/status') {
+          final share = request.url.queryParameters['share'];
+          return http.Response(
+            jsonEncode(
+              share == '5'
+                  ? {
+                      'local': false,
+                      'onServer': true,
+                      'online': false,
+                      'db': true,
+                      'servedFrom': 'server',
+                    }
+                  : {
+                      'local': true,
+                      'onServer': false,
+                      'online': true,
+                      'db': true,
+                      'servedFrom': 'agent',
+                    },
+            ),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({'local': true, 'path': '', 'folders': const []}),
+          200,
+          headers: {'content-type': 'application/json'},
         );
+      }),
+    );
     _installMock();
     await _pump(tester);
 
@@ -632,30 +682,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('si el servidor del drive no tiene base de datos lo DICE',
-      (tester) async {
+  testWidgets('si el servidor del drive no tiene base de datos lo DICE', (
+    tester,
+  ) async {
     // Antes el módulo decía "la carpeta no existe" y mandaba a buscar el
     // problema al lugar equivocado: lo que falta es configurar DRIVE_DB.
     debugLocalShareService = () => LocalShareService(
-          baseUrl: 'http://drive.test',
-          client: MockClient((request) async {
-            if (request.url.path == '/api/local/status') {
-              return http.Response(
-                jsonEncode({
-                  'local': false,
-                  'db': false,
-                  'servedFrom': 'unknown',
-                  'reason': 'no-db',
-                  'detail': 'El servidor del drive no tiene configurada la '
-                      'base de datos (DRIVE_DB)',
-                }),
-                200,
-                headers: {'content-type': 'application/json'},
-              );
-            }
-            return http.Response('sin base de datos', 503);
-          }),
-        );
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/api/local/status') {
+          return http.Response(
+            jsonEncode({
+              'local': false,
+              'db': false,
+              'servedFrom': 'unknown',
+              'reason': 'no-db',
+              'detail':
+                  'El servidor del drive no tiene configurada la '
+                  'base de datos (DRIVE_DB)',
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('sin base de datos', 503);
+      }),
+    );
     _installMock();
     await _pump(tester);
 
@@ -667,15 +719,18 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el switch enciende y apaga el SERVICIO de compartir',
-      (tester) async {
+  testWidgets('el switch enciende y apaga el SERVICIO de compartir', (
+    tester,
+  ) async {
     // Lo que pidió el usuario: un switch en el propio módulo para encender el
     // servicio que sirve las carpetas de ESTA computadora y que SIGA encendido
     // mientras la app esté abierta (no solo mientras se comparte algo).
     final agent = LocalShareAgent.instance;
     // Sin red en la prueba: el agente se queda esperando entre reintentos (sin
     // contestar a nadie) mientras se comprueba el switch.
-    agent.client = MockClient((_) async => throw http.ClientException('sin red'));
+    agent.client = MockClient(
+      (_) async => throw http.ClientException('sin red'),
+    );
     agent.retryDelay = const Duration(seconds: 5);
     addTearDown(() async {
       await agent.setManual(false);
@@ -688,13 +743,17 @@ void main() {
     final card = find.byKey(const ValueKey('share-service-card'));
     expect(card, findsOneWidget);
     expect(find.text('Servicio de compartir'), findsOneWidget);
-    expect(find.descendant(of: card, matching: find.text('Apagado')),
-        findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('Apagado')),
+      findsOneWidget,
+    );
     expect(agent.manualOn, isFalse);
 
     // Se enciende: queda anotado que el servicio va encendido.
-    await _tap(tester,
-        find.descendant(of: card, matching: find.byType(Switch)));
+    await _tap(
+      tester,
+      find.descendant(of: card, matching: find.byType(Switch)),
+    );
 
     expect(agent.manualOn, isTrue);
     expect(AppSettings.instance.shareServing, isTrue);
@@ -702,26 +761,33 @@ void main() {
     // El servicio quedó ENCENDIDO: sirviendo ahora mismo.
     expect(agent.running, isTrue);
     expect(agent.serving.value, isTrue);
-    expect(find.descendant(of: card, matching: find.text('Encendido')),
-        findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('Encendido')),
+      findsOneWidget,
+    );
     expect(
       tester
-          .widget<Switch>(find.descendant(
-              of: card, matching: find.byType(Switch)))
+          .widget<Switch>(
+            find.descendant(of: card, matching: find.byType(Switch)),
+          )
           .value,
       isTrue,
     );
 
     // Y se apaga desde el switch: deja de servir sus carpetas, y se recuerda
     // apagado (el servicio no se enciende solo al volver a abrir la app).
-    await _tap(tester,
-        find.descendant(of: card, matching: find.byType(Switch)));
+    await _tap(
+      tester,
+      find.descendant(of: card, matching: find.byType(Switch)),
+    );
 
     expect(agent.manualOn, isFalse);
     expect(agent.serving.value, isFalse);
     expect(AppSettings.instance.shareServing, isFalse);
-    expect(find.descendant(of: card, matching: find.text('Apagado')),
-        findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('Apagado')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -732,8 +798,9 @@ void main() {
     // deshabilitado y la tarjeta explica qué hacer.
     final agent = LocalShareAgent.instance;
     agent.debugSupported = false;
-    agent.client =
-        MockClient((_) async => throw http.ClientException('sin red'));
+    agent.client = MockClient(
+      (_) async => throw http.ClientException('sin red'),
+    );
     addTearDown(() async {
       agent.stop();
       agent.debugSupported = null;
@@ -745,7 +812,8 @@ void main() {
     final card = find.byKey(const ValueKey('share-service-card'));
     expect(card, findsOneWidget);
     final sw = tester.widget<Switch>(
-        find.descendant(of: card, matching: find.byType(Switch)));
+      find.descendant(of: card, matching: find.byType(Switch)),
+    );
     expect(sw.onChanged, isNull, reason: 'no se puede encender desde aquí');
     expect(sw.value, isFalse);
     // Y la salida concreta, en la propia tarjeta.
@@ -764,19 +832,20 @@ void main() {
     // compartida no existe o ya no está activa" (el compartido se dio de baja).
     // Antes ese texto se mostraba crudo; ahora se dice QUÉ pasó y qué hacer.
     debugLocalShareService = () => LocalShareService(
-          baseUrl: 'http://drive.test',
-          client: MockClient((request) async {
-            if (request.url.path == '/api/local/status') {
-              return http.Response(
-                jsonEncode(
-                    {'error': 'La carpeta compartida no existe o ya no está activa'}),
-                404,
-                headers: {'content-type': 'application/json'},
-              );
-            }
-            return http.Response('no encontrado', 404);
-          }),
-        );
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/api/local/status') {
+          return http.Response(
+            jsonEncode({
+              'error': 'La carpeta compartida no existe o ya no está activa',
+            }),
+            404,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('no encontrado', 404);
+      }),
+    );
     _installMock();
     await _pump(tester);
 

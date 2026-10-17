@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'app_constants.dart';
+import 'hs_api.dart' show HsSession;
 
 /// Una carpeta compartida con el cliente, tal como se VE: [shown] es el nombre
 /// con el que aparece en su Drive y [real] los segmentos REALES del Drive
@@ -22,6 +23,7 @@ class DriveItem {
     this.modified,
     this.size,
     this.childCount = 0,
+    this.countKnown = true,
   });
 
   final String name;
@@ -30,12 +32,22 @@ class DriveItem {
   final int? size;
   final int childCount;
 
-  DriveItem copyWith({int? childCount}) => DriveItem(
+  /// ¿[childCount] es el conteo de VERDAD?
+  ///
+  /// En la raíz del cliente, una carpeta compartida que vive anidada en el
+  /// Drive del estudio (`XV/ReynaCoot`) aparece con su nombre, pero el listado
+  /// del estudio solo dice cuántos elementos hay en `XV`: el conteo de la
+  /// carpeta compartida NO se puede deducir de ahí. Cuando no se sabe, esto
+  /// queda en false y la tarjeta no miente con un "0 elementos".
+  final bool countKnown;
+
+  DriveItem copyWith({int? childCount, bool? countKnown}) => DriveItem(
         name: name,
         isFolder: isFolder,
         modified: modified,
         size: size,
         childCount: childCount ?? this.childCount,
+        countKnown: countKnown ?? this.countKnown,
       );
 }
 
@@ -106,14 +118,26 @@ bool isDriveImageUrl(String url) {
   return _isLocalDriveHost(host);
 }
 
+/// Token de sesión para las URLs de imagen.
+///
+/// `Image.network` NO puede mandar cabeceras, así que el servidor del drive
+/// acepta el token por query (`?apikey=<jwt>`) — el mismo trato que ya usan
+/// las miniaturas de las carpetas compartidas. La única fuente es la sesión
+/// del panel ([HsSession.token]), así vale igual en la app y en las pruebas
+/// (y no depende de que alguien "instale" el token al arrancar).
+String get driveImageToken => HsSession.token ?? '';
+
 /// URL para VER una foto del contenido del sitio:
 ///
 ///   * foto del Drive interno → la versión REDIMENSIONADA del servidor
 ///     (`<servidor>/thumb/<ruta>?w=N`): pesa unos KB en vez de varios MB, así
-///     las miniaturas del panel aparecen al instante;
+///     las miniaturas del panel aparecen al instante. Lleva el token de la
+///     sesión (`?apikey=`), porque el servidor del drive exige permiso de
+///     lectura y una imagen no puede mandar cabeceras: sin él respondía 403 y
+///     las fotos del panel no cargaban nunca;
 ///   * cualquier otro enlace (una foto de otro sitio, una ruta del propio
 ///     sitio como `images/…`) → se devuelve TAL CUAL.
-String driveImagePreview(String url, {int width = 320}) {
+String driveImagePreview(String url, {int width = 320, String? token}) {
   final clean = url.trim();
   if (!isDriveImageUrl(clean)) return clean;
   final uri = Uri.parse(clean);
@@ -124,7 +148,59 @@ String driveImagePreview(String url, {int width = 320}) {
   // acentos o `#` (y `uri.path` los entrega ya decodificados).
   final path = segments.sublist(i + 1).map(Uri.encodeComponent).join('/');
   final w = width.clamp(32, 2048);
-  return '${uri.scheme}://${uri.authority}/thumb/$path?w=$w';
+  // El token va DESPUÉS de `w` a propósito: así la clave de caché de la
+  // imagen (`width`) sigue siendo visible en la URL.
+  final t = (token ?? driveImageToken).trim();
+  final extra = t.isEmpty ? '' : '&apikey=${Uri.encodeQueryComponent(t)}';
+  return '${uri.scheme}://${uri.authority}/thumb/$path?w=$w$extra';
+}
+
+/// El mismo criterio para la URL ORIGINAL de una foto del drive
+/// (`<servidor>/files/<ruta>`), con el token al final cuando hay sesión.
+String drivePhotoUrl(String url, {String? token}) {
+  final clean = url.trim();
+  if (!isDriveImageUrl(clean)) return clean;
+  final t = (token ?? driveImageToken).trim();
+  if (t.isEmpty) return clean;
+  final sep = clean.contains('?') ? '&' : '?';
+  return '$clean$sep'
+      'apikey=${Uri.encodeQueryComponent(t)}';
+}
+
+/// Ruta RELATIVA dentro del Drive de una URL de foto, o null si la URL no es
+/// una foto del Drive.
+///
+///   `https://servidor/files/Boda/Ana/Fiesta/01.jpg` → `Boda/Ana/Fiesta/01.jpg`
+///
+/// Sirve para decirle al servidor QUÉ fotos tiene que dejar ver a la web sin
+/// sesión (la portada del sitio, la imagen de un paquete): se guarda la ruta,
+/// no la URL, porque el token de la sesión nunca debe acabar en la web.
+String? driveRelPath(String url) {
+  final clean = url.trim();
+  if (!isDriveImageUrl(clean)) return null;
+  final uri = Uri.tryParse(clean);
+  if (uri == null) return null;
+  final segments = uri.pathSegments;
+  final i = segments.indexOf('files');
+  if (i < 0 || i >= segments.length - 1) return null;
+  final rel = segments.sublist(i + 1).where((s) => s.isNotEmpty).join('/');
+  return rel.isEmpty ? null : rel;
+}
+
+/// URL PÚBLICA de una foto del Drive: `<servidor>/files/<ruta>`, SIN el token
+/// de sesión.
+///
+/// La usan los módulos que GUARDAN una foto del Drive para que la vea la web
+/// (la portada del sitio, la imagen de un paquete): la página tiene que poder
+/// abrirla sin iniciar sesión de nadie, así que el token no puede ir dentro.
+String drivePublicUrl(String absolutePath) {
+  final base = AppConstants.apiBase.replaceAll(RegExp(r'/$'), '');
+  final path = absolutePath
+      .split('/')
+      .where((s) => s.trim().isNotEmpty)
+      .map(Uri.encodeComponent)
+      .join('/');
+  return '$base/files/$path';
 }
 
 /// Estados de conexión con el servidor del drive.
@@ -202,6 +278,7 @@ class DriveDownloadJob {
     required this.name,
     required this.items,
     this.targetPath,
+    this.from,
   });
 
   final String id;
@@ -211,6 +288,15 @@ class DriveDownloadJob {
 
   /// Elementos que se descargan (se guardan para poder reintentar).
   final List<DriveItem> items;
+
+  /// Carpeta del Drive DE LA QUE salen [items] (null = la carpeta que el drive
+  /// está mostrando).
+  ///
+  /// Existe porque hay pantallas que navegan POR SU CUENTA sin mover el drive
+  /// (el selector de fotos): si no se guardara aquí, la descarga saldría de la
+  /// carpeta que el módulo Archivos tuviera abierta y bajaría OTRO archivo (o
+  /// ninguno).
+  final List<String>? from;
 
   /// Destino elegido en el diálogo Guardar (nativo). En web es null: el
   /// navegador guarda en su carpeta de descargas.
@@ -234,6 +320,15 @@ class DriveDownloadJob {
 
 /// Contrato común del drive (local o servidor).
 abstract class DriveBase extends ChangeNotifier {
+  /// ¿Este drive se sirve por RED (HTTP)?
+  ///
+  /// Importa para pintar una miniatura: un drive local (una carpeta real del
+  /// equipo) se lee con `Image.file`, y uno remoto con `Image.network`. Antes
+  /// se preguntaba `drive is DriveApiService`, así que un drive remoto que no
+  /// hereda de esa clase (p. ej. una carpeta compartida) se pintaba como si
+  /// fuera del disco: la foto NUNCA cargaba y se quedaba el marcador girando.
+  bool get isRemote => true;
+
   // ---------- Estado observable ----------
   List<String> path = [];
   bool loading = false;
@@ -295,9 +390,11 @@ abstract class DriveBase extends ChangeNotifier {
   int get hiddenPathPrefix {
     if (!scoped || path.isEmpty) return 0;
     for (final e in sharedRootEntries) {
-      if (_isPrefix(e.real, path) && !_samePath(e.real, path)) {
-        return e.real.length - 1;
-      }
+      // Vale para la carpeta compartida MISMA y para lo que hay dentro: el
+      // camino del estudio hacia ella (`XV`) no se muestra nunca. Antes, al
+      // estar JUSTO en ella, no se ocultaba nada y el cliente leía
+      // "Mi Drive > XV > ReynaCoot" en vez de "Mi Drive > ReynaCoot".
+      if (_isPrefix(e.real, path)) return e.real.length - 1;
     }
     return 0;
   }
@@ -320,7 +417,11 @@ abstract class DriveBase extends ChangeNotifier {
             // solo se hereda cuando la compartida ES ese primer nivel.
             childCount: e.real.length == 1
                 ? (byName[e.real.first]?.childCount ?? 0)
-                : 0,
+                : (_sharedCounts[_pathKey(e.real)] ?? 0),
+            // Solo se sabe con certeza si el listado del estudio la trae
+            // (compartida del primer nivel) o si se preguntó su contenido.
+            countKnown: e.real.length == 1 ||
+                _sharedCounts.containsKey(_pathKey(e.real)),
           ),
       ];
     }
@@ -381,13 +482,36 @@ abstract class DriveBase extends ChangeNotifier {
     scoped = isClient;
     sharedRootEntries = List.unmodifiable(entries);
     sharedRoots = [for (final e in entries) e.shown];
+    // Cuántos elementos hay dentro de cada compartida (para que la tarjeta del
+    // cliente no diga "0 elementos" teniendo 2 dentro).
+    try {
+      _sharedCounts = await sharedRootCounts(sharedRootEntries);
+    } catch (_) {
+      _sharedCounts = const {};
+    }
     // Fuera de lo compartido (ni dentro, ni de camino): se regresa a la raíz.
     if (path.isNotEmpty && !isInsideShared(path) && !_leadsToShared(path)) {
       path = const [];
+      _setScreenPath(const []);
       setSearch(null);
     }
     await refresh();
   }
+
+  /// Conteo REAL de lo que hay dentro de cada carpeta compartida.
+  ///
+  /// En la raíz del cliente el listado solo trae las carpetas de primer nivel
+  /// del estudio, así que el contenido de una compartida ANIDADA
+  /// (`XV/ReynaCoot`) hay que preguntarlo aparte. Quien pueda hacerlo (el
+  /// servidor, o el disco en la versión local) lo implementa aquí; el resto
+  /// deja el conteo como desconocido y la tarjeta no inventa un número.
+  Future<Map<String, int>> sharedRootCounts(List<SharedRoot> entries) async =>
+      const {};
+
+  /// Conteo ya consultado de cada carpeta compartida (por su ruta real).
+  Map<String, int> _sharedCounts = const {};
+
+  static String _pathKey(List<String> segments) => segments.join('/');
 
   /// Segmentos de una ruta del Drive ('XV/ReynaCoot' → ['XV','ReynaCoot']).
   static List<String> _segments(String path) => drivePathNormalize(path)
@@ -487,9 +611,58 @@ abstract class DriveBase extends ChangeNotifier {
   @protected
   bool applyRefresh(({int seq, String path}) ticket, List<DriveItem> listing) {
     if (!isCurrentRefresh(ticket)) return false;
+    _rawListing = listing;
     updateItems(listing);
     loadedPath = pathLabel;
+    _setScreenPath(path);
     _rememberListing(pathLabel, items);
+    // El contenido de las compartidas vive en el servidor: se vuelve a
+    // preguntar por detrás, porque el número de la tarjeta envejece en cuanto
+    // el cliente sube o borra algo dentro de SU carpeta.
+    if (scoped && path.isEmpty) unawaited(_refreshSharedCounts());
+    return true;
+  }
+
+  /// Último listado CRUDO (sin el alcance compartido aplicado): al recontar hay
+  /// que rehacer el filtro desde el original, no desde lo que ya se muestra.
+  List<DriveItem> _rawListing = const [];
+
+  bool _countingSharedRoots = false;
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  /// Vuelve a preguntar cuántos elementos hay DENTRO de cada compartida y
+  /// repinta la raíz del cliente si el número cambió. Sin bloqueos ni ruido: si
+  /// falla (o el drive ya se cerró) se conserva el conteo anterior.
+  Future<void> _refreshSharedCounts() async {
+    if (_countingSharedRoots || sharedRootEntries.isEmpty) return;
+    final entries = sharedRootEntries;
+    _countingSharedRoots = true;
+    try {
+      final counts = await sharedRootCounts(entries);
+      if (_disposed || !scoped || path.isNotEmpty) return;
+      if (_sameCounts(counts, _sharedCounts)) return;
+      _sharedCounts = counts;
+      updateItems(_rawListing);
+      _rememberListing(pathLabel, items);
+      notifyListeners();
+    } catch (_) {
+      // Sin dato nuevo: se queda el conteo que ya había.
+    } finally {
+      _countingSharedRoots = false;
+    }
+  }
+
+  static bool _sameCounts(Map<String, int> a, Map<String, int> b) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
     return true;
   }
 
@@ -511,6 +684,7 @@ abstract class DriveBase extends ChangeNotifier {
     if (cached != null) {
       updateItems(cached);
       loadedPath = pathLabel;
+      _setScreenPath(path);
       return;
     }
     updateItems(const []);
@@ -531,8 +705,15 @@ abstract class DriveBase extends ChangeNotifier {
   final List<DriveDownloadJob> downloadJobs = [];
 
   bool get isReady => conn != DriveConn.checking;
-  String get locationLabel =>
-      path.isEmpty ? 'Mi Drive' : path.join(' / ');
+
+  /// Ruta para MOSTRAR (encabezado, aviso de "suelta para subir", nombre del
+  /// ZIP). En el drive del cliente no incluye el camino del estudio hacia su
+  /// carpeta compartida: `XV / ReynaCoot` se muestra como `ReynaCoot`.
+  String get locationLabel {
+    if (path.isEmpty) return 'Mi Drive';
+    final shown = path.sublist(hiddenPathPrefix.clamp(0, path.length));
+    return shown.isEmpty ? 'Mi Drive' : shown.join(' / ');
+  }
   String? _search;
   String? get search => _search;
 
@@ -552,9 +733,10 @@ abstract class DriveBase extends ChangeNotifier {
 
   /// ¿Se puede abrir esa carpeta con el alcance compartido actual?
   /// En la raíz de un drive compartido solo se abren las carpetas
-  /// COMPARTIDAS (nada de la raíz completa).
+  /// COMPARTIDAS (nada de la raíz completa). Se mira el listado EN PANTALLA
+  /// (`_screenPath`), que es sobre el que el usuario hace clic.
   bool canOpenFolderNamed(String name) =>
-      !scoped || path.isNotEmpty || _entryShown(name) != null;
+      !scoped || _screenPath.isNotEmpty || _entryShown(name) != null;
 
   /// La carpeta compartida que se VE con el nombre [shown] (null si ninguna).
   SharedRoot? _entryShown(String shown) {
@@ -564,17 +746,37 @@ abstract class DriveBase extends ChangeNotifier {
     return null;
   }
 
+  /// Segmentos de la carpeta cuyo LISTADO está delante del usuario (el último
+  /// que se pintó).
+  ///
+  /// De aquí parte un toque, no de [path]: si el usuario toca el listado que
+  /// sigue a la vista mientras la carpeta nueva carga, el destino es el
+  /// correcto. Antes se partía de [path] y el segundo toque sobre la MISMA
+  /// carpeta la metía dentro de sí misma ("Mi Drive / X / X"). Se conserva
+  /// aunque el listado de la carpeta nueva todavía no haya llegado (ahí no hay
+  /// nada que tocar, y el doble clic se resuelve con el listado anterior).
+  List<String> get _screenPath => _screenSegments;
+  List<String> _screenSegments = const [];
+
+  void _setScreenPath(List<String> segments) {
+    _screenSegments = List<String>.unmodifiable(segments);
+  }
+
   Future<void> openFolder(String name) async {
     if (!canOpenFolderNamed(name)) return;
-    if (scoped && path.isEmpty) {
-      // En la raíz del cliente lo que se toca es el NOMBRE con el que se ve la
-      // carpeta compartida: se entra a su ruta REAL del Drive (una compartida
-      // puede estar anidada: `ReynaCoot` → `XV/ReynaCoot`).
-      final entry = _entryShown(name);
-      path = entry == null ? [name] : List<String>.of(entry.real);
-    } else {
-      path = [...path, name];
-    }
+    // A dónde lleva este toque, según lo que hay en pantalla:
+    //   * raíz del cliente → la ruta REAL de esa compartida (`ReynaCoot` →
+    //     `XV/ReynaCoot`), porque la compartida puede vivir anidada;
+    //   * en cualquier otra carpeta → un nivel más dentro de lo que se ve.
+    final screen = _screenPath;
+    final target = (scoped && screen.isEmpty)
+        ? (_entryShown(name)?.real ?? [name])
+        : [...screen, name];
+    // ¿Ya se está abriendo EXACTAMENTE esta carpeta? (el listado en pantalla
+    // todavía es el de la anterior). No se pide dos veces: era lo que hacía
+    // "Mi Drive / X / X" al tocar dos veces la misma carpeta.
+    if (loading && loadedPath != pathLabel && _samePath(target, path)) return;
+    path = List<String>.of(target);
     setSearch(null);
     await refresh();
   }
@@ -645,6 +847,12 @@ abstract class DriveBase extends ChangeNotifier {
   Future<Map<String, dynamic>?> storageInfo() async => null;
 
   String absolutePathOf(DriveItem item);
+
+  /// Ruta ABSOLUTA de [item] cuando vive en la carpeta [rel], sin mover la
+  /// carpeta que el drive está mostrando. La usan las pantallas que navegan por
+  /// su cuenta (el selector de fotos) para leer o descargar un archivo de SU
+  /// carpeta y no del archivo homónimo de otra.
+  String absolutePathIn(List<String> rel, DriveItem item) => absolutePathOf(item);
 
   /// Vuelve a subir el archivo de un trabajo que quedó en error (botón
   /// "Resubir" del panel). Mantiene la misma fila del trabajo.
@@ -836,12 +1044,14 @@ abstract class DriveBase extends ChangeNotifier {
     String name, {
     required List<DriveItem> items,
     String? targetPath,
+    List<String>? from,
   }) {
     final job = DriveDownloadJob(
       id: 'd${DateTime.now().microsecondsSinceEpoch}',
       name: name,
       items: items,
       targetPath: targetPath,
+      from: from == null ? null : List<String>.of(from),
     );
     downloadJobs.insert(0, job);
     if (downloadJobs.length > 30) {

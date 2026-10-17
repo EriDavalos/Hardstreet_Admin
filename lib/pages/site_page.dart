@@ -1,11 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import '../app_constants.dart';
 import '../app_platform.dart';
-import '../drive_api_service.dart';
-import '../drive_base.dart' show driveImagePreview;
+import '../drive_api_service.dart' show DriveApiService;
+import '../drive_base.dart' show driveImagePreview, drivePublicUrl;
 import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
@@ -13,7 +14,7 @@ import '../theme.dart';
 import '../web_content.dart';
 import '../web_sections.dart';
 import '../widgets/common.dart';
-import '../widgets/drive_thumb.dart';
+import '../widgets/drive_photo_picker.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/site_section_preview.dart';
@@ -585,7 +586,9 @@ class _SitePageState extends State<SitePage> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await widget.api.save(_document(full: _stored));
+      final document = _document(full: _stored);
+      await widget.api.save(document);
+      _publishPublicPhotos(document);
       HsToast.success('Sitio web actualizado',
           details: 'La portada ya muestra los cambios.');
       await _load();
@@ -596,6 +599,19 @@ class _SitePageState extends State<SitePage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// Le dice al servidor del drive qué fotos de la portada tiene que poder
+  /// abrir la WEB (que es pública y no tiene sesión).
+  ///
+  /// Se buscan TODAS las direcciones del documento guardado: así da igual en
+  /// qué sección viva la foto, y las que no son del Drive se descartan solas.
+  /// Va sin esperar (el guardado no depende de esto).
+  void _publishPublicPhotos(SiteContent content) {
+    final urls = RegExp(r'https?://[^\s"\\]+')
+        .allMatches(jsonEncode(content.toJson()))
+        .map((m) => m.group(0)!);
+    unawaited(DriveApiService.publishPublicPhotos('sitio', urls));
   }
 
   /// Sube a la base de datos TODO el contenido actual de la portada.
@@ -631,7 +647,9 @@ class _SitePageState extends State<SitePage> {
     if (ok != true) return;
     setState(() => _saving = true);
     try {
-      await widget.api.save(_document(full: true));
+      final document = _document(full: true);
+      await widget.api.save(document);
+      _publishPublicPhotos(document);
       HsToast.success('Contenido guardado en la base de datos',
           details: 'La web ya lo lee de ahí: se aplica al instante.');
       await _load();
@@ -1773,17 +1791,24 @@ class _SitePageState extends State<SitePage> {
 
   // ---------------- Selector de fotos del Drive ----------------
 
+  /// Abre el selector de fotos del Drive (el mismo de toda la app: rejilla con
+  /// miniatura, carpetas, vista previa y descarga) y devuelve sus URLs
+  /// públicas.
   Future<List<String>> _pickImages() async {
     final drive = DriveScope.maybeOf(context);
     if (drive == null) {
       HsToast.info('El Drive no está disponible en esta pantalla');
       return const [];
     }
-    final picked = await showHsModal<List<String>>(
-      context: context,
-      builder: (_) => _DrivePhotoPicker(drive: drive),
+    final picked = await showDrivePhotoPicker(
+      context,
+      drive: drive,
+      title: 'Fotos del Drive',
+      note: 'Las fotos se enlazan desde el servidor del Drive '
+          '(${AppConstants.apiBase}): para verse en la página tienen que poder '
+          'abrirse sin iniciar sesión.',
     );
-    return picked ?? const [];
+    return [for (final p in picked ?? const <String>[]) drivePublicUrl(p)];
   }
 
   Future<void> _pickImagesFor(TextEditingController controller) async {
@@ -1886,589 +1911,6 @@ class _UrlDialogState extends State<_UrlDialog> {
           ),
         ],
       );
-}
-
-/// Selector de fotos del Drive: navega carpetas y marca imágenes.
-///
-/// Devuelve las URLs públicas de las fotos elegidas (`<servidor>/files/<ruta>`)
-/// SIN el token de sesión: la portada es pública y no puede llevar dentro la
-/// sesión de nadie.
-class _DrivePhotoPicker extends StatefulWidget {
-  const _DrivePhotoPicker({required this.drive});
-
-  final DriveBase drive;
-
-  @override
-  State<_DrivePhotoPicker> createState() => _DrivePhotoPickerState();
-}
-
-class _DrivePhotoPickerState extends State<_DrivePhotoPicker> {
-  List<String> _rel = const [];
-  List<DriveItem> _items = const [];
-  final Set<String> _picked = <String>{};
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final items = await widget.drive.listFolderItems(_rel);
-      if (!mounted) return;
-      setState(() {
-        _items = items;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _items = const [];
-        _error = 'No se pudo abrir la carpeta: $e';
-        _loading = false;
-      });
-    }
-  }
-
-  /// Ancho de la miniatura que se le pide al servidor del Drive (la MISMA
-  /// carpeta en la que se está navegando: ver [DriveBase.thumbSourceIn]).
-  static const int _thumbWidth = 480;
-
-  /// URL pública de una foto (`<drive>/files/<ruta>`), sin token.
-  String _urlFor(DriveItem item) {
-    final segments = [..._rel, item.name]
-        .map((s) => Uri.encodeComponent(s))
-        .join('/');
-    return '${AppConstants.apiBase.replaceAll(RegExp(r'/$'), '')}/files/$segments';
-  }
-
-  /// Entra a una carpeta del Drive (también vale para volver con las migas).
-  void _open(List<String> rel) {
-    setState(() => _rel = List<String>.of(rel));
-    _load();
-  }
-
-  /// Elige o quita una foto.
-  void _toggle(String url) {
-    setState(() {
-      if (!_picked.remove(url)) _picked.add(url);
-    });
-  }
-
-  /// Previsualiza UNA foto en grande (versión reducida del servidor, la misma
-  /// que usará la página) y permite elegirla sin cerrar el selector.
-  Future<void> _preview(DriveItem item) async {
-    final url = _urlFor(item);
-    await showHsModal<void>(
-      context: context,
-      builder: (_) => _DrivePhotoPreviewDialog(
-        name: item.name,
-        src: widget.drive.thumbSourceIn(_rel, item, width: 900),
-        isRemote: widget.drive is DriveApiService,
-        picked: _picked.contains(url),
-        onToggle: () => _toggle(url),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final folders = _items.where((i) => i.isFolder).toList();
-    final photos = _items.where((i) => !i.isFolder).toList();
-    return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-      title: Row(
-        children: [
-          Icon(Icons.photo_library_outlined, size: 20, color: scheme.primary),
-          const SizedBox(width: 10),
-          const Expanded(child: Text('Fotos del Drive')),
-          if (_picked.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: scheme.primary.withValues(alpha: .35)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.check_circle, size: 14, color: scheme.primary),
-                  const SizedBox(width: 5),
-                  Text(
-                    '${_picked.length} elegida${_picked.length == 1 ? '' : 's'}',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: scheme.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-      content: SizedBox(
-        width: 780,
-        height: 560,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _pathBar(scheme),
-            const SizedBox(height: 12),
-            Expanded(child: _body(scheme, folders, photos)),
-            const SizedBox(height: 8),
-            Text(
-              'Las fotos se enlazan desde el servidor del Drive '
-              '(${AppConstants.apiBase}): para verlas en la página tienen que '
-              'poder abrirse sin iniciar sesión.',
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton(
-          onPressed: _picked.isEmpty
-              ? null
-              : () => Navigator.of(context).pop(_picked.toList()..sort()),
-          child: Text('Agregar ${_picked.length}'),
-        ),
-      ],
-    );
-  }
-
-  /// Dónde estás parado: subir un nivel y las migas de pan (cada tramo se puede
-  /// tocar para volver a él de un salto).
-  Widget _pathBar(ColorScheme scheme) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(4, 3, 10, 3),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .6)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Subir un nivel',
-            visualDensity: VisualDensity.compact,
-            onPressed: _rel.isEmpty
-                ? null
-                : () => _open(_rel.sublist(0, _rel.length - 1)),
-            icon: const Icon(Icons.arrow_upward_rounded, size: 18),
-          ),
-          Icon(Icons.folder_open_rounded, size: 17, color: scheme.primary),
-          const SizedBox(width: 6),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              // El tramo donde estás siempre a la vista.
-              reverse: true,
-              child: Row(
-                children: [
-                  _crumb(scheme, 'Mi Drive', const []),
-                  for (var i = 0; i < _rel.length; i++) ...[
-                    Icon(Icons.chevron_right_rounded,
-                        size: 16, color: scheme.onSurfaceVariant),
-                    _crumb(scheme, _rel[i], _rel.sublist(0, i + 1)),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _crumb(ColorScheme scheme, String label, List<String> rel) {
-    final here = rel.length == _rel.length;
-    return TextButton(
-      onPressed: here ? null : () => _open(rel),
-      style: TextButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        minimumSize: const Size(0, 28),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: here ? FontWeight.w800 : FontWeight.w600,
-          color: here ? scheme.onSurface : scheme.primary,
-        ),
-      ),
-    );
-  }
-
-  /// Carpetas (franja de arriba) y fotos (cuadrícula con miniatura grande).
-  Widget _body(
-      ColorScheme scheme, List<DriveItem> folders, List<DriveItem> photos) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off_outlined, size: 34, color: scheme.error),
-            const SizedBox(height: 8),
-            Text(_error!, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _load,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Reintentar'),
-            ),
-          ],
-        ),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (folders.isNotEmpty) ...[
-          _sectionLabel(scheme, 'CARPETAS', folders.length),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 74,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: folders.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, i) => _folderCard(scheme, folders[i]),
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
-        _sectionLabel(scheme, 'FOTOS', photos.length),
-        const SizedBox(height: 8),
-        Expanded(
-          child: photos.isEmpty
-              ? Center(
-                  child: Text(
-                    'En esta carpeta no hay fotos',
-                    style:
-                        TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    // Miniaturas GRANDES: se ve de qué foto se trata sin abrirla.
-                    maxCrossAxisExtent: 176,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: .80,
-                  ),
-                  itemCount: photos.length,
-                  itemBuilder: (context, i) => _photoCard(scheme, photos[i]),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _sectionLabel(ColorScheme scheme, String label, int count) => Row(
-        children: [
-          Container(
-            width: 3,
-            height: 13,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10.5,
-              letterSpacing: 1.2,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text('$count',
-              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant)),
-        ],
-      );
-
-  /// Una carpeta (icono + nombre) que se abre al tocarla.
-  Widget _folderCard(ColorScheme scheme, DriveItem folder) => SizedBox(
-        width: 196,
-        child: Material(
-          color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            key: ValueKey('drive-folder-${folder.name}'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _open([..._rel, folder.name]),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(9, 6, 6, 6),
-              child: Row(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: .12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(Icons.folder_rounded,
-                        size: 19, color: scheme.primary),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          folder.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12.5, fontWeight: FontWeight.w700),
-                        ),
-                        if (folder.childCount > 0)
-                          Text(
-                            '${folder.childCount} elemento'
-                            '${folder.childCount == 1 ? '' : 's'}',
-                            style: TextStyle(
-                                fontSize: 10.5, color: scheme.onSurfaceVariant),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right_rounded,
-                      size: 18, color: scheme.onSurfaceVariant),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-
-  /// Una foto: la miniatura (grande) elige o quita la foto y el botón de la
-  /// esquina la previsualiza.
-  Widget _photoCard(ColorScheme scheme, DriveItem photo) {
-    final url = _urlFor(photo);
-    final selected = _picked.contains(url);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: Container(
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: .45),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: selected
-                    ? scheme.primary
-                    : scheme.outlineVariant.withValues(alpha: .7),
-                width: selected ? 2 : 1,
-              ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // Miniatura de LA CARPETA que se está viendo ([_rel]), no la que
-                // tenga abierta el módulo Archivos, y con el widget del drive
-                // (resuelve imagen remota y archivo local, y avisa si falló en
-                // vez de dejar el recuadro vacío).
-                DriveThumb(
-                  source:
-                      widget.drive.thumbSourceIn(_rel, photo, width: _thumbWidth),
-                  isRemote: widget.drive is DriveApiService,
-                  big: true,
-                ),
-                // La celda entera elige o quita la foto. Va ENCIMA de la
-                // miniatura: si no, el "toca para reintentar" de la miniatura
-                // se quedaría con el toque y la foto nunca se elegiría.
-                InkWell(
-                  key: ValueKey('drive-photo-${photo.name}'),
-                  onTap: () => _toggle(url),
-                  child: const SizedBox.expand(),
-                ),
-                Positioned(
-                  right: 4,
-                  bottom: 4,
-                  child: _overlayButton(
-                    key: ValueKey('drive-photo-preview-${photo.name}'),
-                    icon: Icons.zoom_out_map_rounded,
-                    tooltip: 'Previsualizar',
-                    onTap: () => _preview(photo),
-                  ),
-                ),
-                if (selected)
-                  Positioned(
-                    left: 5,
-                    top: 5,
-                    child: _overlayIcon(Icons.check_circle, scheme.primary),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          photo.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11.5),
-        ),
-      ],
-    );
-  }
-
-  /// Botón flotante sobre la foto (se lee sobre cualquier imagen).
-  Widget _overlayButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-    Key? key,
-  }) =>
-      Material(
-        key: key,
-        color: Colors.black.withValues(alpha: .55),
-        shape: const CircleBorder(),
-        child: IconButton(
-          tooltip: tooltip,
-          padding: EdgeInsets.zero,
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-          iconSize: 16,
-          color: Colors.white,
-          onPressed: onTap,
-          icon: Icon(icon),
-        ),
-      );
-
-  Widget _overlayIcon(IconData icon, Color color) => Container(
-        padding: const EdgeInsets.all(2),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: .55),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, size: 16, color: color),
-      );
-}
-
-/// Vista previa de UNA foto del Drive: la imagen en grande (la versión reducida
-/// del servidor, la misma que usará la página) y su botón para elegirla o
-/// quitarla sin cerrar el selector.
-class _DrivePhotoPreviewDialog extends StatefulWidget {
-  const _DrivePhotoPreviewDialog({
-    required this.name,
-    required this.src,
-    required this.isRemote,
-    required this.picked,
-    required this.onToggle,
-  });
-
-  final String name;
-
-  /// Miniatura grande del servidor (`/thumb/…?w=900`).
-  final String src;
-  final bool isRemote;
-  final bool picked;
-  final VoidCallback onToggle;
-
-  @override
-  State<_DrivePhotoPreviewDialog> createState() =>
-      _DrivePhotoPreviewDialogState();
-}
-
-class _DrivePhotoPreviewDialogState extends State<_DrivePhotoPreviewDialog> {
-  late bool _picked = widget.picked;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-      title: Row(
-        children: [
-          Icon(Icons.image_outlined, size: 19, color: scheme.primary),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Text(
-              widget.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            key: const ValueKey('drive-photo-preview-image'),
-            width: 660,
-            height: 420,
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: .45),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: scheme.outlineVariant.withValues(alpha: .7)),
-            ),
-            child: DriveThumb(
-              source: widget.src,
-              isRemote: widget.isRemote,
-              big: true,
-              contain: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Vista previa en tamaño reducido: la foto completa se ve en la '
-            'página.',
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('drive-photo-preview-close'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cerrar'),
-        ),
-        FilledButton.tonalIcon(
-          key: const ValueKey('drive-photo-preview-toggle'),
-          onPressed: () => setState(() {
-            _picked = !_picked;
-            widget.onToggle();
-          }),
-          icon: Icon(
-            _picked ? Icons.remove_circle_outline : Icons.add_circle_outline,
-            size: 18,
-          ),
-          label: Text(_picked ? 'Quitar' : 'Elegir esta foto'),
-        ),
-      ],
-    );
-  }
 }
 
 /// CATÁLOGO de secciones que se pueden AGREGAR a la página.
