@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:archive/archive.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -298,6 +299,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('en la computadora un clic MARCA la carpeta y el doble clic '
+      'entra', (tester) async {
+    final mock = _DriveMock();
+    debugLocalShareService = mock.service;
+    _installMock();
+    await _pump(tester);
+
+    // Un clic con el RATÓN deja la carpeta marcada, sin entrar (como el
+    // explorador de Windows); el segundo clic seguido entra.
+    await tester.tap(find.text('Estudio 2026'), kind: PointerDeviceKind.mouse);
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(find.text('Bodas'), findsNothing, reason: 'un clic no entra');
+
+    await tester.tap(find.text('Estudio 2026'), kind: PointerDeviceKind.mouse);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Bodas'), findsOneWidget);
+    expect(mock.called, contains('/api/local/list'));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('la vista de lista muestra las mismas carpetas', (tester) async {
     _installMock();
     await _pump(tester);
@@ -344,11 +366,17 @@ void main() {
       expect(find.text('Compartido conmigo'), findsWidgets);
       expect(find.text('Bodas'), findsOneWidget);
       expect(find.text('foto.jpg'), findsOneWidget);
-      // SOLO LECTURA: no hay acciones de escritura en ninguna parte.
+      // SOLO LECTURA: no hay acciones de escritura en ninguna parte. Lo único
+      // que se puede hacer (además de ver) es DESCARGAR.
       expect(find.byTooltip('Nueva carpeta'), findsNothing);
-      expect(find.byTooltip('Renombrar'), findsNothing);
-      expect(find.byTooltip('Eliminar'), findsNothing);
-      expect(find.byTooltip('Descargar'), findsWidgets);
+      await _tap(tester, find.byTooltip('Opciones').last);
+      expect(find.text('Ver'), findsOneWidget);
+      expect(find.text('Descargar'), findsOneWidget);
+      expect(find.text('Renombrar'), findsNothing);
+      expect(find.text('Eliminar'), findsNothing);
+      // Se cierra el menú para poder seguir navegando.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pump();
       expect(mock.called, contains('/api/local/list'));
 
       // Se entra a la subcarpeta: se pide al servidor del DRIVE con la subruta.
@@ -718,8 +746,11 @@ void main() {
     expect(find.text('Archivos compartidos'), findsOneWidget);
     expect(find.text('Buscar carpeta o persona'), findsOneWidget);
     expect(find.byTooltip('Vista de lista'), findsOneWidget);
-    // En el celular las acciones van como botones de imagen.
-    expect(find.byTooltip('Actualizar'), findsOneWidget);
+    // En el celular las acciones van como botones de imagen… pero NO hay
+    // botón de recargar: se recarga deslizando hacia abajo (RefreshIndicator),
+    // como en el resto de los módulos.
+    expect(find.byTooltip('Actualizar'), findsNothing);
+    expect(find.byType(RefreshIndicator), findsOneWidget);
     // Y las carpetas recibidas siguen a la vista.
     expect(find.text('Estudio 2026'), findsOneWidget);
     expect(find.text(r'D:\Eventos\2026'), findsOneWidget);

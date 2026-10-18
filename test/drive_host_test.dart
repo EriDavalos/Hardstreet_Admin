@@ -20,7 +20,10 @@ void main() {
   });
 
   test('lo escrito se normaliza (esquema y barras del final)', () {
-    expect(DriveHost.normalize('192.168.1.72:4000'), 'http://192.168.1.72:4000');
+    expect(
+      DriveHost.normalize('192.168.1.72:4000'),
+      'http://192.168.1.72:4000',
+    );
     expect(
       DriveHost.normalize('  http://192.168.1.72:4000/  '),
       'http://192.168.1.72:4000',
@@ -41,6 +44,23 @@ void main() {
     expect(DriveHost.isValid('ftp://x'), isFalse);
   });
 
+  test('el respaldo público evita TLS con el mismo nombre', () {
+    expect(DriveHost.publicHttp, 'http://oriongo.ddns.net:4000');
+    expect(DriveHost.fallbackCandidates, contains(DriveHost.publicHttp));
+    expect(DriveHost.fallbackCandidates, contains(DriveHost.lanFallback));
+  });
+
+  test('el respaldo de sesión se puede activar y quitar', () {
+    expect(DriveHost.usingFallback, isFalse);
+    DriveHost.useFallback(DriveHost.publicHttp);
+    expect(DriveHost.usingFallback, isTrue);
+    expect(AppConstants.apiBase, DriveHost.publicHttp);
+
+    DriveHost.clearFallback();
+    expect(DriveHost.usingFallback, isFalse);
+    expect(AppConstants.apiBase, DriveHost.compiled);
+  });
+
   test('guardar cambia la dirección del API y borrarla la devuelve', () {
     expect(DriveHost.set('192.168.1.72:4000'), isTrue);
     expect(DriveHost.base, 'http://192.168.1.72:4000');
@@ -58,19 +78,39 @@ void main() {
     expect(DriveHost.isCustom, isFalse);
   });
 
-  test('AppSettings guarda la dirección (y vuelve a leerla al arrancar)', () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final s = AppSettings.instance;
+  test('el respaldo local se activa solo en la sesión y se puede quitar', () {
+    expect(DriveHost.usingFallback, isFalse);
+    DriveHost.useFallback();
+    expect(DriveHost.usingFallback, isTrue);
+    expect(DriveHost.base, DriveHost.lanFallback);
+    expect(AppConstants.apiBase, DriveHost.lanFallback);
 
-    expect(await s.setDriveHost('192.168.1.72:4000'), isTrue);
-    expect(s.driveHost, 'http://192.168.1.72:4000');
-    final sp = await SharedPreferences.getInstance();
-    expect(sp.getString('app.drive.host'), 'http://192.168.1.72:4000');
+    // Elegir una dirección a mano desactiva el respaldo.
+    expect(DriveHost.set('192.168.1.90:4000'), isTrue);
+    expect(DriveHost.usingFallback, isFalse);
+    expect(DriveHost.base, 'http://192.168.1.90:4000');
 
-    // "Reinicio" de la app: la dirección se vuelve a aplicar desde el disco.
-    DriveHost.set(null);
-    expect(await AppSettings.instance.setDriveHost(''), isTrue);
-    expect(sp.getString('app.drive.host'), isNull);
-    expect(DriveHost.isCustom, isFalse);
+    // Y volver a la de fábrica deja la pública, no la local de la sesión.
+    expect(DriveHost.set(null), isTrue);
+    expect(DriveHost.base, DriveHost.compiled);
   });
+
+  test(
+    'AppSettings guarda la dirección (y vuelve a leerla al arrancar)',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final s = AppSettings.instance;
+
+      expect(await s.setDriveHost('192.168.1.72:4000'), isTrue);
+      expect(s.driveHost, 'http://192.168.1.72:4000');
+      final sp = await SharedPreferences.getInstance();
+      expect(sp.getString('app.drive.host'), 'http://192.168.1.72:4000');
+
+      // "Reinicio" de la app: la dirección se vuelve a aplicar desde el disco.
+      DriveHost.set(null);
+      expect(await AppSettings.instance.setDriveHost(''), isTrue);
+      expect(sp.getString('app.drive.host'), isNull);
+      expect(DriveHost.isCustom, isFalse);
+    },
+  );
 }

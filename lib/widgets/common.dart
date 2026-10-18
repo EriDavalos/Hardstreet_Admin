@@ -276,6 +276,8 @@ class PageContainer extends StatelessWidget {
     this.stats = const [],
     this.expand = false,
     this.actionsInline = false,
+    this.onRefresh,
+    this.footer,
   });
 
   final String title;
@@ -301,6 +303,18 @@ class PageContainer extends StatelessWidget {
   /// hace scroll: úsalo en módulos que deben caber exactos (p. ej. el
   /// calendario de Agendas). El hijo debe adaptarse a una altura acotada.
   final bool expand;
+
+  /// Recarga por DESLIZAMIENTO hacia abajo (móvil). El botón de recargar ya no
+  /// existe en los módulos: se recarga con el gesto, como en el resto de apps.
+  final Future<void> Function()? onRefresh;
+
+  /// PIE FIJO de la página: no forma parte del scroll.
+  ///
+  /// Se usa para la barra de paginación ("31–60 de 240 · 30 por página · ‹ ›"):
+  /// antes iba al final del listado y había que bajar hasta el último dato para
+  /// cambiar de página. Ahora queda anclada abajo, como el pie de una tabla de
+  /// escritorio, y el contenido scrollea por encima de ella.
+  final Widget? footer;
 
   /// Semente estable para variar el ángulo del degradado por módulo
   /// (deriva del texto: mismo módulo → mismo diseño siempre).
@@ -521,6 +535,40 @@ class PageContainer extends StatelessWidget {
     final padding =
         EdgeInsets.fromLTRB(compact ? 16 : 24, 18, compact ? 16 : 24, 24);
 
+    // PIE FIJO: el contenido scrollea dentro de un [Expanded] y la barra
+    // queda abajo, fuera del scroll (no se va con el último registro).
+    // En modo [expand] el pie se agrega al final del bloque de abajo.
+    if (footer != null && !expand) {
+      final scroll = ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: padding,
+        children: [
+          FadeSlideIn(child: hero),
+          const SizedBox(height: 20),
+          FadeSlideIn(delayMs: 90, child: child),
+        ],
+      );
+      final refresh = onRefresh;
+      return Padding(
+        padding: EdgeInsets.only(bottom: compact ? 8 : 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: refresh == null
+                  ? scroll
+                  : RefreshIndicator(onRefresh: refresh, child: scroll),
+            ),
+            // La barra va a lo ancho, con el mismo margen lateral que la lista.
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: padding.left),
+              child: footer,
+            ),
+          ],
+        ),
+      );
+    }
+
     // Modo "llenar pantalla": la página ocupa exactamente el alto disponible
     // (sin scroll) y el contenido se estira en el espacio restante.
     if (expand) {
@@ -532,12 +580,17 @@ class PageContainer extends StatelessWidget {
             FadeSlideIn(child: hero),
             const SizedBox(height: 18),
             Expanded(child: FadeSlideIn(delayMs: 90, child: child)),
+            // Pie fijo del módulo (paginación de la tabla de Finanzas).
+            ?footer,
           ],
         ),
       );
     }
 
-    return ListView(
+    final list = ListView(
+      // Siempre desplazable: si el contenido cabe justo, el gesto de recargar
+      // seguiría funcionando (sin esto, RefreshIndicator no se dispara).
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: padding,
       children: [
         FadeSlideIn(child: hero),
@@ -545,6 +598,9 @@ class PageContainer extends StatelessWidget {
         FadeSlideIn(delayMs: 90, child: child),
       ],
     );
+    final refresh = onRefresh;
+    if (refresh == null) return list;
+    return RefreshIndicator(onRefresh: refresh, child: list);
   }
 }
 

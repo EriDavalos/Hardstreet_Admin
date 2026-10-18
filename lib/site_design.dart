@@ -110,6 +110,7 @@ class SiteCardDesign {
     this.imageShadow = .55,
     this.imageShadowStart = .08,
     this.imageShadowEnd = .72,
+    this.imageShadowAngle = 0,
     this.animMode = 'up',
     this.animMs = 600,
     this.animStagger = 100,
@@ -227,6 +228,12 @@ class SiteCardDesign {
   /// Fin del desvanecido de la sombra (0..1 de la tarjeta, desde abajo).
   final double imageShadowEnd;
 
+  /// DE DÓNDE viene la sombra, en grados CSS (0 = desde abajo, el de siempre;
+  /// 90 = desde la izquierda; 180 = desde arriba; 270 = desde la derecha).
+  /// Así la sombra se puede mover de posición para tapar el lado donde esté el
+  /// texto. Es independiente de la dirección del velo.
+  final double imageShadowAngle;
+
   /// Entrada de las tarjetas del catálogo:
   /// `up` subir · `fade` aparecer · `zoom` acercar · `none` sin animación.
   final String animMode;
@@ -272,6 +279,7 @@ class SiteCardDesign {
     double? imageShadow,
     double? imageShadowStart,
     double? imageShadowEnd,
+    double? imageShadowAngle,
     String? animMode,
     int? animMs,
     int? animStagger,
@@ -310,6 +318,7 @@ class SiteCardDesign {
     imageShadow: imageShadow ?? this.imageShadow,
     imageShadowStart: imageShadowStart ?? this.imageShadowStart,
     imageShadowEnd: imageShadowEnd ?? this.imageShadowEnd,
+    imageShadowAngle: imageShadowAngle ?? this.imageShadowAngle,
     animMode: animMode ?? this.animMode,
     animMs: animMs ?? this.animMs,
     animStagger: animStagger ?? this.animStagger,
@@ -350,6 +359,7 @@ class SiteCardDesign {
     'imageShadow': imageShadow,
     'imageShadowStart': imageShadowStart,
     'imageShadowEnd': imageShadowEnd,
+    'imageShadowAngle': imageShadowAngle,
     'animMode': animMode,
     'animMs': animMs,
     'animStagger': animStagger,
@@ -417,6 +427,9 @@ class SiteCardDesign {
       imageShadowEnd: hasShadow
           ? _num(j['imageShadowEnd'], f.imageShadowEnd).clamp(.05, 1)
           : f.imageShadowEnd,
+      // La POSICIÓN de la sombra también llegó después: sin el campo se queda
+      // abajo (0°), que es como se veía antes.
+      imageShadowAngle: _angle(j['imageShadowAngle'], f.imageShadowAngle),
       animMode: _choice(j['animMode'], kDesignAnimModes, f.animMode),
       animMs: _int(j['animMs'], f.animMs),
       animStagger: _int(j['animStagger'], f.animStagger),
@@ -609,6 +622,10 @@ double hsFadeCssDeg(String from, double angle) {
   if (angle >= 0) return ((angle % 360) + 360) % 360;
   return kFadeFromDeg[from] ?? 180;
 }
+
+/// Ángulo CSS de la SOMBRA de la foto: cuánto se gira desde "abajo" (0°).
+/// Se normaliza a 0..359 para que el panel y la web escriban el mismo número.
+double hsShadowCssDeg(double angle) => ((angle % 360) + 360) % 360;
 
 /// Ángulo CSS de la capa perpendicular del velo.
 double hsFadeSideCssDeg(String from, double angle) {

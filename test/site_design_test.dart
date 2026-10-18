@@ -501,6 +501,39 @@ void main() {
       expect(raro.card.imageShadow, 1);
     });
 
+    test('la sombra de la foto se puede MOVER de posición', () {
+      // La posición es un ángulo CSS: 0 abajo (de siempre), 90 izquierda,
+      // 180 arriba y 270 derecha. Se guarda y vuelve igual.
+      const base = SiteCardDesign();
+      expect(base.imageShadowAngle, 0);
+      final movida = base.copyWith(imageMode: 'bg', imageShadowAngle: 90);
+      final vuelta = SiteDesign.fromJsonText(
+        jsonEncode(
+          SiteDesign.defaults.copyWith(card: movida).toJson(),
+        ),
+      );
+      expect(vuelta.card.imageShadowAngle, 90);
+
+      // Un documento viejo (sin el campo) se queda abajo, como se veía antes.
+      final viejo = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {'imageMode': 'bg', 'imageShadow': .5},
+        }),
+      );
+      expect(viejo.card.imageShadowAngle, 0);
+
+      // Y 360/negativo no rompe: el ángulo da la vuelta a 0..359.
+      expect(
+        SiteDesign.fromJsonText(
+          jsonEncode({
+            'card': {'imageShadowAngle': 360},
+          }),
+        ).card.imageShadowAngle,
+        0,
+      );
+      expect(hsShadowCssDeg(-90), 270);
+    });
+
     test('un diseño guardado ANTES de la sombra la estrena con los defaults',
         () {
       // Guardado con la versión vieja (sin las paradas): el degradado negro se
@@ -650,6 +683,110 @@ void main() {
         result!.card.imageFadeEnd,
         greaterThan(const SiteCardDesign().imageFadeEnd),
         reason: 'la parada movida a mano llega al diseño',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la tarjeta se previsualiza EN el modal (sin abrir el navegador)',
+        (tester) async {
+      await _pumpDesigner(tester, size: const Size(1300, 950));
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // El antiguo botón de "Ver en el navegador" ya no está.
+      expect(find.byKey(const ValueKey('design-open-browser')), findsNothing);
+      expect(find.text('Ver en el navegador'), findsNothing);
+      // La vista previa (la tarjeta) sigue dentro del modal.
+      expect(find.text('Así se verá en la web'), findsOneWidget);
+      expect(find.byKey(const ValueKey('design-open-html')), findsOneWidget);
+
+      // El HTML de la tarjeta se puede revisar sin salir del panel.
+      await tester.tap(find.byKey(const ValueKey('design-open-html')));
+      await tester.pumpAndSettle();
+      expect(find.text('HTML de la tarjeta'), findsOneWidget);
+      expect(find.byType(SelectableText), findsWidgets);
+      await tester.tap(find.text('Cerrar'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la SOMBRA NEGRA también se ajusta en Fondo degradado',
+        (tester) async {
+      await _pumpDesigner(tester, size: const Size(1300, 950));
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      final chip = find.byKey(const ValueKey('design-image-fade'));
+      await _scrollTo(tester, chip);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+
+      // Antes estos ajustes solo existían en "De fondo".
+      await _scrollTo(tester, find.text('SOMBRA SOBRE LA FOTO'));
+      expect(find.text('SOMBRA SOBRE LA FOTO'), findsOneWidget);
+      expect(find.text('Sombra de la foto (fuerza)'), findsOneWidget);
+      await _scrollTo(tester, find.text('Dónde empieza el desvanecido'));
+      expect(find.text('Dónde empieza el desvanecido'), findsOneWidget);
+      expect(find.text('Dónde se apaga del todo'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('en el CELULAR el diseñador se abre en pestañas y sin desbordes',
+        (tester) async {
+      await _pumpDesigner(
+        tester,
+        size: const Size(390, 780),
+        onSaved: (_) {},
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Pantalla angosta: controles y vista previa van en pestañas.
+      expect(find.text('Diseño'), findsOneWidget);
+      expect(find.text('Vista previa'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Vista previa'));
+      await tester.pumpAndSettle();
+      expect(find.text('Así se verá en la web'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la SOMBRA se mueve ARRASTRÁNDOLA también en Fondo degradado',
+        (tester) async {
+      SiteDesign? result;
+      await _pumpDesigner(tester, onSaved: (d) => result = d);
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      final chip = find.byKey(const ValueKey('design-image-fade'));
+      await _scrollTo(tester, chip);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+
+      // Por defecto en este estilo se arrastra el desvanecido; el conmutador
+      // deja mover la SOMBRA negra igual que en "De fondo".
+      final shadowChip = find.byKey(const ValueKey('design-drag-shadow'));
+      await _scrollTo(tester, shadowChip);
+      await tester.tap(shadowChip);
+      await tester.pumpAndSettle();
+
+      final start = find.byKey(const ValueKey('design-shadow-start'));
+      await _scrollTo(tester, start);
+      expect(start, findsOneWidget);
+      expect(find.byKey(const ValueKey('design-shadow-end')), findsOneWidget);
+
+      // Se arrastra el asa de arriba hacia arriba: la parada sube.
+      await tester.drag(start, const Offset(0, -40));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(
+        result!.card.imageShadowStart,
+        greaterThan(const SiteCardDesign().imageShadowStart),
+        reason: 'la parada arrastrada tiene que llegar al diseño',
       );
       expect(tester.takeException(), isNull);
     });

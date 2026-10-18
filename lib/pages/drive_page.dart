@@ -22,7 +22,6 @@ import '../../app_constants.dart';
 import '../../app_platform.dart';
 import '../../drive_api_service.dart';
 import '../../drive_downloader.dart';
-import '../../hs_access.dart';
 import '../../image_memory.dart';
 import '../../theme.dart';
 import '../../widgets/anim.dart';
@@ -38,8 +37,7 @@ import '../../widgets/hs_modal.dart';
 /// mover; sin `delete` no hay eliminar; sin `download` no se puede sacar una
 /// imagen. En modo degradado (el backend no respondió) se muestra todo, igual
 /// que en el resto del panel, para no dejar la sección inservible.
-bool _driveCan(String action) =>
-    HsAccess.instance.degraded || HsAccess.instance.can('Archivos', action);
+bool _driveCan(DriveBase drive, String action) => drive.canDo(action);
 
 // ============ Lecturas seguras del ScrollController compartido ============
 //
@@ -228,9 +226,40 @@ class PressMoveDraggable<T extends Object> extends Draggable<T> {
 /// Página "Archivos": drive estilo Google Drive con selección múltiple,
 /// arrastrar-y-soltar y operaciones en lote (mover, copiar, eliminar).
 class DrivePage extends StatefulWidget {
-  const DrivePage({super.key, required this.drive});
+  const DrivePage({
+    super.key,
+    required this.drive,
+    this.title = 'Mi Drive',
+    this.subtitle,
+    this.onBack,
+    this.backTooltip = 'Volver',
+    this.onRootTap,
+    this.initialGrid = true,
+  });
 
   final DriveBase drive;
+
+  /// Título del encabezado. El Drive normal dice "Mi Drive"; una carpeta
+  /// compartida abierta desde su módulo usa el nombre del compartido.
+  final String title;
+
+  /// Texto bajo el título cuando se está en la raíz (si es null, el de
+  /// siempre).
+  final String? subtitle;
+
+  /// Si no es null, se dibuja una flecha para volver (el Drive normal no la
+  /// lleva: es una sección del menú).
+  final VoidCallback? onBack;
+  final String backTooltip;
+
+  /// Qué hace la MIGA RAÍZ al tocarla. Por defecto vuelve a la raíz de ESTE
+  /// drive; el módulo de Archivos compartidos lo usa para volver a su listado
+  /// (la raíz de ese drive es el propio módulo).
+  final VoidCallback? onRootTap;
+
+  /// Vista con la que se abre (cuadrícula o lista): el módulo de Archivos
+  /// compartidos le pasa la que el usuario tenía puesta en el listado.
+  final bool initialGrid;
 
   @override
   State<DrivePage> createState() => _DrivePageState();
@@ -285,6 +314,7 @@ class _DrivePageState extends State<DrivePage> {
   @override
   void initState() {
     super.initState();
+    _grid = widget.initialGrid;
     _lastPath = List.of(widget.drive.path);
     widget.drive.addListener(_onChange);
     HardwareKeyboard.instance.addHandler(_handleKey);
@@ -322,7 +352,7 @@ class _DrivePageState extends State<DrivePage> {
     }
     if (event.logicalKey == LogicalKeyboardKey.delete &&
         _selected.isNotEmpty &&
-        _driveCan('delete')) {
+        _driveCan(widget.drive, 'delete')) {
       _deleteItems(_selected.toList());
       return true;
     }
@@ -337,7 +367,7 @@ class _DrivePageState extends State<DrivePage> {
     if (event.logicalKey == LogicalKeyboardKey.keyV &&
         HardwareKeyboard.instance.isControlPressed &&
         _clipboardNames.isNotEmpty &&
-        _driveCan('create')) {
+        _driveCan(widget.drive, 'create')) {
       _pasteClipboard();
       return true;
     }
@@ -346,12 +376,15 @@ class _DrivePageState extends State<DrivePage> {
 
   /// Ctrl+V: pega lo copiado en la carpeta actual.
   Future<void> _pasteClipboard() async {
-    if (!_driveCan('create')) {
+    if (!_driveCan(widget.drive, 'create')) {
       _snack('Tu rol no puede agregar archivos al Drive', error: true);
       return;
     }
     final names = List.of(_clipboardNames);
-    final result = await widget.drive.copyItems(names, widget.drive.path);
+    final result = await _guarded(
+      () => widget.drive.copyItems(names, widget.drive.path),
+    );
+    if (result == null) return;
     if (result.copied > 0) {
       _snack(
           '${result.copied} elemento${result.copied == 1 ? '' : 's'} pegado${result.copied == 1 ? '' : 's'}');
@@ -431,7 +464,7 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> _downloadItems(List<DriveItem> items) => _guarded(() async {
         // Candado de respaldo: cualquier camino que se me escape en la UI
         // (visor, menús, panel de descargas) queda cortado aquí.
-        if (!_driveCan('download')) {
+        if (!_driveCan(widget.drive, 'download')) {
           _snack('Tu rol no puede descargar archivos del Drive', error: true);
           return;
         }
@@ -639,7 +672,7 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> _handleExternalDrop(DropDoneDetails details) async {
     _lastClickItem = null;
     setState(() => _externalDrag = false);
-    if (!_driveCan('create')) {
+    if (!_driveCan(widget.drive, 'create')) {
       _snack('Tu rol no puede subir archivos al Drive', error: true);
       return;
     }
@@ -716,7 +749,7 @@ class _DrivePageState extends State<DrivePage> {
   Future<bool?> _askDuplicateAction(List<String> dups) {
     return showGeneralDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       barrierLabel: 'Duplicados',
       transitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (ctx, _, _) {
@@ -898,8 +931,9 @@ class _DrivePageState extends State<DrivePage> {
           : '¿Eliminar "${names.first}"?',
     );
     if (ok != true) return;
-    final result = await widget.drive.deleteItems(names);
+    final result = await _guarded(() => widget.drive.deleteItems(names));
     _clearSelection();
+    if (result == null) return;
     if (result.deleted > 0) {
       _snack('${result.deleted} elemento${result.deleted == 1 ? '' : 's'} eliminado${result.deleted == 1 ? '' : 's'}');
     }
@@ -944,7 +978,7 @@ class _DrivePageState extends State<DrivePage> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      ['Mi Drive', ...current].join('  /  '),
+                      [drive.rootLabel, ...current].join('  /  '),
                       style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
@@ -1022,8 +1056,11 @@ class _DrivePageState extends State<DrivePage> {
 
   Future<void> _moveSelected(List<String> targetPath) async {
     final names = _selected.toList(growable: false);
-    final result = await widget.drive.moveItems(names, targetPath);
+    final result = await _guarded(
+      () => widget.drive.moveItems(names, targetPath),
+    );
     _clearSelection();
+    if (result == null) return;
     if (result.moved > 0) {
       _snack('${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'}');
     }
@@ -1032,8 +1069,11 @@ class _DrivePageState extends State<DrivePage> {
 
   Future<void> _copySelected(List<String> targetPath) async {
     final names = _selected.toList(growable: false);
-    final result = await widget.drive.copyItems(names, targetPath);
+    final result = await _guarded(
+      () => widget.drive.copyItems(names, targetPath),
+    );
     _clearSelection();
+    if (result == null) return;
     if (result.copied > 0) {
       _snack('${result.copied} elemento${result.copied == 1 ? '' : 's'} copiado${result.copied == 1 ? '' : 's'}');
     }
@@ -1071,7 +1111,7 @@ class _DrivePageState extends State<DrivePage> {
       // Descargar SIN salir del visor.
       // Sin permiso de descarga el visor ni siquiera muestra el botón.
       onDownload:
-          _driveCan('download') ? (item) => _downloadItems([item]) : null,
+          _driveCan(widget.drive, 'download') ? (item) => _downloadItems([item]) : null,
     );
   }
 
@@ -1114,20 +1154,20 @@ class _DrivePageState extends State<DrivePage> {
       // backend rechazaría.
       items: many
           ? [
-              if (_driveCan('download'))
+              if (_driveCan(widget.drive, 'download'))
                 entry('download-many', Icons.download_rounded,
                     'Descargar ${_selected.length} seleccionadas'),
-              if (_driveCan('delete'))
+              if (_driveCan(widget.drive, 'delete'))
                 entry('delete-many', Icons.delete_outline,
                     'Eliminar ${_selected.length} seleccionadas'),
             ]
           : [
               entry('open', Icons.open_in_new_rounded, 'Abrir'),
-              if (_driveCan('download'))
+              if (_driveCan(widget.drive, 'download'))
                 entry('download', Icons.download_rounded, 'Descargar'),
-              if (_driveCan('update'))
+              if (_driveCan(widget.drive, 'update'))
                 entry('rename', Icons.drive_file_rename_outline, 'Renombrar'),
-              if (_driveCan('delete'))
+              if (_driveCan(widget.drive, 'delete'))
                 entry('delete', Icons.delete_outline, 'Eliminar'),
             ],
     );
@@ -1161,7 +1201,7 @@ class _DrivePageState extends State<DrivePage> {
       _ => null,
     };
     if (need == null) return true; // Abrir solo necesita poder ver.
-    if (_driveCan(need)) return true;
+    if (_driveCan(widget.drive, need)) return true;
     _snack('Tu rol no tiene permitido eso en el Drive', error: true);
     return false;
   }
@@ -1180,7 +1220,7 @@ class _DrivePageState extends State<DrivePage> {
       return;
     }
     // Mover es editar: sin permiso, el arrastre no hace nada.
-    if (!_driveCan('update')) {
+    if (!_driveCan(widget.drive, 'update')) {
       _snack('Tu rol no puede mover archivos del Drive', error: true);
       return;
     }
@@ -1191,10 +1231,16 @@ class _DrivePageState extends State<DrivePage> {
   }
 
   Future<void> _doMove(List<String> names, List<String> targetPath) async {
-    final result = await widget.drive.moveItems(names, targetPath);
+    // Si el servidor rechaza el movimiento (permiso del compartido, la app del
+    // dueño cerrada, red…) hay que DECIRLO: antes la excepción se perdía y
+    // arrastrar y soltar parecía no hacer nada.
+    final result = await _guarded(
+      () => widget.drive.moveItems(names, targetPath),
+    );
     _clearSelection();
+    if (result == null) return;
     if (result.moved > 0) {
-      _snack('${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'} a "${targetPath.last}"');
+      _snack('${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'} a "${targetPath.isEmpty ? widget.drive.rootLabel : targetPath.last}"');
     }
     _showErrors(result.errors);
   }
@@ -1395,19 +1441,44 @@ class _DrivePageState extends State<DrivePage> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      'Mi Drive',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .headlineSmall
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w800),
+                                    Row(
+                                      children: [
+                                        if (widget.onBack != null) ...[
+                                          IconButton(
+                                            tooltip: widget.backTooltip,
+                                            visualDensity: VisualDensity.compact,
+                                            onPressed: widget.onBack,
+                                            icon: const Icon(
+                                              Icons.arrow_back_rounded,
+                                              size: 20,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 2),
+                                        ],
+                                        Flexible(
+                                          child: Text(
+                                            widget.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .headlineSmall
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      drive.locationLabel == 'Mi Drive'
-                                          ? 'Raíz del almacenamiento'
+                                      drive.path.isEmpty ||
+                                              drive.locationLabel == 'Mi Drive'
+                                          ? (widget.subtitle ??
+                                                'Raíz del almacenamiento')
                                           : drive.locationLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodySmall
@@ -1420,7 +1491,7 @@ class _DrivePageState extends State<DrivePage> {
                               // Crear (carpeta/subir) solo con permiso: las
                               // acciones que el rol no tiene NO se dibujan.
                               if (!isCompact) ...[
-                                if (_driveCan('create')) ...[
+                                if (_driveCan(widget.drive, 'create')) ...[
                                   const SizedBox(width: 16),
                                   OutlinedButton.icon(
                                     onPressed: _newFolder,
@@ -1439,7 +1510,7 @@ class _DrivePageState extends State<DrivePage> {
                                   ),
                                 ],
                               ] else ...[
-                                if (_driveCan('create')) ...[
+                                if (_driveCan(widget.drive, 'create')) ...[
                                   _RoundAction(
                                     icon: Icons.create_new_folder_outlined,
                                     tooltip: 'Nueva carpeta',
@@ -1447,11 +1518,9 @@ class _DrivePageState extends State<DrivePage> {
                                   ),
                                   const SizedBox(width: 8),
                                 ],
-                                _RoundAction(
-                                  icon: Icons.refresh,
-                                  tooltip: 'Actualizar',
-                                  onTap: drive.refresh,
-                                ),
+                                // Sin botón de recargar: en la app se
+                                // recarga deslizando hacia abajo (en el
+                                // escritorio, cada acción ya refresca).
                               ],
                             ],
                           ),
@@ -1495,12 +1564,20 @@ class _DrivePageState extends State<DrivePage> {
             const SizedBox(height: 10),
             // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
             // móvil, donde sirve para saltar a cualquier carpeta padre) =====
-            if (drive.path.isNotEmpty)
+            //
+            // En una carpeta COMPARTIDA la ruta se dibuja también en la raíz
+            // (`onRootTap != null`): la primera miga es el MÓDULO del que se
+            // abrió y, al tocarla, se vuelve a su listado.
+            if (drive.path.isNotEmpty || widget.onRootTap != null)
               Padding(
                 padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: _Breadcrumbs(drive: drive, onDropMove: _doMove),
+                  child: _Breadcrumbs(
+                    drive: drive,
+                    onDropMove: _doMove,
+                    onRootTap: widget.onRootTap,
+                  ),
                 ),
               ),
             // ===== Barra de estado =====
@@ -1556,7 +1633,11 @@ class _DrivePageState extends State<DrivePage> {
             ),
             // ===== Contenido =====
             Expanded(
-              child: drive.loading && drive.items.isEmpty
+              // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
+              // botón de recargar en el encabezado).
+              child: RefreshIndicator(
+                onRefresh: drive.refresh,
+                child: drive.loading && drive.items.isEmpty
                   ? const Center(child: CircularProgressIndicator())
                   // El panel bloqueante solo cuando NO hay nada que mostrar:
                   // si ya se ve una carpeta, se queda a la vista.
@@ -1589,11 +1670,11 @@ class _DrivePageState extends State<DrivePage> {
                               // pero no ofrece el botón.
                               actionLabel: drive.scoped &&
                                       drive.path.isEmpty ||
-                                      !_driveCan('create')
+                                      !_driveCan(widget.drive, 'create')
                                   ? null
                                   : 'Subir imágenes',
                               onAction: drive.scoped && drive.path.isEmpty ||
-                                      !_driveCan('create')
+                                      !_driveCan(widget.drive, 'create')
                                   ? null
                                   : _upload,
                             )
@@ -1655,6 +1736,7 @@ class _DrivePageState extends State<DrivePage> {
                                       )),
                               ),
                             ),
+              ),
             ),
           ],
         ),
@@ -1755,6 +1837,7 @@ class _DrivePageState extends State<DrivePage> {
             right: 0,
             bottom: 0,
             child: _SelectionBar(
+              can: drive.canDo,
               count: _selected.length,
               compact: isCompact,
               onClear: _clearSelection,
@@ -1894,6 +1977,7 @@ class _CountPill extends StatelessWidget {
 
 class _SelectionBar extends StatelessWidget {
   const _SelectionBar({
+    required this.can,
     required this.count,
     required this.compact,
     required this.onClear,
@@ -1904,6 +1988,8 @@ class _SelectionBar extends StatelessWidget {
     required this.onDownload,
   });
 
+  /// Permisos del drive que se está viendo.
+  final bool Function(String action) can;
   final int count;
   final bool compact;
   final VoidCallback onClear;
@@ -1978,26 +2064,27 @@ class _SelectionBar extends StatelessWidget {
                       child: const Text('Todos'),
                     ),
                     const SizedBox(width: 2),
-                    // Cada acción exige su permiso del módulo Archivos.
-                    if (_driveCan('update'))
+                    // Cada acción exige su permiso (rol del Drive, o lo que
+                    // dio el dueño de una carpeta compartida).
+                    if (can('update'))
                       _BarAction(
                         tooltip: 'Mover a...',
                         icon: Icons.drive_file_move_outline,
                         onPressed: onMove,
                       ),
-                    if (_driveCan('create'))
+                    if (can('create'))
                       _BarAction(
                         tooltip: 'Copiar a...',
                         icon: Icons.copy_all_outlined,
                         onPressed: onCopy,
                       ),
-                    if (_driveCan('download'))
+                    if (can('download'))
                       _BarAction(
                         tooltip: 'Descargar',
                         icon: Icons.download_rounded,
                         onPressed: onDownload,
                       ),
-                    if (_driveCan('delete'))
+                    if (can('delete'))
                       _BarAction(
                         tooltip: 'Eliminar',
                         icon: Icons.delete_outline,
@@ -2037,14 +2124,70 @@ class _BarAction extends StatelessWidget {
 
 // ===================== Breadcrumbs =====================
 
-class _Breadcrumbs extends StatelessWidget {
-  const _Breadcrumbs({required this.drive, required this.onDropMove});
+class _Breadcrumbs extends StatefulWidget {
+  const _Breadcrumbs({
+    required this.drive,
+    required this.onDropMove,
+    this.onRootTap,
+  });
 
   final DriveBase drive;
   final void Function(List<String> names, List<String> targetPath) onDropMove;
 
+  /// Tocar la miga RAÍZ (null = volver a la raíz del drive).
+  final VoidCallback? onRootTap;
+
+  @override
+  State<_Breadcrumbs> createState() => _BreadcrumbsState();
+}
+
+class _BreadcrumbsState extends State<_Breadcrumbs> {
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _jumpToEnd();
+  }
+
+  @override
+  void didUpdateWidget(covariant _Breadcrumbs old) {
+    super.didUpdateWidget(old);
+    if (old.drive.path.join('/') != widget.drive.path.join('/')) {
+      _jumpToEnd();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Al entrar a una carpeta se enseña SU miga (el final), no el principio:
+  /// con una ruta larga lo que importa es dónde estás, y hacia atrás se
+  /// desliza. Antes las migas usaban Wrap y, cuando no cabían, bajaban a una
+  /// segunda línea y empujaban todo el contenido.
+  void _jumpToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  /// Acorta un nombre largo sin perder el principio ni el final
+  /// ("SesionPreviaDeLaBodaDeAna" → "SesionPre…aDeAna").
+  static String _short(String s, {int max = 24}) {
+    if (s.length <= max) return s;
+    final head = (max * .55).floor();
+    final tail = max - head - 1;
+    return '${s.substring(0, head)}…${s.substring(s.length - tail)}';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final drive = widget.drive;
+    final onDropMove = widget.onDropMove;
     final scheme = Theme.of(context).colorScheme;
     final separator = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -2096,7 +2239,7 @@ class _Breadcrumbs extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      label,
+                      _short(label, max: current ? 32 : 24),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -2124,12 +2267,27 @@ class _Breadcrumbs extends StatelessWidget {
     final children = <Widget>[];
     children.add(
       crumb(
-        'Mi Drive',
-        () => drive.openPath(const []),
-        current: drive.path.isEmpty,
+        drive.rootLabel,
+        widget.onRootTap ?? () => drive.openPath(const []),
+        current: drive.path.isEmpty && drive.crumbFolderLabel == null,
         target: const [],
       ),
     );
+    // La carpeta en sí (solo en una COMPARTIDA: `rootLabel` es el módulo y
+    // esta miga es la carpeta, para poder volver a su contenido desde una
+    // subcarpeta sin salir del módulo).
+    final folderCrumb = drive.crumbFolderLabel;
+    if (folderCrumb != null) {
+      children.add(separator);
+      children.add(
+        crumb(
+          folderCrumb,
+          () => drive.openPath(const []),
+          current: drive.path.isEmpty,
+          target: const [],
+        ),
+      );
+    }
     for (var i = hidden; i < drive.path.length; i++) {
       if (children.isNotEmpty) children.add(separator);
       final t = drive.path.sublist(0, i + 1);
@@ -2142,9 +2300,23 @@ class _Breadcrumbs extends StatelessWidget {
         ),
       );
     }
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: children,
+    // UNA SOLA LÍNEA con desplazamiento horizontal: una ruta profunda ya no
+    // "se va para abajo" ni empuja el contenido. Cada miga se acorta y el
+    // conjunto se desliza; al cambiar de carpeta se muestra su extremo.
+    return SizedBox(
+      height: 34,
+      child: Scrollbar(
+        controller: _scroll,
+        thumbVisibility: false,
+        child: SingleChildScrollView(
+          controller: _scroll,
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: children,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2215,6 +2387,9 @@ class _GridContent extends StatelessWidget {
         final crossCount = (width / minCard).floor().clamp(2, 8);
         return GridView.builder(
           controller: scrollController,
+          // Siempre desplazable: sin esto, con pocos elementos el gesto de
+          // recargar (deslizar hacia abajo) no se dispara.
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
               compact ? 14 : 24, 4, compact ? 14 : 24, compact ? 150 : 110),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -2399,6 +2574,7 @@ class _GridItem extends StatelessWidget {
                     child: item.isFolder
                         ? _FolderCard(
                             item: item,
+                            can: drive.canDo,
                             onOpen: onOpen,
                             onLongPress: onLongPress,
                             onRename: onRename,
@@ -2541,6 +2717,7 @@ class _DragFeedback extends StatelessWidget {
 class _FolderCard extends StatelessWidget {
   const _FolderCard({
     required this.item,
+    required this.can,
     required this.onOpen,
     required this.onLongPress,
     required this.onRename,
@@ -2550,6 +2727,7 @@ class _FolderCard extends StatelessWidget {
   });
 
   final DriveItem item;
+  final bool Function(String action) can;
   final VoidCallback onOpen;
   final VoidCallback onLongPress;
   final VoidCallback onRename;
@@ -2604,6 +2782,8 @@ class _FolderCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   _ItemMenu(
+                    can: can,
+                    onOpen: onOpen,
                     onRename: onRename,
                     onDelete: onDelete,
                     onDownload: onDownload,
@@ -2708,6 +2888,8 @@ class _ImageCard extends StatelessWidget {
                       top: 6,
                       right: 6,
                       child: _OverlayMenu(
+                        can: drive.canDo,
+                        onOpen: onOpen,
                         onRename: onRename,
                         onDelete: onDelete,
                         onDownload: onDownload,
@@ -2752,28 +2934,34 @@ class _ImageCard extends StatelessWidget {
 
 class _ItemMenu extends StatelessWidget {
   const _ItemMenu({
+    required this.can,
+    required this.onOpen,
     required this.onRename,
     required this.onDelete,
     required this.onDownload,
   });
 
+  /// Permisos del drive que se está viendo (rol en Archivos, o los que dio
+  /// el dueño de una carpeta compartida).
+  final bool Function(String action) can;
+  final VoidCallback onOpen;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
-    // Solo las acciones que el rol tiene; si no queda ninguna, el botón de
-    // opciones ni siquiera se dibuja.
+    // Solo las acciones que el rol tiene. VER va siempre (si el elemento se
+    // está viendo, se puede abrir); sin las demás, el menú queda con "Ver".
     final items = <PopupMenuEntry<String>>[
-      if (_driveCan('download'))
+      const PopupMenuItem(value: 'open', child: Text('Ver')),
+      if (can('download'))
         const PopupMenuItem(value: 'download', child: Text('Descargar')),
-      if (_driveCan('update'))
+      if (can('update'))
         const PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-      if (_driveCan('delete'))
+      if (can('delete'))
         const PopupMenuItem(value: 'delete', child: Text('Eliminar')),
     ];
-    if (items.isEmpty) return const SizedBox.shrink();
     return PopupMenuButton<String>(
       tooltip: 'Opciones',
       padding: EdgeInsets.zero,
@@ -2784,6 +2972,7 @@ class _ItemMenu extends StatelessWidget {
         color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
       onSelected: (v) {
+        if (v == 'open') onOpen();
         if (v == 'download') onDownload();
         if (v == 'rename') onRename();
         if (v == 'delete') onDelete();
@@ -2795,27 +2984,33 @@ class _ItemMenu extends StatelessWidget {
 
 class _OverlayMenu extends StatelessWidget {
   const _OverlayMenu({
+    required this.can,
+    required this.onOpen,
     required this.onRename,
     required this.onDelete,
     required this.onDownload,
   });
 
+  final bool Function(String action) can;
+
+  /// Ver el elemento (abrir la carpeta o el visor de la foto).
+  final VoidCallback onOpen;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
-    // Igual que arriba: sin permisos no hay menú que mostrar.
+    // Igual que arriba: VER siempre, y las demás según los permisos.
     final items = <PopupMenuEntry<String>>[
-      if (_driveCan('download'))
+      const PopupMenuItem(value: 'open', child: Text('Ver')),
+      if (can('download'))
         const PopupMenuItem(value: 'download', child: Text('Descargar')),
-      if (_driveCan('update'))
+      if (can('update'))
         const PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-      if (_driveCan('delete'))
+      if (can('delete'))
         const PopupMenuItem(value: 'delete', child: Text('Eliminar')),
     ];
-    if (items.isEmpty) return const SizedBox.shrink();
     return Material(
       color: Colors.black54,
       borderRadius: BorderRadius.circular(8),
@@ -2825,6 +3020,7 @@ class _OverlayMenu extends StatelessWidget {
         splashRadius: 18,
         icon: const Icon(Icons.more_vert, size: 18, color: Colors.white),
         onSelected: (v) {
+          if (v == 'open') onOpen();
           if (v == 'download') onDownload();
           if (v == 'rename') onRename();
           if (v == 'delete') onDelete();
@@ -2923,6 +3119,7 @@ class _ListContent extends StatelessWidget {
           Expanded(
             child: ListView.builder(
               controller: scrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
               itemCount: items.length,
               itemBuilder: (context, i) {
                 final item = items[i];
@@ -3112,6 +3309,18 @@ class _ListRow extends StatelessWidget {
               ),
             ),
             if (!compact) ...[
+              // Tipo (igual que la cuadrícula: una carpeta se distingue de una
+              // foto también en la fila).
+              SizedBox(
+                width: 76,
+                child: Text(
+                  item.isFolder ? 'Carpeta' : 'Imagen',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
               SizedBox(
                 width: 140,
                 child: Text(
@@ -3155,6 +3364,8 @@ class _ListRow extends StatelessWidget {
             SizedBox(
               width: 40,
               child: _ItemMenu(
+                can: drive.canDo,
+                onOpen: onOpen,
                 onRename: onRename,
                 onDelete: onDelete,
                 onDownload: onDownload,
@@ -3248,7 +3459,10 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
 
   void _move(int delta) {
     final next = (_index + delta) % widget.images.length;
-    setState(() => _index = next < 0 ? next + widget.images.length : next);
+    setState(() {
+      _index = next < 0 ? next + widget.images.length : next;
+      _previewReady = false;
+    });
     _zoom.value = Matrix4.identity();
     _preloadNeighbors();
     _loadFull();
@@ -3309,6 +3523,9 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   double _fullProgress = 0;
   bool _fullLoading = false;
   String _fullKey = '';
+
+  /// La miniatura rápida ya se ve: desde aquí se puede pedir la original.
+  bool _previewReady = false;
 
   Future<void> _loadFull() async {
     final item = widget.images[_index];
@@ -3396,6 +3613,10 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                       contain: true,
                       // A pantalla completa NO se redondean las esquinas.
                       rounded: false,
+                      onReady: () {
+                        if (!mounted || _previewReady) return;
+                        setState(() => _previewReady = true);
+                      },
                     ),
                     // 2) Original por chunks: aparece encima (nítido) al
                     //    completar, con transición suave.
@@ -3409,6 +3630,23 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                           duration: const Duration(milliseconds: 250),
                           child: child,
                         ),
+                      )
+                    // 2b) Respaldo directo: si la descarga por chunks falla (o
+                    //     es web), la ORIGINAL se pide por red en cuanto el
+                    //     preview ya se ve. Si también falla, queda el preview.
+                    else if (_previewReady && isRemote)
+                      Image.network(
+                        widget.drive.absolutePathOf(item),
+                        fit: BoxFit.contain,
+                        frameBuilder: (c, child, frame, sync) {
+                          if (sync) return child;
+                          return AnimatedOpacity(
+                            opacity: frame == null ? 0 : 1,
+                            duration: const Duration(milliseconds: 200),
+                            child: child,
+                          );
+                        },
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
                   ],
                 ),

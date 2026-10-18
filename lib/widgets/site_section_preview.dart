@@ -29,7 +29,7 @@ class SiteSectionPreview extends StatelessWidget {
     required this.images,
     required this.props,
     this.gold = const Color(0xFFC9A96E),
-    this.height = 148,
+    this.height = 176,
   });
 
   /// Clave de la sección (`hero`, `about`…).
@@ -39,6 +39,13 @@ class SiteSectionPreview extends StatelessWidget {
   final Map<String, dynamic> props;
   final Color gold;
   final double height;
+
+  /// Lienzo de DISEÑO de la maqueta: todo está dibujado para este tamaño y
+  /// luego se ESCALA al cuadro real. Así una miniatura y la vista en grande
+  /// enseñan EXACTAMENTE lo mismo, solo que más grande y legible —y nada se
+  /// recorta ni se deforma (se conserva la proporción).
+  static const double baseWidth = 360;
+  static const double baseHeight = 148;
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +58,35 @@ class SiteSectionPreview extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
       ),
-      child: _body(scheme),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final w = box.maxWidth.isFinite ? box.maxWidth : baseWidth;
+          final h = box.maxHeight.isFinite ? box.maxHeight : baseHeight;
+          final byWidth = w / baseWidth;
+          final byHeight = h / baseHeight;
+          final scale = byWidth < byHeight ? byWidth : byHeight;
+          if (scale <= 0) return _body(scheme);
+          // Mismo dibujo, pintado ESCALADO: solo zoom.
+          return ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.center,
+              minWidth: 0,
+              maxWidth: double.infinity,
+              minHeight: 0,
+              maxHeight: double.infinity,
+              child: Transform.scale(
+                scale: scale,
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: baseWidth,
+                  height: baseHeight,
+                  child: _body(scheme),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 

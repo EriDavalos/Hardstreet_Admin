@@ -72,15 +72,24 @@ void main() {
     // Velo: el ángulo libre manda (90°) y el color de fábrica es negro.
     expect(conSombra, contains('linear-gradient(90deg,rgba(0, 0, 0, 0.12)'));
     expect(conSombra, contains('rgba(0, 0, 0, 0.48) 50%'));
-    // Sombra: degradado negro hacia arriba con sus DOS paradas (empieza en el
-    // 8% y se apaga en el 72%), como el degradado de Photoshop.
+    // Sombra: degradado negro con sus DOS paradas (empieza en el 8% y se apaga
+    // en el 72%), desde abajo (0deg) porque el diseño no la movió.
     expect(
       conSombra,
       contains(
-        'linear-gradient(to top,rgba(0, 0, 0, 0.6) 0%,'
+        'linear-gradient(0deg,rgba(0, 0, 0, 0.6) 0%,'
         'rgba(0, 0, 0, 0.6) 8.0%,rgba(0,0,0,0) 72.0%)',
       ),
     );
+    // Si el diseño la mueve, la posición viaja al HTML (90deg = izquierda).
+    final movida = _html(
+      const SiteCardDesign(
+        imageMode: 'bg',
+        imageShadow: .6,
+        imageShadowAngle: 90,
+      ),
+    );
+    expect(movida, contains('linear-gradient(90deg,rgba(0, 0, 0, 0.6) 0%,'));
     expect(conSombra, contains('pkg-photo-bg::after'));
 
     // Con la fuerza a 0, esa capa no se emite.

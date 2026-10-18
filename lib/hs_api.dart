@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
+import 'share_permissions.dart';
 import 'site_design.dart';
 import 'web_content.dart';
 import 'widgets/hs_toast.dart';
@@ -71,6 +72,69 @@ typedef HsModulePerms = ({
   String? categoryName,
   int? categoryOrder,
 });
+
+/// Una PÁGINA de un listado, calculada por el servidor.
+///
+/// El backend devuelve solo las filas de la página pedida y el TOTAL de filas
+/// (con la búsqueda y los filtros ya aplicados). Así el panel no se trae la
+/// tabla entera para cortarla en memoria: `total` es lo que la app usa para
+/// pintar "31–60 de 240" y los contadores de los chips.
+///
+/// Compatibilidad: si el servidor no manda `total` (backend viejo o una
+/// respuesta de prueba), `serverPaged` queda en false y el listado se comporta
+/// como antes (pagina en pantalla sobre lo recibido).
+class HsPageResult {
+  const HsPageResult({
+    required this.items,
+    required this.total,
+    required this.serverPaged,
+    this.page = 1,
+    this.pages = 1,
+    this.meta = const {},
+  });
+
+  final List<Map<String, dynamic>> items;
+
+  /// Filas totales del listado CON los filtros aplicados.
+  final int total;
+
+  /// Página que devolvió el servidor (1-based).
+  final int page;
+
+  /// Páginas totales con el `limit` pedido.
+  final int pages;
+
+  /// true = el backend paginó/filtró de verdad (mandó `total`).
+  final bool serverPaged;
+
+  /// Datos extra de la respuesta (p. ej. `roleCounts`, `pkgCounts`).
+  final Map<String, dynamic> meta;
+
+  /// Recorta `data[key]` (la lista) y lee `total`/`page`/`pages`/`limit`.
+  factory HsPageResult.from(Map<String, dynamic> data, String key) {
+    final items = ((data[key] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    final rawTotal = data['total'];
+    final server = rawTotal is num;
+    final total = server ? rawTotal.toInt() : items.length;
+    final limit = (data['limit'] as num?)?.toInt();
+    final pages = (data['pages'] as num?)?.toInt() ??
+        (server && limit != null && limit > 0
+            ? (total + limit - 1) ~/ limit
+            : 1);
+    final page = (data['page'] as num?)?.toInt() ?? 1;
+    return HsPageResult(
+      items: items,
+      total: total,
+      page: page < 1 ? 1 : page,
+      pages: pages < 1 ? 1 : pages,
+      serverPaged: server,
+      meta: data,
+    );
+  }
+}
 
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode, this.details});
@@ -149,9 +213,9 @@ class HsApi {
       Uri.parse('$base$path').replace(queryParameters: query);
 
   static Map<String, String> _headers() => {
-        'Content-Type': 'application/json',
-        if (HsSession.isLogged) 'Authorization': 'Bearer ${HsSession.token}',
-      };
+    'Content-Type': 'application/json',
+    if (HsSession.isLogged) 'Authorization': 'Bearer ${HsSession.token}',
+  };
 
   /// Primer texto no vacío de la lista (`message`, luego `error`).
   static String? _firstText(List<Object?> values) {
@@ -196,7 +260,8 @@ class HsApi {
       final map = body is Map ? body : null;
       // El backend manda { code, message, details }; `error` se acepta como
       // respaldo para no romper con un backend viejo.
-      final msg = _firstText([map?['message'], map?['error']]) ??
+      final msg =
+          _firstText([map?['message'], map?['error']]) ??
           'Error HTTP ${r.statusCode}';
       final details = _firstText([map?['details']]);
       if (notify) HsToast.error(msg, details: details);
@@ -216,35 +281,54 @@ class HsApi {
   static Future<dynamic> get(String path, {Map<String, String>? query}) =>
       _run(() => client.get(_u(path, query), headers: _headers()), path: path);
 
+  /// Listado COMPLETO (sin paginar).
+  ///
+  /// `all=1` queda SOLO para los desplegables y los totales del Dashboard, que
+  /// de verdad necesitan el catálogo entero. Los listados de los módulos
+  /// paginan en el SERVIDOR (ver [HsPageResult]): piden una página con
+  /// `?page=&limit=` y reciben `total`/`pages` calculados por el backend.
+  static Map<String, String> get allRows => const {'all': '1'};
+
+  /// Query de una página: `?page=2&limit=50&q=...&<filtros>`.
+  static Map<String, String> pageQuery(
+    int page,
+    int limit, {
+    String? q,
+    Map<String, String> extra = const {},
+  }) => {
+    'page': '$page',
+    'limit': '$limit',
+    if ((q ?? '').trim().isNotEmpty) 'q': q!.trim(),
+    ...extra,
+  };
+
   /// Escritura. [notify] = true hace que el mensaje del backend salga en la
   /// notificación lateral (verde al éxito, rojo al error).
   static Future<dynamic> post(
     String path,
     Map<String, dynamic> body, {
     bool notify = true,
-  }) =>
-      _run(
-        () => client.post(_u(path), headers: _headers(), body: jsonEncode(body)),
-        path: path,
-        notify: notify,
-      );
+  }) => _run(
+    () => client.post(_u(path), headers: _headers(), body: jsonEncode(body)),
+    path: path,
+    notify: notify,
+  );
 
   static Future<dynamic> put(
     String path,
     Map<String, dynamic> body, {
     bool notify = true,
-  }) =>
-      _run(
-        () => client.put(_u(path), headers: _headers(), body: jsonEncode(body)),
-        path: path,
-        notify: notify,
-      );
+  }) => _run(
+    () => client.put(_u(path), headers: _headers(), body: jsonEncode(body)),
+    path: path,
+    notify: notify,
+  );
 
   static Future<dynamic> delete(String path, {bool notify = true}) => _run(
-        () => client.delete(_u(path), headers: _headers()),
-        path: path,
-        notify: notify,
-      );
+    () => client.delete(_u(path), headers: _headers()),
+    path: path,
+    notify: notify,
+  );
 
   /// DELETE con cuerpo (lo pide el módulo Archivos compartidos: la carpeta
   /// y a qué usuarios se le quita no caben cómodos en la URL).
@@ -252,26 +336,30 @@ class HsApi {
     String path,
     Map<String, dynamic> body, {
     bool notify = true,
-  }) =>
-      _run(
-        () => client.delete(_u(path),
-            headers: _headers(), body: jsonEncode(body)),
-        path: path,
-        notify: notify,
-      );
+  }) => _run(
+    () => client.delete(_u(path), headers: _headers(), body: jsonEncode(body)),
+    path: path,
+    notify: notify,
+  );
 
   // ---------------- Auth ----------------
 
   /// Login real contra /api/auth/login (la misma que usa la web).
-  static Future<Map<String, dynamic>> login(String email, String password) async {
+  static Future<Map<String, dynamic>> login(
+    String email,
+    String password,
+  ) async {
     // El login no es un "crear/editar/eliminar": su error se muestra en la
     // propia pantalla, no como notificación lateral.
-    final data = await post('/api/auth/login',
-        {'email': email, 'password': password},
-        notify: false);
+    final data = await post('/api/auth/login', {
+      'email': email,
+      'password': password,
+    }, notify: false);
     HsSession.token = (data['token'] ?? '').toString();
     HsSession.user = (data['user'] as Map?)?.cast<String, dynamic>();
-    if (!HsSession.isLogged) throw ApiException('El servidor no devolvió token');
+    if (!HsSession.isLogged) {
+      throw ApiException('El servidor no devolvió token');
+    }
     return HsSession.user ?? const {};
   }
 
@@ -296,10 +384,33 @@ class HsApi {
   // ---------------- Usuarios ----------------
 
   static Future<List<Map<String, dynamic>>> adminUsers() async {
-    final data = await get('/api/admin/users');
+    final data = await get('/api/admin/users', query: allRows);
     return ((data['users'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
+  }
+
+  /// Listado de Usuarios PAGINADO EN EL SERVIDOR.
+  ///
+  /// [q] busca por nombre, apellido, correo o rol; [role] filtra por el NOMBRE
+  /// del rol. La respuesta trae `roleCounts` (conteo por rol, respetando la
+  /// búsqueda) para los chips, `allTotal` y `total`/`pages`.
+  static Future<HsPageResult> adminUsersPage({
+    int page = 1,
+    int limit = 30,
+    String q = '',
+    String role = '',
+  }) async {
+    final data = await get(
+      '/api/admin/users',
+      query: pageQuery(
+        page,
+        limit,
+        q: q,
+        extra: {if (role.trim().isNotEmpty) 'role': role.trim()},
+      ),
+    );
+    return HsPageResult.from((data as Map).cast<String, dynamic>(), 'users');
   }
 
   static Future<void> createUser(Map<String, dynamic> body) =>
@@ -314,7 +425,7 @@ class HsApi {
 
   /// Cada rol: { id, name, permissions: [ { moduleId, permissionId } ] }
   static Future<List<Map<String, dynamic>>> roles() async {
-    final data = await get('/api/admin/roles');
+    final data = await get('/api/admin/roles', query: allRows);
     return ((data['roles'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
@@ -360,7 +471,7 @@ class HsApi {
   /// tierId, tierName, tierNum, categoryId, categoryName, isExtern,
   /// urlImage, serviceIds, serviceNames }]
   static Future<List<Map<String, dynamic>>> adminPackages() async {
-    final data = await get('/api/admin/packages');
+    final data = await get('/api/admin/packages', query: allRows);
     return ((data['packages'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
@@ -396,13 +507,11 @@ class HsApi {
   ///
   /// Requiere permiso de CREAR en el módulo "Paquetes" (las categorías son
   /// parte del catálogo, igual que en el menú).
-  static Future<void> createPackageCategory(
-    String name, {
-    String? urlImage,
-  }) => post('/api/admin/categories', {
-    'name': name,
-    if ((urlImage ?? '').trim().isNotEmpty) 'urlImage': urlImage!.trim(),
-  });
+  static Future<void> createPackageCategory(String name, {String? urlImage}) =>
+      post('/api/admin/categories', {
+        'name': name,
+        if ((urlImage ?? '').trim().isNotEmpty) 'urlImage': urlImage!.trim(),
+      });
 
   /// Renombra una categoría del catálogo.
   static Future<void> updatePackageCategory(Map<String, dynamic> body) =>
@@ -425,10 +534,32 @@ class HsApi {
 
   /// Catálogo completo para el módulo Servicios (incluye url).
   static Future<List<Map<String, dynamic>>> adminServices() async {
-    final data = await get('/api/admin/services');
+    final data = await get('/api/admin/services', query: allRows);
     return ((data['services'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
+  }
+
+  /// Listado de Servicios PAGINADO EN EL SERVIDOR.
+  ///
+  /// [q] busca por nombre/descripción; [link] = 'con' | 'sin' filtra por liga
+  /// de Drive. La respuesta trae `linkCounts` para los chips.
+  static Future<HsPageResult> adminServicesPage({
+    int page = 1,
+    int limit = 30,
+    String q = '',
+    String link = '',
+  }) async {
+    final data = await get(
+      '/api/admin/services',
+      query: pageQuery(
+        page,
+        limit,
+        q: q,
+        extra: {if (link.trim().isNotEmpty) 'link': link.trim()},
+      ),
+    );
+    return HsPageResult.from((data as Map).cast<String, dynamic>(), 'services');
   }
 
   /// Crea un servicio { name, description?, icon?, url? }.
@@ -445,12 +576,10 @@ class HsApi {
 
   /// Edita la liga base del Drive de un servicio. Se usa DESDE la pestaña
   /// Servicios del paquete comprado del cliente (es opcional).
-  static Future<void> updateServiceUrl(int serviceId, String url) =>
-      post('/api/admin/package-progress', {
-        'action': 'actualizar-servicio-url',
-        'serviceId': serviceId,
-        'url': url,
-      });
+  static Future<void> updateServiceUrl(int serviceId, String url) => post(
+    '/api/admin/package-progress',
+    {'action': 'actualizar-servicio-url', 'serviceId': serviceId, 'url': url},
+  );
 
   /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
   /// servicio del paquete (`serviceId` = id del servicio DEL PAQUETE). Las
@@ -464,29 +593,87 @@ class HsApi {
     String link = '',
     bool pickPhotos = false,
     bool showFolder = true,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'actualizar-servicio-share',
-        'serviceId': serviceId,
-        'folder': folder,
-        'link': link,
-        'pickPhotos': pickPhotos,
-        'showFolder': showFolder,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'actualizar-servicio-share',
+    'serviceId': serviceId,
+    'folder': folder,
+    'link': link,
+    'pickPhotos': pickPhotos,
+    'showFolder': showFolder,
+  });
 
   /// Los elementos/fotos que YO (cliente) marqué para un servicio de mi
   /// paquete. Devuelve la lista de rutas del Drive.
-  static Future<List<String>> myServiceItems(int serviceId) async {
-    final data = await get('/api/my/service-items',
-        query: {'serviceId': '$serviceId'});
-    return ((data['items'] as List?) ?? const [])
+  static Future<List<String>> myServiceItems(int serviceId) async =>
+      (await myServiceItemsInfo(serviceId)).items;
+
+  /// Lo mismo, pero con lo que hace falta para el MÓDULO de selección: la
+  /// carpeta compartida del servicio, el máximo de fotos y si está habilitado.
+  /// Un backend viejo devuelve sólo `items`; aquí se completan valores seguros.
+  static Future<
+      ({List<String> items, String folder, int max, bool pickPhotos})>
+  myServiceItemsInfo(int serviceId) async {
+    final data = await get(
+      '/api/my/service-items',
+      query: {'serviceId': '$serviceId'},
+    );
+    final items = ((data['items'] as List?) ?? const [])
         .map((e) => e.toString())
         .toList();
+    return (
+      items: items,
+      folder: (data['folder'] ?? '').toString().trim(),
+      max: (data['max'] as num?)?.toInt() ?? 0,
+      pickPhotos: data['pickPhotos'] == true,
+    );
   }
+
+  /// Avisa al CLIENTE de un paquete (desde el administrador del paquete).
+  /// [kind] = `fotos-disponibles` | `servicio-terminado` | `paquete`.
+  static Future<int> notifyClient({
+    required int purchasedPackageId,
+    int? serviceId,
+    String kind = 'paquete',
+    required String title,
+    String body = '',
+  }) async {
+    final data = await post('/api/admin/package-progress', {
+      'action': 'notificar-cliente',
+      'purchasedPackageId': purchasedPackageId,
+      if (serviceId != null && serviceId > 0) 'serviceId': serviceId,
+      'kind': kind,
+      'title': title,
+      'body': body,
+    });
+    return (data['sent'] as num?)?.toInt() ?? 0;
+  }
+
+  /// MIS avisos del paquete (los manda el estudio desde el panel).
+  static Future<
+      ({List<Map<String, dynamic>> items, int unread})>
+  myNotifications() async {
+    final data = await get('/api/my/notifications') as Map? ?? const {};
+    final items = ((data['notifications'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    return (items: items, unread: (data['unread'] as num?)?.toInt() ?? 0);
+  }
+
+  /// Marca leídos unos avisos (o todos si [all]).
+  static Future<void> markNotificationsRead({
+    List<int> ids = const [],
+    bool all = false,
+  }) => post('/api/my/notifications', {
+    if (all) 'all': true,
+    if (!all && ids.isNotEmpty) 'ids': ids,
+  });
 
   /// REEMPLAZA mi selección de elementos/fotos de ese servicio.
   static Future<List<String>> setMyServiceItems(
-      int serviceId, List<String> paths) async {
+    int serviceId,
+    List<String> paths,
+  ) async {
     final data = await put('/api/my/service-items', {
       'serviceId': serviceId,
       'paths': paths,
@@ -513,7 +700,7 @@ class HsApi {
   /// MIS permisos (para el menú): GET /api/admin/permission (antes
   /// "my-permissions"). Devuelve { isAdmin, modules: [{ key, name, actions }] }.
   static Future<({bool isAdmin, List<HsModulePerms> modules})>
-      myPermissions() async {
+  myPermissions() async {
     final data = await get('/api/admin/permission') as Map? ?? const {};
     final modules = <HsModulePerms>[];
     for (final m in ((data['modules'] as List?) ?? const [])) {
@@ -551,58 +738,53 @@ class HsApi {
   static Future<void> setPackageDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'compartir-directorio',
-        'purchasedPackageId': purchasedPackageId,
-        'path': path,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'compartir-directorio',
+    'purchasedPackageId': purchasedPackageId,
+    'path': path,
+  });
 
   /// Suma UNA carpeta del Drive a las compartidas con el cliente del paquete
   /// (un paquete puede compartir varias).
   static Future<void> addPackageDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'agregar-directorio',
-        'purchasedPackageId': purchasedPackageId,
-        'path': path,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'agregar-directorio',
+    'purchasedPackageId': purchasedPackageId,
+    'path': path,
+  });
 
   /// Deja de compartir UNA carpeta del paquete (las demás siguen igual).
   static Future<void> removePackageDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'quitar-directorio',
-        'purchasedPackageId': purchasedPackageId,
-        'path': path,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'quitar-directorio',
+    'purchasedPackageId': purchasedPackageId,
+    'path': path,
+  });
 
   /// Comparte UNA carpeta del Drive DIRECTAMENTE con el CLIENTE: la ve en
   /// TODOS sus paquetes (no solo en el que se está administrando).
   static Future<void> addClientDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'agregar-directorio-cliente',
-        'purchasedPackageId': purchasedPackageId,
-        'path': path,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'agregar-directorio-cliente',
+    'purchasedPackageId': purchasedPackageId,
+    'path': path,
+  });
 
   /// Deja de compartir UNA carpeta compartida con el CLIENTE.
   static Future<void> removeClientDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'quitar-directorio-cliente',
-        'purchasedPackageId': purchasedPackageId,
-        'path': path,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'quitar-directorio-cliente',
+    'purchasedPackageId': purchasedPackageId,
+    'path': path,
+  });
 
   /// Carpetas del Drive COMPARTIDAS con el usuario logueado.
   ///
@@ -612,7 +794,7 @@ class HsApi {
   ///
   /// Endpoint: GET /api/my/drive
   static Future<({bool isClient, List<Map<String, dynamic>> paths})>
-      myDriveDirectories() async {
+  myDriveDirectories() async {
     final data = (await get('/api/my/drive') as Map?) ?? const {};
     final paths = ((data['paths'] as List?) ?? const [])
         .whereType<Map>()
@@ -629,13 +811,10 @@ class HsApi {
   /// Si la tabla `site_config` todavía no existe (o nadie ha diseñado nada)
   /// devuelve los valores por defecto del sitio.
   static Future<({SiteDesign design, Map<String, dynamic>? landing})>
-      siteDesign() async {
+  siteDesign() async {
     final data = (await get('/api/admin/site') as Map?) ?? const {};
     final landing = (data['landing'] as Map?)?.cast<String, dynamic>();
-    return (
-      design: SiteDesign.fromJsonText(data['design']),
-      landing: landing,
-    );
+    return (design: SiteDesign.fromJsonText(data['design']), landing: landing);
   }
 
   /// Guarda el diseño de las tarjetas (permiso de actualizar en "Paquetes").
@@ -661,20 +840,21 @@ class HsApi {
   ///
   /// Endpoint: GET /api/admin/shared-files
   static Future<
-      ({
-        List<Map<String, dynamic>> shared,
-        List<Map<String, dynamic>> received,
-        List<Map<String, dynamic>> candidates,
-        bool canShare,
-        bool canDelete,
-      })> sharedFiles() async {
+    ({
+      List<Map<String, dynamic>> shared,
+      List<Map<String, dynamic>> received,
+      List<Map<String, dynamic>> candidates,
+      bool canShare,
+      bool canDelete,
+    })
+  >
+  sharedFiles() async {
     final data = (await get('/api/admin/shared-files') as Map?) ?? const {};
     final item = (data['item'] as Map?)?.cast<String, dynamic>() ?? const {};
-    List<Map<String, dynamic>> list(Object? raw) =>
-        ((raw as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList();
+    List<Map<String, dynamic>> list(Object? raw) => ((raw as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
     return (
       shared: list(item['shared']),
       received: list(item['received']),
@@ -687,27 +867,41 @@ class HsApi {
   /// A quién le tengo compartida YA la carpeta [folder] (y los candidatos).
   ///
   /// Endpoint: `GET /api/admin/shared-files?folder=<ruta>`
-  static Future<({
-    List<int> targets,
-    List<Map<String, dynamic>> candidates,
-    bool canShare,
-    bool canDelete,
-  })> sharedFileTargets(String folder) async {
-    final data = (await get('/api/admin/shared-files',
-            query: {'folder': folder}) as Map?) ??
+  static Future<
+    ({
+      List<int> targets,
+      Map<int, SharePermissions> permissions,
+      List<Map<String, dynamic>> candidates,
+      bool canShare,
+      bool canDelete,
+    })
+  >
+  sharedFileTargets(String folder) async {
+    final data =
+        (await get('/api/admin/shared-files', query: {'folder': folder})
+            as Map?) ??
         const {};
     final item = (data['item'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final targets = ((item['targets'] as List?) ?? const [])
+    final rawTargets = ((item['targets'] as List?) ?? const [])
         .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    final targets = rawTargets
         .map((e) => (e['id'] as num?)?.toInt() ?? 0)
         .where((n) => n > 0)
         .toList();
+    final permissions = <int, SharePermissions>{
+      for (final t in rawTargets)
+        if (((t['id'] as num?)?.toInt() ?? 0) > 0)
+          (t['id'] as num).toInt(): SharePermissions.fromJson(t['permissions']),
+    };
     final candidates = ((data['candidates'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => e.cast<String, dynamic>())
         .toList();
     return (
       targets: targets,
+      permissions: permissions,
       candidates: candidates,
       canShare: data['canShare'] != false,
       canDelete: data['canDelete'] != false,
@@ -720,11 +914,19 @@ class HsApi {
   static Future<void> shareFolderWith({
     required String path,
     required List<int> userIds,
-  }) =>
-      post('/api/admin/shared-files', {
-        'path': path,
-        'userIds': userIds,
-      });
+
+    /// Permisos POR usuario (los decide quien comparte). Si no se mandan, el
+    /// servidor deja "ver y descargar".
+    Map<int, SharePermissions>? permissions,
+  }) => post('/api/admin/shared-files', {
+    'path': path,
+    'userIds': userIds,
+    if (permissions != null)
+      'access': [
+        for (final e in permissions.entries)
+          {'userId': e.key, ...e.value.toJson()},
+      ],
+  });
 
   /// Deja de compartir la carpeta [path] con [userIds].
   ///
@@ -733,18 +935,38 @@ class HsApi {
     required String path,
     required List<int> userIds,
   }) =>
-      deleteBody('/api/admin/shared-files', {
-        'path': path,
-        'userIds': userIds,
-      });
+      deleteBody('/api/admin/shared-files', {'path': path, 'userIds': userIds});
 
   // ---------------- Clientes ----------------
 
   static Future<List<Map<String, dynamic>>> clients() async {
-    final data = await get('/api/admin/clients');
+    final data = await get('/api/admin/clients', query: allRows);
     return ((data['clients'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
+  }
+
+  /// Directorio de Clientes PAGINADO EN EL SERVIDOR.
+  ///
+  /// [q] busca por nombre, apellido, correo o teléfono; [packages] = 'con' |
+  /// 'sin' filtra por paquetes contratados. La respuesta trae `pkgCounts` y
+  /// `assignedPackages` para los chips y la píldora del módulo.
+  static Future<HsPageResult> clientsPage({
+    int page = 1,
+    int limit = 30,
+    String q = '',
+    String packages = '',
+  }) async {
+    final data = await get(
+      '/api/admin/clients',
+      query: pageQuery(
+        page,
+        limit,
+        q: q,
+        extra: {if (packages.trim().isNotEmpty) 'packages': packages.trim()},
+      ),
+    );
+    return HsPageResult.from((data as Map).cast<String, dynamic>(), 'clients');
   }
 
   static Future<void> createClient(Map<String, dynamic> body) =>
@@ -753,24 +975,32 @@ class HsApi {
   static Future<void> updateClient(Map<String, dynamic> body) =>
       put('/api/admin/clients', body);
 
-  static Future<void> deleteClient(int id) => delete('/api/admin/clients?id=$id');
+  static Future<void> deleteClient(int id) =>
+      delete('/api/admin/clients?id=$id');
 
   /// Paquetes del cliente: { purchasedPackages: [...], catalog: [...] }
   static Future<Map<String, dynamic>> clientPackages(int userId) async {
-    final data = await get('/api/admin/client-packages', query: {'userId': '$userId'});
+    final data = await get(
+      '/api/admin/client-packages',
+      query: {'userId': '$userId'},
+    );
     return (data as Map).cast<String, dynamic>();
   }
 
   /// Asignar compra existente al cliente.
-  static Future<void> assignPurchasedPackage(int userId, int purchasedPackageId) =>
-      post('/api/admin/client-packages', {
-        'userId': userId,
-        'purchasedPackageId': purchasedPackageId,
-      });
+  static Future<void> assignPurchasedPackage(
+    int userId,
+    int purchasedPackageId,
+  ) => post('/api/admin/client-packages', {
+    'userId': userId,
+    'purchasedPackageId': purchasedPackageId,
+  });
 
   /// Crear compra nueva desde el catálogo y asignarla.
-  static Future<void> addPackageFromCatalog(int userId, int packageId) =>
-      post('/api/admin/client-packages', {'userId': userId, 'packageId': packageId});
+  static Future<void> addPackageFromCatalog(int userId, int packageId) => post(
+    '/api/admin/client-packages',
+    {'userId': userId, 'packageId': packageId},
+  );
 
   /// Quitar el paquete del cliente (baja del vínculo).
   static Future<void> removeClientPackage(int userId, int usersPackageId) =>
@@ -787,10 +1017,14 @@ class HsApi {
     int? userId,
     int? purchasedPackageId,
   }) async {
-    final data = await get('/api/admin/package-payments', query: {
-      if (userId != null) 'userId': '$userId',
-      if (purchasedPackageId != null) 'purchasedPackageId': '$purchasedPackageId',
-    });
+    final data = await get(
+      '/api/admin/package-payments',
+      query: {
+        if (userId != null) 'userId': '$userId',
+        if (purchasedPackageId != null)
+          'purchasedPackageId': '$purchasedPackageId',
+      },
+    );
     return ((data['payments'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
@@ -825,36 +1059,40 @@ class HsApi {
   ///
   /// Endpoint: GET /api/admin/package-progress
   static Future<Map<String, dynamic>> packageProgress(
-      int purchasedPackageId) async {
-    final data = await get('/api/admin/package-progress',
-        query: {'purchasedPackageId': '$purchasedPackageId'});
+    int purchasedPackageId,
+  ) async {
+    final data = await get(
+      '/api/admin/package-progress',
+      query: {'purchasedPackageId': '$purchasedPackageId'},
+    );
     return (data as Map).cast<String, dynamic>();
   }
 
   /// Da por TERMINADO un servicio del paquete (estado Entregado + fecha).
-  static Future<void> completePackageService(int serviceId,
-          {String description = ''}) =>
-      post('/api/admin/package-progress', {
-        'action': 'completar-servicio',
-        'serviceId': serviceId,
-        if (description.isNotEmpty) 'description': description,
-      });
+  static Future<void> completePackageService(
+    int serviceId, {
+    String description = '',
+  }) => post('/api/admin/package-progress', {
+    'action': 'completar-servicio',
+    'serviceId': serviceId,
+    if (description.isNotEmpty) 'description': description,
+  });
 
   /// Reabre un servicio que ya estaba terminado.
-  static Future<void> reopenPackageService(int serviceId) =>
-      post('/api/admin/package-progress', {
-        'action': 'reabrir-servicio',
-        'serviceId': serviceId,
-      });
+  static Future<void> reopenPackageService(int serviceId) => post(
+    '/api/admin/package-progress',
+    {'action': 'reabrir-servicio', 'serviceId': serviceId},
+  );
 
   /// Cambia la descripción (avance) de un servicio.
-  static Future<void> updatePackageService(int serviceId,
-          {required String description}) =>
-      post('/api/admin/package-progress', {
-        'action': 'actualizar-servicio',
-        'serviceId': serviceId,
-        'description': description,
-      });
+  static Future<void> updatePackageService(
+    int serviceId, {
+    required String description,
+  }) => post('/api/admin/package-progress', {
+    'action': 'actualizar-servicio',
+    'serviceId': serviceId,
+    'description': description,
+  });
 
   /// Registra un movimiento del paquete:
   /// `inversion`, `gasto`, `ahorro` o `abono_externo`.
@@ -864,15 +1102,14 @@ class HsApi {
     required num amount,
     String description = '',
     int? userId,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'movimiento',
-        'purchasedPackageId': purchasedPackageId,
-        'kind': kind,
-        'amount': amount,
-        'description': description,
-        'userId': ?userId,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'movimiento',
+    'purchasedPackageId': purchasedPackageId,
+    'kind': kind,
+    'amount': amount,
+    'description': description,
+    'userId': ?userId,
+  });
 
   /// Reparte un pago entre colaboradores y empleados del paquete. Cuenta como
   /// gasto, pero cada parte queda registrada como `pago` con su destinatario.
@@ -909,39 +1146,37 @@ class HsApi {
     String? kind,
     num? amount,
     String? description,
-  }) =>
-      post('/api/admin/package-progress', {
-        'action': 'editar-movimiento',
-        'movementId': id,
-        'source': source,
-        'kind': ?kind,
-        'amount': ?amount,
-        'description': ?description,
-      });
+  }) => post('/api/admin/package-progress', {
+    'action': 'editar-movimiento',
+    'movementId': id,
+    'source': source,
+    'kind': ?kind,
+    'amount': ?amount,
+    'description': ?description,
+  });
 
   /// Quita un movimiento o un abono del historial.
   /// `source` = 'movement' (inversión/gasto/abono externo) o 'payment'.
-  static Future<void> deletePackageMovement(int id,
-          {String source = 'movement'}) =>
-      post('/api/admin/package-progress', {
-        'action': 'quitar-movimiento',
-        'movementId': id,
-        'source': source,
-      });
+  static Future<void> deletePackageMovement(
+    int id, {
+    String source = 'movement',
+  }) => post('/api/admin/package-progress', {
+    'action': 'quitar-movimiento',
+    'movementId': id,
+    'source': source,
+  });
 
   /// Finaliza el paquete (el backend valida servicios y pago completos).
-  static Future<void> finishClientPackage(int purchasedPackageId) =>
-      post('/api/admin/package-progress', {
-        'action': 'finalizar',
-        'purchasedPackageId': purchasedPackageId,
-      });
+  static Future<void> finishClientPackage(int purchasedPackageId) => post(
+    '/api/admin/package-progress',
+    {'action': 'finalizar', 'purchasedPackageId': purchasedPackageId},
+  );
 
   /// Reabre un paquete finalizado.
-  static Future<void> reopenClientPackage(int purchasedPackageId) =>
-      post('/api/admin/package-progress', {
-        'action': 'reabrir-paquete',
-        'purchasedPackageId': purchasedPackageId,
-      });
+  static Future<void> reopenClientPackage(int purchasedPackageId) => post(
+    '/api/admin/package-progress',
+    {'action': 'reabrir-paquete', 'purchasedPackageId': purchasedPackageId},
+  );
 
   // ---------------- Finanzas (módulo "Finanzas") ----------------
 
@@ -974,13 +1209,12 @@ class HsApi {
     required String kind,
     required num amount,
     String description = '',
-  }) =>
-      post('/api/admin/finance', {
-        'purchasedPackageId': ?purchasedPackageId,
-        'kind': kind,
-        'amount': amount,
-        'description': description,
-      });
+  }) => post('/api/admin/finance', {
+    'purchasedPackageId': ?purchasedPackageId,
+    'kind': kind,
+    'amount': amount,
+    'description': description,
+  });
 
   /// Destina un monto al AHORRO. Sin paquete el ahorro es del NEGOCIO
   /// (movimiento general); con paquete se aparta de ese paquete.
@@ -989,13 +1223,12 @@ class HsApi {
     int? purchasedPackageId,
     required num amount,
     String description = '',
-  }) =>
-      addFinanceMovement(
-        purchasedPackageId: purchasedPackageId,
-        kind: 'ahorro',
-        amount: amount,
-        description: description,
-      );
+  }) => addFinanceMovement(
+    purchasedPackageId: purchasedPackageId,
+    kind: 'ahorro',
+    amount: amount,
+    description: description,
+  );
 
   // ---------------- Agendas ----------------
 
@@ -1008,12 +1241,17 @@ class HsApi {
     String? from,
     String? to,
   }) async {
-    final data = await get('/api/admin/agendas', query: {
-      if (userId != null) 'userId': '$userId',
-      if (purchasedPackageId != null) 'purchasedPackageId': '$purchasedPackageId',
-      'from': ?from,
-      'to': ?to,
-    });
+    final data = await get(
+      '/api/admin/agendas',
+      query: {
+        ...allRows,
+        if (userId != null) 'userId': '$userId',
+        if (purchasedPackageId != null)
+          'purchasedPackageId': '$purchasedPackageId',
+        'from': ?from,
+        'to': ?to,
+      },
+    );
     return ((data['agendas'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
@@ -1067,18 +1305,48 @@ class HsApi {
     int limit = 100,
     int offset = 0,
   }) async {
-    final data = await get('/api/admin/activity', query: {
-      'module': ?module,
-      'action': ?action,
-      'entity': ?entity,
-      if (userId != null) 'userId': '$userId',
-      'q': ?query,
-      'limit': '$limit',
-      'offset': '$offset',
-    });
+    final data = await get(
+      '/api/admin/activity',
+      query: {
+        'module': ?module,
+        'action': ?action,
+        'entity': ?entity,
+        if (userId != null) 'userId': '$userId',
+        'q': ?query,
+        'limit': '$limit',
+        'offset': '$offset',
+      },
+    );
     return ((data['entries'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => e.cast<String, dynamic>())
         .toList();
+  }
+
+  /// Bitácora PAGINADA EN EL SERVIDOR: una página + `total`.
+  ///
+  /// La respuesta trae `moduleCounts` y `actionCounts` calculados por el
+  /// backend, para que los chips y las píldoras no dependan de la página que
+  /// se está viendo.
+  static Future<HsPageResult> activityPage({
+    int page = 1,
+    int limit = 30,
+    String q = '',
+    String module = '',
+    String action = '',
+  }) async {
+    final data = await get(
+      '/api/admin/activity',
+      query: pageQuery(
+        page,
+        limit,
+        q: q,
+        extra: {
+          if (module.trim().isNotEmpty) 'module': module.trim(),
+          if (action.trim().isNotEmpty) 'action': action.trim(),
+        },
+      ),
+    );
+    return HsPageResult.from((data as Map).cast<String, dynamic>(), 'entries');
   }
 }

@@ -2,10 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
-
 import '../card_html.dart';
-import '../open_html.dart';
 import '../site_design.dart';
 import 'common.dart';
 import 'hs_modal.dart';
@@ -29,13 +26,13 @@ const List<List<String>> kDesignPresets = [
   ['#C9A96E', '#F0D48A', '#0B0E17'], // oro de la marca
   ['#D9A441', '#F2C66B', '#120E05'], // ámbar cálido
   ['#8FB0D4', '#B9D0E6', '#0B111A'], // acero frío
-  ['#7C5CFF', '#C4B5FD', '#120C2B'], // violeta
+  ['#14B8A6', '#5EEAD4', '#04211F'], // turquesa
   ['#10B981', '#6EE7B7', '#04231A'], // esmeralda
   ['#EF4444', '#FCA5A5', '#2A0A0A'], // rojo
   ['#EC4899', '#F9A8D4', '#2B0719'], // rosa
   ['#3B82F6', '#93C5FD', '#08172F'], // azul
   ['#F59E0B', '#FCD34D', '#2A1B02'], // ámbar
-  ['#14B8A6', '#5EEAD4', '#04211F'], // turquesa
+  ['#0EA5E9', '#7DD3FC', '#082033'], // cielo
 ];
 
 /// Colores de la PALETA (se eligen de un toque): neutros, los dorados de la
@@ -55,10 +52,10 @@ const List<String> kColorSwatches = [
   '#10B981', '#6EE7B7', '#047857', '#065F46', '#22C55E', '#84CC16',
   // Azules
   '#3B82F6', '#93C5FD', '#1D4ED8', '#1E3A8A', '#0EA5E9', '#38BDF8',
-  // Morados
-  '#7C5CFF', '#C4B5FD', '#5B21B6', '#3B0764', '#A855F7', '#D8B4FE',
-  // Turquesa y cían oscuro
-  '#14B8A6', '#5EEAD4', '#0E7490', '#164E63',
+  // Turquesas
+  '#14B8A6', '#5EEAD4', '#0F766E', '#134E4A', '#2DD4BF', '#99F6E4',
+  // Cían oscuro
+  '#0E7490', '#164E63',
 ];
 
 const Map<String, String> kTierLabels = {
@@ -100,17 +97,14 @@ List<LinearGradient> hsPhotoFadeGradients(
   // giraba: con un ángulo libre y una dirección distinta de `bottom`, el panel
   // y la web giraban en sentidos distintos. Ahora el número es el mismo
   // (`hsFadeCssDeg`, compartido con el HTML y con la web).
-  LinearGradient at(
-    double deg,
-    List<Color> colors,
-    List<double> stops,
-  ) => LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: colors,
-    stops: stops,
-    transform: GradientRotation((deg - 180) * math.pi / 180),
-  );
+  LinearGradient at(double deg, List<Color> colors, List<double> stops) =>
+      LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: colors,
+        stops: stops,
+        transform: GradientRotation((deg - 180) * math.pi / 180),
+      );
   final main = at(
     hsFadeCssDeg(from, angle),
     [a(f * .15), a(f * .6), a(f)],
@@ -130,11 +124,16 @@ List<LinearGradient> hsPhotoFadeGradients(
 ///
 /// Se ajusta como las PARADAS de un degradado de Photoshop: [start] es dónde el
 /// negro deja de ser sólido y [end] dónde se apaga del todo (0..1, desde abajo).
+/// [angle] mueve la sombra de POSICIÓN en grados CSS: 0 la deja abajo (como
+/// siempre), 90 la pone a la izquierda, 180 arriba y 270 a la derecha. El
+/// degradado se arma en el eje de abajo→arriba y se gira, igual que el velo,
+/// para que el panel y la web coincidan.
 /// La web pinta exactamente la misma capa (`site.js` → `.pkg-photo-bg::before`).
 LinearGradient? hsPhotoShadowGradient(
   double amount, {
   double start = .08,
   double end = .72,
+  double angle = 0,
 }) {
   final s = amount.clamp(0.0, 1.0);
   if (s <= 0) return null;
@@ -146,6 +145,7 @@ LinearGradient? hsPhotoShadowGradient(
     end: Alignment.topCenter,
     colors: [black, black, Colors.black.withValues(alpha: 0)],
     stops: [0, a, b],
+    transform: GradientRotation(hsShadowCssDeg(angle) * math.pi / 180),
   );
 }
 
@@ -208,12 +208,18 @@ Widget hsPhotoFadeOverlay(
   double shadow = 0,
   double shadowStart = .08,
   double shadowEnd = .72,
+  double shadowAngle = 0,
 }) => IgnorePointer(
   child: Stack(
     fit: StackFit.expand,
     children: [
       // La sombra va DEBAJO del velo: el velo (con su color) sigue manando.
-      if (hsPhotoShadowGradient(shadow, start: shadowStart, end: shadowEnd)
+      if (hsPhotoShadowGradient(
+            shadow,
+            start: shadowStart,
+            end: shadowEnd,
+            angle: shadowAngle,
+          )
           case final g?)
         DecoratedBox(decoration: BoxDecoration(gradient: g)),
       for (final g in hsPhotoFadeGradients(
@@ -264,16 +270,10 @@ class _PackageDesignerState extends State<_PackageDesigner> {
   /// vuelve a lanzar en la vista previa).
   int _animRun = 0;
 
-  /// Abre la tarjeta (el HTML real, con su CSS) en el navegador del sistema.
-  Future<void> _openInBrowser() async {
-    final ok = await hsOpenHtmlInBrowser(_cardHtml());
-    if (ok || !mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        content: Text('No se pudo abrir el navegador con la tarjeta'),
-      ),
-    );
-  }
+  /// Qué paradas se ARRASTRAN sobre la tarjeta de la vista previa cuando el
+  /// estilo es "Fondo degradado" (allí hay dos: la sombra negra y el
+  /// desvanecido de la foto).
+  String _drag = 'shadow';
 
   @override
   Widget build(BuildContext context) {
@@ -283,46 +283,21 @@ class _PackageDesignerState extends State<_PackageDesigner> {
     return Dialog(
       insetPadding: const EdgeInsets.all(18),
       clipBehavior: Clip.antiAlias,
+      backgroundColor: scheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1080, maxHeight: 900),
+        constraints: const BoxConstraints(maxWidth: 1180, maxHeight: 940),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
-              child: Row(
-                children: [
-                  Icon(Icons.style_outlined, color: scheme.primary),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Diseñador de tarjetas',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => setState(() => _d = SiteDesign.defaults),
-                    icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                    label: const Text('Diseño original'),
-                  ),
-                  IconButton(
-                    tooltip: 'Cerrar',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-            ),
+            _designerHeader(scheme),
             _hr(scheme),
             Expanded(
               child: wide
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        SizedBox(width: 400, child: _controls(scheme)),
+                        SizedBox(width: 430, child: _controls(scheme)),
                         VerticalDivider(width: 1, color: _line(scheme)),
                         Expanded(child: _preview(scheme)),
                       ],
@@ -347,44 +322,160 @@ class _PackageDesignerState extends State<_PackageDesigner> {
                     ),
             ),
             _hr(scheme),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.cloud_done_outlined,
-                    size: 16,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Al guardar, la página web lo aplica al instante '
-                      '(no hay que publicar el sitio).',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(_d),
-                    icon: const Icon(Icons.save_outlined, size: 18),
-                    label: const Text('Guardar diseño'),
-                  ),
-                ],
-              ),
-            ),
+            _designerFooter(scheme),
           ],
         ),
       ),
     );
   }
+
+  /// Cabecera del diseñador: marca, título, subtítulo y acciones.
+  Widget _designerHeader(ColorScheme scheme) {
+    // En pantalla angosta el botón de reiniciar va SOLO con su icono: con
+    // texto, la cabecera no cabe y desbordaba.
+    final narrow = MediaQuery.sizeOf(context).width < 620;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 10, 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            scheme.primary.withValues(alpha: .10),
+            scheme.surface.withValues(alpha: 0),
+          ],
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [scheme.primary, scheme.primary.withValues(alpha: .65)],
+              ),
+              borderRadius: BorderRadius.circular(13),
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.primary.withValues(alpha: .28),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.style_outlined,
+              color: Colors.white,
+              size: 21,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Diseñador de tarjetas',
+                  style: TextStyle(fontSize: 17.5, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Ajusta y mira la tarjeta aquí mismo · la web lo aplica al '
+                  'guardar, sin publicar',
+                  style: TextStyle(
+                    fontSize: 11.8,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (narrow)
+            IconButton(
+              key: const ValueKey('design-reset'),
+              tooltip: 'Diseño original',
+              onPressed: () => setState(() => _d = SiteDesign.defaults),
+              icon: const Icon(Icons.restart_alt_rounded, size: 20),
+            )
+          else
+            OutlinedButton.icon(
+              key: const ValueKey('design-reset'),
+              onPressed: () => setState(() => _d = SiteDesign.defaults),
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('Diseño original'),
+            ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: 'Cerrar',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Pie del diseñador: qué se guarda y las dos acciones.
+  Widget _designerFooter(ColorScheme scheme) {
+    final narrow = MediaQuery.sizeOf(context).width < 620;
+    final buttons = <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton.icon(
+        onPressed: () => Navigator.of(context).pop(_d),
+        icon: const Icon(Icons.save_outlined, size: 18),
+        label: const Text('Guardar diseño'),
+      ),
+    ];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+      color: scheme.surfaceContainerLowest.withValues(alpha: .6),
+      // En el celular la nota va arriba y los botones debajo, alineados a la
+      // derecha: en una sola fila no caben y desbordaban.
+      child: narrow
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _footerNote(scheme),
+                const SizedBox(height: 10),
+                // Wrap: si los dos botones no caben, bajan a otra línea en vez
+                // de desbordar la pantalla.
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: buttons,
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: _footerNote(scheme)),
+                Wrap(spacing: 8, runSpacing: 8, children: buttons),
+              ],
+            ),
+    );
+  }
+
+  Widget _footerNote(ColorScheme scheme) => Row(
+    children: [
+      Icon(Icons.bolt_rounded, size: 16, color: scheme.primary),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Text(
+          'Al guardar, la página web lo aplica al instante (no hay que '
+          'publicar el sitio).',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+      ),
+    ],
+  );
 
   Widget _hr(ColorScheme s) => Divider(height: 1, color: _line(s));
 
@@ -594,7 +685,14 @@ class _PackageDesignerState extends State<_PackageDesigner> {
           'fade': 'Fondo degradado',
         },
         c.imageMode,
-        (v) => update(c.copyWith(imageMode: v)),
+        (v) => setState(() {
+          _d = _d.copyWith(card: _d.card.copyWith(imageMode: v));
+          // Al elegir el estilo, las asas empiezan moviendo lo propio de ese
+          // estilo: en "Fondo degradado", su desvanecido; en "De fondo", la
+          // sombra. Después se puede cambiar con el conmutador de la vista
+          // previa.
+          _drag = v == 'fade' ? 'fade' : 'shadow';
+        }),
         prefix: 'design-image',
       ),
       if (c.imageMode == 'top')
@@ -606,6 +704,14 @@ class _PackageDesignerState extends State<_PackageDesigner> {
           (v) => update(c.copyWith(imageHeight: v)),
           valueLabel: '${c.imageHeight.round()} px',
         ),
+      // La SOMBRA NEGRA sobre la foto (su fuerza y las DOS paradas de su
+      // degradado) sirve para los dos estilos con foto de fondo: antes solo
+      // aparecía en "De fondo" y en "Fondo degradado" no se podía ajustar
+      // nada de ella.
+      if (c.imageMode == 'bg' || c.imageMode == 'fade') ...[
+        _group('Sombra sobre la foto'),
+        ..._photoShadowControls(c, update),
+      ],
       if (c.imageMode == 'bg') ...[
         _slider(
           'Oscurecido de la foto (fuerza)',
@@ -616,8 +722,7 @@ class _PackageDesignerState extends State<_PackageDesigner> {
           divisions: 20,
           valueLabel: '${(c.imageFade * 100).round()}%',
         ),
-        _group('Degradado de la foto'),
-        ..._photoShadowControls(c, update),
+        _group('Velo de color'),
         _fadeAngleRow(c),
         const SizedBox(height: 10),
         _fadeColorRow(c),
@@ -655,7 +760,8 @@ class _PackageDesignerState extends State<_PackageDesigner> {
         _fadeAngleRow(
           c,
           title: 'Hacia dónde desaparece',
-          hint: 'Gira el punto hacia el lado por el que la foto se funde con el '
+          hint:
+              'Gira el punto hacia el lado por el que la foto se funde con el '
               'fondo. 0° por arriba, 90° por la derecha, 180° por abajo.',
         ),
         const SizedBox(height: 6),
@@ -913,110 +1019,307 @@ class _PackageDesignerState extends State<_PackageDesigner> {
   Widget _preview(ColorScheme scheme) {
     final c = _d.card;
     return Container(
-      color: scheme.surfaceContainerHighest.withValues(alpha: .25),
-      child: ListView(
-        padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.surfaceContainerHighest.withValues(alpha: .38),
+            scheme.surfaceContainerLowest.withValues(alpha: .9),
+          ],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(Icons.visibility_outlined, size: 16, color: scheme.primary),
-              const SizedBox(width: 8),
-              const Text(
-                'Así se verá en la web',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          // La tarjeta y la fila enseñan SIEMPRE el mismo tier: el que se está
-          // ajustando. Así una paleta de Gold o de Basic se ve al momento.
-          Text(
-            'Muestra (card y fila con el mismo tier)',
-            style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 6),
-          // Se acomoda en varias líneas: en columnas angostas los tres chips y
-          // los dos botones no caben en una sola fila.
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              for (final e in kTierLabels.entries)
-                _previewTierChip(e.key, e.value),
-              if (!kIsWeb)
-                TextButton.icon(
-                  key: const ValueKey('design-open-browser'),
-                  onPressed: _openInBrowser,
-                  icon: const Icon(Icons.open_in_new_rounded, size: 17),
-                  label: const Text('Ver en el navegador'),
+          // Barra tipo navegador: deja claro que lo de abajo es la PÁGINA.
+          _previewChrome(scheme),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.visibility_outlined,
+                      size: 16,
+                      color: scheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Así se verá en la web',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
-              TextButton.icon(
-                onPressed: () => setState(() => _animRun++),
-                icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                label: const Text('Repetir'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: c.imageMode == 'bg' && c.imageShadow > 0
-                  // Con el desvanecido encendido, sus dos paradas se mueven
-                  // ARRASTRÁNDOLAS sobre la tarjeta (como en Photoshop).
-                  ? _ShadowStops(
-                      start: c.imageShadowStart,
-                      end: c.imageShadowEnd,
-                      onChanged: (s, e) => setState(
-                        () => _d = _d.copyWith(
-                          card: _d.card.copyWith(
-                            imageShadowStart: s,
-                            imageShadowEnd: e,
+                const SizedBox(height: 10),
+                // La tarjeta y la fila enseñan SIEMPRE el mismo tier: el que se está
+                // ajustando. Así una paleta de Gold o de Basic se ve al momento.
+                Text(
+                  'Muestra (card y fila con el mismo tier)',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                // Se acomoda en varias líneas: en columnas angostas los tres chips y
+                // los dos botones no caben en una sola fila.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (final e in kTierLabels.entries)
+                      _previewTierChip(e.key, e.value),
+                    // (No hay "Ver en el navegador": la tarjeta se previsualiza AQUÍ
+                    // mismo, en el modal.)
+                    TextButton.icon(
+                      key: const ValueKey('design-open-html'),
+                      onPressed: _showHtml,
+                      icon: const Icon(Icons.code_rounded, size: 17),
+                      label: const Text('HTML'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _animRun++),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                      label: const Text('Repetir'),
+                    ),
+                  ],
+                ),
+                // Con foto de fondo, las DOS paradas del degradado negro se mueven
+                // ARRASTRÁNDOLAS sobre la tarjeta (como en Photoshop). En "Fondo
+                // degradado" hay dos juegos de paradas (la sombra y el desvanecido),
+                // así que se elige cuál se arrastra con este conmutador — antes, en
+                // ese estilo la sombra solo se podía mover con los deslizadores.
+                if (c.imageMode == 'fade' && c.imageShadow > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: [
+                        Text(
+                          'Arrastrar en la tarjeta:',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
-                      ),
-                      child: _animatedPreview(_previewCard()),
-                    )
-                  : c.imageMode == 'fade'
-                  // Las dos paradas del DESVANECIDO también se arrastran:
-                  // dónde se ve la foto y dónde termina de fundirse con el
-                  // fondo.
-                  ? _ShadowStops(
-                      start: c.imageFadeStart,
-                      end: c.imageFadeEnd,
-                      keyStart: const ValueKey('design-fade-start'),
-                      keyEnd: const ValueKey('design-fade-end'),
-                      labelStart: 'se ve',
-                      labelEnd: 'desaparece',
-                      onChanged: (s, e) => setState(
-                        () => _d = _d.copyWith(
-                          card: _d.card.copyWith(
-                            imageFadeStart: s,
-                            imageFadeEnd: e,
-                          ),
-                        ),
-                      ),
-                      child: _animatedPreview(_previewCard()),
-                    )
-                  : _animatedPreview(_previewCard()),
+                        const SizedBox(width: 8),
+                        _dragChip('shadow', 'Sombra negra'),
+                        const SizedBox(width: 6),
+                        _dragChip('fade', 'Desvanecido'),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 10),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: _dragHandles(c),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  'Fila (vista compacta del catálogo)',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                _previewRow(),
+                const SizedBox(height: 16),
+                Text(
+                  'Columnas del catálogo: ${c.columns} · '
+                  'servicios listados: ${c.servicesLimit == 0 ? 'todos' : c.servicesLimit} · '
+                  'borde: ${c.borderWidth <= 0 ? 'sin borde' : '${c.borderWidth.round()} px'} · '
+                  'foto: ${_imageLabel(c.imageMode)} · '
+                  'entrada: ${_animLabel(c)}',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 22),
-          const Text(
-            'Fila (vista compacta del catálogo)',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ],
+      ),
+    );
+  }
+
+  /// La tarjeta de la vista previa, con las asas que toquen según lo que se
+  /// esté ajustando: la SOMBRA negra (en los dos estilos con foto de fondo) o
+  /// el desvanecido de la foto.
+  Widget _dragHandles(SiteCardDesign c) {
+    final shadowHandles =
+        c.imageShadow > 0 && (c.imageMode == 'bg' || _drag == 'shadow');
+    if (shadowHandles && (c.imageMode == 'bg' || c.imageMode == 'fade')) {
+      return _ShadowStops(
+        start: c.imageShadowStart,
+        end: c.imageShadowEnd,
+        onChanged: (s, e) => setState(
+          () => _d = _d.copyWith(
+            card: _d.card.copyWith(imageShadowStart: s, imageShadowEnd: e),
           ),
-          const SizedBox(height: 8),
-          _previewRow(),
-          const SizedBox(height: 16),
-          Text(
-            'Columnas del catálogo: ${c.columns} · '
-            'servicios listados: ${c.servicesLimit == 0 ? 'todos' : c.servicesLimit} · '
-            'borde: ${c.borderWidth <= 0 ? 'sin borde' : '${c.borderWidth.round()} px'} · '
-            'foto: ${_imageLabel(c.imageMode)} · '
-            'entrada: ${_animLabel(c)}',
-            style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+        ),
+        child: _animatedPreview(_previewCard()),
+      );
+    }
+    if (c.imageMode == 'fade') {
+      // Las dos paradas del DESVANECIDO también se arrastran: dónde se ve la
+      // foto y dónde termina de fundirse con el fondo.
+      return _ShadowStops(
+        start: c.imageFadeStart,
+        end: c.imageFadeEnd,
+        keyStart: const ValueKey('design-fade-start'),
+        keyEnd: const ValueKey('design-fade-end'),
+        labelStart: 'se ve',
+        labelEnd: 'desaparece',
+        onChanged: (s, e) => setState(
+          () => _d = _d.copyWith(
+            card: _d.card.copyWith(imageFadeStart: s, imageFadeEnd: e),
+          ),
+        ),
+        child: _animatedPreview(_previewCard()),
+      );
+    }
+    return _animatedPreview(_previewCard());
+  }
+
+  /// Chip para elegir QUÉ paradas se arrastran sobre la tarjeta.
+  Widget _dragChip(String key, String label) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = _drag == key;
+    return InkWell(
+      key: ValueKey('design-drag-$key'),
+      borderRadius: BorderRadius.circular(999),
+      onTap: () => setState(() => _drag = key),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected
+              ? scheme.primary.withValues(alpha: .16)
+              : scheme.surfaceContainerHighest.withValues(alpha: .5),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected
+                ? scheme.primary.withValues(alpha: .6)
+                : _line(scheme),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Barra del "navegador" de la vista previa (es una maqueta: no navega).
+  Widget _previewChrome(ColorScheme scheme) {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .55),
+        border: Border(bottom: BorderSide(color: _line(scheme))),
+      ),
+      child: Row(
+        children: [
+          for (final color in const [
+            Color(0xFFFF5F57),
+            Color(0xFFFEBC2E),
+            Color(0xFF28C840),
+          ]) ...[
+            Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .75),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              height: 24,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              alignment: Alignment.centerLeft,
+              decoration: BoxDecoration(
+                color: scheme.surface.withValues(alpha: .75),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: _line(scheme)),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.lock_outline_rounded,
+                    size: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'hardstreet · catálogo de paquetes (vista previa)',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// El HTML de la tarjeta (el MISMO documento que usa la web). Se abre en
+  /// un visor dentro del modal: sirve para revisar la exactitud del card sin
+  /// salir del panel.
+  Future<void> _showHtml() async {
+    final html = _cardHtml();
+    await showHsModal<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('HTML de la tarjeta'),
+        content: SizedBox(
+          width: 720,
+          height: 460,
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B0E17),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.all(14),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                html,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11.5,
+                  height: 1.45,
+                  color: Color(0xFFE6E6E6),
+                ),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
           ),
         ],
       ),
@@ -1204,8 +1507,109 @@ class _PackageDesignerState extends State<_PackageDesigner> {
         divisions: 19,
         valueLabel: '${(c.imageShadowEnd * 100).round()}%',
       ),
+      // POSICIÓN de la sombra: de qué lado tapa la foto. Antes el degradado
+      // negro siempre subía desde abajo; si el texto o el precio van arriba (o
+      // la foto tiene su sujeto abajo) se puede mover con estos cuatro atajos
+      // o girando el punto.
+      _shadowAngleRow(c, update),
     ],
   ];
+
+  /// Posición de la sombra de la foto: atajos (abajo, arriba, izquierda,
+  /// derecha) + el mismo círculo que el velo para el ángulo exacto.
+  Widget _shadowAngleRow(
+    SiteCardDesign c,
+    void Function(SiteCardDesign) update,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final deg = hsShadowCssDeg(c.imageShadowAngle).round();
+    void setDeg(int value) =>
+        update(c.copyWith(imageShadowAngle: (value % 360).toDouble()));
+    const presets = <int, String>{
+      0: 'Abajo',
+      180: 'Arriba',
+      90: 'Izquierda',
+      270: 'Derecha',
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 4),
+        Text(
+          'Posición de la sombra',
+          style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final e in presets.entries)
+              InkWell(
+                key: ValueKey('design-shadow-dir-${e.key}'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => setDeg(e.key),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: deg == e.key
+                        ? scheme.primary.withValues(alpha: .16)
+                        : scheme.surfaceContainerHighest.withValues(alpha: .5),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: deg == e.key
+                          ? scheme.primary.withValues(alpha: .6)
+                          : _line(scheme),
+                    ),
+                  ),
+                  child: Text(
+                    e.value,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: deg == e.key
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                      color: deg == e.key
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _AngleDial(
+              key: const ValueKey('design-shadow-angle'),
+              degrees: deg,
+              ghost: 0,
+              onChanged: setDeg,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                'Gira el punto para mover la sombra: 0° abajo, 90° a la '
+                'izquierda, 180° arriba y 270° a la derecha.',
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.4,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
 
   /// Dirección del velo, con el CÍRCULO y sus grados (único control: la rosa de
   /// direcciones de antes se retiró porque repetía lo mismo).
@@ -1367,6 +1771,7 @@ class _PackageDesignerState extends State<_PackageDesigner> {
               shadow: c.imageShadow,
               shadowStart: c.imageShadowStart,
               shadowEnd: c.imageShadowEnd,
+              shadowAngle: c.imageShadowAngle,
             ),
             Padding(
               padding: const EdgeInsets.all(12),
@@ -1516,7 +1921,15 @@ class _PackageDesignerState extends State<_PackageDesigner> {
     final c = _d.card;
     if (c.imageMode == 'fade') {
       // La foto (aquí su marcador) se desvanece hacia el fondo de la tarjeta,
-      // que pinta el contenedor: no hay velo encima.
+      // que pinta el contenedor: no hay velo de color encima. Sí puede llevar
+      // la SOMBRA negra del diseño (su fuerza y sus dos paradas), como en la
+      // web.
+      final shadow = hsPhotoShadowGradient(
+        c.imageShadow,
+        start: c.imageShadowStart,
+        end: c.imageShadowEnd,
+        angle: c.imageShadowAngle,
+      );
       return Stack(
         children: [
           Positioned.fill(
@@ -1528,6 +1941,14 @@ class _PackageDesignerState extends State<_PackageDesigner> {
               child: _photoFill(accent),
             ),
           ),
+          if (shadow != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(gradient: shadow),
+                ),
+              ),
+            ),
           content,
         ],
       );
@@ -1545,6 +1966,7 @@ class _PackageDesignerState extends State<_PackageDesigner> {
             shadow: c.imageShadow,
             shadowStart: c.imageShadowStart,
             shadowEnd: c.imageShadowEnd,
+            shadowAngle: c.imageShadowAngle,
           ),
         ),
         content,
@@ -2664,10 +3086,7 @@ class _ShadowStopsState extends State<_ShadowStops> {
               ),
               Container(
                 margin: const EdgeInsets.only(left: 6, right: 6),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 7,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: .62),
                   borderRadius: BorderRadius.circular(7),

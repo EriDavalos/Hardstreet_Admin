@@ -29,13 +29,69 @@ class DriveHost {
   /// ¿Se está usando una dirección distinta a la de fábrica?
   static bool get isCustom => _custom != null;
 
+  /// Dirección LOCAL de respaldo: la misma que documenta el módulo Conexión.
+  ///
+  /// Cuando el teléfono está en la red de la oficina, el nombre público
+  /// responde con el certificado del router (o el NAT no devuelve la
+  /// conexión) y el drive no conecta. En ese caso la app PRUEBA esta
+  /// dirección y, si responde, la usa durante la sesión sin que el usuario
+  /// tenga que escribirla. Al reabrir la app vuelve a intentar la pública.
+  static const String lanFallback = 'http://192.168.1.72:4000';
+
+  /// El MISMO nombre público pero por HTTP directo al puerto del drive.
+  ///
+  /// El servidor del Drive escucha HTTP en 4000 y no siempre hay un proxy
+  /// con un certificado válido delante. Cuando el HTTPS falla en el teléfono
+  /// (certificado del router, cadena incompleta…), esta dirección evita TLS
+  /// y sigue funcionando desde internet, sin depender de la red local.
+  static String get publicHttp {
+    final uri = Uri.tryParse(compiled);
+    if (uri == null || uri.host.isEmpty) return compiled;
+    // Si la build ya apunta a HTTP, no hay nada que cambiar.
+    if (uri.scheme == 'http') return compiled;
+    return Uri(scheme: 'http', host: uri.host, port: 4000).toString();
+  }
+
+  /// Direcciones que se prueban, EN ORDEN, cuando la configurada no responde.
+  ///
+  /// 1. el nombre público por HTTP (sirve dentro y fuera de la oficina),
+  /// 2. la IP local (sirve si el router no devuelve la conexión a su propia
+  ///    IP pública).
+  /// Se quitan duplicados y la que ya se está usando.
+  static List<String> get fallbackCandidates {
+    final out = <String>[];
+    for (final candidate in [publicHttp, lanFallback]) {
+      if (candidate == base || out.contains(candidate)) continue;
+      out.add(candidate);
+    }
+    return out;
+  }
+
+  /// Dirección que se activó automáticamente en esta sesión.
+  static String? _sessionFallback;
+
+  /// true = se está usando una dirección de respaldo.
+  static bool get usingFallback => _custom == null && _sessionFallback != null;
+
+  /// Activa una dirección de respaldo para el resto de la sesión.
+  static void useFallback([String? url]) {
+    if (_custom != null) return;
+    final clean = normalize(url ?? lanFallback);
+    if (clean != null) _sessionFallback = clean;
+  }
+
+  /// Vuelve a la dirección pública de fábrica.
+  static void clearFallback() => _sessionFallback = null;
+
   /// Dirección EFECTIVA del servidor del drive (lo que usan los servicios).
-  static String get base => _custom ?? compiled;
+  static String get base => _custom ?? _sessionFallback ?? compiled;
 
   /// Guarda (o borra, con `null`/vacío) la dirección del servidor.
   /// Devuelve `true` si quedó aplicada; `false` si lo escrito no es válido.
   static bool set(String? raw) {
     final text = (raw ?? '').trim();
+    // Elegir una dirección a mano desactiva el respaldo automático.
+    _sessionFallback = null;
     if (text.isEmpty) {
       _custom = null;
       return true;

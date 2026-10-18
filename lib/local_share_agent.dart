@@ -23,9 +23,12 @@ import 'hs_api.dart';
 // configurar el router ni la IP.
 //
 // Reglas:
-//   * SOLO LECTURA: listar y leer archivos. Nunca se escribe ni se borra nada.
-//   * SOLO se sirven rutas DENTRO de la carpeta compartida que el servidor
-//     pide (se revalida aquí, aunque el servidor ya lo valida).
+//   * LEE (listar, miniaturas, archivos) y, si quien comparte dio permiso,
+//     ESCRIBE: crear carpeta, subir, renombrar, mover, copiar y eliminar.
+//     El servidor decide con los permisos del COMPARTIDO; aquí se revalida
+//     que toda ruta quede DENTRO de la carpeta compartida.
+//   * Las subidas de otros usuarios llegan como una URL temporal del
+//     servidor: este equipo baja el archivo y lo escribe en el disco.
 //   * Si la sesión no sirve (401/403) o el usuario cierra sesión, se detiene.
 // ==================================================================
 
@@ -243,6 +246,13 @@ class LocalShareAgent {
     return _manual;
   }
 
+  /// ¿El usuario ya eligió el switch (aunque lo haya dejado apagado)?
+  ///
+  /// Cuando la preferencia es explícita, el agente NO se enciende solo por
+  /// tener carpetas locales: si lo apagó, sigue apagado al entrar y salir del
+  /// módulo y al reabrir la app.
+  bool get manualPreferenceKnown => AppSettings.instance.shareServingSet;
+
   /// Al arrancar la app con sesión restaurada o al volver a entrar.
   void restart() {
     stop();
@@ -255,9 +265,15 @@ class LocalShareAgent {
   /// falta (y no antes).
   Future<void> syncWithShares() async {
     if (!supported) return;
-    // El switch manda: si el usuario lo dejó encendido, el servicio se enciende
-    // aunque no haya carpetas compartidas a la vista.
-    if (loadManualPreference()) return;
+    // El switch manda en los DOS sentidos: encendido sirve aunque no haya
+    // carpetas a la vista; apagado NO se vuelve a encender solo porque exista
+    // una carpeta local compartida.
+    loadManualPreference();
+    if (manualPreferenceKnown) {
+      if (_manual) { start(); }
+      else { stop(); }
+      return;
+    }
     try {
       final data = await HsApi.sharedFiles();
       final hasLocal = data.shared.any((s) => s['local'] == true);
@@ -361,6 +377,14 @@ class LocalShareAgent {
         root: '${request['root'] ?? ''}',
         path: '${request['path'] ?? ''}',
         width: int.tryParse('${request['w'] ?? ''}') ?? 0,
+        // Escritura: nombre nuevo, destino, lista y archivo temporal.
+        name: '${request['name'] ?? ''}',
+        to: '${request['to'] ?? ''}',
+        names: [
+          for (final n in ((request['names'] as List?) ?? const [])) '$n',
+        ],
+        overwrite: '${request['overwrite'] ?? ''}' == '1',
+        url: '${request['url'] ?? ''}',
       ).timeout(_readTimeout('${request['op'] ?? ''}'));
     } on TimeoutException {
       reply = const AgentReply(
@@ -381,6 +405,9 @@ class LocalShareAgent {
   static Duration _readTimeout(String op) => switch (op) {
     'list' => const Duration(seconds: 20),
     'thumb' => const Duration(seconds: 45),
+    // Escribir (sobre todo una subida, que baja el archivo del servidor)
+    // puede tardar más que leer: una foto grande por un disco/enlace lento.
+    'put' || 'copy' => const Duration(seconds: 240),
     _ => const Duration(seconds: 120),
   };
 
@@ -392,6 +419,11 @@ class LocalShareAgent {
     required String root,
     required String path,
     int width = 0,
+    String name = '',
+    String to = '',
+    List<String> names = const [],
+    bool overwrite = false,
+    String url = '',
   }) async {
     try {
       final target = resolveInside(root, path);
@@ -490,6 +522,141 @@ class LocalShareAgent {
           name: name,
         );
       }
+      // ==================== ESCRITURA ====================
+      if (op == 'mkdir') {
+        final dir = Directory(_inside(root, path, _safeName(name)));
+        if (await dir.exists()) {
+          return const AgentReply(
+            status: 409,
+            error: 'Ya existe una carpeta con ese nombre',
+          );
+        }
+        await dir.create();
+        return _jsonReply({'ok': true, 'name': _safeName(name)});
+      }
+      if (op == 'put') {
+        if (url.isEmpty) {
+          return const AgentReply(status: 400, error: 'Falta el archivo');
+        }
+        final clean = _safeName(name);
+        // El archivo que otro usuario subió está en el servidor: se baja y se
+        // escribe AQUÍ, en la computadora del dueño.
+        final r = await client
+            .get(
+              Uri.parse('${AppConstants.apiBase}$url'),
+              headers: _headers,
+            )
+            .timeout(const Duration(minutes: 4));
+        if (r.statusCode != 200) {
+          return AgentReply(
+            status: r.statusCode == 404 ? 410 : 502,
+            error: 'No se pudo bajar el archivo para guardarlo (HTTP ${r.statusCode})',
+          );
+        }
+        final dir = Directory(target);
+        if (!await dir.exists()) {
+          return const AgentReply(
+            status: 404,
+            error: 'La carpeta ya no existe en esta computadora',
+          );
+        }
+        final saved = await _uniqueIn(dir, clean, false, overwrite: overwrite);
+        await File('${dir.path}/$saved').writeAsBytes(r.bodyBytes, flush: true);
+        return _jsonReply({'ok': true, 'name': saved});
+      }
+      if (op == 'rename') {
+        final clean = _safeName(name);
+        final from = FileSystemEntity.typeSync(target) ==
+                FileSystemEntityType.directory
+            ? Directory(target) as FileSystemEntity
+            : File(target) as FileSystemEntity;
+        if (!await from.exists()) {
+          return const AgentReply(
+            status: 404,
+            error: 'El elemento ya no existe en esta computadora',
+          );
+        }
+        final parent = target.substring(0, target.lastIndexOf('/'));
+        final dest = '$parent/$clean';
+        if (FileSystemEntity.typeSync(dest) != FileSystemEntityType.notFound) {
+          return const AgentReply(
+            status: 409,
+            error: 'Ya existe un elemento con ese nombre',
+          );
+        }
+        await from.rename(dest);
+        return _jsonReply({'ok': true, 'name': clean});
+      }
+      if (op == 'delete') {
+        var deleted = 0;
+        final errors = <String>[];
+        for (final raw in names) {
+          final clean = _safeName(raw);
+          final dest = _inside(root, path, clean);
+          try {
+            final type = FileSystemEntity.typeSync(dest);
+            if (type == FileSystemEntityType.notFound) continue;
+            if (type == FileSystemEntityType.directory) {
+              await Directory(dest).delete(recursive: true);
+            } else {
+              await File(dest).delete();
+            }
+            deleted++;
+          } catch (_) {
+            errors.add('No se pudo eliminar "$clean"');
+          }
+        }
+        return _jsonReply({'ok': true, 'deleted': deleted, 'errors': errors});
+      }
+      if (op == 'move' || op == 'copy') {
+        final destDir = Directory(resolveInside(root, to));
+        if (!await destDir.exists()) {
+          return const AgentReply(
+            status: 404,
+            error: 'La carpeta de destino ya no existe en esta computadora',
+          );
+        }
+        var done = 0;
+        final errors = <String>[];
+        for (final raw in names) {
+          final clean = _safeName(raw);
+          final src = _inside(root, path, clean);
+          final type = FileSystemEntity.typeSync(src);
+          if (type == FileSystemEntityType.notFound) continue;
+          final isDir = type == FileSystemEntityType.directory;
+          // Una carpeta no puede meterse dentro de sí misma.
+          if (isDir && _normalize(destDir.path).startsWith('${_normalize(src)}/')) {
+            errors.add('No puedes mover "$clean" dentro de sí misma');
+            continue;
+          }
+          try {
+            final saved = await _uniqueIn(
+              destDir,
+              clean,
+              isDir,
+              overwrite: overwrite && op == 'move',
+            );
+            final dest = '${destDir.path}/$saved';
+            if (op == 'move') {
+              await (isDir ? Directory(src) : File(src)).rename(dest);
+            } else if (isDir) {
+              await _copyDir(Directory(src), Directory(dest));
+            } else {
+              await File(src).copy(dest);
+            }
+            done++;
+          } catch (e) {
+            errors.add(
+              'No se pudo ${op == 'move' ? 'mover' : 'copiar'} "$clean"',
+            );
+          }
+        }
+        return _jsonReply({
+          'ok': true,
+          (op == 'move' ? 'moved' : 'copied'): done,
+          'errors': errors,
+        });
+      }
       return const AgentReply(status: 400, error: 'Petición no soportada');
     } catch (e) {
       return AgentReply(status: 500, error: 'No se pudo leer: $e');
@@ -526,6 +693,61 @@ class LocalShareAgent {
     }
     return norm;
   }
+
+  /// Une [path] + [name] DENTRO de [root] (sin escapes).
+  String _inside(String root, String path, String name) =>
+      resolveInside(root, path.isEmpty ? name : '$path/$name');
+
+  /// Nombre de archivo/carpeta seguro: sin separadores, sin `..` ni unidad.
+  static String _safeName(String raw) {
+    final clean = raw.replaceAll(RegExp(r'[\\/:*?"<>|]'), '').trim();
+    if (clean.isEmpty || clean == '.' || clean == '..') {
+      throw StateError('Nombre inválido');
+    }
+    return clean;
+  }
+
+  /// Nombre libre en [dir] ("foto.jpg" → "foto (1).jpg") salvo [overwrite].
+  static Future<String> _uniqueIn(
+    Directory dir,
+    String name,
+    bool isFolder, {
+    bool overwrite = false,
+  }) async {
+    if (overwrite) return name;
+    final dot = isFolder ? -1 : name.lastIndexOf('.');
+    final base = dot > 0 ? name.substring(0, dot) : name;
+    final ext = dot > 0 ? name.substring(dot) : '';
+    var candidate = name;
+    var i = 1;
+    while (FileSystemEntity.typeSync('${dir.path}/$candidate') !=
+        FileSystemEntityType.notFound) {
+      candidate = '$base ($i)$ext';
+      i++;
+    }
+    return candidate;
+  }
+
+  /// Copia recursiva (solo imágenes y carpetas, igual que el Drive).
+  static Future<void> _copyDir(Directory src, Directory dst) async {
+    await dst.create(recursive: true);
+    await for (final e in src.list(followLinks: false)) {
+      final name = e.uri.pathSegments.where((s) => s.isNotEmpty).last;
+      if (name.startsWith('.')) continue;
+      final d = '${dst.path}/$name';
+      if (e is Directory) {
+        await _copyDir(e, Directory(d));
+      } else if (e is File && _isImage(name)) {
+        await e.copy(d);
+      }
+    }
+  }
+
+  /// Respuesta JSON de una operación de escritura.
+  static AgentReply _jsonReply(Map<String, dynamic> data) => AgentReply(
+    bytes: utf8.encode(jsonEncode(data)),
+    mime: 'application/json',
+  );
 
   /// Ruta absoluta normalizada con '/' (para comparar prefijos sin sorpresas).
   static String _normalize(String raw) {

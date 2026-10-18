@@ -200,6 +200,7 @@ class SiteExtraSection {
     this.texts = const {},
     this.images = const {},
     this.props = const {},
+    this.html = '',
   });
 
   /// Nombre de la instancia: `gallery-2` para la primera galería agregada.
@@ -216,12 +217,16 @@ class SiteExtraSection {
   final Map<String, String> images;
   final Map<String, dynamic> props;
 
+  /// HTML propio de la copia ('' = se pinta como la sección original).
+  final String html;
+
   SiteExtraSection copyWith({
     bool? visible,
     int? order,
     Map<String, String>? texts,
     Map<String, String>? images,
     Map<String, dynamic>? props,
+    String? html,
   }) =>
       SiteExtraSection(
         id: id,
@@ -231,6 +236,7 @@ class SiteExtraSection {
         texts: texts ?? this.texts,
         images: images ?? this.images,
         props: props ?? this.props,
+        html: html ?? this.html,
       );
 
   Map<String, dynamic> toJson() => {
@@ -241,6 +247,7 @@ class SiteExtraSection {
         if (texts.isNotEmpty) 'texts': texts,
         if (images.isNotEmpty) 'images': images,
         if (props.isNotEmpty) 'props': props,
+        if (html.trim().isNotEmpty) 'html': html,
       };
 
   /// Lee una copia guardada (null si le falta lo indispensable: `id` y `key`).
@@ -270,6 +277,7 @@ class SiteExtraSection {
       props: m['props'] is Map
           ? (m['props'] as Map).cast<String, dynamic>()
           : const {},
+      html: '${m['html'] ?? ''}'.trim(),
     );
   }
 
@@ -286,11 +294,12 @@ class SiteExtraSection {
       other.order == order &&
       jsonEncode(other.texts) == jsonEncode(texts) &&
       jsonEncode(other.images) == jsonEncode(images) &&
-      jsonEncode(other.props) == jsonEncode(props);
+      jsonEncode(other.props) == jsonEncode(props) &&
+      other.html == html;
 
   @override
   int get hashCode => Object.hash(id, key, visible, order,
-      jsonEncode(texts), jsonEncode(images), jsonEncode(props));
+      jsonEncode(texts), jsonEncode(images), jsonEncode(props), html);
 
   @override
   String toString() => 'SiteExtraSection($id de $key)';
@@ -303,6 +312,7 @@ class SiteContent {
     this.images = const {},
     this.sections = const {},
     this.extraSections = const [],
+    this.html = const {},
   });
 
   /// Sólo los textos CAMBIADOS (clave → valor).
@@ -317,18 +327,28 @@ class SiteContent {
   /// Las secciones AGREGADAS (copias): una segunda galería, otro divisor…
   final List<SiteExtraSection> extraSections;
 
+  /// HTML PROPIO de una sección (id de instancia → contenido), editado a mano
+  /// desde el panel. Si una sección está aquí, la web pinta ESE HTML en lugar
+  /// del contenido que arma con los campos y los datos.
+  final Map<String, String> html;
+
   /// Un documento vacío: la portada se ve tal como la trae el HTML.
   static const SiteContent empty = SiteContent();
 
   bool get isEmpty =>
-      texts.isEmpty && images.isEmpty && sections.isEmpty && extraSections.isEmpty;
+      texts.isEmpty &&
+      images.isEmpty &&
+      sections.isEmpty &&
+      extraSections.isEmpty &&
+      html.isEmpty;
 
   /// Cuántos campos se han cambiado (para las píldoras del encabezado).
   int get editedCount =>
       texts.length +
       images.length +
       sections.values.where((s) => !s.visible).length +
-      extraSections.length;
+      extraSections.length +
+      html.length;
 
   /// ¿Es el MISMO contenido? (valor a valor: `==` de dos mapas de Dart compara
   /// la identidad de las claves, no lo que llevan dentro, así que no sirve para
@@ -337,6 +357,7 @@ class SiteContent {
       _sameMap(texts, other.texts) &&
       _sameMap(images, other.images) &&
       _sameMap(sections, other.sections) &&
+      _sameMap(html, other.html) &&
       _sameExtras(extraSections, other.extraSections);
 
   /// Las copias son iguales si lo son una a una (y en el mismo orden).
@@ -361,12 +382,14 @@ class SiteContent {
     Map<String, String>? images,
     Map<String, SiteSectionState>? sections,
     List<SiteExtraSection>? extraSections,
+    Map<String, String>? html,
   }) =>
       SiteContent(
         texts: texts ?? this.texts,
         images: images ?? this.images,
         sections: sections ?? this.sections,
         extraSections: extraSections ?? this.extraSections,
+        html: html ?? this.html,
       );
 
   /// Un texto editado (o null si sigue el de fábrica).
@@ -374,6 +397,9 @@ class SiteContent {
 
   /// Una imagen editada (o null).
   String? imageOf(String key) => images[key];
+
+  /// El HTML propio de una sección ('' = no tiene).
+  String htmlOf(String id) => html[id] ?? '';
 
   /// Opciones propias de una sección (vacío = las de fábrica de la web).
   Map<String, dynamic> propsOf(String key) =>
@@ -390,6 +416,7 @@ class SiteContent {
           'sections': {for (final e in sections.entries) e.key: e.value.toJson()},
         if (extraSections.isNotEmpty)
           'extraSections': [for (final e in extraSections) e.toJson()],
+        if (html.isNotEmpty) 'html': html,
       };
 
   /// Lee lo guardado (tolerante: lo que falte o venga raro se ignora).
@@ -423,8 +450,18 @@ class SiteContent {
       // iguales: la segunda se ignora.
       if (extra != null && !extras.any((e) => e.id == extra.id)) extras.add(extra);
     }
+    final html = <String, String>{};
+    for (final e in _map(m['html']).entries) {
+      final v = '${e.value ?? ''}'.trim();
+      if (v.isNotEmpty) html[e.key] = v;
+    }
     return SiteContent(
-        texts: texts, images: images, sections: sections, extraSections: extras);
+      texts: texts,
+      images: images,
+      sections: sections,
+      extraSections: extras,
+      html: html,
+    );
   }
 
   static List<Object?> _list(Object? v) =>

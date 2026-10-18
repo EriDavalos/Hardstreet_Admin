@@ -163,6 +163,31 @@ void main() {
       expect(find.byKey(const ValueKey('site-add-services')), findsNothing);
     });
 
+    testWidgets('la copia nace con el HTML propio de su original',
+        (tester) async {
+      const code = '<div class="packages-grid"><p>Hecho a mano</p></div>';
+      final api = _FakeSiteApi(
+        stored: const SiteContent(html: {'gallery': code}),
+      );
+      await pumpPage(tester, api);
+
+      await addSection(tester, 'gallery');
+
+      // La copia ya trae el HTML de la original (y lo anuncia su botón).
+      final copyHtml = find.byKey(const ValueKey('site-html-gallery-2'));
+      expect(
+        find.descendant(of: copyHtml, matching: find.text('Editar HTML')),
+        findsOneWidget,
+      );
+
+      await save(tester);
+      final saved = api.saves.single;
+      expect(saved.htmlOf('gallery-2'), code);
+      expect(saved.extraSections.single.html, code);
+      // La original conserva el suyo.
+      expect(saved.htmlOf('gallery'), code);
+    });
+
     testWidgets('agregar monta la copia y lo editado se guarda EN LA COPIA',
         (tester) async {
       final api = _FakeSiteApi();

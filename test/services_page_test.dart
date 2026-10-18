@@ -74,6 +74,16 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
+/// Baja dentro del formulario hasta que el campo quede a la vista.
+Future<void> _reveal(WidgetTester tester, Finder finder) async {
+  await tester.dragUntilVisible(
+    finder,
+    find.byType(SingleChildScrollView).last,
+    const Offset(0, -220),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('lista servicios con icono y descripción, SIN la liga del Drive',
       (tester) async {
@@ -141,5 +151,51 @@ void main() {
     final update = posts.where((p) => p['id'] == 2).toList();
     expect(update, hasLength(1));
     expect(update.first['name'], 'Álbum premium');
+  });
+
+  testWidgets('los parámetros especiales guardan el máximo de fotos',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    await _tap(tester, find.text('Álbum de fotos'));
+    await _reveal(tester, find.text('Elegir fotos'));
+    expect(find.text('PARÁMETROS ESPECIALES'), findsOneWidget);
+
+    // «Elegir fotos» trae su campo de cuántas fotos y enciende la carpeta.
+    await _tap(tester, find.text('Elegir fotos'));
+    await _reveal(tester, find.byKey(const ValueKey('service-photos-max')));
+    await tester.enterText(
+      find.byKey(const ValueKey('service-photos-max')),
+      '12',
+    );
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final update = posts.where((p) => p['id'] == 2).toList();
+    expect(update, hasLength(1));
+    expect(update.first['photosMax'], 12);
+    expect(update.first['allowFolder'], isTrue);
+  });
+
+  testWidgets('sin «Abrir carpeta» tampoco se puede elegir fotos',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    await _tap(tester, find.text('Álbum de fotos'));
+    await _reveal(tester, find.text('Elegir fotos'));
+    // Primero se encienden las fotos y después se apaga la carpeta: las fotos
+    // se apagan solas (el selector vive DENTRO de la carpeta compartida).
+    await _tap(tester, find.text('Elegir fotos'));
+    await _reveal(tester, find.text('Abrir carpeta'));
+    await _tap(tester, find.text('Abrir carpeta'));
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final update = posts.where((p) => p['id'] == 2).toList();
+    expect(update, hasLength(1));
+    expect(update.first['photosMax'], 0);
+    expect(update.first['allowFolder'], isFalse);
   });
 }

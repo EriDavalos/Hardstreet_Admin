@@ -76,8 +76,9 @@ Future<void> _pumpPage(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('muestra quién creó o eliminó qué, con su módulo y acción',
-      (tester) async {
+  testWidgets('muestra quién creó o eliminó qué, con su módulo y acción', (
+    tester,
+  ) async {
     _installMock();
     await _pumpPage(tester);
 
@@ -99,8 +100,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el detalle (details) se ve al expandir la fila',
-      (tester) async {
+  testWidgets('el detalle (details) se ve al expandir la fila', (tester) async {
     _installMock();
     await _pumpPage(tester);
 
@@ -115,8 +115,9 @@ void main() {
     expect(find.textContaining('email: ana@hardstreet.com'), findsOneWidget);
   });
 
-  testWidgets('la flecha de detalle tiene aire: no va pegada a la hora',
-      (tester) async {
+  testWidgets('la flecha de detalle tiene aire: no va pegada a la hora', (
+    tester,
+  ) async {
     _installMock();
     await _pumpPage(tester);
 
@@ -127,17 +128,24 @@ void main() {
     final time = tester.getRect(find.text('10:30'));
     final box = tester.getRect(arrow);
     // Va DEBAJO de la hora, con aire vertical entre las dos.
-    expect(box.top - time.bottom, greaterThanOrEqualTo(6),
-        reason: 'la flecha tiene aire respecto a la hora (antes pegaba)');
+    expect(
+      box.top - time.bottom,
+      greaterThanOrEqualTo(6),
+      reason: 'la flecha tiene aire respecto a la hora (antes pegaba)',
+    );
 
     // Y tampoco pegada al borde derecho de la tarjeta.
     final card = tester.getRect(find.byType(Card).first);
-    expect(card.right - box.right, greaterThanOrEqualTo(10),
-        reason: 'queda margen contra el borde de la tarjeta');
+    expect(
+      card.right - box.right,
+      greaterThanOrEqualTo(10),
+      reason: 'queda margen contra el borde de la tarjeta',
+    );
   });
 
-  testWidgets('el filtro por acción pide solo las eliminaciones',
-      (tester) async {
+  testWidgets('el filtro por acción pide solo las eliminaciones', (
+    tester,
+  ) async {
     final urls = <String>[];
     HsApi.client = MockClient((request) async {
       urls.add(request.url.toString());
@@ -149,7 +157,12 @@ void main() {
     });
     await _pumpPage(tester);
 
+    // El filtro vive en el MÓDULO DE FILTROS que abre el botón de la barra.
+    await tester.tap(find.byKey(const ValueKey('hs-filter-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Eliminaciones'));
+    await tester.pump();
+    await tester.tap(find.textContaining('Aplicar'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 

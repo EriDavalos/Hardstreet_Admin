@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart'
+    show WidgetsBinding, WidgetsBindingObserver, AppLifecycleState;
 import 'package:flutter/foundation.dart';
 
 import 'event_widget.dart';
@@ -20,12 +22,17 @@ import 'reminder_notifications_native.dart';
 ///
 /// Singleton simple: `RemindersService.instance`. El polling se inicia y
 /// detiene desde el panel al entrar/salir de sesión.
-class RemindersService extends ChangeNotifier {
+class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
   RemindersService._();
   static final RemindersService instance = RemindersService._();
 
   /// Cuánto espera entre consultas al servidor.
-  static const Duration pollInterval = Duration(minutes: 5);
+  ///
+  /// 30 segundos: los avisos llegan casi al instante sin abrir una conexión
+  /// permanente contra el backend (que en Vercel no la mantendría). Además se
+  /// refresca al VOLVER a la app (ver [didChangeAppLifecycleState]), así que
+  /// al desbloquear el teléfono o regresar a la ventana los avisos ya están.
+  static const Duration pollInterval = Duration(seconds: 30);
 
   Timer? _timer;
 
@@ -50,6 +57,11 @@ class RemindersService extends ChangeNotifier {
   void start() {
     if (_started) return;
     _started = true;
+    try {
+      WidgetsBinding.instance.addObserver(this);
+    } catch (_) {
+      // Sin binding (pruebas muy tempranas): el polling funciona igual.
+    }
     refresh(); // primer llenado inmediato
     _timer = Timer.periodic(pollInterval, (_) => refresh());
   }
@@ -59,6 +71,18 @@ class RemindersService extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _started = false;
+    try {
+      WidgetsBinding.instance.removeObserver(this);
+    } catch (_) {
+      // idem
+    }
+  }
+
+  /// Al VOLVER a la app (o desbloquear el equipo) se pide de inmediato: así no
+  /// hay que esperar al siguiente ciclo para ver un aviso nuevo.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _started) refresh();
   }
 
   /// Limpia todo (al cerrar sesión): la campanita no debe recordar avisos
@@ -123,7 +147,9 @@ class RemindersService extends ChangeNotifier {
     // Copia NUEVA de cada aviso (no mutar en sitio) + UNA sola notificación
     // al final: notificar dentro del bucle reconstruía el diálogo con el
     // conteo inconsistente y el botón "Marcar leídos" se quedaba visible.
-    _reminders = [for (final r in _reminders) {...r, 'isRead': 1}];
+    _reminders = [
+      for (final r in _reminders) {...r, 'isRead': 1},
+    ];
     _unread = 0;
     notifyListeners();
     try {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../hs_api.dart';
@@ -5,6 +7,8 @@ import '../hs_format.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 
 // ==================================================================
 // MÓDULO ACTIVIDAD: la bitácora del panel.
@@ -34,25 +38,25 @@ const List<(String, String, IconData)> _kActivityFilters = [
 ({Color color, IconData icon, String label}) _actionStyle(String action) =>
     switch (action.toLowerCase()) {
       'create' => (
-          color: const Color(0xFF10B981),
-          icon: Icons.add_circle_outline,
-          label: 'Creación',
-        ),
+        color: const Color(0xFF10B981),
+        icon: Icons.add_circle_outline,
+        label: 'Creación',
+      ),
       'delete' => (
-          color: const Color(0xFFEF4444),
-          icon: Icons.delete_outline,
-          label: 'Eliminación',
-        ),
+        color: const Color(0xFFEF4444),
+        icon: Icons.delete_outline,
+        label: 'Eliminación',
+      ),
       'update' => (
-          color: AppColors.brand,
-          icon: Icons.edit_outlined,
-          label: 'Edición',
-        ),
+        color: AppColors.brand,
+        icon: Icons.edit_outlined,
+        label: 'Edición',
+      ),
       _ => (
-          color: const Color(0xFFF59E0B),
-          icon: Icons.bolt_outlined,
-          label: 'Acción',
-        ),
+        color: const Color(0xFFF59E0B),
+        icon: Icons.bolt_outlined,
+        label: 'Acción',
+      ),
     };
 
 class ActivityPage extends StatefulWidget {
@@ -65,9 +69,30 @@ class ActivityPage extends StatefulWidget {
 class _ActivityPageState extends State<ActivityPage> {
   bool _loading = true;
   String? _error;
+
+  /// Entradas de la PÁGINA actual (las manda el backend).
   List<Map<String, dynamic>> _entries = const [];
   String _query = '';
   String _action = '';
+
+  /// Filtro por MÓDULO ('' = todos).
+  String _module = '';
+
+  // Paginación de la bitácora (30 de fábrica; 50/100/200 en el pie).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
+  /// Total de registros con los filtros puestos (lo calcula el servidor).
+  int _total = 0;
+
+  /// Conteos por MÓDULO y por ACCIÓN que manda el backend (chips y stats).
+  Map<String, int> _moduleCounts = const {};
+  Map<String, int> _actionCounts = const {};
+
+  /// true = backend paginado; false = respuesta vieja (se pagina en pantalla).
+  bool _serverPaged = false;
+
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -75,22 +100,64 @@ class _ActivityPageState extends State<ActivityPage> {
     _reload();
   }
 
-  Future<void> _reload() async {
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  /// Busca en el servidor con una pequeña espera (una petición por pausa).
+  void _search(String value) {
+    setState(() {
+      _query = value;
+      _page = 1;
+    });
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), _reload);
+  }
+
+  /// Pide la página actual al backend con sus filtros.
+  Future<void> _reload({bool reset = false}) async {
+    if (reset) _page = 1;
+    // Página pedida (antes de que el servidor la recorte).
+    final asked = _page;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final entries = await HsApi.activity(
-        action: _action.isEmpty ? null : _action,
-        limit: 200,
+      final result = await HsApi.activityPage(
+        page: _page,
+        limit: _pageSize,
+        q: _query,
+        module: _module,
+        action: _action,
       );
       if (!mounted) return;
+      Map<String, int> counts(String key) => {
+        for (final e in ((result.meta[key] as Map?) ?? const {}).entries)
+          e.key.toString(): (e.value as num?)?.toInt() ?? 0,
+      };
       setState(() {
-        _entries = entries;
+        _entries = result.items;
+        _serverPaged = result.serverPaged;
+        _total = result.total;
+        _moduleCounts = counts('moduleCounts');
+        _actionCounts = counts('actionCounts');
+        if (result.serverPaged) _page = result.page;
         _loading = false;
         _error = null;
       });
+      // La página pedida ya no existe (p. ej. al vaciar la bitácora): pide la
+      // última que sí tiene datos.
+      if (result.serverPaged &&
+          result.items.isEmpty &&
+          result.total > 0 &&
+          _page > 1 &&
+          _page < asked) {
+        _page = result.pages;
+        await _reload();
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -106,11 +173,33 @@ class _ActivityPageState extends State<ActivityPage> {
     }
   }
 
-  /// El buscador filtra lo ya cargado (últimos 200 registros).
-  List<Map<String, dynamic>> get _filtered {
+  /// Módulos del filtro.
+  ///
+  /// Con el backend paginado salen de los CONTEOS que manda (así aparecen
+  /// módulos que no están en esta página); con uno viejo, de las filas.
+  List<String> get _modules {
+    if (_serverPaged) {
+      return _moduleCounts.keys.where((m) => m.trim().isNotEmpty).toList()
+        ..sort();
+    }
+    final out = <String>{};
+    for (final e in _entries) {
+      final m = (e['moduleName'] ?? e['module'] ?? '').toString().trim();
+      if (m.isNotEmpty) out.add(m);
+    }
+    return out.toList()..sort();
+  }
+
+  /// Filas que se pintan (con un backend viejo se filtran aquí, como antes).
+  List<Map<String, dynamic>> get _visible {
+    if (_serverPaged) return _entries;
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _entries;
     return _entries.where((e) {
+      if (_module.isNotEmpty) {
+        final m = (e['moduleName'] ?? e['module'] ?? '').toString();
+        if (m.toLowerCase() != _module.toLowerCase()) return false;
+      }
+      if (q.isEmpty) return true;
       final hay = [
         e['description'],
         e['userName'],
@@ -123,74 +212,136 @@ class _ActivityPageState extends State<ActivityPage> {
     }).toList();
   }
 
-  int _countOf(String action) =>
-      _entries.where((e) => (e['action'] ?? '').toString() == action).length;
+  /// Total que se le pasa a la barra: el del servidor o el local.
+  int get _pagerTotal => _serverPaged ? _total : _visible.length;
+
+  int _countOf(String action) => _serverPaged
+      ? (_actionCounts[action] ?? 0)
+      : _entries.where((e) => (e['action'] ?? '').toString() == action).length;
+
+  int _countOfModule(String module) => _serverPaged
+      ? (_moduleCounts[module] ?? 0)
+      : _entries
+            .where(
+              (e) =>
+                  (e['moduleName'] ?? e['module'] ?? '')
+                      .toString()
+                      .toLowerCase() ==
+                  module.toLowerCase(),
+            )
+            .length;
+
+  /// Módulo de filtros: tipo de acción y módulo del panel.
+  List<HsFilterGroup> get _filterGroups => [
+    HsFilterGroup(
+      id: 'action',
+      title: 'Tipo de movimiento',
+      help: 'Altas, ediciones y bajas registradas por el equipo.',
+      options: [
+        for (final (value, label, icon) in _kActivityFilters)
+          HsFilterOption(
+            value: value,
+            label: label,
+            count: value.isEmpty ? _pagerTotal : _countOf(value),
+            icon: icon,
+            color: value.isEmpty ? null : _actionStyle(value).color,
+          ),
+      ],
+    ),
+    if (_modules.isNotEmpty)
+      HsFilterGroup(
+        id: 'module',
+        title: 'Módulo',
+        help: 'Dónde se hizo el cambio.',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Todos los módulos',
+            count: _pagerTotal,
+            icon: Icons.apps_rounded,
+          ),
+          for (final m in _modules)
+            HsFilterOption(
+              value: m,
+              label: m,
+              count: _countOfModule(m),
+              icon: Icons.widgets_outlined,
+            ),
+        ],
+      ),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final entries = _filtered;
+    final entries = _serverPaged
+        ? _visible
+        : HsPages(
+            total: _visible.length,
+            page: _page,
+            pageSize: _pageSize,
+          ).slice(_visible);
 
     return PageContainer(
       title: 'Actividad',
       description:
           'Bitácora de quién creó, editó o eliminó cada cosa del panel.',
       icon: Icons.history_rounded,
+      onRefresh: _reload,
       stats: [
         StatPill(
-            icon: Icons.receipt_long_outlined,
-            label: '${_entries.length} registros'),
+          icon: Icons.receipt_long_outlined,
+          label: '$_pagerTotal registros',
+        ),
         StatPill(
-            icon: Icons.add_circle_outline,
-            label: "${_countOf('create')} altas"),
+          icon: Icons.add_circle_outline,
+          label: "${_countOf('create')} altas",
+        ),
         StatPill(
-            icon: Icons.delete_outline,
-            label: "${_countOf('delete')} bajas"),
-      ],
-      actions: [
-        HsActionButton(
-          primary: false,
-          onPressed: _loading ? null : _reload,
-          icon: Icons.refresh,
-          label: 'Actualizar',
+          icon: Icons.delete_outline,
+          label: "${_countOf('delete')} bajas",
         ),
       ],
+      // Barra de páginas como PIE FIJO (fuera del scroll).
+      footer: HsPager(
+        total: _pagerTotal,
+        page: _page,
+        pageSize: _pageSize,
+        enabled: !_loading && _error == null,
+        onPage: (p) {
+          setState(() => _page = p);
+          _reload();
+        },
+        onPageSize: (n) {
+          setState(() {
+            _pageSize = n;
+            _page = 1;
+          });
+          _reload();
+        },
+      ),
+      // Sin botón de recargar: se recarga deslizando hacia abajo.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: 'Buscar por usuario, módulo o descripción…',
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () => setState(() => _query = ''),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Filtro por tipo de acción: se pide al backend.
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final (value, label, icon) in _kActivityFilters)
-                FilterChip(
-                  selected: _action == value,
-                  avatar: Icon(icon,
-                      size: 16,
-                      color: _action == value ? scheme.primary : null),
-                  label: Text(label),
-                  onSelected: (_) {
-                    if (_action == value) return;
-                    _action = value;
-                    _reload();
-                  },
-                ),
-            ],
+          HsSearchFilterBar(
+            // Busca en el servidor (con una pequeña espera entre teclas).
+            hint: 'Buscar por usuario, módulo o descripción…',
+            onChanged: _search,
+            initial: _query,
+            groups: _filterGroups,
+            selected: {'action': _action, 'module': _module},
+            onApply: (filters) {
+              final action = filters['action'] ?? '';
+              final module = filters['module'] ?? '';
+              if (action == _action && module == _module) return;
+              setState(() {
+                _action = action;
+                _module = module;
+                _page = 1;
+              });
+              _reload();
+            },
           ),
           const SizedBox(height: 16),
           if (_loading)
@@ -201,8 +352,11 @@ class _ActivityPageState extends State<ActivityPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined,
-                        size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -223,8 +377,9 @@ class _ActivityPageState extends State<ActivityPage> {
                   'Aquí aparecerá cada alta, edición o baja que se haga en el '
                   'panel, con el usuario que la hizo.',
             )
-          else
+          else ...[
             _ActivityTimeline(entries: entries),
+          ],
         ],
       ),
     );
@@ -261,47 +416,59 @@ class _ActivityTimeline extends StatelessWidget {
       if (day.isNotEmpty && day != lastDay) {
         lastDay = day;
         final n = counts[day] ?? 0;
-        children.add(Padding(
-          padding: EdgeInsets.only(top: i == 0 ? 0 : 18, bottom: 10),
-          child: Row(
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: scheme.primary.withValues(alpha: .10),
-                  borderRadius: BorderRadius.circular(999),
-                  border:
-                      Border.all(color: scheme.primary.withValues(alpha: .22)),
-                ),
-                child: Text(
-                  hsDayLabel(when!).toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: .7,
-                    color: scheme.primary,
+        children.add(
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : 18, bottom: 10),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .10),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: .22),
+                    ),
+                  ),
+                  child: Text(
+                    hsDayLabel(when!).toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .7,
+                      color: scheme.primary,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '$n ${n == 1 ? 'registro' : 'registros'}',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: scheme.onSurfaceVariant,
+                const SizedBox(width: 8),
+                Text(
+                  '$n ${n == 1 ? 'registro' : 'registros'}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ));
+        );
       }
-      children.add(StaggeredItem(index: i, child: _ActivityTile(entry: e)));
+      children.add(
+        StaggeredItem(
+          index: i,
+          child: _ActivityTile(entry: e),
+        ),
+      );
     }
 
     return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
   }
 }
 
@@ -334,8 +501,7 @@ class _ActivityTileState extends State<_ActivityTile> {
 
     final meta = [
       if (module.isNotEmpty) module,
-      if (entity.isNotEmpty)
-        entityId == null ? entity : '$entity #$entityId',
+      if (entity.isNotEmpty) entityId == null ? entity : '$entity #$entityId',
     ].join('  ·  ');
 
     final head = Row(
@@ -361,14 +527,18 @@ class _ActivityTileState extends State<_ActivityTile> {
               Text(
                 (entry['description'] ?? style.label).toString(),
                 style: const TextStyle(
-                    fontSize: 13.5, fontWeight: FontWeight.w700),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               if (meta.isNotEmpty) ...[
                 const SizedBox(height: 3),
                 Text(
                   meta,
-                  style:
-                      TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
               const SizedBox(height: 6),
@@ -474,12 +644,14 @@ class _ActivityTileState extends State<_ActivityTile> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(11),
                         decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHighest
-                              .withValues(alpha: .35),
+                          color: scheme.surfaceContainerHighest.withValues(
+                            alpha: .35,
+                          ),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color:
-                                scheme.onSurfaceVariant.withValues(alpha: .14),
+                            color: scheme.onSurfaceVariant.withValues(
+                              alpha: .14,
+                            ),
                           ),
                         ),
                         child: Text(

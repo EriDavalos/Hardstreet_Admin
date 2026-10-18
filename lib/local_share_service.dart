@@ -12,6 +12,7 @@ import 'download_stub.dart' if (dart.library.html) 'download_web.dart';
 import 'drive_base.dart';
 import 'drive_downloader.dart' show needsSaveDialog, saveToAndroidDownloads;
 import 'hs_api.dart';
+import 'share_permissions.dart';
 
 // ==================================================================
 // HARD STREET ADMIN - Carpetas compartidas (SOLO LECTURA)
@@ -30,11 +31,27 @@ import 'hs_api.dart';
 
 /// Un elemento (carpeta o imagen) de una carpeta local compartida.
 class LocalShareItem {
-  const LocalShareItem({required this.name, required this.isFolder, this.size});
+  const LocalShareItem({
+    required this.name,
+    required this.isFolder,
+    this.size,
+    this.modified,
+    this.childCount = 0,
+    this.countKnown = true,
+  });
 
   final String name;
   final bool isFolder;
   final int? size;
+
+  /// Fecha de la última modificación (la manda el servidor del drive).
+  final DateTime? modified;
+
+  /// Cuántos elementos tiene DENTRO (solo carpetas).
+  final int childCount;
+
+  /// ¿[childCount] es el conteo de verdad? Un servidor viejo no lo manda.
+  final bool countKnown;
 }
 
 /// Contenido de una carpeta local compartida.
@@ -63,6 +80,8 @@ class LocalShareStatus {
     this.hasDatabase = true,
     this.reason,
     this.detail,
+    this.permissions = SharePermissions.readOnly,
+    this.permissionsKnown = false,
   });
 
   /// server (está en el servidor) | agent (computadora del dueño, app abierta)
@@ -86,6 +105,13 @@ class LocalShareStatus {
 
   /// Explicación del servidor (para mostrarla tal cual).
   final String? detail;
+
+  /// Lo que YO puedo hacer en la carpeta (lo decide quien la comparte).
+  final SharePermissions permissions;
+
+  /// ¿El servidor MANDÓ esos permisos? (un servidor viejo no los manda, y en
+  /// ese caso no se pueden usar para decidir qué ofrecer en la vista).
+  final bool permissionsKnown;
 
   /// ¿Se puede servir? (no hay estado peor que "offline" / "unknown").
   bool get available => servedFrom == 'server' || servedFrom == 'agent';
@@ -139,6 +165,8 @@ class LocalShareStatus {
     hasDatabase: m['db'] != false,
     reason: m['reason'] == null ? null : '${m['reason']}',
     detail: m['detail'] == null ? null : '${m['detail']}',
+    permissions: SharePermissions.fromJson(m['permissions']),
+    permissionsKnown: m['permissions'] is Map,
   );
 
   /// Sin poder preguntar (red, servidor viejo): se intenta servir igual.
@@ -231,11 +259,20 @@ class LocalShareService {
     final items = <LocalShareItem>[];
     for (final e in raw) {
       if (e is! Map) continue;
+      final count = (e['childCount'] as num?)?.toInt();
+      final ms = (e['modified'] as num?)?.toInt();
       items.add(
         LocalShareItem(
           name: '${e['name'] ?? ''}',
           isFolder: e['isFolder'] == true,
           size: (e['size'] as num?)?.toInt(),
+          modified:
+              ms == null || ms <= 0
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(ms),
+          childCount: count ?? 0,
+          // Sin dato, la tarjeta NO dice "0 elementos": dice que no se sabe.
+          countKnown: count != null,
         ),
       );
     }
@@ -317,6 +354,152 @@ class LocalShareService {
     }
     // El ZIP se arma en un isolate: una carpeta grande no congela la pantalla.
     return compute(encodeSharedZip, entries);
+  }
+
+  // ==================== ESCRITURA ====================
+  //
+  // El servidor exige el permiso del COMPARTIDO (el dueño lo concede al
+  // compartir). Aquí solo se pide; quien decide de verdad es él.
+
+  /// Crea una carpeta dentro de [path] (permiso "Crear").
+  Future<void> mkdir(int shareId, List<String> path, String name) async {
+    final r = await _client
+        .post(
+          _u('/api/local/mkdir', {}),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'share': shareId,
+            'path': path.join('/'),
+            'name': name,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw _why(r, 'No se pudo crear la carpeta (HTTP ${r.statusCode})');
+    }
+  }
+
+  /// Sube un archivo a [path] (permiso "Crear"). Devuelve el nombre guardado
+  /// (el servidor puede renombrarlo si ya existía y no se sobrescribe).
+  Future<String> uploadBytes(
+    int shareId,
+    List<String> path,
+    String name,
+    List<int> bytes, {
+    bool overwrite = false,
+  }) async {
+    final req = http.MultipartRequest(
+      'POST',
+      _u('/api/local/upload', {
+        'share': '$shareId',
+        'path': path.join('/'),
+        if (overwrite) 'overwrite': '1',
+      }),
+    );
+    req.headers.addAll(_headers);
+    req.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: name),
+    );
+    final streamed = await _client
+        .send(req)
+        .timeout(const Duration(minutes: 5));
+    final r = await http.Response.fromStream(streamed);
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw _why(r, 'No se pudo subir "$name" (HTTP ${r.statusCode})');
+    }
+    try {
+      final data = jsonDecode(r.body);
+      if (data is Map && data['name'] is String) return '${data['name']}';
+    } catch (_) {
+      // Sin JSON: se asume el nombre pedido.
+    }
+    return name;
+  }
+
+  /// Renombra el elemento [path] (permiso "Editar").
+  Future<void> rename(int shareId, List<String> path, String newName) async {
+    final r = await _client
+        .patch(
+          _u('/api/local/item', {}),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'share': shareId,
+            'path': path.join('/'),
+            'name': newName,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw _why(r, 'No se pudo renombrar (HTTP ${r.statusCode})');
+    }
+  }
+
+  /// Elimina [names] dentro de [path] (permiso "Editar").
+  Future<({int deleted, List<String> errors})> deleteItems(
+    int shareId,
+    List<String> path,
+    List<String> names,
+  ) async {
+    final r = await _client
+        .post(
+          _u('/api/local/delete', {}),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'share': shareId,
+            'path': path.join('/'),
+            'names': names,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw _why(r, 'No se pudo eliminar (HTTP ${r.statusCode})');
+    }
+    final data = jsonDecode(r.body) is Map
+        ? (jsonDecode(r.body) as Map)
+        : const {};
+    return (
+      deleted: (data['deleted'] as num?)?.toInt() ?? 0,
+      errors: [
+        for (final e in ((data['errors'] as List?) ?? const [])) '$e',
+      ],
+    );
+  }
+
+  /// Mueve o copia [names] de [from] a [to] (editar / crear).
+  Future<({int moved, List<String> errors})> transfer(
+    int shareId, {
+    required bool move,
+    required List<String> from,
+    required List<String> names,
+    required List<String> to,
+  }) async {
+    final r = await _client
+        .post(
+          _u('/api/local/${move ? 'move' : 'copy'}', {}),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'share': shareId,
+            'from': from.join('/'),
+            'names': names,
+            'to': to.join('/'),
+          }),
+        )
+        .timeout(const Duration(minutes: 5));
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      throw _why(
+        r,
+        'No se pudo ${move ? 'mover' : 'copiar'} (HTTP ${r.statusCode})',
+      );
+    }
+    final data = jsonDecode(r.body) is Map
+        ? (jsonDecode(r.body) as Map)
+        : const {};
+    return (
+      moved: (data[move ? 'moved' : 'copied'] as num?)?.toInt() ?? 0,
+      errors: [
+        for (final e in ((data['errors'] as List?) ?? const [])) '$e',
+      ],
+    );
   }
 
   /// Bytes del archivo original (se descarga o se mete en un ZIP).

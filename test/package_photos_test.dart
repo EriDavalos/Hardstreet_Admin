@@ -17,10 +17,11 @@ import 'package:hardstreet_admin/widgets/drive_thumb.dart';
 // catálogo no se parecía a la página. Ahora se pide la MISMA foto que ve la
 // web (`url_image`), al servidor del drive y en tamaño de tarjeta:
 //
-//   https://servidor/thumb/<ruta>?w=640&apikey=<token de la sesión>
+//   https://servidor/thumb/<ruta>?w=640
 //
-// El token va en la URL porque una imagen no puede mandar cabeceras: sin él el
-// servidor contesta 403 y las fotos no cargaban ni aquí ni en la web.
+// SIN token: `/thumb` es público (son las imágenes del catálogo y de la web).
+// Antes la URL llevaba `?apikey=` y un rol al que se le quitó "Ver Drive"
+// recibía 403 en las portadas: justo el error que se reportó.
 // ==================================================================
 
 const _drivePhoto =
@@ -136,8 +137,8 @@ void main() {
     expect(photo.source, contains('w=640'));
     expect(
       photo.source,
-      contains('apikey=token-de-prueba'),
-      reason: 'sin el token el servidor responde 403 y la foto no carga',
+      isNot(contains('apikey')),
+      reason: 'la miniatura es pública: no se lleva el token de la sesión',
     );
     expect(photo.isRemote, isTrue);
   });

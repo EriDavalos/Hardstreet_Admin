@@ -64,9 +64,7 @@ String hsPackageCardHtml({
 
   final css = StringBuffer()
     ..writeln(_baseCss(accent: accent, dark: dark))
-    ..writeln(
-      _designCss(card: card, accent: accent, accentSoft: accentSoft),
-    )
+    ..writeln(_designCss(card: card, accent: accent, accentSoft: accentSoft))
     ..writeln(
       _tierCss(
         card: card,
@@ -185,7 +183,8 @@ ${body.toString().trimRight()}
 }
 
 /// Estilos de los elementos de la tarjeta (los toma de `index.css`).
-String _baseCss({required String accent, required String dark}) => '''
+String _baseCss({required String accent, required String dark}) =>
+    '''
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:transparent}
 body{font-family:'Inter',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
@@ -250,9 +249,7 @@ String _designCss({
     css.writeln('.package-card::before{display:none;}');
   }
   if (card.imageMode == 'top') {
-    css.writeln(
-      '.pkg-photo{height:${card.imageHeight.round()}px;}',
-    );
+    css.writeln('.pkg-photo{height:${card.imageHeight.round()}px;}');
   }
   if (card.imageMode == 'fade') {
     // FONDO CON DESVANECIDO: la foto se ve de un lado y se funde con el fondo
@@ -263,9 +260,7 @@ String _designCss({
     final mask =
         'linear-gradient(${deg}deg,#000 ${(a * 100).toStringAsFixed(1)}%,'
         'transparent ${(b * 100).toStringAsFixed(1)}%)';
-    css.writeln(
-      '.pkg-photo-bg{-webkit-mask-image:$mask;mask-image:$mask;}',
-    );
+    css.writeln('.pkg-photo-bg{-webkit-mask-image:$mask;mask-image:$mask;}');
     // Sin foto, el hueco del acento se desvanece igual: se ve dónde irá.
     css.writeln(
       '.pkg-photo-empty{background:linear-gradient(135deg,'
@@ -279,21 +274,18 @@ String _designCss({
       final start = card.imageShadowStart.clamp(0.0, .95);
       final end = card.imageShadowEnd.clamp(start + .05, 1.0);
       final black = _rgba('#000000', _round2(card.imageShadow));
+      // POSICIÓN: el diseño decide de qué lado entra la sombra (0° abajo).
+      final deg = _num(hsShadowCssDeg(card.imageShadowAngle));
       css.writeln(
         ".pkg-photo-bg::before{content:'';position:absolute;inset:0;"
-        'background:linear-gradient(to top,'
+        'background:linear-gradient(${deg}deg,'
         '$black 0%,$black ${(start * 100).toStringAsFixed(1)}%,'
         'rgba(0,0,0,0) ${(end * 100).toStringAsFixed(1)}%);}',
       );
     }
     css.writeln(
       ".pkg-photo-bg::after{content:'';position:absolute;inset:0;"
-      'background:${_fadeCss(
-        card.imageFadeColor,
-        card.imageFade,
-        card.imageFadeFrom,
-        card.imageFadeAngle,
-      )};}',
+      'background:${_fadeCss(card.imageFadeColor, card.imageFade, card.imageFadeFrom, card.imageFadeAngle)};}',
     );
     css.writeln(
       '.pkg-photo-empty{background:linear-gradient(135deg,'
@@ -330,13 +322,9 @@ String _tierCss({
     'border-width:${_num(card.borderWidth)}px;}',
   );
   css.writeln('$k .pkg-name{color:#fff;}');
-  css.writeln(
-    '$k .pkg-price-value,$k .pkg-category-name{color:$accent;}',
-  );
+  css.writeln('$k .pkg-price-value,$k .pkg-category-name{color:$accent;}');
   css.writeln('$k .pkg-icon-svg{color:$accent;}');
-  css.writeln(
-    '$k .pkg-subtitle{color:${_rgba('#ffffff', .55)};}',
-  );
+  css.writeln('$k .pkg-subtitle{color:${_rgba('#ffffff', .55)};}');
   css.writeln(
     '$k .pkg-cta{background:${_rgba(accent, .18)};color:$accent;'
     'border-color:transparent;}',

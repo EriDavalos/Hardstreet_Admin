@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -29,6 +30,7 @@ import 'pages/shared_files_page.dart';
 import 'pages/site_page.dart';
 import 'pages/storage_page.dart';
 import 'pages/users_page.dart';
+import 'package_notifications_service.dart';
 import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
@@ -41,6 +43,16 @@ import 'widgets/wheel_fix.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // En el NAVEGADOR, el clic derecho es NUESTRO: abre el menú de la app
+  // (Descargar / Renombrar / Eliminar) y no el del navegador con "Inspeccionar"
+  // y demás. En escritorio y móvil nativo esta llamada no existe.
+  if (kIsWeb) {
+    unawaited(
+      BrowserContextMenu.disableContextMenu().catchError((_) {
+        // Navegador sin soporte para desactivarlo: la app sigue igual.
+      }),
+    );
+  }
   applySystemChromeStyle(isDark: false);
   runApp(const HardStreetAdminApp());
 }
@@ -162,7 +174,10 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       // REVISIÓN DE VERSIÓN en CADA entrada (login o ya logueado):
       WidgetsBinding.instance.addPostFrameCallback((_) => _checkVersion());
       // Sesión restaurada ("Recordarme"): los avisos también empiezan ya.
-      if (_sessionRestored) RemindersService.instance.start();
+      if (_sessionRestored) {
+        RemindersService.instance.start();
+        PackageNotificationsService.instance.start();
+      }
       // Si este usuario comparte carpetas de SU computadora, la app empieza a
       // servirlas (agente): así los demás las ven mientras la app esté abierta.
       if (_sessionRestored) {
@@ -186,6 +201,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     AppSettings.instance.removeListener(_onSettingsChanged);
     _versionTimer?.cancel();
     RemindersService.instance.stop();
+    PackageNotificationsService.instance.stop();
     LocalShareAgent.instance.stop();
     super.dispose();
   }
@@ -281,6 +297,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // Avisos de eventos próximos + widget: empiezan a consultarse en segundo
     // plano (el widget también se alimenta desde ahí).
     RemindersService.instance.start();
+    // Avisos del PAQUETE (fotos disponibles / servicio terminado).
+    PackageNotificationsService.instance.start();
     // Carpetas compartidas DESDE esta computadora: el agente empieza a
     // atenderlas (solo si el usuario comparte alguna de su PC).
     unawaited(LocalShareAgent.instance.syncWithShares());
@@ -294,6 +312,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     HsAccess.reset(); // el siguiente login recarga permisos desde cero
     _sessionRestored = false;
     RemindersService.instance.reset(); // la campanita no recuerda avisos viejos
+    PackageNotificationsService.instance.reset();
     // Las carpetas de esta computadora dejan de servirse al salir: sin sesión
     // no hay a quién autorizar.
     LocalShareAgent.instance.stop();

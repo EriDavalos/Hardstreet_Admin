@@ -227,13 +227,13 @@ void main() {
       reason: 'la portada de la categoría se quedó sin foto',
     );
     // La foto es la del paquete que la tiene, pedida al servidor del drive en
-    // tamaño de portada y con el token (sin él el servidor responde 403).
+    // tamaño de portada. La miniatura es PÚBLICA: no lleva el token.
     expect(
       thumbs.first.source,
       contains('/thumb/Boda/Ana/Fiesta/IMG_3196%20Mejorado.jpg'),
     );
     expect(thumbs.first.source, contains('w=640'));
-    expect(thumbs.first.source, contains('apikey=token-de-prueba'));
+    expect(thumbs.first.source, isNot(contains('apikey')));
   });
 
   testWidgets('abrir una categoría muestra SUS paquetes en el mismo módulo', (
@@ -305,6 +305,12 @@ void main() {
 
     await _tap(tester, find.text('Nueva categoría'));
     expect(find.text('Nueva categoría'), findsWidgets);
+
+    // El diálogo trae la VISTA PREVIA de la portada tal como saldrá en la
+    // galería (y en la web).
+    expect(find.byKey(const ValueKey('category-preview')), findsOneWidget);
+    // (La sección se rotula en mayúsculas, como el resto del panel.)
+    expect(find.text('ASÍ SE VERÁ EN EL CATÁLOGO'), findsOneWidget);
 
     // El nombre va en SU campo (el diálogo también tiene el de la foto).
     await tester.enterText(

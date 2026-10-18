@@ -67,51 +67,53 @@ class _RemindersBellState extends State<RemindersBell> {
           tooltip: _open
               ? 'Cerrar avisos'
               : unread > 0
-                  ? 'Avisos ($unread sin leer)'
-                  : 'Avisos de eventos',
+              ? 'Avisos ($unread sin leer)'
+              : 'Avisos de eventos',
           isSelected: _open,
           onPressed: _toggle,
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(
-                  _open || unread > 0
-                      ? Icons.notifications
-                      : Icons.notifications_outlined,
-                ),
-                if (unread > 0)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: Theme.of(context).scaffoldBackgroundColor,
-                          width: 1.5,
-                        ),
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(
+                _open || unread > 0
+                    ? Icons.notifications
+                    : Icons.notifications_outlined,
+              ),
+              if (unread > 0)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        width: 1.5,
                       ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        unread > 9 ? '9+' : '$unread',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          height: 1.2,
-                        ),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      unread > 9 ? '9+' : '$unread',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        height: 1.2,
                       ),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -138,11 +140,7 @@ class _BellOverlay extends StatelessWidget {
           ),
         ),
         // Anclado bajo la top bar (60 px) a la derecha, con margen.
-        Positioned(
-          top: 66,
-          right: 12,
-          child: child,
-        ),
+        Positioned(top: 66, right: 12, child: child),
       ],
     );
   }
@@ -161,29 +159,56 @@ class _RemindersPanel extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final screen = MediaQuery.sizeOf(context);
     return Material(
-      elevation: 8,
-      shadowColor: Colors.black.withValues(alpha: .30),
+      elevation: 14,
+      shadowColor: Colors.black.withValues(alpha: .35),
       color: scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 360,
-          maxHeight: (screen.height * .55).clamp(220.0, 480.0),
+          maxWidth: 380,
+          maxHeight: (screen.height * .62).clamp(240.0, 520.0),
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-          child: AnimatedBuilder(
-            animation: service,
-            builder: (context, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _PanelHeader(service: service, onClose: onClose),
-                const SizedBox(height: 6),
-                Flexible(child: _buildList(context, service)),
-              ],
-            ),
+        child: AnimatedBuilder(
+          animation: service,
+          builder: (context, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _PanelHeader(service: service, onClose: onClose),
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                  child: _buildList(context, service),
+                ),
+              ),
+              // Pie: deja claro que se actualiza solo (no hay que recargar).
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 9),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(
+                      color: scheme.outlineVariant.withValues(alpha: .45),
+                    ),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.bolt_rounded, size: 14, color: scheme.primary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Se actualiza en tiempo real mientras el panel está abierto',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -193,18 +218,50 @@ class _RemindersPanel extends StatelessWidget {
   Widget _buildList(BuildContext context, RemindersService service) {
     final list = service.reminders;
     if (list.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Text(
-          'No hay avisos de eventos próximos',
-          textAlign: TextAlign.center,
+      final scheme = Theme.of(context).colorScheme;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.notifications_none_rounded,
+                size: 26,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'No hay avisos de eventos próximos',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'Aquí llegarán los eventos que se acerquen (una semana y un día '
+              'antes).',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.35,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
         ),
       );
     }
     return ListView.separated(
       shrinkWrap: true,
       itemCount: list.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, i) =>
           _ReminderTile(reminder: list[i], service: service),
     );
@@ -219,28 +276,82 @@ class _PanelHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 0),
+    final scheme = Theme.of(context).colorScheme;
+    final total = service.reminders.length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primary.withValues(alpha: .12),
+            scheme.primary.withValues(alpha: .02),
+          ],
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+      ),
       child: Row(
         children: [
-          Icon(Icons.notifications, size: 20),
-          const SizedBox(width: 8),
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              service.unread > 0
+                  ? Icons.notifications_active_rounded
+                  : Icons.notifications_rounded,
+              size: 20,
+              color: scheme.primary,
+            ),
+          ),
+          const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              'Avisos de eventos',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w800),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Avisos de eventos',
+                  style: Theme.of(context).textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                Text(
+                  service.unread > 0
+                      ? '${service.unread} sin leer · $total en total'
+                      : total > 0
+                      ? 'Todo leído · $total avisos'
+                      : 'Sin avisos por ahora',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
           if (service.unread > 0)
-            TextButton(
+            TextButton.icon(
               // markAllRead() solo dispara la confirmación con el servidor
               // (fire-and-forget): el estado local ya quedó actualizado de
               // forma síncrona, así el botón se repinta al instante.
               onPressed: service.markAllRead,
-              child: const Text('Marcar leídos'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              icon: const Icon(Icons.done_all_rounded, size: 15),
+              label: const Text('Marcar leídos'),
             ),
           IconButton(
             tooltip: 'Cerrar',
@@ -275,50 +386,193 @@ class _ReminderTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // Clave por ID de aviso: permite verificar SU estado en pruebas sin
     // depender de los textos ("leído" vs "no leído") del icono.
-    return InkWell(
+    // Cuándo: el aviso trae `kind` ('7d' = falta una semana, '1d' = mañana)
+    // y la fecha del evento.
+    final kind = (reminder['kind'] ?? '').toString();
+    final kindLabel = kind == '1d'
+        ? 'Mañana'
+        : kind == '7d'
+        ? 'Falta 1 semana'
+        : 'Próximo evento';
+    final eventDate = DateTime.tryParse(
+      '${reminder['eventDate'] ?? reminder['created'] ?? ''}',
+    );
+
+    return Material(
       key: ValueKey('reminder-${reminder['id']}'),
-      onTap: () {
-        final id = _id;
-        if (id != null) service.markRead(id);
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              _unread ? Icons.circle : Icons.check_circle_outline,
-              size: 16,
-              color: _unread ? scheme.primary : scheme.outlineVariant,
+      color: _unread
+          ? scheme.primary.withValues(alpha: .07)
+          : scheme.surfaceContainerHighest.withValues(alpha: .28),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          final id = _id;
+          if (id != null) service.markRead(id);
+        },
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: _unread
+                  ? scheme.primary.withValues(alpha: .28)
+                  : scheme.outlineVariant.withValues(alpha: .40),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Pastilla con el icono del aviso (y el estado de leído).
+              Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  Text(
-                    _title,
-                    style: TextStyle(
-                      fontWeight: _unread ? FontWeight.w700 : FontWeight.w500,
-                      fontSize: 13.5,
+                  Container(
+                    width: 32,
+                    height: 32,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _unread
+                          ? scheme.primary.withValues(alpha: .14)
+                          : scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      kind == '1d'
+                          ? Icons.event_available_rounded
+                          : Icons.event_note_rounded,
+                      size: 17,
+                      color: _unread ? scheme.primary : scheme.onSurfaceVariant,
                     ),
                   ),
-                  if (_body.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      _body,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
+                  Positioned(
+                    right: -3,
+                    bottom: -3,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerLow,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _unread ? Icons.circle : Icons.check_circle_outline,
+                        size: 12,
+                        color: _unread ? scheme.primary : scheme.outlineVariant,
                       ),
                     ),
-                  ],
+                  ),
                 ],
               ),
-            ),
-          ],
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: _unread
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              fontSize: 13,
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kind == '1d'
+                                ? const Color(0xFFF59E0B).withValues(alpha: .15)
+                                : scheme.primary.withValues(alpha: .10),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            kindLabel,
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              color: kind == '1d'
+                                  ? const Color(0xFFB45309)
+                                  : scheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_body.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        _body,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.3,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (eventDate != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.schedule_rounded,
+                            size: 12,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _whenLabel(eventDate),
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  static const _months = [
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sep',
+    'oct',
+    'nov',
+    'dic',
+  ];
+
+  /// "12 oct · 18:30" (o solo la fecha si no tiene hora).
+  String _whenLabel(DateTime d) {
+    final hora = d.hour == 0 && d.minute == 0
+        ? ''
+        : ' · ${d.hour.toString().padLeft(2, '0')}:'
+              '${d.minute.toString().padLeft(2, '0')}';
+    return '${d.day} ${_months[d.month - 1]}$hora';
   }
 }

@@ -18,14 +18,14 @@ import '../widgets/hs_toast.dart';
 /// Paleta estable por servicio: cada servicio conserva su color en toda la
 /// vista (calendario, panel lateral y modal de detalle).
 const List<Color> _agendaPalette = [
-  Color(0xFF8B5CF6),
+  Color(0xFF0D9488),
   Color(0xFF10B981),
   Color(0xFFF59E0B),
   Color(0xFF3B82F6),
   Color(0xFFEF4444),
   Color(0xFF14B8A6),
   Color(0xFFEC4899),
-  Color(0xFF6366F1),
+  Color(0xFF0EA5E9),
 ];
 
 Color _serviceColorOf(int? id) => id == null
@@ -460,7 +460,7 @@ class _AgendasPageState extends State<AgendasPage> {
   Future<void> _addEvent() async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => const _NewAgendaDialog(),
     );
     if (saved == true) await _reload();
@@ -3126,7 +3126,7 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                 label: 'Hora',
                 value: hsTimeLabel(_dateTime),
                 onTap: _pickTime,
-                tint: const Color(0xFF8B5CF6),
+                tint: const Color(0xFF0D9488),
               );
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

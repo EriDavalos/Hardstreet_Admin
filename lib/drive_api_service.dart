@@ -10,6 +10,7 @@ import 'package:http_parser/http_parser.dart';
 
 import 'app_constants.dart';
 import 'drive_base.dart';
+import 'drive_host.dart';
 import 'hs_api.dart';
 
 export 'drive_base.dart'
@@ -33,11 +34,19 @@ export 'drive_base.dart'
 /// (ver/crear/editar/eliminar/descargar). Sin token el servidor puede
 /// rechazar la petición (según su configuración).
 class DriveApiService extends DriveBase {
-  DriveApiService({String? baseUrl}) : base = baseUrl ?? AppConstants.apiBase {
+  DriveApiService({String? baseUrl}) : _fixedBase = baseUrl {
     refresh();
   }
 
-  final String base;
+  /// Dirección fija de las pruebas (null = la configurada en [DriveHost]).
+  final String? _fixedBase;
+
+  /// Se resuelve en cada uso: así el respaldo automático a la red local
+  /// cambia las URLs sin recrear el servicio.
+  String get base => _fixedBase ?? AppConstants.apiBase;
+
+  /// Evita reintentar el respaldo más de una vez por sesión.
+  static bool _fallbackTried = false;
 
   /// Cliente HTTP de las peticiones JSON del drive. Es INYECTABLE: las pruebas
   /// lo reemplazan por un `MockClient` para no tocar la red (mismo patrón que
@@ -86,21 +95,20 @@ class DriveApiService extends DriveBase {
   }
 
   /// Versión PREVIEW para el visor: 1600px (~400-800 KB en vez de 10 MB).
+  ///
+  /// `/thumb` es PÚBLICO (son las imágenes del catálogo), así que aquí no se
+  /// manda el token: una URL de imagen no debe llevar la sesión encima.
   @override
   String fullSource(DriveItem item, {int? previewWidth}) {
-    final q = _apikeyQuery;
-    final tail = q.isEmpty ? '' : '&$q';
     if (previewWidth == null) return absolutePathOf(item);
     return '$base/thumb/${[...path, item.name].join('/')}'
-        '?w=$previewWidth&q=80$tail';
+        '?w=$previewWidth&q=80';
   }
 
   /// Miniatura liviana generada por el servidor (JPEG pequeño, con caché).
   @override
   String thumbSource(DriveItem item, {int width = 320}) {
-    final q = _apikeyQuery;
-    return '$base/thumb/${[...path, item.name].join('/')}'
-        '?w=$width${q.isEmpty ? '' : '&$q'}';
+    return '$base/thumb/${[...path, item.name].join('/')}?w=$width';
   }
 
   /// Espacio total y ocupado del drive → GET /api/space.
@@ -212,6 +220,14 @@ class DriveApiService extends DriveBase {
       conn = DriveConn.online;
     } catch (e) {
       if (isCurrentRefresh(ticket)) {
+        // En el celular el nombre público puede responder con el certificado
+        // del router (HandshakeException) o el navegador bloquearlo (Failed to
+        // fetch). Antes de rendirnos probamos las direcciones de respaldo: el
+        // MISMO nombre por HTTP (funciona desde internet) y la IP local.
+        if (await _tryConnectionFallback(e)) {
+          await refresh();
+          return;
+        }
         failRefresh('No se pudo conectar con el servidor ($base): $e');
       }
     } finally {
@@ -222,6 +238,43 @@ class DriveApiService extends DriveBase {
         notifyListeners();
       }
     }
+  }
+
+  /// Prueba las direcciones de respaldo cuando la configurada falla por red/TLS.
+  ///
+  /// Devuelve true si cambió a una de ellas; el llamador repite la petición.
+  /// Solo se intenta con errores de CONEXIÓN (no con un 401/403 del servidor)
+  /// y una vez por sesión, para no mandar al usuario a una IP que no existe.
+  Future<bool> _tryConnectionFallback(Object error) async {
+    if (_fixedBase != null || _fallbackTried || DriveHost.isCustom) {
+      return false;
+    }
+    final text = error.toString().toLowerCase();
+    final connectionError =
+        text.contains('handshake') ||
+        text.contains('certificate') ||
+        text.contains('failed to fetch') ||
+        text.contains('socket') ||
+        text.contains('connection') ||
+        text.contains('timed out') ||
+        text.contains('timeout') ||
+        text.contains('clientexception');
+    if (!connectionError) return false;
+    _fallbackTried = true;
+    for (final candidate in DriveHost.fallbackCandidates) {
+      try {
+        final r = await http
+            .get(Uri.parse('$candidate/api/health'))
+            .timeout(const Duration(seconds: 3));
+        if (r.statusCode == 200) {
+          DriveHost.useFallback(candidate);
+          return true;
+        }
+      } catch (_) {
+        // Esta dirección no responde: se prueba la siguiente.
+      }
+    }
+    return false;
   }
 
   /// ¿Nombres ya existen en la carpeta actual del servidor?
@@ -321,10 +374,7 @@ class DriveApiService extends DriveBase {
       );
       i++;
       addUploadJob(job);
-      pending.add((
-        job,
-        _UploadSource(file: x, path: kIsWeb ? null : x.path),
-      ));
+      pending.add((job, _UploadSource(file: x, path: kIsWeb ? null : x.path)));
     }
     return _runUploads(pending, overwrite: overwrite);
   }
@@ -575,7 +625,8 @@ class DriveApiService extends DriveBase {
   }) async {
     final total = (size != null && size > 0) ? size : job.total;
     if (total <= 0) throw 'No se pudo leer el tamaño de la foto';
-    final id = 'up${DateTime.now().microsecondsSinceEpoch}'
+    final id =
+        'up${DateTime.now().microsecondsSinceEpoch}'
         '${job.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '')}';
     final count = (total + pieces - 1) ~/ pieces;
     final rel = path.join('/');
@@ -613,10 +664,7 @@ class DriveApiService extends DriveBase {
     final done = await client
         .post(
           _u('/api/upload/finish'),
-          headers: {
-            ..._authHeaders,
-            'Content-Type': 'application/json',
-          },
+          headers: {..._authHeaders, 'Content-Type': 'application/json'},
           body: jsonEncode({
             'id': id,
             'total': count,
@@ -649,7 +697,7 @@ class DriveApiService extends DriveBase {
     if (_looksLikeHtml(text)) {
       return status == 413
           ? 'el proxy del servidor rechazó el tamaño (413): revisa '
-              'client_max_body_size'
+                'client_max_body_size'
           : 'el proxy contestó una página HTML en vez de la API del drive';
     }
     if (text.isEmpty) return 'el servidor no respondió nada';
@@ -677,9 +725,7 @@ class DriveApiService extends DriveBase {
           job,
           _UploadSource(
             file: x,
-            path: x == null
-                ? job.thumb
-                : (kIsWeb ? null : x.path),
+            path: x == null ? job.thumb : (kIsWeb ? null : x.path),
           ),
         ),
       );
@@ -705,10 +751,17 @@ class DriveApiService extends DriveBase {
 
   @override
   Future<void> rename(DriveItem item, String newName) async {
+    // Una imagen conserva su extensión (el Drive lista solo imágenes): sin
+    // esto, renombrar "foto.jpg" a "foto" la dejaba invisible.
+    var name = newName.trim();
+    if (!item.isFolder && !hasImageExt(name)) {
+      name = '$name${extOf(item.name)}';
+    }
+    if (name.isEmpty || name == item.name) return;
     await _post('/api/items', {
       'path': path.join('/'),
       'name': item.name,
-      'newName': newName,
+      'newName': name,
     }, method: 'PATCH');
     await refresh();
   }
@@ -813,14 +866,16 @@ class DriveApiService extends DriveBase {
     final nested = entries.where((e) => e.real.length > 1).toList();
     if (nested.isEmpty) return const {};
     final out = <String, int>{};
-    await Future.wait(nested.map((e) async {
-      try {
-        final items = await listFolderItems(e.real);
-        out[e.real.join('/')] = items.length;
-      } catch (_) {
-        // Sin dato: la tarjeta no muestra conteo (mejor eso que un 0 falso).
-      }
-    }));
+    await Future.wait(
+      nested.map((e) async {
+        try {
+          final items = await listFolderItems(e.real);
+          out[e.real.join('/')] = items.length;
+        } catch (_) {
+          // Sin dato: la tarjeta no muestra conteo (mejor eso que un 0 falso).
+        }
+      }),
+    );
     return out;
   }
 
@@ -1107,13 +1162,16 @@ class DriveApiService extends DriveBase {
     Map<String, dynamic> body, {
     String method = 'POST',
   }) async {
-    final r = await http
-        .post(
-          _u(p),
-          body: jsonEncode(body),
-          headers: {'Content-Type': 'application/json', ..._authHeaders},
-        )
-        .timeout(const Duration(seconds: 30));
+    // El [method] se respeta DE VERDAD: antes siempre se mandaba POST y las
+    // rutas que el servidor expone con otro verbo (PATCH /api/items, el de
+    // renombrar) contestaban 404 "Cannot POST /api/items". Por eso renombrar
+    // no funcionaba en el Drive del servidor.
+    final req = http.Request(method, _u(p))
+      ..body = jsonEncode(body)
+      ..headers.addAll({'Content-Type': 'application/json', ..._authHeaders});
+    final r = await http.Response.fromStream(
+      await client.send(req).timeout(const Duration(seconds: 30)),
+    );
     if (r.statusCode != 200) {
       final msg = (() {
         try {

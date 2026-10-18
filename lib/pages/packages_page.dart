@@ -20,6 +20,8 @@ import '../widgets/drive_photo_picker.dart';
 import '../widgets/drive_thumb.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
+import '../widgets/hs_search_filter.dart';
+import '../widgets/hs_pager.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/package_designer.dart';
 import '../widgets/service_form_dialog.dart';
@@ -60,9 +62,10 @@ bool _hasPhoto(Map<String, dynamic> pkg) =>
 /// URL con la que el PANEL pinta la foto de un paquete.
 ///
 /// Es la MISMA foto que ve la web (`url_image`), pedida al servidor del drive
-/// en tamaño de tarjeta (`/thumb/<ruta>?w=N`) y con el token de la sesión,
-/// porque una imagen no puede mandar cabeceras y sin él el servidor contesta
-/// 403: por eso las fotos "no cargaban" en el catálogo.
+/// en tamaño de tarjeta (`/thumb/<ruta>?w=N`). `/thumb` es PÚBLICO en el
+/// servidor del drive, así que la imagen carga SIN sesión: un rol sin permiso
+/// de Drive también ve las portadas del catálogo (antes llegaba un 403 y las
+/// fotos "no cargaban").
 String _photoSource(Map<String, dynamic> pkg, {int width = 640}) =>
     driveImagePreview((pkg['urlImage'] ?? '').toString(), width: width);
 
@@ -212,6 +215,7 @@ Widget _photoBackdrop(
           shadow: card.imageShadow,
           shadowStart: card.imageShadowStart,
           shadowEnd: card.imageShadowEnd,
+          shadowAngle: card.imageShadowAngle,
         ),
       ),
       child,
@@ -253,9 +257,7 @@ class _CardAction extends StatelessWidget {
             icon,
             size: 19,
             color: tint,
-            shadows: const [
-              Shadow(color: Color(0xAA000000), blurRadius: 6),
-            ],
+            shadows: const [Shadow(color: Color(0xAA000000), blurRadius: 6)],
           ),
         ),
       ),
@@ -287,6 +289,19 @@ class _PackagesPageState extends State<PackagesPage> {
   List<Map<String, dynamic>> _categories = const [];
   List<Map<String, dynamic>> _services = const [];
   String _query = '';
+
+  // Paginación del listado de paquetes (30 de fábrica; 50/100/200 abajo).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
+  /// Filtro por NIVEL (tier): null = todos.
+  int? _tierFilter;
+
+  /// Filtro por PRECIO: '' todos · 'con' con precio · 'sin' sin precio.
+  String _priceFilter = '';
+
+  /// Filtro de la GALERÍA: '' todas · 'con' con paquetes · 'sin' sin paquetes.
+  String _catPkgFilter = '';
 
   /// Nivel del módulo: la GALERÍA de categorías (con lo que arranca) o la
   /// lista de paquetes de UNA categoría. `_allPackages` marca la lista
@@ -375,7 +390,7 @@ class _PackagesPageState extends State<PackagesPage> {
     // completa; en computadora, el diálogo flotante.
     final saved = await showHsModal<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _PackageFormDialog(
         pkg: pkg,
         tiers: _tiers,
@@ -420,10 +435,29 @@ class _PackagesPageState extends State<PackagesPage> {
   /// Crea una categoría del catálogo (p. ej. "Bautizo") o EDITA una de la
   /// galería: su nombre y su foto (enlace o Drive).
   Future<void> _openCategoryForm([Map<String, dynamic>? category]) async {
+    // Lo que ya tiene la categoría (paquetes y precio más bajo): el diálogo lo
+    // usa para que la VISTA PREVIA diga lo mismo que la galería.
+    final id = (category?['id'] as num?)?.toInt() ?? 0;
+    final mine = id == 0
+        ? const <Map<String, dynamic>>[]
+        : _packages
+              .where((p) => (p['categoryId'] as num?)?.toInt() == id)
+              .toList(growable: false);
+    num minPrice = 0;
+    for (final p in mine) {
+      final price = (p['price'] as num?) ?? 0;
+      if (price <= 0) continue;
+      if (minPrice == 0 || price < minPrice) minPrice = price;
+    }
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => _CategoryFormDialog(category: category),
+      barrierDismissible: true,
+      builder: (_) => _CategoryFormDialog(
+        category: category,
+        count: mine.length,
+        minPrice: minPrice,
+        gold: hsHexColor(_design.gold),
+      ),
     );
     if (saved == true && mounted) _reload();
   }
@@ -497,6 +531,7 @@ class _PackagesPageState extends State<PackagesPage> {
     _categoryId = id;
     _allPackages = false;
     _query = '';
+    _page = 1;
   });
 
   /// Muestra TODO el catálogo de una vez (la opción de la galería).
@@ -504,6 +539,7 @@ class _PackagesPageState extends State<PackagesPage> {
     _allPackages = true;
     _categoryId = null;
     _query = '';
+    _page = 1;
   });
 
   /// Vuelve a la galería de categorías.
@@ -511,7 +547,21 @@ class _PackagesPageState extends State<PackagesPage> {
     _allPackages = false;
     _categoryId = null;
     _query = '';
+    _page = 1;
   });
+
+  /// Barra de paginación del catálogo: va en el PIE FIJO de la página.
+  Widget _pager({bool enabled = true}) => HsPager(
+    total: _filtered.length,
+    page: _page,
+    pageSize: _pageSize,
+    enabled: enabled,
+    onPage: (p) => setState(() => _page = p),
+    onPageSize: (n) => setState(() {
+      _pageSize = n;
+      _page = 1;
+    }),
+  );
 
   /// Nombre de la categoría abierta (o "Todo el catálogo").
   String get _levelTitle {
@@ -526,6 +576,130 @@ class _PackagesPageState extends State<PackagesPage> {
     return 'Categoría';
   }
 
+  /// MÓDULO DE FILTROS de la galería de categorías.
+  List<HsFilterGroup> _galleryFilters(List<CategoryGroup> groups) {
+    final withPkgs = groups.where((g) => g.packages.isNotEmpty).length;
+    return [
+      HsFilterGroup(
+        id: 'catPkgs',
+        title: 'Contenido de la categoría',
+        help: 'Útil para encontrar categorías que todavía no tienen paquetes.',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Todas las categorías',
+            count: groups.length,
+            icon: Icons.category_outlined,
+          ),
+          HsFilterOption(
+            value: 'con',
+            label: 'Con paquetes',
+            count: withPkgs,
+            icon: Icons.inventory_2_outlined,
+            color: const Color(0xFF16A34A),
+          ),
+          HsFilterOption(
+            value: 'sin',
+            label: 'Sin paquetes',
+            count: groups.length - withPkgs,
+            icon: Icons.inventory_2_outlined,
+            color: const Color(0xFFD97706),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// MÓDULO DE FILTROS del catálogo: categoría, nivel y precio.
+  List<HsFilterGroup> _packageFilters() {
+    int countCat(int? id) => id == null
+        ? _packages.length
+        : _packages
+              .where((p) => (p['categoryId'] as num?)?.toInt() == id)
+              .length;
+    int countTier(int? id) => id == null
+        ? _packages.length
+        : _packages.where((p) => (p['tierId'] as num?)?.toInt() == id).length;
+    final conPrecio = _packages
+        .where((p) => ((p['price'] as num?) ?? 0) > 0)
+        .length;
+    return [
+      HsFilterGroup(
+        id: 'category',
+        title: 'Categoría',
+        help: 'Cambia de categoría sin volver a la galería.',
+        options: [
+          HsFilterOption(
+            value: 'all',
+            label: 'Todo el catálogo',
+            count: _packages.length,
+            icon: Icons.apps_rounded,
+          ),
+          for (final c in _categories)
+            HsFilterOption(
+              value: '${(c['id'] as num).toInt()}',
+              label: (c['name'] ?? '').toString(),
+              count: countCat((c['id'] as num).toInt()),
+              icon: Icons.category_outlined,
+            ),
+          if (countCat(0) > 0)
+            HsFilterOption(
+              value: '0',
+              label: 'Sin categoría',
+              count: countCat(0),
+              icon: Icons.label_off_outlined,
+              color: const Color(0xFFD97706),
+            ),
+        ],
+      ),
+      HsFilterGroup(
+        id: 'tier',
+        title: 'Nivel del paquete',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Todos los niveles',
+            count: _packages.length,
+            icon: Icons.layers_outlined,
+          ),
+          for (final t in _tiers)
+            HsFilterOption(
+              value: '${(t['id'] as num?)?.toInt() ?? 0}',
+              label: (t['name'] ?? '').toString(),
+              count: countTier((t['id'] as num?)?.toInt()),
+              icon: Icons.military_tech_outlined,
+            ),
+        ],
+      ),
+      HsFilterGroup(
+        id: 'price',
+        title: 'Precio',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Cualquier precio',
+            count: _packages.length,
+            icon: Icons.payments_outlined,
+          ),
+          HsFilterOption(
+            value: 'con',
+            label: 'Con precio',
+            count: conPrecio,
+            icon: Icons.attach_money_rounded,
+            color: const Color(0xFF16A34A),
+          ),
+          HsFilterOption(
+            value: 'sin',
+            label: 'Sin precio',
+            count: _packages.length - conPrecio,
+            icon: Icons.money_off_outlined,
+            color: const Color(0xFFD97706),
+          ),
+        ],
+      ),
+    ];
+  }
+
   List<Map<String, dynamic>> get _filtered {
     final q = _query.trim().toLowerCase();
     final cat = _activeCategory;
@@ -533,6 +707,13 @@ class _PackagesPageState extends State<PackagesPage> {
       if (cat != null && (p['categoryId'] as num?)?.toInt() != cat) {
         return false;
       }
+      if (_tierFilter != null &&
+          (p['tierId'] as num?)?.toInt() != _tierFilter) {
+        return false;
+      }
+      final price = (p['price'] as num?) ?? 0;
+      if (_priceFilter == 'con' && price <= 0) return false;
+      if (_priceFilter == 'sin' && price > 0) return false;
       if (q.isEmpty) return true;
       final hay =
           '${p['name'] ?? ''} ${p['subtitle'] ?? ''} '
@@ -542,6 +723,13 @@ class _PackagesPageState extends State<PackagesPage> {
       return hay.contains(q);
     }).toList();
   }
+
+  /// Paquetes de la página actual (después de buscar/filtrar por categoría).
+  List<Map<String, dynamic>> get _pageRows => HsPages(
+    total: _filtered.length,
+    page: _page,
+    pageSize: _pageSize,
+  ).slice(_filtered);
 
   @override
   Widget build(BuildContext context) {
@@ -568,6 +756,10 @@ class _PackagesPageState extends State<PackagesPage> {
           : 'Personaliza los paquetes que la web muestra en "Nuestros '
                 'Paquetes": nombre, precio, servicios incluidos e imagen.',
       icon: Icons.card_giftcard_rounded,
+      onRefresh: _reload,
+      // PIE FIJO con la paginación (solo dentro del catálogo: la galería de
+      // categorías no se pagina).
+      footer: gallery ? null : _pager(enabled: !_loading && _error == null),
       stats: gallery
           ? [
               StatPill(
@@ -637,25 +829,29 @@ class _PackagesPageState extends State<PackagesPage> {
     if (_error != null) return _errorCard(scheme, _error!);
 
     final q = _query.trim().toLowerCase();
-    final visible = q.isEmpty
-        ? groups
-        : groups
-              .where(
-                (c) =>
-                    c.name.toLowerCase().contains(q) ||
-                    c.packages.any(
-                      (p) => '${p['name'] ?? ''}'.toLowerCase().contains(q),
-                    ),
-              )
-              .toList(growable: false);
+    final visible = groups
+        .where((c) {
+          if (_catPkgFilter == 'con' && c.packages.isEmpty) return false;
+          if (_catPkgFilter == 'sin' && c.packages.isNotEmpty) return false;
+          if (q.isEmpty) return true;
+          return c.name.toLowerCase().contains(q) ||
+              c.packages.any(
+                (p) => '${p['name'] ?? ''}'.toLowerCase().contains(q),
+              );
+        })
+        .toList(growable: false);
     if (visible.isEmpty) {
+      final filtered = q.isNotEmpty || _catPkgFilter.isNotEmpty;
       return EmptyState(
         icon: Icons.collections_bookmark_outlined,
-        title: q.isEmpty ? 'Todavía no hay categorías' : 'Sin resultados',
-        message: q.isEmpty
+        title: q.isEmpty && !filtered
+            ? 'Todavía no hay categorías'
+            : 'Sin resultados',
+        message: !filtered
             ? 'Las categorías salen de los paquetes del catálogo y se pueden '
                   'crear aquí mismo con "Nueva categoría".'
-            : 'Ninguna categoría ni paquete coincide con "$_query".',
+            : 'Ninguna categoría ni paquete coincide con la búsqueda o el '
+                  'filtro elegido.',
       );
     }
 
@@ -668,18 +864,19 @@ class _PackagesPageState extends State<PackagesPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
-          onChanged: (v) => setState(() => _query = v),
-          decoration: InputDecoration(
-            hintText: 'Buscar por categoría o paquete…',
-            prefixIcon: const Icon(Icons.search, size: 20),
-            suffixIcon: _query.isEmpty
-                ? null
-                : IconButton(
-                    onPressed: () => setState(() => _query = ''),
-                    icon: const Icon(Icons.close, size: 18),
-                  ),
-          ),
+        HsSearchFilterBar(
+          hint: 'Buscar por categoría o paquete…',
+          initial: _query,
+          onChanged: (v) => setState(() {
+            _query = v;
+            _page = 1;
+          }),
+          groups: _galleryFilters(groups),
+          selected: {'catPkgs': _catPkgFilter},
+          onApply: (filters) => setState(() {
+            _catPkgFilter = filters['catPkgs'] ?? '';
+            _page = 1;
+          }),
         ),
         const SizedBox(height: 18),
         CategoryGalleryHead(
@@ -742,55 +939,47 @@ class _PackagesPageState extends State<PackagesPage> {
           ],
         ),
         const SizedBox(height: 6),
-        // Búsqueda + conmutador de vista (cards ⇄ filas).
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                onChanged: (v) => setState(() => _query = v),
-                decoration: InputDecoration(
-                  hintText: 'Buscar por nombre, descripción o categoría…',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  suffixIcon: _query.isEmpty
-                      ? null
-                      : IconButton(
-                          onPressed: () => setState(() => _query = ''),
-                          icon: const Icon(Icons.close, size: 18),
-                        ),
-                ),
+        // Búsqueda + filtros + conmutador de vista (cards ⇄ filas).
+        HsSearchFilterBar(
+          hint: 'Buscar por nombre, descripción o categoría…',
+          initial: _query,
+          onChanged: (v) => setState(() {
+            _query = v;
+            _page = 1;
+          }),
+          groups: _packageFilters(),
+          selected: {
+            'category': _allPackages ? 'all' : '${_categoryId ?? ''}',
+            'tier': '${_tierFilter ?? ''}',
+            'price': _priceFilter,
+          },
+          onApply: (filters) {
+            final cat = filters['category'] ?? '';
+            final tier = int.tryParse(filters['tier'] ?? '');
+            final price = filters['price'] ?? '';
+            setState(() {
+              _tierFilter = tier;
+              _priceFilter = price;
+              _page = 1;
+              if (cat == 'all') {
+                _allPackages = true;
+                _categoryId = null;
+              } else if (cat.isNotEmpty) {
+                _allPackages = false;
+                _categoryId = int.tryParse(cat);
+              }
+            });
+          },
+          trailing: Tooltip(
+            message: _byCards ? 'Ver como filas' : 'Ver como cards',
+            child: IconButton.filledTonal(
+              onPressed: () => setState(() => _byCards = !_byCards),
+              icon: Icon(
+                _byCards ? Icons.view_list_rounded : Icons.grid_view_rounded,
               ),
             ),
-            const SizedBox(width: 10),
-            Tooltip(
-              message: _byCards ? 'Ver como filas' : 'Ver como cards',
-              child: IconButton.filledTonal(
-                onPressed: () => setState(() => _byCards = !_byCards),
-                icon: Icon(
-                  _byCards ? Icons.view_list_rounded : Icons.grid_view_rounded,
-                ),
-              ),
-            ),
-          ],
-        ),
-        // Filtros por categoría (chips estilo web) que se envuelven.
-        if (_categories.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _filterChip(null, 'Todos'),
-              for (final c in _categories)
-                _filterChip(
-                  (c['id'] as num).toInt(),
-                  (c['name'] ?? '').toString(),
-                ),
-            ],
           ),
-        ],
-        // Personalizar el DISEÑO de las cards: al INICIO del catálogo, con
-        // la muestra de los tiers que se están usando, para poder abrirlo
-        // sin bajar toda la lista (y en las dos vistas: cards y filas).
+        ),
         if (canDesign) ...[const SizedBox(height: 14), _designBar(scheme)],
         const SizedBox(height: 16),
         if (_loading)
@@ -805,28 +994,33 @@ class _PackagesPageState extends State<PackagesPage> {
                 'No hay paquetes que coincidan. Crea el primero con el botón '
                 '"Nuevo paquete".',
           )
-        else if (!_byCards)
+        else if (!_byCards) ...[
           // ===== Vista de FILAS: un paquete por línea, para comparar =====
-          Column(
-            children: [
-              for (var i = 0; i < _filtered.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: StaggeredItem(
-                    index: i,
-                    child: _PackageRow(
-                      pkg: _filtered[i],
-                      design: _design,
-                      canEdit: _canUpdatePackages,
-                      canDelete: _canDeletePackages,
-                      onEdit: () => _openForm(_filtered[i]),
-                      onDelete: () => _delete(_filtered[i]),
+          Builder(
+            builder: (context) {
+              final rows = _pageRows;
+              return Column(
+                children: [
+                  for (var i = 0; i < rows.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: StaggeredItem(
+                        index: i,
+                        child: _PackageRow(
+                          pkg: rows[i],
+                          design: _design,
+                          canEdit: _canUpdatePackages,
+                          canDelete: _canDeletePackages,
+                          onEdit: () => _openForm(rows[i]),
+                          onDelete: () => _delete(rows[i]),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-            ],
-          )
-        else
+                ],
+              );
+            },
+          ),
+        ] else
           LayoutBuilder(
             builder: (context, box) {
               // Tarjetas de hasta [kPackageCardMaxWidth]: se acomodan solas
@@ -841,18 +1035,18 @@ class _PackagesPageState extends State<PackagesPage> {
                 spacing: 14,
                 runSpacing: 14,
                 children: [
-                  for (var i = 0; i < _filtered.length; i++)
+                  for (var i = 0; i < _pageRows.length; i++)
                     SizedBox(
                       width: cardW,
                       child: StaggeredItem(
                         index: i,
                         child: WebPackageCard(
-                          pkg: _filtered[i],
+                          pkg: _pageRows[i],
                           design: _design,
                           canEdit: _canUpdatePackages,
                           canDelete: _canDeletePackages,
-                          onEdit: () => _openForm(_filtered[i]),
-                          onDelete: () => _delete(_filtered[i]),
+                          onEdit: () => _openForm(_pageRows[i]),
+                          onDelete: () => _delete(_pageRows[i]),
                         ),
                       ),
                     ),
@@ -988,44 +1182,6 @@ class _PackagesPageState extends State<PackagesPage> {
                 label: const Text('Personalizar'),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _filterChip(int? id, String label) {
-    final scheme = Theme.of(context).colorScheme;
-    // La categoría abierta es la que manda: el chip dice el estado REAL del
-    // nivel ("Todos" está activo cuando se ve todo el catálogo).
-    final selected = id == null ? _allPackages : _activeCategory == id;
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: () => id == null ? _openAllPackages() : _openCategory(id),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected
-              ? hsHexColor(_design.gold).withValues(alpha: .16)
-              : scheme.surfaceContainerHighest.withValues(alpha: .5),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: selected
-                ? hsHexColor(_design.gold).withValues(alpha: .65)
-                : scheme.outlineVariant.withValues(alpha: .5),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            color: selected
-                ? hsHexColor(_design.gold)
-                : scheme.onSurfaceVariant,
-            letterSpacing: selected ? .4 : 0,
           ),
         ),
       ),
@@ -1918,9 +2074,7 @@ class _IconGhost extends StatelessWidget {
     final dangerTint = const Color(0xFFFF8A8A);
     final tint =
         color ??
-        (danger
-            ? dangerTint
-            : Theme.of(context).colorScheme.onSurfaceVariant);
+        (danger ? dangerTint : Theme.of(context).colorScheme.onSurfaceVariant);
     final button = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(9),
@@ -2061,7 +2215,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   Future<void> _addService() async {
     final created = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => const ServiceFormDialog(),
     );
     if (created != true || !mounted) return;
@@ -2555,6 +2709,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
           'La que la web usa en la tarjeta del paquete y en los '
           'carruseles.',
       confirmLabel: 'Usar esta foto',
+      maxSelection: 1,
       note:
           'Se enlaza desde el servidor del Drive '
           '(${AppConstants.apiBase}): la página la abre sin iniciar sesión.',
@@ -2932,10 +3087,24 @@ class _FormTabButton extends StatelessWidget {
 /// sí: es la portada de la categoría en la galería y se puede poner con un
 /// ENLACE o elegirla del DRIVE (igual que la foto de un paquete).
 class _CategoryFormDialog extends StatefulWidget {
-  const _CategoryFormDialog({this.category});
+  const _CategoryFormDialog({
+    this.category,
+    this.count = 0,
+    this.minPrice = 0,
+    this.gold = AppColors.brand,
+  });
 
   /// Categoría a editar (null = crear una nueva).
   final Map<String, dynamic>? category;
+
+  /// Cuántos paquetes tiene ya (para la vista previa).
+  final int count;
+
+  /// Precio más bajo de sus paquetes (0 = sin precio).
+  final num minPrice;
+
+  /// Acento del diseño (el mismo oro de la galería).
+  final Color gold;
 
   @override
   State<_CategoryFormDialog> createState() => _CategoryFormDialogState();
@@ -3019,6 +3188,7 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
       title: 'Foto de la categoría',
       subtitle: 'La portada de la categoría en la galería del catálogo.',
       confirmLabel: 'Usar esta foto',
+      maxSelection: 1,
       note:
           'Se enlaza desde el servidor del Drive '
           '(${AppConstants.apiBase}): la página la abre sin iniciar sesión.',
@@ -3056,6 +3226,8 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
               hintText: 'Ej. Bautizo',
               prefixIcon: Icon(Icons.category_outlined, size: 20),
             ),
+            // La vista previa se pinta con lo que se escribe: se actualiza ya.
+            onChanged: (_) => setState(() {}),
             onSubmitted: (_) => _save(),
           ),
         ),
@@ -3122,6 +3294,43 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
                     ),
                   ),
                 ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // ===== Vista previa: la MISMA portada de la galería =====
+        FormSection(
+          label: 'Así se verá en el catálogo',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: SizedBox(
+                  width: 246,
+                  height: 214,
+                  child: CategoryCoverCard(
+                    key: const ValueKey('category-preview'),
+                    name: _name.text.trim().isEmpty
+                        ? 'Nueva categoría'
+                        : _name.text.trim(),
+                    photo: src.isEmpty ? null : src,
+                    price: widget.minPrice,
+                    count: widget.count,
+                    gold: widget.gold,
+                    onTap: () {},
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Es la portada real de la galería (y de la web): el nombre '
+                'va en mayúsculas y el pie cuenta los paquetes y el precio.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),

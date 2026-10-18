@@ -289,6 +289,26 @@ void main() {
       expect(find.widgetWithText(TextField, 'Fondo de la portada'), findsOneWidget);
     });
 
+    testWidgets('la miniatura se puede ver EN GRANDE dentro del módulo',
+        (tester) async {
+      final api = FakeSiteApi();
+      await pumpPage(tester, api: api);
+
+      final big = find.byKey(const ValueKey('site-preview-hero'));
+      expect(big, findsOneWidget);
+      await tester.ensureVisible(big);
+      await tester.tap(big);
+      await tester.pumpAndSettle();
+
+      // La MISMA maqueta, más grande (y sin salir del módulo ni abrir nada
+      // fuera del panel).
+      expect(find.byType(SiteSectionPreview), findsWidgets);
+      expect(find.textContaining('Así se verá esta parte'), findsOneWidget);
+      await tester.tap(find.text('Cerrar'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('carga lo guardado, avisa de cambios y guarda lo editado',
         (tester) async {
       final api = FakeSiteApi(

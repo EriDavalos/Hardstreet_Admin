@@ -184,8 +184,14 @@ void _installMock({
 }
 
 Future<void> _pump(WidgetTester tester,
-    {void Function(List<String>)? onOpenDrive}) async {
-  await tester.binding.setSurfaceSize(const Size(1100, 900));
+    {void Function(List<String>)? onOpenDrive,
+    Size size = const Size(1100, 900)}) async {
+  // El tamaño de la VISTA (no solo la superficie): así MediaQuery también ve
+  // el ancho del celular y los modales/atajos compactos se activan.
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = size;
+  addTearDown(tester.view.reset);
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     DriveScope(
@@ -272,18 +278,26 @@ void main() {
     _installMock(puts: puts);
     await _pump(tester);
 
+    // Módulo de la selección: lo ya elegido, con la opción de agregar más.
     await _tap(tester, find.text('Mis fotos (1)'));
-
-    // El selector arranca en la raíz de lo compartido.
-    expect(find.text('Elegir fotos · Álbum de fotos'), findsOneWidget);
+    expect(find.text('Mis fotos · Álbum de fotos'), findsOneWidget);
     expect(find.text('1 elegida'), findsOneWidget);
 
-    // Entrar a la carpeta compartida y marcar OTRA foto (el nombre también
-    // aparece en la tarjeta del Drive de la página: se toma el del diálogo).
-    await _tap(tester, find.text('ReynaCoot').last);
-    expect(find.text('portada.jpg'), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('service-photos-add')));
+
+    // El selector arranca DENTRO de la carpeta compartida del servicio (no
+    // puede subir al resto del Drive) y conserva lo ya elegido.
+    expect(find.text('Elegir fotos · Álbum de fotos'), findsOneWidget);
+    // El módulo (detrás) y el selector muestran el mismo conteo.
+    expect(find.text('1 elegida'), findsWidgets);
+    // La foto ya elegida se ve en el módulo (detrás) y en el selector.
+    expect(find.text('portada.jpg'), findsWidgets);
     await _tap(tester, find.text('fiesta.jpg'));
 
+    expect(find.text('2 elegidas'), findsOneWidget);
+
+    await _tap(tester, find.text('Agregar a mi selección'));
+    expect(find.text('Mis fotos · Álbum de fotos'), findsOneWidget);
     expect(find.text('2 elegidas'), findsOneWidget);
 
     await _tap(tester, find.text('Guardar selección'));
@@ -293,6 +307,55 @@ void main() {
     expect(puts.single['paths'], ['ReynaCoot/fiesta.jpg', 'ReynaCoot/portada.jpg']);
     expect(find.text('Selección guardada'), findsOneWidget);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('desde el módulo se quitan fotos y se guarda la nueva lista',
+      (tester) async {
+    final puts = <Map<String, dynamic>>[];
+    _installMock(puts: puts);
+    await _pump(tester);
+
+    await _tap(tester, find.text('Mis fotos (1)'));
+    await _tap(tester, find.byTooltip('Quitar de mi selección'));
+
+    // Al quedarse sin fotos, el módulo muestra el estado vacío.
+    expect(find.text('Todavía no has elegido fotos'), findsOneWidget);
+
+    await _tap(tester, find.text('Guardar selección'));
+
+    expect(puts, hasLength(1));
+    expect(puts.single['paths'], isEmpty);
+    expect(find.text('Selección borrada'), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('en celular el módulo, el selector y el visor caben completos',
+      (tester) async {
+    _installMock(puts: []);
+    await _pump(tester, size: const Size(390, 844));
+    expect(tester.takeException(), isNull,
+        reason: 'la página Mi paquete no desborda en celular');
+
+    // El módulo de fotos ocupa la pantalla y no desborda.
+    await _tap(tester, find.text('Mis fotos (1)'));
+    expect(find.text('Mis fotos · Álbum de fotos'), findsOneWidget);
+    expect(find.text('Guardar selección'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // El visor de una foto abre a pantalla completa (zoom + encajar).
+    await _tap(tester, find.text('portada.jpg'));
+    expect(find.byKey(const ValueKey('drive-photo-preview-image')),
+        findsOneWidget);
+    expect(find.text('Encajar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await _tap(tester, find.byKey(const ValueKey('drive-photo-preview-close')));
+
+    // El selector de fotos también se ve completo en el celular.
+    await _tap(tester, find.byKey(const ValueKey('service-photos-add')));
+    expect(find.text('Elegir fotos · Álbum de fotos'), findsOneWidget);
+    expect(find.text('Agregar a mi selección'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -25,6 +25,7 @@ class AppSettings extends ChangeNotifier {
   static const _kToken = 'app.token';
   static const _kUser = 'app.user';
   static const _kShareServing = 'app.share.serving';
+  static const _kShareServingSet = 'app.share.serving.set';
   static const _kDriveHost = 'app.drive.host';
 
   bool _loaded = false;
@@ -32,6 +33,11 @@ class AppSettings extends ChangeNotifier {
 
   // ---- Servicio de compartir (switch de "Archivos compartidos") ----
   bool _shareServing = false;
+
+  /// ¿El usuario ya eligió encendido/apagado? Si nunca tocó el switch, el
+  /// servicio puede encenderse solo cuando hay carpetas locales compartidas.
+  /// Si lo apagó a propósito, se queda apagado aunque haya carpetas.
+  bool _shareServingSet = false;
 
   // ---- Sesión persistente ("Recordarme") ----
   bool _remember = false;
@@ -50,6 +56,9 @@ class AppSettings extends ChangeNotifier {
   /// no quede ningún compartido a la vista, y lo sigue haciendo en la próxima
   /// apertura: es lo que pide el switch del módulo "Archivos compartidos".
   bool get shareServing => _shareServing;
+
+  /// ¿La preferencia del switch es EXPLÍCITA (la eligió el usuario)?
+  bool get shareServingSet => _shareServingSet;
 
   /// Dirección del servidor del drive guardada por el usuario, o `null` si se
   /// usa la de fábrica ([DriveHost.compiled]).
@@ -120,6 +129,12 @@ class AppSettings extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
       _dark = sp.getBool(_kDark) ?? false;
       _shareServing = sp.getBool(_kShareServing) ?? false;
+      // Las instalaciones viejas no tienen esta marca: si el switch estaba
+      // apagado se sigue pudiendo encender solo al haber carpetas; si estaba
+      // encendido, se respeta como preferencia explícita.
+      _shareServingSet =
+          sp.getBool(_kShareServingSet) ??
+          (sp.getBool(_kShareServing) ?? false);
       // Antes que nada: la dirección del servidor. Los servicios del drive la
       // leen al construirse, así que tiene que estar puesta ya al arrancar.
       DriveHost.set(sp.getString(_kDriveHost));
@@ -147,8 +162,7 @@ class AppSettings extends ChangeNotifier {
 
   /// Guarda la dirección del servidor del drive (vacío = la de fábrica).
   ///
-  /// Se aplica al REINICIAR la app: los servicios del drive ya construidos se
-  /// quedan con la dirección anterior, así que se pide cerrar y volver a abrir.
+  /// Se aplica al instante: los servicios resuelven la base en cada petición.
   /// Devuelve `false` si lo escrito no es una dirección válida.
   Future<bool> setDriveHost(String? value) async {
     if (!DriveHost.set(value)) return false;
@@ -169,12 +183,18 @@ class AppSettings extends ChangeNotifier {
 
   /// Enciende o apaga el servicio de compartir y lo recuerda.
   Future<void> setShareServing(bool value) async {
-    if (_shareServing == value) return;
+    // Si el valor YA está y la preferencia ya era explícita, no hay nada que
+    // escribir: volver a esperar el storage desde un cierre de modal podía
+    // dejar la operación colgada. El primer apagado (cuando el servicio se
+    // encendió solo) SÍ se guarda: queda como preferencia explícita.
+    if (_shareServing == value && _shareServingSet) return;
     _shareServing = value;
+    _shareServingSet = true;
     notifyListeners();
     try {
       final sp = await SharedPreferences.getInstance();
       await sp.setBool(_kShareServing, value);
+      await sp.setBool(_kShareServingSet, true);
     } catch (_) {
       // Sin storage: el cambio vale solo para esta sesión.
     }

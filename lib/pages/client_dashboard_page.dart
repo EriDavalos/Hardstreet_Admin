@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../app_constants.dart';
+import '../drive_base.dart' show driveImagePreview, isDriveImageUrl;
 import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
-import '../theme.dart';
+import '../service_icons.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
-import '../widgets/drive_photo_picker.dart';
+import '../widgets/drive_thumb.dart';
+import '../widgets/hs_search_filter.dart';
+import '../widgets/service_photos_sheet.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
@@ -47,6 +50,14 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   /// que el estudio le asignó a cada uno de sus paquetes comprados.
   List<Map<String, dynamic>> _sharedPaths = const [];
 
+  /// Avisos del paquete (fotos disponibles, servicio terminado…).
+  List<Map<String, dynamic>> _notifications = const [];
+  int _unread = 0;
+
+  /// Búsqueda y filtro de SUS servicios.
+  String _serviceQuery = '';
+  String _serviceFilter = '';
+
   @override
   void initState() {
     super.initState();
@@ -68,10 +79,22 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       } catch (_) {
         // Sin backend nuevo: se muestran las ligas de los servicios.
       }
+      // Avisos del paquete: si el backend aún no tiene la migración, vacío.
+      var notifications = const <Map<String, dynamic>>[];
+      var unread = 0;
+      try {
+        final info = await HsApi.myNotifications();
+        notifications = info.items;
+        unread = info.unread;
+      } catch (_) {
+        // Sin avisos: la vista sigue igual.
+      }
       if (!mounted) return;
       setState(() {
         _packages = packages;
         _sharedPaths = shared;
+        _notifications = notifications;
+        _unread = unread;
         if (_selectedId == 0 && packages.isNotEmpty) {
           _selectedId = (packages.first['id'] as num? ?? 0).toInt();
         }
@@ -164,11 +187,12 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       if (svc is! Map) continue;
       // La liga compartida PARA ESTE SERVICIO del paquete manda; la del
       // catálogo queda como respaldo de un backend viejo.
-      final url = ((s['shareLink'] ?? '').toString().trim().isNotEmpty
-              ? s['shareLink']
-              : svc['url'])
-          .toString()
-          .trim();
+      final url =
+          ((s['shareLink'] ?? '').toString().trim().isNotEmpty
+                  ? s['shareLink']
+                  : svc['url'])
+              .toString()
+              .trim();
       if (url.isEmpty || !seen.add(url)) continue;
       out.add(((svc['name'] ?? 'Servicio').toString(), url));
     }
@@ -200,8 +224,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     widget.onOpenDrive?.call(segments);
   }
 
-  /// Abre el selector de fotos/elementos para UN servicio y guarda la lista
-  /// que el cliente marque (nada se mueve ni se copia de carpeta).
+  /// Abre el MÓDULO de fotos de UN servicio: ver lo elegido, quitar, agregar
+  /// (solo dentro de la carpeta compartida del servicio) y guardar.
   Future<void> _pickServiceItems(Map<String, dynamic> s, String name) async {
     final serviceId = (s['id'] as num?)?.toInt() ?? 0;
     if (serviceId == 0) {
@@ -213,33 +237,72 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       HsToast.info('El Drive no está disponible en esta pantalla');
       return;
     }
-    // La selección guardada es la fuente de verdad; si el backend todavía no
-    // tiene la migración, se arranca vacío en vez de fallar.
+    final catalog = (s['service'] is Map)
+        ? (s['service'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    var folder = (s['shareFolder'] ?? '').toString().trim();
+    var max =
+        (s['photosMax'] as num?)?.toInt() ??
+        (catalog['photosMax'] as num?)?.toInt() ??
+        0;
     var current = const <String>[];
     try {
-      current = await HsApi.myServiceItems(serviceId);
+      final info = await HsApi.myServiceItemsInfo(serviceId);
+      current = info.items;
+      if (info.folder.isNotEmpty) folder = info.folder;
+      if (info.max > 0) max = info.max;
     } catch (_) {
-      // Sin backend nuevo: se empieza sin selección.
+      // Backend viejo: se usan los datos del paquete y la lista guardada.
     }
     if (!mounted) return;
-    // El MISMO selector del Drive que usan los demás módulos (rejilla con
-    // miniatura, vista previa y descarga): antes este era una lista sin fotos.
-    final picked = await showDrivePhotoPicker(
+    if (folder.isEmpty) {
+      HsToast.info(
+        'El servicio todavía no tiene carpeta compartida',
+        details: 'Tu fotógrafo la asigna desde el administrador del paquete.',
+      );
+      return;
+    }
+    final saved = await showServicePhotosSheet(
       context,
       drive: drive,
-      title: 'Elegir fotos · ${name.isEmpty ? 'Servicio' : name}',
-      subtitle: 'Marca lo que quieras de tu Drive para este servicio. Se guarda '
-          'tu SELECCIÓN: nada se mueve ni se copia de carpeta.',
-      confirmLabel: 'Guardar selección',
-      initialPicked: current,
+      serviceId: serviceId,
+      serviceName: name.isEmpty ? 'Servicio' : name,
+      folder: folder,
+      max: max,
+      initial: current,
     );
-    if (picked == null) return;
+    if (saved == null) return;
+    await _load();
+  }
+
+  /// Marca un aviso como leído (optimista) y confirma con el servidor.
+  Future<void> _readNotification(int id) async {
+    setState(() {
+      _notifications = [
+        for (final n in _notifications)
+          if ((n['id'] as num?)?.toInt() == id) {...n, 'isRead': true} else n,
+      ];
+      _unread = _notifications.where((n) => n['isRead'] != true).length;
+    });
     try {
-      await HsApi.setMyServiceItems(serviceId, picked);
-      HsToast.success('Selección guardada');
-      await _load();
+      await HsApi.markNotificationsRead(ids: [id]);
     } catch (_) {
-      // El error ya se notificó desde la capa de API.
+      // El próximo refresh lo corrige.
+    }
+  }
+
+  Future<void> _readAllNotifications() async {
+    if (_unread == 0) return;
+    setState(() {
+      _notifications = [
+        for (final n in _notifications) {...n, 'isRead': true},
+      ];
+      _unread = 0;
+    });
+    try {
+      await HsApi.markNotificationsRead(all: true);
+    } catch (_) {
+      // idem.
     }
   }
 
@@ -248,7 +311,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final scheme = Theme.of(context).colorScheme;
     final services = _services;
     final done = services.where(_isDone).length;
-    final inProgress = services.where(_isInProgress).length;
     final price = ((_selected['price'] as num?) ?? 0).toDouble();
     final paid = ((_selected['paid'] as num?) ?? 0).toDouble();
 
@@ -258,11 +320,13 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           'Avance de tus paquetes: lo que ya cumplimos y las carpetas del '
           'Drive compartidas contigo.',
       icon: Icons.workspace_premium_outlined,
+      onRefresh: _load,
       stats: [
         if (_packages.isNotEmpty)
           StatPill(
             icon: Icons.card_giftcard_outlined,
-            label: '${_packages.length} '
+            label:
+                '${_packages.length} '
                 '${_packages.length == 1 ? 'paquete' : 'paquetes'}',
           ),
         if (services.isNotEmpty)
@@ -271,14 +335,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             label: '$done de ${services.length} servicios cumplidos',
           ),
       ],
-      actions: [
-        HsActionButton(
-          primary: false,
-          onPressed: _loading ? null : _load,
-          icon: Icons.refresh,
-          label: 'Actualizar',
-        ),
-      ],
+      // Sin botón de recargar: se recarga deslizando hacia abajo.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -290,8 +347,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined,
-                        size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -314,35 +374,27 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             )
           else ...[
             if (_packages.length > 1) ...[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final p in _packages)
-                    ChoiceChip(
-                      label: Text(
-                        (p['name'] ?? 'Paquete').toString(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      selected:
-                          (p['id'] as num? ?? 0).toInt() == _selectedId,
-                      onSelected: (_) => setState(
-                          () => _selectedId = (p['id'] as num? ?? 0).toInt()),
-                    ),
-                ],
-              ),
+              _packagePicker(scheme),
               const SizedBox(height: 14),
             ],
             FadeSlideIn(child: _heroCard(scheme, price, paid)),
-            if (services.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              _header(scheme, Icons.checklist_rounded, 'Lo que hemos cumplido'),
-              const SizedBox(height: 10),
-              _progressCard(scheme, services, done, inProgress),
+            if (_notifications.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _notificationsCard(scheme),
             ],
-            const SizedBox(height: 18),
-            _header(scheme, Icons.folder_copy_outlined, 'Mi Drive compartido'),
+            if (services.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              _servicesSection(scheme, services),
+            ],
+            const SizedBox(height: 20),
+            _sectionTitle(
+              scheme,
+              Icons.folder_copy_outlined,
+              'Mi Drive compartido',
+              trailing:
+                  '${_sharedPaths.length} '
+                  '${_sharedPaths.length == 1 ? 'carpeta' : 'carpetas'}',
+            ),
             const SizedBox(height: 10),
             _driveCard(scheme),
           ],
@@ -353,18 +405,307 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
 
   // ==================== Piezas de UI ====================
 
-  Widget _header(ColorScheme scheme, IconData icon, String label) {
+  Widget _sectionTitle(
+    ColorScheme scheme,
+    IconData icon,
+    String label, {
+    String? trailing,
+  }) {
     return Row(
       children: [
-        Icon(icon, size: 17, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .10),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(icon, size: 15, color: scheme.primary),
         ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+          ),
+        ),
+        if ((trailing ?? '').isNotEmpty)
+          Text(
+            trailing!,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
       ],
     );
   }
+
+  // ---------------- Selector de paquete (con su foto) ----------------
+
+  /// Tira horizontal de paquetes cuando el cliente tiene más de uno. Cada
+  /// uno lleva su foto, como la tarjeta del catálogo.
+  Widget _packagePicker(ColorScheme scheme) {
+    final phone = MediaQuery.sizeOf(context).width < 620;
+    return SizedBox(
+      height: phone ? 76 : 82,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(right: 2),
+        itemCount: _packages.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 9),
+        itemBuilder: (context, i) {
+          final p = _packages[i];
+          final id = (p['id'] as num? ?? 0).toInt();
+          final on = id == _selectedId;
+          final pkg = (p['package'] is Map)
+              ? (p['package'] as Map).cast<String, dynamic>()
+              : const <String, dynamic>{};
+          final photo = (pkg['urlImage'] ?? '').toString().trim();
+          final look = HsTierLook.of(
+            (pkg['tier'] is Map)
+                ? ((pkg['tier'] as Map)['name'] ?? '').toString()
+                : '',
+          );
+          return InkWell(
+            borderRadius: BorderRadius.circular(15),
+            onTap: () => setState(() => _selectedId = id),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: phone ? 190 : 220,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: on
+                    ? look.accent.withValues(alpha: .10)
+                    : scheme.surfaceContainerHighest.withValues(alpha: .30),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(
+                  color: on
+                      ? look.accent.withValues(alpha: .75)
+                      : scheme.outlineVariant.withValues(alpha: .45),
+                  width: on ? 1.5 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(11),
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: _PackagePhoto(
+                        url: photo,
+                        tier: look,
+                        emoji: hsCategoryEmoji(
+                          (pkg['packageCategory'] is Map)
+                              ? ((pkg['packageCategory'] as Map)['name'] ?? '')
+                                    .toString()
+                              : '',
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (p['name'] ?? 'Paquete').toString(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.2,
+                            fontWeight: on ? FontWeight.w800 : FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          (p['status'] is Map)
+                              ? ((p['status'] as Map)['name'] ?? '').toString()
+                              : '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (on)
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 17,
+                      color: look.accent,
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ---------------- Avisos del paquete ----------------
+
+  static IconData _noticeIcon(String kind) {
+    switch (kind) {
+      case 'fotos-disponibles':
+        return Icons.photo_library_outlined;
+      case 'servicio-terminado':
+        return Icons.task_alt_rounded;
+      default:
+        return Icons.notifications_none_rounded;
+    }
+  }
+
+  static String _noticeWhen(Map<String, dynamic> n) {
+    final when = hsParseDate(n['created']);
+    return when == null ? '' : hsShortDate(when);
+  }
+
+  /// Novedades que el estudio envió al cliente (fotos, cierre de servicio…).
+  Widget _notificationsCard(ColorScheme scheme) {
+    final items = _notifications.take(4).toList();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.primary.withValues(alpha: .22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.notifications_active_outlined,
+                size: 17,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 7),
+              const Expanded(
+                child: Text(
+                  'Novedades',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                ),
+              ),
+              if (_unread > 0)
+                TextButton(
+                  onPressed: _readAllNotifications,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  child: const Text('Marcar leídas'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (final n in items) _noticeRow(scheme, n),
+        ],
+      ),
+    );
+  }
+
+  Widget _noticeRow(ColorScheme scheme, Map<String, dynamic> n) {
+    final unread = n['isRead'] != true;
+    final id = (n['id'] as num?)?.toInt() ?? 0;
+    final kind = (n['kind'] ?? '').toString();
+    final when = _noticeWhen(n);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: unread && id > 0 ? () => _readNotification(id) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: (unread ? scheme.primary : scheme.onSurfaceVariant)
+                    .withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                _noticeIcon(kind),
+                size: 17,
+                color: unread ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          (n['title'] ?? 'Aviso').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: unread
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (unread)
+                        Container(
+                          width: 7,
+                          height: 7,
+                          margin: const EdgeInsets.only(left: 6),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                  if ((n['body'] ?? '').toString().isNotEmpty)
+                    Text(
+                      (n['body'] ?? '').toString(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.3,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  if (when.isNotEmpty)
+                    Text(
+                      when,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurfaceVariant.withValues(alpha: .8),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  // ==================== Portada del paquete ====================
 
   Widget _heroCard(ColorScheme scheme, double price, double paid) {
     final p = _selected;
@@ -380,295 +721,742 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final category = (pkg['packageCategory'] is Map)
         ? ((pkg['packageCategory'] as Map)['name'] ?? '').toString()
         : '';
+    final photo = (pkg['urlImage'] ?? '').toString().trim();
+    final look = HsTierLook.of(tier);
+    final phone = MediaQuery.sizeOf(context).width < 620;
     final payPct = price > 0 ? (paid / price).clamp(0.0, 1.0) : null;
+    final folder = _sharedPaths.isNotEmpty
+        ? (_sharedPaths.first['path'] ?? '').toString()
+        : '';
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(18),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: look.gradient,
+          border: Border.all(color: look.accent.withValues(alpha: .38)),
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.brand, AppColors.brandDark],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(14),
+            // ---------- Foto del paquete con su información ----------
+            SizedBox(
+              height: phone ? 178 : 218,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _PackagePhoto(
+                    url: photo,
+                    tier: look,
+                    emoji: hsCategoryEmoji(category),
+                    big: true,
                   ),
-                  child: const Icon(Icons.card_giftcard_rounded,
-                      color: Colors.white, size: 24),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        (p['name'] ?? 'Mi paquete').toString(),
-                        style: const TextStyle(
-                            fontSize: 16.5, fontWeight: FontWeight.w800),
+                  // Velo: arriba para las píldoras, abajo para el título.
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x66000000),
+                          Color(0x00000000),
+                          Color(0x22000000),
+                          Color(0xE6000000),
+                        ],
+                        stops: [0, .28, .55, 1],
                       ),
-                      if ((p['subtitle'] ?? '').toString().isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          (p['subtitle'] ?? '').toString(),
-                          style: TextStyle(
-                              fontSize: 12.5, color: scheme.onSurfaceVariant),
-                        ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 13,
+                    right: 13,
+                    top: 12,
+                    child: Row(
+                      children: [
+                        if (status.isNotEmpty)
+                          _heroPill(
+                            icon: Icons.circle,
+                            label: status,
+                            tint: Colors.white,
+                          ),
+                        const Spacer(),
+                        if (tier.isNotEmpty)
+                          _heroPill(
+                            icon: Icons.military_tech_outlined,
+                            label: tier,
+                            tint: look.accentSoft,
+                          ),
                       ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 13,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (category.isNotEmpty)
+                          Text(
+                            '${hsCategoryEmoji(category)}  ${category.toUpperCase()}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: look.accentSoft,
+                              fontSize: 10,
+                              letterSpacing: 1.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        const SizedBox(height: 5),
+                        Text(
+                          (p['name'] ?? 'Mi paquete').toString(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            height: 1.08,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if ((p['subtitle'] ?? '').toString().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            (p['subtitle'] ?? '').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .78),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ---------- Pago + accesos rápidos ----------
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                phone ? 15 : 18,
+                14,
+                phone ? 15 : 18,
+                16,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      _glassPill(
+                        Icons.check_circle_outline,
+                        '${_services.where(_isDone).length} de '
+                        '${_services.length} servicios',
+                      ),
+                      if (folder.isNotEmpty)
+                        _glassPill(
+                          Icons.folder_shared_outlined,
+                          'Carpeta lista',
+                        ),
                     ],
                   ),
-                ),
-                if (status.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: .12),
-                      borderRadius: BorderRadius.circular(20),
+                  if (payPct != null) ...[
+                    const SizedBox(height: 15),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Pagado ${hsMoney(paid)} de ${hsMoney(price)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${(payPct * 100).round()} %',
+                          style: TextStyle(
+                            color: look.accentSoft,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ),
-                    child: Text(
-                      status,
+                    const SizedBox(height: 7),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        value: payPct,
+                        minHeight: 7,
+                        color: look.accent,
+                        backgroundColor: Colors.white.withValues(alpha: .16),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      payPct >= .999
+                          ? 'Paquete liquidado ✓'
+                          : 'Faltan ${hsMoney(price - paid)} por cubrir',
                       style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                          color: scheme.primary),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withValues(alpha: .65),
+                      ),
                     ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (tier.isNotEmpty) _pill(scheme, Icons.military_tech_outlined, tier),
-                if (category.isNotEmpty)
-                  _pill(scheme, Icons.category_outlined, category),
-                _pill(scheme, Icons.payments_outlined,
-                    '${hsMoney(paid)} de ${hsMoney(price)}'),
-              ],
-            ),
-            if (payPct != null) ...[
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: payPct,
-                  minHeight: 7,
-                ),
+                  ],
+                  if (folder.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        onPressed: () => _openShared(folder),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: look.accent,
+                          foregroundColor: look.dark,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 15,
+                            vertical: 11,
+                          ),
+                        ),
+                        icon: const Icon(Icons.folder_open_outlined, size: 18),
+                        label: const Text('Abrir mi carpeta'),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                payPct >= .999
-                    ? 'Paquete liquidado ✓'
-                    : 'Faltan ${hsMoney(price - paid)} por cubrir',
-                style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: payPct >= .999
-                        ? Colors.green
-                        : scheme.onSurfaceVariant),
-              ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _pill(ColorScheme scheme, IconData icon, String label) {
+  /// Píldora sobre la foto del paquete.
+  Widget _heroPill({
+    required IconData icon,
+    required String label,
+    required Color tint,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: .55),
-        borderRadius: BorderRadius.circular(18),
+        color: Colors.black.withValues(alpha: .38),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .30)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: scheme.onSurfaceVariant),
+          Icon(icon, size: 10, color: tint),
           const SizedBox(width: 5),
           Text(
             label,
             style: const TextStyle(
-                fontSize: 11.5, fontWeight: FontWeight.w700),
+              color: Colors.white,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// Checklist de servicios: entregados en VERDE, en curso en AZUL.
-  Widget _progressCard(
-      ColorScheme scheme, List<Map<String, dynamic>> services, int done, int inProgress) {
-    final total = services.length;
-    final pct = total > 0 ? done / total : 0.0;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Píldora translúcida del bloque de pago.
+  Widget _glassPill(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '$done de $total servicios cumplidos'
-                        '${inProgress > 0 ? ' · $inProgress en proceso' : ''}',
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    Text(
-                      '${(pct * 100).round()} %',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: scheme.primary),
-                    ),
-                  ],
+          Icon(icon, size: 12, color: Colors.white70),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==================== Servicios ====================
+
+  /// ¿Este servicio tiene encendido «Elegir fotos» y una carpeta compartida?
+  static bool _photoService(Map<String, dynamic> s) =>
+      s['pickPhotos'] == true &&
+      (s['shareFolder'] ?? '').toString().trim().isNotEmpty;
+
+  static int _statusOrder(Map<String, dynamic> s) {
+    final id = _statusId(s);
+    if (id == 1) return 0; // Pendiente primero
+    if (id == 2) return 1; // En proceso
+    return 2;
+  }
+
+  bool _matchesService(Map<String, dynamic> s) {
+    final q = _serviceQuery.trim().toLowerCase();
+    final done = _isDone(s);
+    if (_serviceFilter == 'fotos' && !_photoService(s)) return false;
+    if (_serviceFilter == 'pendientes' && done) return false;
+    if (_serviceFilter == 'completados' && !done) return false;
+    if (q.isEmpty) return true;
+    final svc = (s['service'] is Map)
+        ? (s['service'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final hay = '${svc['name'] ?? ''} ${s['description'] ?? ''}'.toLowerCase();
+    return hay.contains(q);
+  }
+
+  Widget _servicesSection(
+    ColorScheme scheme,
+    List<Map<String, dynamic>> services,
+  ) {
+    final doneCount = services.where(_isDone).length;
+    final visible = services.where(_matchesService).toList();
+    List<Map<String, dynamic>> take(bool Function(Map<String, dynamic>) test) {
+      final list = visible.where(test).toList()
+        ..sort((a, b) {
+          final byStatus = _statusOrder(a).compareTo(_statusOrder(b));
+          if (byStatus != 0) return byStatus;
+          final an =
+              ((a['service'] is Map)
+                      ? ((a['service'] as Map)['name'] ?? '')
+                      : '')
+                  .toString();
+          final bn =
+              ((b['service'] is Map)
+                      ? ((b['service'] as Map)['name'] ?? '')
+                      : '')
+                  .toString();
+          return an.toLowerCase().compareTo(bn.toLowerCase());
+        });
+      return list;
+    }
+
+    final photos = take((s) => !_isDone(s) && _photoService(s));
+    final pending = take((s) => !_isDone(s) && !_photoService(s));
+    final completed = take(_isDone);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle(
+          scheme,
+          Icons.checklist_rounded,
+          'Tus servicios',
+          trailing: '$doneCount de ${services.length} cumplidos',
+        ),
+        const SizedBox(height: 12),
+        HsSearchFilterBar(
+          hint: 'Buscar un servicio…',
+          initial: _serviceQuery,
+          onChanged: (v) => setState(() => _serviceQuery = v),
+          groups: [
+            HsFilterGroup(
+              id: 'estado',
+              title: 'Estado del servicio',
+              help: 'Los servicios con «Elegir fotos» aparecen siempre arriba.',
+              options: [
+                HsFilterOption(
+                  value: '',
+                  label: 'Todos los servicios',
+                  count: services.length,
+                  icon: Icons.apps_rounded,
                 ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: pct,
-                    minHeight: 7,
-                    color: Colors.green,
-                    backgroundColor: Colors.green.withValues(alpha: .14),
-                  ),
+                HsFilterOption(
+                  value: 'fotos',
+                  label: 'Puedo elegir fotos',
+                  count: services.where(_photoService).length,
+                  icon: Icons.photo_library_outlined,
+                  color: const Color(0xFF0D9488),
+                ),
+                HsFilterOption(
+                  value: 'pendientes',
+                  label: 'Todavía en proceso',
+                  count: services.length - doneCount,
+                  icon: Icons.pending_actions_outlined,
+                  color: const Color(0xFF3B82F6),
+                ),
+                HsFilterOption(
+                  value: 'completados',
+                  label: 'Completados',
+                  count: doneCount,
+                  icon: Icons.task_alt_rounded,
+                  color: const Color(0xFF16A34A),
                 ),
               ],
             ),
-          ),
-          const Divider(height: 1),
-          for (final s in services) _serviceRow(scheme, s),
+          ],
+          selected: {'estado': _serviceFilter},
+          onApply: (filters) =>
+              setState(() => _serviceFilter = filters['estado'] ?? ''),
+        ),
+        const SizedBox(height: 14),
+        if (visible.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .25),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .45),
+              ),
+            ),
+            child: Text(
+              'Ningún servicio coincide con la búsqueda o el filtro.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          )
+        else ...[
+          if (photos.isNotEmpty) ...[
+            _serviceGroup(
+              scheme,
+              title: 'Elige tus fotos',
+              subtitle: 'Marca tus favoritas de la carpeta compartida.',
+              icon: Icons.photo_library_outlined,
+              accent: const Color(0xFF0D9488),
+              services: photos,
+            ),
+            const SizedBox(height: 14),
+          ],
+          if (pending.isNotEmpty) ...[
+            _serviceGroup(
+              scheme,
+              title: 'En proceso',
+              subtitle: 'Lo que estamos preparando para ti.',
+              icon: Icons.pending_actions_outlined,
+              accent: const Color(0xFF3B82F6),
+              services: pending,
+            ),
+            const SizedBox(height: 14),
+          ],
+          if (completed.isNotEmpty)
+            _serviceGroup(
+              scheme,
+              title: 'Completados',
+              subtitle: 'Servicios que ya entregamos.',
+              icon: Icons.task_alt_rounded,
+              accent: const Color(0xFF16A34A),
+              services: completed,
+            ),
         ],
-      ),
+      ],
     );
   }
 
-  Widget _serviceRow(ColorScheme scheme, Map<String, dynamic> s) {
+  Widget _serviceGroup(
+    ColorScheme scheme, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color accent,
+    required List<Map<String, dynamic>> services,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Row(
+            children: [
+              Icon(icon, size: 15, color: accent),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$title · ${services.length}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: accent,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final s in services) _serviceCard(scheme, s),
+      ],
+    );
+  }
+
+  Widget _serviceCard(ColorScheme scheme, Map<String, dynamic> s) {
     final svc = (s['service'] is Map)
         ? (s['service'] as Map).cast<String, dynamic>()
         : const <String, dynamic>{};
     final name = (svc['name'] ?? 'Servicio').toString();
-    final note = (s['description'] ?? '').toString();
-    // Opciones de compartir del SERVICIO: carpeta y liga (las define el
-    // estudio) y la selección de fotos que hace el propio cliente.
+    final note = (s['description'] ?? '').toString().trim();
     final shareFolder = (s['shareFolder'] ?? '').toString().trim();
     final shareLink = (s['shareLink'] ?? '').toString().trim();
-    // Qué opciones le salen al cliente las decide el ESTUDIO, servicio por
-    // servicio (antes «Elegir fotos» salía en TODOS). Sin backend nuevo se
-    // mantiene como siempre: la carpeta sí, las fotos no.
     final showFolder = s['showFolder'] != false;
-    // Elegir fotos del Drive necesita poder VER el Drive: sin ese permiso la
-    // opción no se dibuja (el resto de la tarjeta sigue igual).
-    final pickPhotos =
-        s['pickPhotos'] == true && HsAccess.instance.canUseDrive;
+    final photosMax =
+        (s['photosMax'] as num?)?.toInt() ??
+        (svc['photosMax'] as num?)?.toInt() ??
+        0;
+    final pickOn =
+        s['pickPhotos'] == true &&
+        HsAccess.instance.canUseDrive &&
+        shareFolder.isNotEmpty;
+    final canPick = _photoService(s);
     final items = (s['items'] as num?)?.toInt() ?? 0;
     final done = _isDone(s);
     final progress = _isInProgress(s);
     final color = done
-        ? Colors.green
+        ? const Color(0xFF16A34A)
         : progress
-            ? const Color(0xFF3B82F6)
-            : scheme.onSurfaceVariant;
-    final icon = done
-        ? Icons.check_circle_rounded
+        ? const Color(0xFF3B82F6)
+        : const Color(0xFFD97706);
+    final statusLabel = done
+        ? 'Cumplido'
         : progress
-            ? Icons.radio_button_checked_rounded
-            : Icons.radio_button_unchecked_rounded;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 11, 16, 11),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        ? 'En proceso'
+        : (_statusName(s).isEmpty ? 'Pendiente' : _statusName(s));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      decoration: BoxDecoration(
+        color: done
+            ? const Color(0xFF16A34A).withValues(alpha: .05)
+            : scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: done
+              ? const Color(0xFF16A34A).withValues(alpha: .28)
+              : canPick
+              ? const Color(0xFF0D9488).withValues(alpha: .32)
+              : scheme.outlineVariant.withValues(alpha: .50),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    decoration: done ? TextDecoration.lineThrough : null,
-                    color: done ? scheme.onSurfaceVariant : null,
+                Container(
+                  width: 42,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: Icon(
+                    serviceIconOf((svc['icon'] ?? '').toString()),
+                    size: 21,
+                    color: color,
                   ),
                 ),
-                if (note.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    note,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.3,
-                        color: scheme.onSurfaceVariant),
-                  ),
-                ],
-                // Opciones de compartir: en MÓVIL van en UNA fila que se
-                // desliza (no apiladas), para no comerse el alto del listado.
-                const SizedBox(height: 4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (shareFolder.isNotEmpty && showFolder)
-                        TextButton.icon(
-                          onPressed: () => _openShared(shareFolder),
-                          icon: const Icon(Icons.folder_open_outlined, size: 16),
-                          label: const Text('Abrir carpeta'),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.2,
+                                fontWeight: FontWeight.w800,
+                                color: done ? scheme.onSurfaceVariant : null,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: .12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              statusLabel,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: color,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (note.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          note,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            height: 1.3,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
-                      if (shareLink.isNotEmpty)
-                        TextButton.icon(
-                          onPressed: () => _openLink(shareLink),
-                          icon: const Icon(Icons.link, size: 16),
-                          label: const Text('Ver liga'),
+                      ],
+                      if (canPick) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.photo_library_outlined,
+                              size: 13,
+                              color: const Color(0xFF0D9488),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                items == 0
+                                    ? (photosMax > 0
+                                          ? 'Puedes elegir hasta $photosMax fotos'
+                                          : 'Puedes elegir tus fotos')
+                                    : photosMax > 0
+                                    ? '$items de $photosMax fotos elegidas'
+                                    : '$items '
+                                          '${items == 1 ? 'foto elegida' : 'fotos elegidas'}',
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0D9488),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      if (pickPhotos)
-                        TextButton.icon(
-                          onPressed: () => _pickServiceItems(s, name),
-                          icon: const Icon(Icons.photo_library_outlined,
-                              size: 16),
-                          label: Text(items > 0
-                              ? 'Mis fotos ($items)'
-                              : 'Elegir fotos'),
-                        ),
+                        if (photosMax > 0) ...[
+                          const SizedBox(height: 5),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(
+                              value: (items / photosMax).clamp(0.0, 1.0),
+                              minHeight: 4,
+                              color: const Color(0xFF0D9488),
+                              backgroundColor: const Color(0xFF0D9488)
+                                  .withValues(alpha: .14),
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            done
-                ? 'Cumplido'
-                : progress
-                    ? 'En proceso'
-                    : (_statusName(s).isEmpty ? 'Pendiente' : _statusName(s)),
-            style: TextStyle(
-                fontSize: 11.5, fontWeight: FontWeight.w800, color: color),
-          ),
+          if (pickOn ||
+              (showFolder && shareFolder.isNotEmpty) ||
+              shareLink.isNotEmpty) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (pickOn)
+                    FilledButton.tonalIcon(
+                      onPressed: () => _pickServiceItems(s, name),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 11,
+                          vertical: 8,
+                        ),
+                        backgroundColor: const Color(0xFF0D9488)
+                            .withValues(alpha: .13),
+                        foregroundColor: const Color(0xFF0F766E),
+                        textStyle: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      icon: const Icon(Icons.photo_library_outlined, size: 16),
+                      label: Text(
+                        items > 0 ? 'Mis fotos ($items)' : 'Elegir fotos',
+                      ),
+                    ),
+                  if (showFolder && shareFolder.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: () => _openShared(shareFolder),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        side: BorderSide(
+                          color: scheme.outlineVariant.withValues(alpha: .8),
+                        ),
+                      ),
+                      icon: const Icon(Icons.folder_open_outlined, size: 16),
+                      label: const Text('Abrir carpeta'),
+                    ),
+                  if (shareLink.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => _openLink(shareLink),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 32),
+                        textStyle: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      icon: const Icon(Icons.link, size: 15),
+                      label: const Text('Ver liga'),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -686,8 +1474,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           padding: const EdgeInsets.all(18),
           child: Row(
             children: [
-              Icon(Icons.folder_copy_outlined,
-                  size: 26, color: scheme.onSurfaceVariant),
+              Icon(
+                Icons.folder_copy_outlined,
+                size: 26,
+                color: scheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -695,7 +1486,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   'fotógrafo la asigna al paquete desde el administrador del '
                   'paquete y aquí aparecerá tu acceso directo.',
                   style: TextStyle(
-                      fontSize: 12.5, height: 1.4, color: scheme.onSurfaceVariant),
+                    fontSize: 12.5,
+                    height: 1.4,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -725,16 +1519,20 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                     ? 'Carpeta compartida contigo'
                     : '${shared.length} carpetas compartidas contigo',
                 style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                    color: scheme.onSurfaceVariant),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
             for (final s in shared)
               ListTile(
                 dense: true,
-                leading: Icon(Icons.folder_shared_outlined,
-                    size: 18, color: scheme.primary),
+                leading: Icon(
+                  Icons.folder_shared_outlined,
+                  size: 18,
+                  color: scheme.primary,
+                ),
                 title: Text(
                   (s['packageName'] ?? '').toString().isEmpty
                       ? 'Carpeta compartida'
@@ -742,14 +1540,18 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 12.5, fontWeight: FontWeight.w700),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 subtitle: Text(
                   (s['path'] ?? '').toString(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 11, color: scheme.onSurfaceVariant),
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
                 trailing: TextButton(
                   onPressed: () => _openShared((s['path'] ?? '').toString()),
@@ -766,13 +1568,16 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 child: FilledButton.icon(
                   onPressed: () => _openLink(links.first.$2),
                   icon: Icon(
-                      ownDrivePathOf(links.first.$2) != null
-                          ? Icons.folder_open_outlined
-                          : Icons.link,
-                      size: 18),
-                  label: Text(ownDrivePathOf(links.first.$2) != null
-                      ? 'Entrar a mi Drive'
-                      : 'Copiar enlace del Drive'),
+                    ownDrivePathOf(links.first.$2) != null
+                        ? Icons.folder_open_outlined
+                        : Icons.link,
+                    size: 18,
+                  ),
+                  label: Text(
+                    ownDrivePathOf(links.first.$2) != null
+                        ? 'Entrar a mi Drive'
+                        : 'Copiar enlace del Drive',
+                  ),
                 ),
               ),
             for (final (name, url) in links) ...[
@@ -785,26 +1590,122 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   size: 18,
                   color: scheme.primary,
                 ),
-                title: Text(name,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 12.5, fontWeight: FontWeight.w700)),
+                title: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 subtitle: Text(
                   url,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 11, color: scheme.onSurfaceVariant),
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
                 trailing: TextButton(
                   onPressed: () => _openLink(url),
-                  child: Text(
-                      ownDrivePathOf(url) != null ? 'Abrir' : 'Copiar'),
+                  child: Text(ownDrivePathOf(url) != null ? 'Abrir' : 'Copiar'),
                 ),
               ),
             ],
           ],
           const SizedBox(height: 6),
+        ],
+      ),
+    );
+  }
+}
+
+/// La FOTO del paquete en «Mi paquete»: la del Drive (miniatura), un enlace
+/// externo, o el hueco con el emoji de la categoría sobre el degradado del
+/// tier cuando el paquete todavía no tiene foto.
+class _PackagePhoto extends StatelessWidget {
+  const _PackagePhoto({
+    required this.url,
+    required this.tier,
+    required this.emoji,
+    this.big = false,
+  });
+
+  final String url;
+  final HsTierLook tier;
+  final String emoji;
+  final bool big;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _PackagePhotoFallback(tier: tier, emoji: emoji, big: big);
+    final clean = url.trim();
+    if (clean.isEmpty) return fallback;
+    if (isDriveImageUrl(clean)) {
+      return DriveThumb(
+        source: driveImagePreview(clean, width: big ? 1200 : 240),
+        isRemote: true,
+        big: big,
+        rounded: false,
+      );
+    }
+    return Image.network(
+      clean,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => fallback,
+      loadingBuilder: (context, child, progress) =>
+          progress == null ? child : fallback,
+    );
+  }
+}
+
+class _PackagePhotoFallback extends StatelessWidget {
+  const _PackagePhotoFallback({
+    required this.tier,
+    required this.emoji,
+    required this.big,
+  });
+
+  final HsTierLook tier;
+  final String emoji;
+  final bool big;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(gradient: tier.gradient, color: tier.dark),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            right: -30,
+            top: -40,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: tier.accent.withValues(alpha: .10),
+              ),
+            ),
+          ),
+          Positioned(
+            left: -40,
+            bottom: -50,
+            child: Container(
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: .04),
+              ),
+            ),
+          ),
+          Center(
+            child: Text(emoji, style: TextStyle(fontSize: big ? 62 : 26)),
+          ),
         ],
       ),
     );

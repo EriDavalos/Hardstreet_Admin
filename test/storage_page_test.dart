@@ -102,8 +102,10 @@ void main() {
     expect(find.text('Cuota libre'), findsOneWidget);
     expect(find.text('Disco usado'), findsOneWidget);
     expect(find.text('Disco libre'), findsOneWidget);
-    // El botón de actualizar es de IMAGEN, en la tarjeta de presentación.
-    expect(find.byTooltip('Actualizar el espacio'), findsOneWidget);
+    // Sin botón de recargar (se pidió quitarlo de todos los módulos): el
+    // espacio se pone al día deslizando hacia abajo, como en el resto.
+    expect(find.byTooltip('Actualizar el espacio'), findsNothing);
+    expect(find.byType(RefreshIndicator), findsOneWidget);
     // Al 25 % no hay avisos.
     expect(find.textContaining('85 %'), findsNothing);
 

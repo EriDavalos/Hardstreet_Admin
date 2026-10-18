@@ -5,6 +5,7 @@ import '../drive_base.dart';
 import '../drive_downloader.dart';
 import '../hs_format.dart';
 import '../theme.dart';
+import 'drive_photo_viewer.dart';
 import 'drive_thumb.dart';
 import 'hs_modal.dart';
 import 'hs_toast.dart';
@@ -35,6 +36,15 @@ Future<List<String>?> showDrivePhotoPicker(
   String confirmLabel = 'Usar estas fotos',
   String? note,
   bool allowDownload = true,
+  /// Máximo de fotos que se pueden marcar. `null` = sin límite; `1` = una
+  /// sola (la tarjeta de un paquete, la portada de una sección…).
+  int? maxSelection,
+  /// Mínimo para poder confirmar (por defecto, 1).
+  int minSelection = 1,
+  /// Carpeta RAÍZ que no se puede abandonar (p. ej. la carpeta compartida de
+  /// UN servicio). Vacío = todo el Drive. El selector abre dentro de ella y
+  /// no deja subir más arriba.
+  List<String> rootPath = const <String>[],
 }) =>
     showHsModal<List<String>>(
       context: context,
@@ -47,6 +57,9 @@ Future<List<String>?> showDrivePhotoPicker(
         confirmLabel: confirmLabel,
         note: note,
         allowDownload: allowDownload,
+        maxSelection: maxSelection,
+        minSelection: minSelection,
+        rootPath: rootPath,
       ),
     );
 
@@ -61,6 +74,9 @@ class DrivePhotoPicker extends StatefulWidget {
     this.confirmLabel = 'Usar estas fotos',
     this.note,
     this.allowDownload = true,
+    this.maxSelection,
+    this.minSelection = 1,
+    this.rootPath = const <String>[],
   });
 
   final DriveBase drive;
@@ -77,12 +93,29 @@ class DrivePhotoPicker extends StatefulWidget {
   final String? note;
   final bool allowDownload;
 
+  /// Cuántas fotos se pueden marcar: 1, una cantidad o todas (null).
+  final int? maxSelection;
+
+  /// Cuántas hacen falta para confirmar (1 por defecto).
+  final int minSelection;
+
+  /// Carpeta raíz que no se puede abandonar (vacío = todo el Drive).
+  final List<String> rootPath;
+
   @override
   State<DrivePhotoPicker> createState() => _DrivePhotoPickerState();
 }
 
 class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
-  late List<String> _path = List<String>.of(widget.initialPath);
+  /// Raíz permitida, ya normalizada en segmentos (vacío = raíz del Drive).
+  late final List<String> _root = widget.rootPath
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+
+  late List<String> _path = _root.isNotEmpty
+      ? List<String>.of(_root)
+      : List<String>.of(widget.initialPath);
   List<DriveItem> _items = const [];
 
   /// Rutas ABSOLUTAS marcadas (se conservan al navegar entre carpetas).
@@ -150,15 +183,36 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
   }
 
   void _up() {
-    if (_path.isEmpty) return;
+    if (!_canGoUp) return;
     setState(() => _path = _path.sublist(0, _path.length - 1));
     _load();
   }
 
+  /// No se puede salir de la carpeta compartida del servicio.
+  bool get _canGoUp => _path.length > _root.length;
+
   void _toggle(DriveItem item) {
     final abs = _abs(item.name);
     setState(() {
-      if (!_picked.remove(abs)) _picked.add(abs);
+      if (_picked.remove(abs)) return;
+      final max = widget.maxSelection;
+      if (max != null && max > 0) {
+        if (max == 1) {
+          // Una sola: marcar otra REEMPLAZA la anterior (como un selector).
+          _picked
+            ..clear()
+            ..add(abs);
+          return;
+        }
+        if (_picked.length >= max) {
+          HsToast.info(
+            'Máximo $max fotos',
+            details: 'Quita una para poder elegir otra.',
+          );
+          return;
+        }
+      }
+      _picked.add(abs);
     });
   }
 
@@ -196,21 +250,20 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
     }
   }
 
-  /// Ve una foto en grande sin cerrar el selector (y la marca desde ahí).
+  /// Ve una foto en grande (con zoom y pantalla completa) sin cerrar el
+  /// selector, y la marca desde ahí.
   Future<void> _preview(DriveItem item) async {
     final abs = _abs(item.name);
-    await showHsModal<void>(
-      context: context,
-      builder: (_) => _PhotoPreview(
-        name: item.name,
-        meta: _metaLabel(item),
-        src: _drive.thumbSourceIn(_path, item, width: 1400),
-        isRemote: _remote,
-        picked: _picked.contains(abs),
-        onToggle: () => setState(() {
-          if (!_picked.remove(abs)) _picked.add(abs);
-        }),
-      ),
+    await showDrivePhotoViewer(
+      context,
+      name: item.name,
+      meta: _metaLabel(item),
+      src: _drive.thumbSourceIn(_path, item, width: 2200),
+      // La original se pide cuando la miniatura ya se ve (ver el visor).
+      originalSrc: _remote ? _drive.fullSourceIn(_path, item) : '',
+      isRemote: _remote,
+      picked: _picked.contains(abs),
+      onToggle: () => _toggle(item),
     );
   }
 
@@ -224,6 +277,7 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final phone = hsIsPhone(context);
+    final size = MediaQuery.sizeOf(context);
     final folders = [
       for (final i in _items)
         if (i.isFolder) i,
@@ -234,14 +288,26 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
     ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final count = _picked.length;
     return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      // En celular casi toda la pantalla para el selector; en escritorio deja
+      // ver el panel detrás.
+      insetPadding: phone
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 10)
+          : const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(phone ? 16 : 22)),
       titlePadding: const EdgeInsets.fromLTRB(18, 16, 14, 0),
       contentPadding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
       actionsPadding: const EdgeInsets.fromLTRB(12, 6, 14, 14),
       title: _header(scheme, count),
       content: SizedBox(
-        width: phone ? double.infinity : 820,
-        height: phone ? double.infinity : 540,
+        // En escritorio el selector aprovecha casi toda la ventana (antes se
+        // quedaba en 820×540 y sobraba espacio).
+        width: phone
+            ? double.infinity
+            : (size.width * .88).clamp(560.0, 1120.0),
+        height: phone
+            ? double.infinity
+            : (size.height * .72).clamp(420.0, 780.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -272,7 +338,7 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
             label: const Text('Descargar'),
           ),
         FilledButton.icon(
-          onPressed: count == 0
+          onPressed: count < widget.minSelection
               ? null
               : () => Navigator.of(context).pop(_picked.toList()..sort()),
           icon: const Icon(Icons.check_rounded, size: 18),
@@ -321,7 +387,14 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
               ),
               Text(
                 widget.subtitle ??
-                    'Elige las fotos de tu Drive. Nada se mueve de carpeta.',
+                    (widget.maxSelection == 1
+                        ? 'Elige UNA foto de tu Drive. Nada se mueve de '
+                              'carpeta.'
+                        : widget.maxSelection != null
+                        ? 'Elige hasta ${widget.maxSelection} fotos de tu '
+                              'Drive. Nada se mueve de carpeta.'
+                        : 'Elige las fotos de tu Drive. Nada se mueve de '
+                              'carpeta.'),
                 maxLines: 2,
                 style: TextStyle(
                   fontSize: 12,
@@ -347,7 +420,11 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
                 Icon(Icons.check_circle, size: 14, color: scheme.primary),
                 const SizedBox(width: 5),
                 Text(
-                  count == 1 ? '1 elegida' : '$count elegidas',
+                  widget.maxSelection == null
+                      ? (count == 1 ? '1 elegida' : '$count elegidas')
+                      : (count == 1 && widget.maxSelection == 1
+                            ? '1 de 1'
+                            : '$count de ${widget.maxSelection}'),
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
@@ -375,7 +452,7 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
           IconButton(
             tooltip: 'Subir un nivel',
             visualDensity: VisualDensity.compact,
-            onPressed: _path.isEmpty ? null : _up,
+            onPressed: _canGoUp ? _up : null,
             icon: const Icon(Icons.arrow_upward_rounded, size: 18),
           ),
           const SizedBox(width: 2),
@@ -385,8 +462,28 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
               reverse: true, // la carpeta actual (la última) siempre a la vista
               child: Row(
                 children: [
-                  Icon(Icons.home_outlined, size: 16, color: AppColors.brand),
-                  for (var i = 0; i < _path.length; i++) ...[
+                  Icon(
+                    _root.isEmpty
+                        ? Icons.home_outlined
+                        : Icons.folder_shared_outlined,
+                    size: 16,
+                    color: AppColors.brand,
+                  ),
+                  if (_root.isNotEmpty) ...[
+                    Text(
+                      _root[_root.length - 1],
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: _path.length == _root.length
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        color: _path.length == _root.length
+                            ? scheme.onSurface
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  for (var i = _root.length; i < _path.length; i++) ...[
                     Icon(Icons.chevron_right_rounded,
                         size: 15, color: scheme.onSurfaceVariant),
                     Text(
@@ -660,115 +757,3 @@ class _Tile extends StatelessWidget {
   }
 }
 
-/// Una foto en grande (para mirarla bien antes de elegirla).
-class _PhotoPreview extends StatefulWidget {
-  const _PhotoPreview({
-    required this.name,
-    required this.meta,
-    required this.src,
-    required this.isRemote,
-    required this.picked,
-    required this.onToggle,
-  });
-
-  final String name;
-  final String meta;
-  final String src;
-  final bool isRemote;
-  final bool picked;
-  final VoidCallback onToggle;
-
-  @override
-  State<_PhotoPreview> createState() => _PhotoPreviewState();
-}
-
-class _PhotoPreviewState extends State<_PhotoPreview> {
-  late bool _picked = widget.picked;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(26),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 720),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w700),
-                        ),
-                        if (widget.meta.isNotEmpty)
-                          Text(
-                            widget.meta,
-                            style: const TextStyle(
-                                color: Colors.white60, fontSize: 11.5),
-                          ),
-                      ],
-                    ),
-                  ),
-                  TextButton.icon(
-                    key: const ValueKey('drive-photo-preview-toggle'),
-                    onPressed: () => setState(() {
-                      _picked = !_picked;
-                      widget.onToggle();
-                    }),
-                    icon: Icon(
-                      _picked
-                          ? Icons.check_circle_rounded
-                          : Icons.radio_button_unchecked_rounded,
-                      size: 18,
-                    ),
-                    style: TextButton.styleFrom(foregroundColor: Colors.white),
-                    label: Text(_picked ? 'Quitar' : 'Elegir esta foto'),
-                  ),
-                  IconButton(
-                    key: const ValueKey('drive-photo-preview-close'),
-                    tooltip: 'Cerrar',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white70),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: DriveThumb(
-                key: const ValueKey('drive-photo-preview-image'),
-                source: widget.src,
-                isRemote: widget.isRemote,
-                size: double.infinity,
-                big: true,
-                contain: true,
-                rounded: false,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                'Toca «Elegir esta foto» para marcarla sin cerrar el selector.',
-                style: TextStyle(
-                    fontSize: 11, color: scheme.onSurfaceVariant.withValues(alpha: .8)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

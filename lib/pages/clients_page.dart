@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
@@ -13,7 +15,10 @@ import '../widgets/hs_pickers.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
+import '../widgets/service_items_gallery.dart';
 
 /// Estilo COMPACTO de las acciones de un servicio (dentro del administrador
 /// de paquetes): en el celular los tres botones tienen que caber en UNA fila
@@ -38,8 +43,31 @@ class ClientsPage extends StatefulWidget {
 class _ClientsPageState extends State<ClientsPage> {
   bool _loading = true;
   String? _error;
+
+  /// Filas de la PÁGINA actual (las manda el backend).
   List<Map<String, dynamic>> _clients = const [];
   String _query = '';
+
+  /// Filtro por paquetes: '' todos · 'con' con paquetes · 'sin' sin paquetes.
+  String _pkgFilter = '';
+
+  // Paginación del directorio (30 de fábrica; 50/100/200 en el pie).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
+  /// Total de clientes con la búsqueda/filtro puestos (lo calcula el servidor).
+  int _total = 0;
+
+  /// Conteos de los chips (respetan la búsqueda): todos / con / sin paquetes.
+  Map<String, int> _pkgCounts = const {};
+
+  /// Paquetes asignados a TODOS los clientes (stat del módulo).
+  int _assignedPackages = 0;
+
+  /// true = backend paginado; false = respuesta vieja (se pagina en pantalla).
+  bool _serverPaged = false;
+
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -47,18 +75,67 @@ class _ClientsPageState extends State<ClientsPage> {
     _reload();
   }
 
-  Future<void> _reload() async {
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  /// Busca en el servidor con una pequeña espera (una petición por pausa).
+  void _search(String value) {
+    setState(() {
+      _query = value;
+      _page = 1;
+    });
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), _reload);
+  }
+
+  /// Pide la página actual al backend (con búsqueda y filtro de paquetes).
+  Future<void> _reload({bool reset = false}) async {
+    if (reset) _page = 1;
+    // Página pedida (antes de que el servidor la recorte).
+    final asked = _page;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final clients = await HsApi.clients();
+      final result = await HsApi.clientsPage(
+        page: _page,
+        limit: _pageSize,
+        q: _query,
+        packages: _pkgFilter,
+      );
       if (!mounted) return;
       setState(() {
-        _clients = clients;
+        _clients = result.items;
+        _serverPaged = result.serverPaged;
+        _total = result.total;
+        _pkgCounts = {
+          for (final e
+              in ((result.meta['pkgCounts'] as Map?) ?? const {}).entries)
+            e.key.toString(): (e.value as num?)?.toInt() ?? 0,
+        };
+        _assignedPackages =
+            (result.meta['assignedPackages'] as num?)?.toInt() ??
+            _clients.fold<int>(
+              0,
+              (a, c) => a + ((c['packagesCount'] as num?)?.toInt() ?? 0),
+            );
+        if (result.serverPaged) _page = result.page;
         _loading = false;
       });
+      // La página pedida ya no existe (se borró su última fila): pide la
+      // última que sí tiene datos.
+      if (result.serverPaged &&
+          result.items.isEmpty &&
+          result.total > 0 &&
+          _page > 1 &&
+          _page < asked) {
+        _page = result.pages;
+        await _reload();
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -77,10 +154,11 @@ class _ClientsPageState extends State<ClientsPage> {
   Future<void> _openForm([Map<String, dynamic>? client]) async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _ClientFormDialog(client: client),
     );
-    if (saved == true) _reload();
+    // Al CREAR se vuelve a la página 1 (la fila nueva queda a la vista).
+    if (saved == true) _reload(reset: client == null);
   }
 
   Future<void> _delete(Map<String, dynamic> client) async {
@@ -102,16 +180,22 @@ class _ClientsPageState extends State<ClientsPage> {
   Future<void> _openPackages(Map<String, dynamic> client) async {
     await showDialog<void>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => ClientPackagesDialog(client: client),
     );
     _reload(); // el conteo pudo cambiar
   }
 
-  List<Map<String, dynamic>> get _filtered {
+  /// Filas que se pintan: la página del servidor o el filtro local (backend
+  /// viejo sin `total`).
+  List<Map<String, dynamic>> get _visible {
+    if (_serverPaged) return _clients;
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _clients;
     return _clients.where((u) {
+      final pkgs = (u['packagesCount'] as num?)?.toInt() ?? 0;
+      if (_pkgFilter == 'con' && pkgs == 0) return false;
+      if (_pkgFilter == 'sin' && pkgs > 0) return false;
+      if (q.isEmpty) return true;
       final hay =
           '${u['name'] ?? ''} ${u['lastname'] ?? ''} ${u['email'] ?? ''} ${u['number'] ?? ''}'
               .toLowerCase();
@@ -119,44 +203,126 @@ class _ClientsPageState extends State<ClientsPage> {
     }).toList();
   }
 
+  /// Total del chip "Todos" (respeta la búsqueda, no el filtro elegido).
+  int get _countAll =>
+      _serverPaged ? (_pkgCounts['all'] ?? 0) : _clients.length;
+
+  int get _countWith => _serverPaged
+      ? (_pkgCounts['with'] ?? 0)
+      : _clients
+            .where((u) => ((u['packagesCount'] as num?)?.toInt() ?? 0) > 0)
+            .length;
+
+  int get _countWithout => _serverPaged
+      ? (_pkgCounts['without'] ?? 0)
+      : _clients
+            .where((u) => ((u['packagesCount'] as num?)?.toInt() ?? 0) == 0)
+            .length;
+
+  /// Opciones del módulo de filtros: paquetes contratados.
+  List<HsFilterGroup> get _filterGroups => [
+    HsFilterGroup(
+      id: 'packages',
+      title: 'Paquetes contratados',
+      help: 'Filtra el directorio por clientes con o sin paquetes activos.',
+      options: [
+        HsFilterOption(
+          value: '',
+          label: 'Todos los clientes',
+          count: _countAll,
+          icon: Icons.groups_rounded,
+        ),
+        HsFilterOption(
+          value: 'con',
+          label: 'Con paquetes',
+          count: _countWith,
+          icon: Icons.inventory_2_outlined,
+          color: const Color(0xFF16A34A),
+        ),
+        HsFilterOption(
+          value: 'sin',
+          label: 'Sin paquetes',
+          count: _countWithout,
+          icon: Icons.inventory_2_outlined,
+          color: const Color(0xFFD97706),
+        ),
+      ],
+    ),
+  ];
+
+  /// Clientes de la página actual.
+  List<Map<String, dynamic>> get _pageRows => _serverPaged
+      ? _visible
+      : HsPages(
+          total: _visible.length,
+          page: _page,
+          pageSize: _pageSize,
+        ).slice(_visible);
+
+  /// Total que se le pasa a la barra: el del servidor o el local.
+  int get _pagerTotal => _serverPaged ? _total : _visible.length;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
       title: 'Clientes',
-      description:
-          'Directorio de clientes (rol fijo "Client") y administración de sus paquetes.',
+      description: 'Directorio de clientes (rol fijo "Client") y administración de sus paquetes.',
       icon: Icons.badge_rounded,
+      onRefresh: _reload,
       stats: [
-        StatPill(icon: Icons.people_outline, label: '${_clients.length} clientes'),
+        StatPill(icon: Icons.people_outline, label: '$_countAll clientes'),
         StatPill(
-            icon: Icons.inventory_2_outlined,
-            label: '${_clients.fold<int>(0, (a, c) => a + ((c['packagesCount'] as num?)?.toInt() ?? 0))} paquetes asignados'),
+          icon: Icons.inventory_2_outlined,
+          label: '$_assignedPackages paquetes asignados',
+        ),
       ],
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
-        if (HsAccess.instance.degraded || HsAccess.instance.can('Clientes', 'create'))
+        if (HsAccess.instance.degraded ||
+            HsAccess.instance.can('Clientes', 'create'))
           HsActionButton(
             onPressed: () => _openForm(),
             icon: Icons.badge_outlined,
             label: 'Nuevo cliente',
           ),
       ],
+      // Barra de páginas como PIE FIJO (fuera del scroll).
+      footer: HsPager(
+        total: _pagerTotal,
+        page: _page,
+        pageSize: _pageSize,
+        enabled: !_loading && _error == null,
+        onPage: (p) {
+          setState(() => _page = p);
+          _reload();
+        },
+        onPageSize: (n) {
+          setState(() {
+            _pageSize = n;
+            _page = 1;
+          });
+          _reload();
+        },
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: 'Buscar por nombre, correo o teléfono…',
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () => setState(() => _query = ''),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-            ),
+          HsSearchFilterBar(
+            hint: 'Buscar por nombre, correo o teléfono…',
+            onChanged: _search,
+            initial: _query,
+            groups: _filterGroups,
+            selected: {'packages': _pkgFilter},
+            onApply: (filters) {
+              final next = filters['packages'] ?? '';
+              if (next == _pkgFilter) return;
+              setState(() {
+                _pkgFilter = next;
+                _page = 1;
+              });
+              _reload();
+            },
           ),
           const SizedBox(height: 16),
           if (_loading)
@@ -167,7 +333,11 @@ class _ClientsPageState extends State<ClientsPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -180,43 +350,54 @@ class _ClientsPageState extends State<ClientsPage> {
                 ),
               ),
             )
-          else if (_filtered.isEmpty)
+          else if (_visible.isEmpty)
             const EmptyState(
               icon: Icons.badge_outlined,
               title: 'Sin clientes',
-              message:
-                  'No hay clientes que coincidan. Crea el primero con el botón "Nuevo cliente".',
+              message: 'No hay clientes que coincidan. Crea el primero con el botón "Nuevo cliente".',
             )
-          else
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (var i = 0; i < _filtered.length; i++) ...[
-                    if (i > 0)
-                      Divider(height: 1, color: Theme.of(context).dividerColor),
-                    StaggeredItem(
-                      index: i,
-                      child: _ClientTile(
-                        client: _filtered[i],
-                        onEdit: HsAccess.instance.degraded ||
-                                HsAccess.instance.can('Clientes', 'update')
-                            ? () => _openForm(_filtered[i])
-                            : null,
-                        onPackages: HsAccess.instance.degraded ||
-                                HsAccess.instance.can('Clientes', 'update')
-                            ? () => _openPackages(_filtered[i])
-                            : null,
-                        onDelete: HsAccess.instance.degraded ||
-                                HsAccess.instance.can('Clientes', 'delete')
-                            ? () => _delete(_filtered[i])
-                            : null,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+          else ...[
+            Builder(
+              builder: (context) {
+                final rows = _pageRows;
+                return Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        StaggeredItem(
+                          index: i,
+                          child: _ClientTile(
+                            client: rows[i],
+                            onEdit:
+                                HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Clientes', 'update')
+                                ? () => _openForm(rows[i])
+                                : null,
+                            onPackages:
+                                HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Clientes', 'update')
+                                ? () => _openPackages(rows[i])
+                                : null,
+                            onDelete:
+                                HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Clientes', 'delete')
+                                ? () => _delete(rows[i])
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
+          ],
         ],
       ),
     );
@@ -247,12 +428,12 @@ class _ClientTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final name =
-        '${client['name'] ?? ''} ${client['lastname'] ?? ''}'.trim().trim();
+    final name = '${client['name'] ?? ''} ${client['lastname'] ?? ''}'
+        .trim()
+        .trim();
     final email = (client['email'] ?? '').toString().trim();
     final number = (client['number'] ?? '').toString().trim();
-    final initial =
-        name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
+    final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final pkgCount = (client['packagesCount'] as num?)?.toInt() ?? 0;
     final subtitle = [
       if (email.isNotEmpty) email,
@@ -261,139 +442,155 @@ class _ClientTile extends StatelessWidget {
 
     // En pantallas angostas los botones no caben junto al texto: se guardan
     // en el menú "⋮" de la propia tarjeta.
-    return LayoutBuilder(builder: (context, box) {
-    final compact = box.maxWidth < 560;
-    final row = Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-      child: Row(
-        children: [
-          // Avatar con inicial: aro tenue + tinte violeta del directorio.
-          Container(
-            padding: const EdgeInsets.all(2.5),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF8B5CF6).withValues(alpha: .10),
-              border: Border.all(
-                  color: const Color(0xFF8B5CF6).withValues(alpha: .28)),
-            ),
-            child: CircleAvatar(
-              radius: 19,
-              backgroundColor: const Color(0xFF8B5CF6).withValues(alpha: .16),
-              child: Text(
-                initial,
-                style: const TextStyle(
-                  color: Color(0xFF8B5CF6),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 15,
+    return LayoutBuilder(
+      builder: (context, box) {
+        final compact = box.maxWidth < 560;
+        final row = Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
+            children: [
+              // Avatar con inicial: aro tenue + tinte turquesa del directorio.
+              Container(
+                padding: const EdgeInsets.all(2.5),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF0D9488).withValues(alpha: .10),
+                  border: Border.all(
+                    color: const Color(0xFF0D9488).withValues(alpha: .28),
+                  ),
                 ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name.isEmpty ? (email.isEmpty ? 'Sin nombre' : email) : name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 14),
-                ),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
+                child: CircleAvatar(
+                  radius: 19,
+                  backgroundColor: const Color(0xFF0D9488)
+                      .withValues(alpha: .16),
+                  child: Text(
+                    initial,
+                    style: const TextStyle(
+                      color: Color(0xFF0D9488),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
                     ),
                   ),
-                ],
-                const SizedBox(height: 6),
-                // Sus paquetes, a la vista: es lo que se administra al
-                // tocar la tarjeta.
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _ClientChip(
-                      icon: Icons.card_giftcard_outlined,
-                      label: pkgCount == 1 ? '1 paquete' : '$pkgCount paquetes',
-                      tint: const Color(0xFF8B5CF6),
+                    Text(
+                      name.isEmpty
+                          ? (email.isEmpty ? 'Sin nombre' : email)
+                          : name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      ),
                     ),
-                    // Ya no hay pastilla "Abrir": la tarjeta entera abre el
-                    // administrador (y el menú "⋮" tiene la acción).
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    // Sus paquetes, a la vista: es lo que se administra al
+                    // tocar la tarjeta.
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        _ClientChip(
+                          icon: Icons.card_giftcard_outlined,
+                          label: pkgCount == 1
+                              ? '1 paquete'
+                              : '$pkgCount paquetes',
+                          tint: const Color(0xFF0D9488),
+                        ),
+                        // Ya no hay pastilla "Abrir": la tarjeta entera abre el
+                        // administrador (y el menú "⋮" tiene la acción).
+                      ],
+                    ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 6),
+              if (compact)
+                // Menú "⋮" (el mismo patrón en todos los módulos en el celular).
+                // Sin ninguna opción disponible (permisos) no se dibuja.
+                HsRowMenu(
+                  actions: [
+                    HsMenuAction(
+                      icon: Icons.card_giftcard_outlined,
+                      label: 'Paquetes',
+                      onTap: onPackages,
+                    ),
+                    HsMenuAction(
+                      icon: Icons.edit_outlined,
+                      label: 'Editar',
+                      onTap: onEdit,
+                    ),
+                    HsMenuAction(
+                      icon: Icons.delete_outline,
+                      label: 'Eliminar',
+                      onTap: onDelete,
+                      destructive: true,
+                    ),
+                  ],
+                )
+              else ...[
+                // Los botones de siempre para abrir los paquetes del cliente.
+                if (onPackages != null)
+                  IconButton(
+                    tooltip: 'Paquetes',
+                    onPressed: onPackages,
+                    icon: const Icon(Icons.card_giftcard_outlined, size: 20),
+                  ),
+                if (onEdit != null)
+                  IconButton(
+                    tooltip: 'Editar',
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                  ),
+                if (onDelete != null)
+                  IconButton(
+                    tooltip: 'Eliminar',
+                    onPressed: onDelete,
+                    icon: Icon(
+                      Icons.delete_outline,
+                      size: 20,
+                      color: scheme.error.withValues(alpha: .8),
+                    ),
+                  ),
+                if (onPackages != null)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
               ],
-            ),
+            ],
           ),
-          const SizedBox(width: 6),
-          if (compact)
-            // Menú "⋮" (el mismo patrón en todos los módulos en el celular).
-            // Sin ninguna opción disponible (permisos) no se dibuja.
-            HsRowMenu(
-              actions: [
-                HsMenuAction(
-                  icon: Icons.card_giftcard_outlined,
-                  label: 'Paquetes',
-                  onTap: onPackages,
-                ),
-                HsMenuAction(
-                  icon: Icons.edit_outlined,
-                  label: 'Editar',
-                  onTap: onEdit,
-                ),
-                HsMenuAction(
-                  icon: Icons.delete_outline,
-                  label: 'Eliminar',
-                  onTap: onDelete,
-                  destructive: true,
-                ),
-              ],
-            )
-          else ...[
-            // Los botones de siempre para abrir los paquetes del cliente.
-            if (onPackages != null)
-              IconButton(
-                tooltip: 'Paquetes',
-                onPressed: onPackages,
-                icon: const Icon(Icons.card_giftcard_outlined, size: 20),
-              ),
-            if (onEdit != null)
-              IconButton(
-                tooltip: 'Editar',
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit_outlined, size: 20),
-              ),
-            if (onDelete != null)
-              IconButton(
-                tooltip: 'Eliminar',
-                onPressed: onDelete,
-                icon: Icon(Icons.delete_outline,
-                    size: 20, color: scheme.error.withValues(alpha: .8)),
-              ),
-            if (onPackages != null)
-              Icon(Icons.chevron_right_rounded,
-                  size: 20, color: scheme.onSurfaceVariant),
-          ],
-        ],
-      ),
-    );
+        );
 
-    // Sin permiso de administrar paquetes la tarjeta NO es clickeable (solo
-    // se ven las acciones permitidas).
-    if (onPackages == null) return row;
-    return Tooltip(
-      message: 'Abrir el administrador de paquetes',
-      waitDuration: const Duration(milliseconds: 700),
-      child: InkWell(onTap: onPackages, child: row),
+        // Sin permiso de administrar paquetes la tarjeta NO es clickeable (solo
+        // se ven las acciones permitidas).
+        if (onPackages == null) return row;
+        return Tooltip(
+          message: 'Abrir el administrador de paquetes',
+          waitDuration: const Duration(milliseconds: 700),
+          child: InkWell(onTap: onPackages, child: row),
+        );
+      },
     );
-    });
   }
 }
 
@@ -521,8 +718,10 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
     };
     try {
       if (_editing) {
-        await HsApi.updateClient(
-            {'id': (widget.client!['id'] as num).toInt(), ...body});
+        await HsApi.updateClient({
+          'id': (widget.client!['id'] as num).toInt(),
+          ...body,
+        });
       } else {
         await HsApi.createClient(body);
       }
@@ -548,7 +747,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    const accent = Color(0xFF8B5CF6);
+    const accent = Color(0xFF0D9488);
 
     final nameField = TextField(
       controller: _name,
@@ -589,9 +788,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
       obscureText: !_showPassword,
       decoration: InputDecoration(
         labelText: _editing ? 'Nueva contraseña (opcional)' : 'Contraseña',
-        helperText: _editing
-            ? 'Déjala vacía para conservar la actual.'
-            : null,
+        helperText: _editing ? 'Déjala vacía para conservar la actual.' : null,
         prefixIcon: const Icon(Icons.lock_outline, size: 20),
         suffixIcon: IconButton(
           tooltip: _showPassword ? 'Ocultar' : 'Mostrar',
@@ -617,7 +814,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
-        // Preview con acento morado (identidad del módulo Clientes)
+        // Preview con acento turquesa (identidad del módulo Clientes)
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -639,7 +836,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
                 height: 52,
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                    colors: [Color(0xFF0D9488), Color(0xFF115E59)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -661,13 +858,17 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_name.text.trim()} ${_lastname.text.trim()}'.trim().isEmpty
+                      '${_name.text.trim()} ${_lastname.text.trim()}'
+                              .trim()
+                              .isEmpty
                           ? 'Nuevo cliente'
                           : '${_name.text.trim()} ${_lastname.text.trim()}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 14.5),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -824,16 +1025,24 @@ class _AbonarDialogState extends State<_AbonarDialog> {
             children: [
               Expanded(
                 child: _MiniStat(
-                    'Total', hsMoney(price, currency), scheme.onSurface),
+                  'Total',
+                  hsMoney(price, currency),
+                  scheme.onSurface,
+                ),
               ),
               Expanded(
                 child: _MiniStat(
-                    'Pagado', hsMoney(paid, currency), const Color(0xFF10B981)),
+                  'Pagado',
+                  hsMoney(paid, currency),
+                  const Color(0xFF10B981),
+                ),
               ),
               Expanded(
-                child: _MiniStat('Saldo',
-                    hsMoney(saldo < 0 ? 0 : saldo, currency),
-                    const Color(0xFFF59E0B)),
+                child: _MiniStat(
+                  'Saldo',
+                  hsMoney(saldo < 0 ? 0 : saldo, currency),
+                  const Color(0xFFF59E0B),
+                ),
               ),
             ],
           ),
@@ -921,8 +1130,13 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
     final picked = await showHsDatePicker(context, initialDate: _dateTime);
     if (picked == null) return;
     setState(() {
-      _dateTime = DateTime(picked.year, picked.month, picked.day,
-          _dateTime.hour, _dateTime.minute);
+      _dateTime = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        _dateTime.hour,
+        _dateTime.minute,
+      );
     });
   }
 
@@ -930,8 +1144,13 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
     final picked = await showHsTimePicker(context, initialTime: _dateTime);
     if (picked == null) return;
     setState(() {
-      _dateTime = DateTime(_dateTime.year, _dateTime.month, _dateTime.day,
-          picked.hour, picked.minute);
+      _dateTime = DateTime(
+        _dateTime.year,
+        _dateTime.month,
+        _dateTime.day,
+        picked.hour,
+        picked.minute,
+      );
     });
   }
 
@@ -1011,7 +1230,7 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
               label: 'Hora',
               value: hsTimeLabel(_dateTime),
               onTap: _pickTime,
-              tint: _kViolet,
+              tint: _kTeal,
             );
             if (stack) {
               return Column(
@@ -1066,7 +1285,8 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Descripción del evento',
-              hintText: 'Ej. Sesión de fotos en el jardín, ceremonia a las 6 pm…',
+              hintText:
+                  'Ej. Sesión de fotos en el jardín, ceremonia a las 6 pm…',
               alignLabelWithHint: true,
             ),
           ),
@@ -1150,8 +1370,11 @@ class _PickerField extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.edit_calendar_outlined,
-                size: 16, color: scheme.onSurfaceVariant),
+            Icon(
+              Icons.edit_calendar_outlined,
+              size: 16,
+              color: scheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -1178,38 +1401,37 @@ class _PickerField extends StatelessWidget {
 /// Colores de los movimientos y estados (se usan en todo el modal).
 const Color _kGreen = Color(0xFF10B981);
 const Color _kAmber = Color(0xFFF59E0B);
-const Color _kViolet = Color(0xFF8B5CF6);
 const Color _kBlue = Color(0xFF3B82F6);
 const Color _kRed = Color(0xFFEF4444);
 const Color _kTeal = Color(0xFF14B8A6);
 
 /// Etiqueta / icono / color de cada tipo de movimiento.
 String _moveLabel(String kind) => switch (kind) {
-      'abono' => 'Abono',
-      'abono_externo' => 'Abono externo',
-      'inversion' => 'Inversión',
-      'ahorro' => 'Ahorro',
-      'pago' => 'Pago',
-      _ => 'Gasto',
-    };
+  'abono' => 'Abono',
+  'abono_externo' => 'Abono externo',
+  'inversion' => 'Inversión',
+  'ahorro' => 'Ahorro',
+  'pago' => 'Pago',
+  _ => 'Gasto',
+};
 
 IconData _moveIcon(String kind) => switch (kind) {
-      'abono' => Icons.payments_outlined,
-      'abono_externo' => Icons.account_balance_wallet_outlined,
-      'inversion' => Icons.trending_up,
-      'ahorro' => Icons.savings_rounded,
-      'pago' => Icons.handshake_outlined,
-      _ => Icons.trending_down,
-    };
+  'abono' => Icons.payments_outlined,
+  'abono_externo' => Icons.account_balance_wallet_outlined,
+  'inversion' => Icons.trending_up,
+  'ahorro' => Icons.savings_rounded,
+  'pago' => Icons.handshake_outlined,
+  _ => Icons.trending_down,
+};
 
 Color _moveColor(String kind) => switch (kind) {
-      'abono' => _kGreen,
-      'abono_externo' => _kBlue,
-      'inversion' => _kViolet,
-      'ahorro' => _kTeal,
-      'pago' => _kAmber,
-      _ => _kRed,
-    };
+  'abono' => _kGreen,
+  'abono_externo' => _kBlue,
+  'inversion' => _kTeal,
+  'ahorro' => _kTeal,
+  'pago' => _kAmber,
+  _ => _kRed,
+};
 
 /// Tipos que ofrece el diálogo "Movimiento del paquete".
 const List<String> _kMovementKinds = [
@@ -1222,12 +1444,12 @@ const List<String> _kMovementKinds = [
 
 /// Descripción corta de cada tipo (tarjetas de selección del diálogo).
 String _moveHint(String kind) => switch (kind) {
-      'inversion' => 'Dinero que se mete al paquete',
-      'gasto' => 'Dinero que se gasta del paquete',
-      'ahorro' => 'Dinero que se aparta del disponible',
-      'abono_externo' => 'Pago recibido fuera del paquete',
-      _ => 'Pago a un colaborador o empleado',
-    };
+  'inversion' => 'Dinero que se mete al paquete',
+  'gasto' => 'Dinero que se gasta del paquete',
+  'ahorro' => 'Dinero que se aparta del disponible',
+  'abono_externo' => 'Pago recibido fuera del paquete',
+  _ => 'Pago a un colaborador o empleado',
+};
 
 /// Administrador del paquete del cliente.
 /// PÚBLICO para poder probarlo desde test/ (lo abre el módulo Clientes).
@@ -1257,6 +1479,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   bool _loadingProgress = false;
 
   bool _busy = false;
+
   /// Pestaña activa del detalle. `null` = aún sin elegir: en ventana
   /// angosta se abre con la ficha (presentación) y en escritorio con
   /// Servicios. En escritorio no existe la pestaña 4 (la ficha vive en la
@@ -1320,8 +1543,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         _loading = false;
         _error = null;
         // Conserva el paquete elegido; si ya no existe, vuelve al vigente.
-        final stillThere = purchased
-            .any((p) => (p['id'] as num).toInt() == _selectedId);
+        final stillThere = purchased.any(
+          (p) => (p['id'] as num).toInt() == _selectedId,
+        );
         if (!stillThere) _selectedId = _vigenteId;
       });
       await _loadProgress();
@@ -1416,15 +1640,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return ((_selected?['services'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => e.cast<String, dynamic>())
-        .map((s) => <String, dynamic>{
-              ...s,
-              'done': (s['status'] ?? '')
-                  .toString()
-                  .trim()
-                  .toLowerCase()
-                  .startsWith('entregado'),
-              'finishedAt': null,
-            })
+        .map(
+          (s) => <String, dynamic>{
+            ...s,
+            'done': (s['status'] ?? '')
+                .toString()
+                .trim()
+                .toLowerCase()
+                .startsWith('entregado'),
+            'finishedAt': null,
+          },
+        )
         .toList();
   }
 
@@ -1454,9 +1680,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return saldo < 0 ? 0 : saldo;
   }
 
-  List<String> get _blockers => (((_progress?['blockers'] as List?) ?? const []))
-      .map((e) => e.toString())
-      .toList();
+  List<String> get _blockers =>
+      (((_progress?['blockers'] as List?) ?? const []))
+          .map((e) => e.toString())
+          .toList();
 
   bool get _finishedSelected => _selected != null && _isFinished(_selected!);
 
@@ -1535,8 +1762,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                       ),
                     ),
                     Text(
-                      hsMoney((p['price'] as num?) ?? 0,
-                          (p['currency'] ?? 'MXN').toString()),
+                      hsMoney(
+                        (p['price'] as num?) ?? 0,
+                        (p['currency'] ?? 'MXN').toString(),
+                      ),
                       style: TextStyle(
                         fontSize: 12.5,
                         color: Theme.of(ctx).colorScheme.onSurfaceVariant,
@@ -1581,7 +1810,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   Future<void> _abonar(Map<String, dynamic> pkg) async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _AbonarDialog(package: pkg),
     );
     if (saved == true) await _reload(silent: true);
@@ -1593,7 +1822,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       icon: Icons.task_alt,
       title: 'Terminar servicio',
       subtitle: (svc['name'] ?? '').toString(),
-      intro: 'Se marcará como entregado y quedará registrada la fecha de '
+      intro:
+          'Se marcará como entregado y quedará registrada la fecha de '
           'cierre con esta descripción.',
       initial: (svc['description'] ?? '').toString(),
       label: 'Cómo quedó el servicio / observaciones',
@@ -1601,8 +1831,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
     if (note == null) return;
     await _run(
-      () => HsApi.completePackageService((svc['id'] as num).toInt(),
-          description: note),
+      () => HsApi.completePackageService(
+        (svc['id'] as num).toInt(),
+        description: note,
+      ),
     );
   }
 
@@ -1631,8 +1863,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
     if (note == null) return;
     await _run(
-      () => HsApi.updatePackageService((svc['id'] as num).toInt(),
-          description: note),
+      () => HsApi.updatePackageService(
+        (svc['id'] as num).toInt(),
+        description: note,
+      ),
     );
   }
 
@@ -1654,7 +1888,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       icon: Icons.link,
       title: 'Carpeta del Drive',
       subtitle: (svc['name'] ?? '').toString(),
-      intro: 'Pega la liga base de la carpeta del Drive de este servicio. '
+      intro:
+          'Pega la liga base de la carpeta del Drive de este servicio. '
           'Déjala vacía para quitarla.',
       initial: (svc['url'] ?? '').toString(),
       label: 'URL base del Drive',
@@ -1662,9 +1897,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       allowEmpty: true,
     );
     if (url == null) return;
-    await _run(
-      () => HsApi.updateServiceUrl(serviceId, url.trim()),
-    );
+    await _run(() => HsApi.updateServiceUrl(serviceId, url.trim()));
   }
 
   /// Comparte con el cliente una CARPETA del Drive y/o una LIGA para UN
@@ -1680,15 +1913,29 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       _snack('No se pudo identificar el servicio');
       return;
     }
+    // Qué permite el servicio del catálogo (el backend lo manda en el nivel
+    // superior y dentro de `service`; se acepta cualquiera de los dos).
+    final catalog = (svc['service'] is Map)
+        ? (svc['service'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final photosMax =
+        (svc['photosMax'] as num?)?.toInt() ??
+        (catalog['photosMax'] as num?)?.toInt() ??
+        0;
+    final allowFolder =
+        svc['allowFolder'] != false && catalog['allowFolder'] != false;
+
     final out = await showDialog<_ServiceShare>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _ServiceShareDialog(
         serviceName: (svc['name'] ?? 'Servicio').toString(),
         folder: (svc['shareFolder'] ?? '').toString(),
         link: (svc['shareLink'] ?? '').toString(),
         pickPhotos: svc['pickPhotos'] == true,
         showFolder: svc['showFolder'] != false,
+        photosMax: photosMax,
+        allowFolder: allowFolder,
         // Sin permiso para ver el Drive no se puede abrir su selector.
         onPickFolder: HsAccess.instance.canUseDrive
             ? () => _pickDriveFolder(insideShared: true)
@@ -1707,6 +1954,72 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
+  /// Abre las fotos que el cliente ya eligió para ESTE servicio.
+  Future<void> _viewServicePhotos(Map<String, dynamic> svc) async {
+    final paths = ((svc['itemPaths'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .where((p) => p.trim().isNotEmpty)
+        .toList();
+    final total = (svc['items'] as num?)?.toInt() ?? 0;
+    if (paths.isEmpty && total > 0) {
+      _snack('Actualiza el panel para ver las fotos elegidas');
+      return;
+    }
+    await showServiceItemsGallery(
+      context,
+      serviceName: (svc['name'] ?? 'Servicio').toString(),
+      folder: (svc['shareFolder'] ?? '').toString(),
+      paths: paths,
+    );
+  }
+
+  /// Avisa al cliente de que YA puede elegir sus fotos.
+  Future<void> _notifyPhotos(Map<String, dynamic> svc) async {
+    final pkg = _selected;
+    final pkgId = (pkg?['id'] as num?)?.toInt() ?? 0;
+    if (pkgId == 0) return;
+    final name = (svc['name'] ?? 'Servicio').toString();
+    final ok = await showHsModal<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Avisar al cliente'),
+        content: Text(
+          'Le enviaremos un aviso a «${pkg?['name'] ?? 'su paquete'}» de que '
+          'la selección de fotos de "$name" ya está disponible.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.notifications_active_outlined, size: 18),
+            label: const Text('Enviar aviso'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final sent = await HsApi.notifyClient(
+        purchasedPackageId: pkgId,
+        serviceId: (svc['id'] as num?)?.toInt(),
+        kind: 'fotos-disponibles',
+        title: 'Ya puedes elegir tus fotos',
+        body:
+            'La selección de fotos de «$name» ya está disponible en Mi paquete.',
+      );
+      _snack(
+        sent > 0
+            ? 'Aviso enviado al cliente'
+            : 'El paquete no tiene clientes activos',
+      );
+    } catch (_) {
+      // La capa de API ya avisó.
+    }
+  }
+
   /// Registra un movimiento (inversión, gasto, ahorro, abono externo o pago).
   /// El ahorro acepta monto o porcentaje del DISPONIBLE (abonado - gastado).
   Future<void> _addMovement() async {
@@ -1714,7 +2027,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (pkg == null) return;
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _MovementDialog(
         package: pkg,
         disponible: _disponible,
@@ -1732,7 +2045,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (pkg == null) return;
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _MovementDialog(
         package: pkg,
         disponible: _disponible,
@@ -1757,7 +2070,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     }
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _SplitPaymentDialog(
         package: pkg,
         recipients: recipients,
@@ -1817,8 +2130,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     await _run(() => HsApi.reopenClientPackage((pkg['id'] as num).toInt()));
   }
 
-  Future<bool> _confirm(String title, String message,
-      {String confirmLabel = 'Continuar'}) async {
+  Future<bool> _confirm(
+    String title,
+    String message, {
+    String confirmLabel = 'Continuar',
+  }) async {
     final ok = await confirmDelete(
       context,
       title: title,
@@ -1844,7 +2160,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   }) {
     return showDialog<String>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (ctx) => _NoteDialog(
         icon: icon,
         title: title,
@@ -1901,8 +2217,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               final available = constraints.maxHeight.isFinite
                   ? constraints.maxHeight
                   : size.height * .94;
-              final height =
-                  phone ? available : (available * .98).clamp(460.0, 920.0);
+              final height = phone
+                  ? available
+                  : (available * .98).clamp(460.0, 920.0);
               return SizedBox(
                 width: phone ? double.infinity : 1180,
                 height: height,
@@ -1935,8 +2252,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               tooltip: 'Todos los paquetes',
               visualDensity: VisualDensity.compact,
               onPressed: _busy ? null : _backToPicker,
-              icon: Icon(Icons.arrow_back,
-                  size: 20, color: scheme.onSurfaceVariant),
+              icon: Icon(
+                Icons.arrow_back,
+                size: 20,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           Container(
             width: 42,
@@ -1949,8 +2269,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               ),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: const Icon(Icons.card_giftcard_outlined,
-                color: Colors.white, size: 21),
+            child: const Icon(
+              Icons.card_giftcard_outlined,
+              color: Colors.white,
+              size: 21,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1969,7 +2292,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 12, color: scheme.onSurfaceVariant),
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -2009,10 +2334,15 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         if (_selected != null && _canAdminister)
           TextButton.icon(
             onPressed: _busy ? null : () => _removeFromClient(_selected!),
-            icon: Icon(Icons.remove_circle_outline,
-                size: 18, color: scheme.error),
-            label:
-                Text('Quitar del cliente', style: TextStyle(color: scheme.error)),
+            icon: Icon(
+              Icons.remove_circle_outline,
+              size: 18,
+              color: scheme.error,
+            ),
+            label: Text(
+              'Quitar del cliente',
+              style: TextStyle(color: scheme.error),
+            ),
           ),
       ],
     );
@@ -2052,10 +2382,12 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                 message: 'Quitar el paquete del cliente',
                 child: IconButton.outlined(
                   visualDensity: VisualDensity.compact,
-                  onPressed:
-                      _busy ? null : () => _removeFromClient(_selected!),
-                  icon: Icon(Icons.remove_circle_outline,
-                      size: 20, color: scheme.error),
+                  onPressed: _busy ? null : () => _removeFromClient(_selected!),
+                  icon: Icon(
+                    Icons.remove_circle_outline,
+                    size: 20,
+                    color: scheme.error,
+                  ),
                 ),
               ),
             ],
@@ -2188,8 +2520,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.inventory_2_outlined,
-                  size: 42, color: scheme.onSurfaceVariant),
+              Icon(
+                Icons.inventory_2_outlined,
+                size: 42,
+                color: scheme.onSurfaceVariant,
+              ),
               const SizedBox(height: 12),
               const Text('Este cliente aún no tiene paquetes'),
               const SizedBox(height: 14),
@@ -2209,49 +2544,53 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 2),
           child: _sectionLabel(
-              scheme, 'Paquetes · ${_purchased.length} en total'),
+            scheme,
+            'Paquetes · ${_purchased.length} en total',
+          ),
         ),
         Expanded(
-          child: LayoutBuilder(builder: (context, box) {
-            final cols = box.maxWidth > 940
-                ? 3
-                : box.maxWidth > 620
-                    ? 2
-                    : 1;
-            const gap = 12.0;
-            final cardW =
-                (box.maxWidth - 32 - (cols - 1) * gap) / cols;
-            return ListView(
-              primary: false,
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-              children: [
-                Wrap(
-                  spacing: gap,
-                  runSpacing: gap,
-                  children: [
-                    for (var i = 0; i < _purchased.length; i++)
-                      SizedBox(
-                        width: cardW,
-                        child: StaggeredItem(
-                          index: i,
-                          child: _PackageTargetCard(
-                            pkg: _purchased[i],
-                            isVigente:
-                                (_purchased[i]['id'] as num).toInt() ==
-                                    _vigenteId,
-                            finished: _isFinished(_purchased[i]),
-                            onTap: _busy
-                                ? null
-                                : () => _openPackage(
-                                    (_purchased[i]['id'] as num).toInt()),
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final cols = box.maxWidth > 940
+                  ? 3
+                  : box.maxWidth > 620
+                  ? 2
+                  : 1;
+              const gap = 12.0;
+              final cardW = (box.maxWidth - 32 - (cols - 1) * gap) / cols;
+              return ListView(
+                primary: false,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                children: [
+                  Wrap(
+                    spacing: gap,
+                    runSpacing: gap,
+                    children: [
+                      for (var i = 0; i < _purchased.length; i++)
+                        SizedBox(
+                          width: cardW,
+                          child: StaggeredItem(
+                            index: i,
+                            child: _PackageTargetCard(
+                              pkg: _purchased[i],
+                              isVigente:
+                                  (_purchased[i]['id'] as num).toInt() ==
+                                  _vigenteId,
+                              finished: _isFinished(_purchased[i]),
+                              onTap: _busy
+                                  ? null
+                                  : () => _openPackage(
+                                      (_purchased[i]['id'] as num).toInt(),
+                                    ),
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ],
-            );
-          }),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ],
     );
@@ -2301,10 +2640,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         const SizedBox(height: 14),
         // Abonar, Movimiento y Agendas viven en las pestañas de la
         // derecha: en la ficha solo queda el botón de cierre.
-        if (_canAdminister)
-          _finishButton()
-        else
-          _readOnlyBox(scheme),
+        if (_canAdminister) _finishButton() else _readOnlyBox(scheme),
       ],
     );
   }
@@ -2340,19 +2676,23 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           decoration: BoxDecoration(
             color: scheme.surfaceContainerHighest.withValues(alpha: .35),
             borderRadius: BorderRadius.circular(12),
-            border:
-                Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
           ),
           child: Row(
             children: [
-              Icon(Icons.lock_outline,
-                  size: 15, color: scheme.onSurfaceVariant),
+              Icon(
+                Icons.lock_outline,
+                size: 15,
+                color: scheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   _finishedSelected
                       ? 'Paquete terminado: sus servicios y el pago quedaron '
-                          'concluidos. Reábrelo solo para corregir algo.'
+                            'concluidos. Reábrelo solo para corregir algo.'
                       : 'Paquete anterior: se consulta como detalle.',
                   style: TextStyle(
                     fontSize: 11,
@@ -2402,8 +2742,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// El paquete como pieza representativa: el MISMO flyer oscuro con acento
   /// dorado del catálogo de la web (tier, categoría, nombre y precio).
   Widget _cover(ColorScheme scheme, Map<String, dynamic> pkg) {
-    final data =
-        ((_progress?['package'] as Map?) ?? const {}).cast<String, dynamic>();
+    final data = ((_progress?['package'] as Map?) ?? const {})
+        .cast<String, dynamic>();
     final name = (pkg['name'] ?? 'Paquete').toString();
     final subtitle = (pkg['subtitle'] ?? '').toString();
     final categoryName = (pkg['categoryName'] ?? '').toString();
@@ -2464,11 +2804,14 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                         if (tier.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 9, vertical: 3),
+                              horizontal: 9,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               gradient: look.premium
                                   ? LinearGradient(
-                                      colors: [look.accent, look.accentSoft])
+                                      colors: [look.accent, look.accentSoft],
+                                    )
                                   : null,
                               color: look.premium
                                   ? null
@@ -2477,7 +2820,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                               border: look.premium
                                   ? null
                                   : Border.all(
-                                      color: look.accent.withValues(alpha: .35)),
+                                      color: look.accent.withValues(alpha: .35),
+                                    ),
                             ),
                             child: Text(
                               tier.toUpperCase(),
@@ -2485,8 +2829,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                                 fontSize: 9.5,
                                 letterSpacing: 1.6,
                                 fontWeight: FontWeight.w800,
-                                color:
-                                    look.premium ? look.dark : look.accentSoft,
+                                color: look.premium
+                                    ? look.dark
+                                    : look.accentSoft,
                               ),
                             ),
                           ),
@@ -2524,9 +2869,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                         const SizedBox(width: 7),
                         Expanded(
                           child: Text(
-                            (categoryName.isEmpty
-                                    ? 'General'
-                                    : categoryName)
+                            (categoryName.isEmpty ? 'General' : categoryName)
                                 .toUpperCase(),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2588,8 +2931,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                               ),
                             ),
                             Padding(
-                              padding:
-                                  const EdgeInsets.only(bottom: 3, left: 6),
+                              padding: const EdgeInsets.only(
+                                bottom: 3,
+                                left: 6,
+                              ),
                               child: Text(
                                 'total',
                                 style: TextStyle(
@@ -2603,7 +2948,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                         if (_selectedId == _vigenteId)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: _kGreen.withValues(alpha: .18),
                               borderRadius: BorderRadius.circular(999),
@@ -2633,8 +2980,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// Dinero del paquete. El TOTAL va grande en el flyer, así que aquí van
   /// los tres datos que se siguen de cerca: abonado, saldo y % pagado.
   Widget _money(ColorScheme scheme, Map<String, dynamic> pkg) {
-    final data =
-        ((_progress?['package'] as Map?) ?? const {}).cast<String, dynamic>();
+    final data = ((_progress?['package'] as Map?) ?? const {})
+        .cast<String, dynamic>();
     final currency = (pkg['currency'] ?? 'MXN').toString();
     final price = (data['price'] as num?) ?? (pkg['price'] as num?) ?? 0;
     final paid = (data['paid'] as num?) ?? (pkg['paid'] as num?) ?? 0;
@@ -2656,7 +3003,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         const SizedBox(width: 8),
         Expanded(
           child: _MoneyTile(
-              'Pagado', '${(pct * 100).toStringAsFixed(0)} %', _kBlue),
+            'Pagado',
+            '${(pct * 100).toStringAsFixed(0)} %',
+            _kBlue,
+          ),
         ),
       ],
     );
@@ -2664,8 +3014,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   /// Barras de avance: pago del paquete y servicios terminados.
   Widget _progressBars(ColorScheme scheme) {
-    final data =
-        ((_progress?['package'] as Map?) ?? const {}).cast<String, dynamic>();
+    final data = ((_progress?['package'] as Map?) ?? const {})
+        .cast<String, dynamic>();
     final price = (data['price'] as num?) ?? (_selected?['price'] as num?) ?? 0;
     final paid = (data['paid'] as num?) ?? (_selected?['paid'] as num?) ?? 0;
     final pct = price > 0 ? (paid / price).clamp(0.0, 1.0) : 0.0;
@@ -2763,51 +3113,53 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LayoutBuilder(builder: (context, box) {
-            Widget button(int i, {required bool flex}) {
-              final w = _TabButton(
-                icon: tabs[i].icon,
-                label: tabs[i].label,
-                selected: active == tabs[i].value,
-                onTap: () => setState(() => _tab = tabs[i].value),
-              );
-              return flex ? Expanded(child: w) : w;
-            }
-
-            const gap = 8.0;
-            // Ancho MÍNIMO razonable por pestaña (icono + texto + aire).
-            double needed() {
-              var total = 0.0;
-              for (final t in tabs) {
-                total += 46 + t.label.length * 7.4;
+          LayoutBuilder(
+            builder: (context, box) {
+              Widget button(int i, {required bool flex}) {
+                final w = _TabButton(
+                  icon: tabs[i].icon,
+                  label: tabs[i].label,
+                  selected: active == tabs[i].value,
+                  onTap: () => setState(() => _tab = tabs[i].value),
+                );
+                return flex ? Expanded(child: w) : w;
               }
-              return total + gap * (tabs.length - 1);
-            }
 
-            if (box.maxWidth >= needed()) {
-              return Row(
-                children: [
-                  for (var i = 0; i < tabs.length; i++) ...[
-                    if (i > 0) const SizedBox(width: gap),
-                    button(i, flex: true),
+              const gap = 8.0;
+              // Ancho MÍNIMO razonable por pestaña (icono + texto + aire).
+              double needed() {
+                var total = 0.0;
+                for (final t in tabs) {
+                  total += 46 + t.label.length * 7.4;
+                }
+                return total + gap * (tabs.length - 1);
+              }
+
+              if (box.maxWidth >= needed()) {
+                return Row(
+                  children: [
+                    for (var i = 0; i < tabs.length; i++) ...[
+                      if (i > 0) const SizedBox(width: gap),
+                      button(i, flex: true),
+                    ],
                   ],
-                ],
+                );
+              }
+              // No cabe: scroll horizontal con cada pestaña a su ancho natural.
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < tabs.length; i++) ...[
+                      if (i > 0) const SizedBox(width: gap),
+                      button(i, flex: false),
+                    ],
+                  ],
+                ),
               );
-            }
-            // No cabe: scroll horizontal con cada pestaña a su ancho natural.
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < tabs.length; i++) ...[
-                    if (i > 0) const SizedBox(width: gap),
-                    button(i, flex: false),
-                  ],
-                ],
-              ),
-            );
-          }),
+            },
+          ),
           if (note != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -2952,8 +3304,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           if (drivePathNormalize(p).isNotEmpty) drivePathNormalize(p),
     ];
     if (insideShared && roots.isEmpty) {
-      _snack('Comparte primero una carpeta con el cliente: el servicio '
-          'comparte DENTRO de su Drive');
+      _snack(
+        'Comparte primero una carpeta con el cliente: el servicio '
+        'comparte DENTRO de su Drive',
+      );
       return null;
     }
     return showHsModal<List<String>>(
@@ -3011,8 +3365,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.folder_shared_outlined,
-                  size: 18, color: scheme.primary),
+              Icon(
+                Icons.folder_shared_outlined,
+                size: 18,
+                color: scheme.primary,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -3020,9 +3377,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   'en todos sus paquetes (y su Drive solo muestra lo que se le '
                   'comparte). Puede ser más de una.',
                   style: TextStyle(
-                      fontSize: 12,
-                      height: 1.35,
-                      color: scheme.onSurfaceVariant),
+                    fontSize: 12,
+                    height: 1.35,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -3042,12 +3400,12 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               color: scheme.surfaceContainerHighest.withValues(alpha: .35),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                  color: scheme.outlineVariant.withValues(alpha: .5)),
+                color: scheme.outlineVariant.withValues(alpha: .5),
+              ),
             ),
             child: Row(
               children: [
-                Icon(Icons.folder_off_outlined,
-                    color: scheme.onSurfaceVariant),
+                Icon(Icons.folder_off_outlined, color: scheme.onSurfaceVariant),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -3056,13 +3414,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                       const Text(
                         'Sin carpetas compartidas',
                         style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w800),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'El cliente todavía no ve nada en su Drive.',
                         style: TextStyle(
-                            fontSize: 11.5, color: scheme.onSurfaceVariant),
+                          fontSize: 11.5,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -3077,9 +3439,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           FilledButton.icon(
             onPressed: _shareClientDriveFolder,
             icon: const Icon(Icons.folder_open_outlined, size: 18),
-            label: Text(paths.isEmpty
-                ? 'Compartir una carpeta del Drive'
-                : 'Compartir otra carpeta'),
+            label: Text(
+              paths.isEmpty
+                  ? 'Compartir una carpeta del Drive'
+                  : 'Compartir otra carpeta',
+            ),
           )
         else if (editable)
           Text(
@@ -3105,7 +3469,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
             'solo se ven aquí. Para que el cliente las vea en TODOS sus '
             'paquetes, quítalas y vuelve a compartirlas arriba.',
             style: TextStyle(
-                fontSize: 11.5, height: 1.35, color: scheme.onSurfaceVariant),
+              fontSize: 11.5,
+              height: 1.35,
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 10),
           for (final path in legacy) ...[
@@ -3159,7 +3526,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// Tarjeta de UNA carpeta compartida con el CLIENTE (todos sus paquetes).
   ///
   /// Se ve en TODOS sus paquetes, así que lo que se quita es el VÍNCULO con el
-  /// cliente (desvincular): el azul del panel, sin el morado de antes y con el
+  /// cliente (desvincular): el azul del panel, sin el violeta de antes y con el
   /// botón nombrado en vez de una "x".
   Widget _clientFolderCard(ColorScheme scheme, String path, bool editable) {
     return Container(
@@ -3178,8 +3545,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               color: AppColors.brand.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(Icons.folder_shared_outlined,
-                color: AppColors.brand, size: 20),
+            child: const Icon(
+              Icons.folder_shared_outlined,
+              color: AppColors.brand,
+              size: 20,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -3191,7 +3561,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 12.5, fontWeight: FontWeight.w700, height: 1.2),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -3199,7 +3572,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 11, color: scheme.onSurfaceVariant),
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -3214,7 +3589,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   visualDensity: VisualDensity.compact,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   textStyle: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 icon: const Icon(Icons.link_off, size: 16),
                 label: const Text('Desvincular'),
@@ -3247,13 +3624,17 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w800),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   'Carpeta compartida con el cliente de este paquete.',
-                  style:
-                      TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -3294,10 +3675,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         onUrl: _editServiceUrl,
         onShare: _editServiceShare,
         onCopy: _copyServiceUrl,
+        onPhotos: _viewServicePhotos,
+        onNotify: _notifyPhotos,
       ),
     );
   }
-
 
   // ---------- Pestaña: calendario ----------
 
@@ -3305,8 +3687,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// "Agenda"), con los próximos primero. Se pueden crear, editar y eliminar.
   Widget _calendarTab(ColorScheme scheme) {
     final agendas = _agendasOfSelected.toList()
-      ..sort((a, b) =>
-          '${a['eventDate'] ?? ''}'.compareTo('${b['eventDate'] ?? ''}'));
+      ..sort(
+        (a, b) =>
+            '${a['eventDate'] ?? ''}'.compareTo('${b['eventDate'] ?? ''}'),
+      );
     final now = DateTime.now();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3315,8 +3699,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
           child: Row(
             children: [
-              const Icon(Icons.event_available_outlined,
-                  size: 16, color: _kBlue),
+              const Icon(
+                Icons.event_available_outlined,
+                size: 16,
+                color: _kBlue,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -3374,11 +3761,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (id == null) return;
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => _AgendaFormDialog(
-        purchasedPackageId: id,
-        services: _services,
-      ),
+      barrierDismissible: true,
+      builder: (_) =>
+          _AgendaFormDialog(purchasedPackageId: id, services: _services),
     );
     if (saved == true) await _reload(silent: true);
   }
@@ -3389,7 +3774,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (id == null) return;
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _AgendaFormDialog(
         purchasedPackageId: id,
         services: _services,
@@ -3411,9 +3796,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       confirmLabel: 'Eliminar',
     );
     if (ok != true) return;
-    await _run(
-      () => HsApi.deleteAgenda((agenda['id'] as num).toInt()),
-    );
+    await _run(() => HsApi.deleteAgenda((agenda['id'] as num).toInt()));
   }
 
   // ---------- Pestaña: movimientos ----------
@@ -3426,19 +3809,30 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     final tiles = <Widget>[
       _MoneyTile('Disponible', hsMoney(_disponible, currency), _kGreen),
       _MoneyTile(
-          'Ahorro', hsMoney((totals['ahorrado'] as num?) ?? 0, currency), _kTeal),
+        'Ahorro',
+        hsMoney((totals['ahorrado'] as num?) ?? 0, currency),
+        _kTeal,
+      ),
       _MoneyTile(
-          'Abono externo',
-          hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
-          _kBlue),
+        'Abono externo',
+        hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
+        _kBlue,
+      ),
       _MoneyTile(
-          'Invertido',
-          hsMoney((totals['invertido'] as num?) ?? 0, currency),
-          _kViolet),
+        'Invertido',
+        hsMoney((totals['invertido'] as num?) ?? 0, currency),
+        _kTeal,
+      ),
       _MoneyTile(
-          'Gastado', hsMoney((totals['gastado'] as num?) ?? 0, currency), _kRed),
+        'Gastado',
+        hsMoney((totals['gastado'] as num?) ?? 0, currency),
+        _kRed,
+      ),
       _MoneyTile(
-          'Pagado', hsMoney((totals['pagos'] as num?) ?? 0, currency), _kAmber),
+        'Pagado',
+        hsMoney((totals['pagos'] as num?) ?? 0, currency),
+        _kAmber,
+      ),
     ];
 
     // TODO (tarjetas de dinero + botones + movimientos) vive en UN solo
@@ -3451,8 +3845,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         if (_progress != null) ...[
           Row(
             children: [
-              Icon(Icons.account_balance_wallet_outlined,
-                  size: 15, color: scheme.primary),
+              Icon(
+                Icons.account_balance_wallet_outlined,
+                size: 15,
+                color: scheme.primary,
+              ),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -3468,9 +3865,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                 Text(
                   'Disponible ${hsMoney(_disponible, currency)}',
                   style: const TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: _kGreen),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: _kGreen,
+                  ),
                 ),
               Tooltip(
                 message: _moneyOpen
@@ -3482,8 +3880,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   icon: AnimatedRotation(
                     turns: _moneyOpen ? 0 : .5,
                     duration: const Duration(milliseconds: 180),
-                    child: Icon(Icons.keyboard_arrow_up_rounded,
-                        size: 20, color: scheme.onSurfaceVariant),
+                    child: Icon(
+                      Icons.keyboard_arrow_up_rounded,
+                      size: 20,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ),
@@ -3500,18 +3901,20 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     // En el celular los cuadros van en 2 columnas legibles y
                     // bajan con el scroll; en escritorio, todos en una fila.
                     child: phone
-                        ? LayoutBuilder(builder: (context, box) {
-                            const gap = 6.0;
-                            final w = (box.maxWidth - gap) / 2;
-                            return Wrap(
-                              spacing: gap,
-                              runSpacing: gap,
-                              children: [
-                                for (final t in tiles)
-                                  SizedBox(width: w, child: t),
-                              ],
-                            );
-                          })
+                        ? LayoutBuilder(
+                            builder: (context, box) {
+                              const gap = 6.0;
+                              final w = (box.maxWidth - gap) / 2;
+                              return Wrap(
+                                spacing: gap,
+                                runSpacing: gap,
+                                children: [
+                                  for (final t in tiles)
+                                    SizedBox(width: w, child: t),
+                                ],
+                              );
+                            },
+                          )
                         : _MoneyRow(tiles: tiles),
                   ),
           ),
@@ -3532,7 +3935,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     style: FilledButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       textStyle: const TextStyle(
-                          fontSize: 12.5, fontWeight: FontWeight.w700),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -3575,9 +3980,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
-
   Widget _movementRow(
-      ColorScheme scheme, Map<String, dynamic> m, String currency) {
+    ColorScheme scheme,
+    Map<String, dynamic> m,
+    String currency,
+  ) {
     final kind = (m['kind'] ?? 'gasto').toString();
     final color = _moveColor(kind);
     final when = hsParseDate(m['created']);
@@ -3618,9 +4025,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                 Row(
                   children: [
                     _MiniPill(
-                        icon: _moveIcon(kind),
-                        label: _moveLabel(kind),
-                        color: color),
+                      icon: _moveIcon(kind),
+                      label: _moveLabel(kind),
+                      color: color,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       hsMoney((m['amount'] as num?) ?? 0, currency),
@@ -3654,15 +4062,21 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               tooltip: 'Editar registro',
               visualDensity: VisualDensity.compact,
               onPressed: _busy ? null : () => _editMovement(m),
-              icon: Icon(Icons.edit_outlined,
-                  size: 16, color: scheme.onSurfaceVariant),
+              icon: Icon(
+                Icons.edit_outlined,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             IconButton(
               tooltip: 'Quitar registro',
               visualDensity: VisualDensity.compact,
               onPressed: _busy ? null : () => _removeMovement(m),
-              icon:
-                  Icon(Icons.close, size: 16, color: scheme.error.withValues(alpha: .8)),
+              icon: Icon(
+                Icons.close,
+                size: 16,
+                color: scheme.error.withValues(alpha: .8),
+              ),
             ),
           ],
         ],
@@ -3708,6 +4122,8 @@ class _ServiceTile extends StatefulWidget {
     required this.onUrl,
     required this.onShare,
     required this.onCopy,
+    required this.onPhotos,
+    required this.onNotify,
   });
 
   final Map<String, dynamic> service;
@@ -3719,6 +4135,8 @@ class _ServiceTile extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>> onUrl;
   final ValueChanged<Map<String, dynamic>> onShare;
   final ValueChanged<String> onCopy;
+  final ValueChanged<Map<String, dynamic>> onPhotos;
+  final ValueChanged<Map<String, dynamic>> onNotify;
 
   @override
   State<_ServiceTile> createState() => _ServiceTileState();
@@ -3734,7 +4152,7 @@ class _ServiceTileState extends State<_ServiceTile> {
     final done = s['done'] == true;
     final when = hsParseDate(s['finishedAt']);
     final phone = MediaQuery.sizeOf(context).width < 560;
-    final color = done ? _kGreen : _kViolet;
+    final color = done ? _kGreen : _kTeal;
     final desc = (s['description'] ?? '').toString().trim();
     final url = (s['url'] ?? '').toString().trim();
     final shareFolder = (s['shareFolder'] ?? '').toString().trim();
@@ -3744,12 +4162,20 @@ class _ServiceTileState extends State<_ServiceTile> {
     // estudio al compartir): antes «elegir fotos» salía en todos.
     final pickPhotos = s['pickPhotos'] == true;
     final showFolder = s['showFolder'] != false;
+    final catalog = (s['service'] is Map)
+        ? (s['service'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final photosMax =
+        (s['photosMax'] as num?)?.toInt() ??
+        (catalog['photosMax'] as num?)?.toInt() ??
+        0;
     // ¿Se puede desplegar la tarjeta? SIEMPRE que haya algo dentro: los datos
     // del servicio (nota, enlaces, lo compartido…) o, si se administra, sus
     // OPCIONES (añadir nota/enlace, compartir). Antes solo se desplegaba si el
     // servicio YA tenía datos, así que un servicio pendiente no dejaba agregar
     // su nota ni su enlace hasta terminarlo.
-    final hasDetail = desc.isNotEmpty ||
+    final hasDetail =
+        desc.isNotEmpty ||
         url.isNotEmpty ||
         shareFolder.isNotEmpty ||
         shareLink.isNotEmpty ||
@@ -3805,7 +4231,9 @@ class _ServiceTileState extends State<_ServiceTile> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 13.5),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13.5,
+                          ),
                         ),
                         const SizedBox(height: 3),
                         _MiniPill(
@@ -3829,8 +4257,11 @@ class _ServiceTileState extends State<_ServiceTile> {
                               onPressed: widget.busy
                                   ? null
                                   : () => widget.onReopen(s),
-                              icon: const Icon(Icons.undo,
-                                  size: 18, color: _kAmber),
+                              icon: const Icon(
+                                Icons.undo,
+                                size: 18,
+                                color: _kAmber,
+                              ),
                             ),
                           )
                         // Completar NO es la acción principal de la tarjeta (lo
@@ -3838,37 +4269,42 @@ class _ServiceTileState extends State<_ServiceTile> {
                         // botón discreto, del mismo peso que "Asignar del
                         // catálogo" (contorno), sin el verde de antes.
                         : (phone
-                            ? Tooltip(
-                                message: 'Completar servicio',
-                                child: IconButton.outlined(
-                                  visualDensity: VisualDensity.compact,
+                              ? Tooltip(
+                                  message: 'Completar servicio',
+                                  child: IconButton.outlined(
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: widget.busy
+                                        ? null
+                                        : () => widget.onComplete(s),
+                                    icon: const Icon(Icons.task_alt, size: 18),
+                                  ),
+                                )
+                              : OutlinedButton.icon(
                                   onPressed: widget.busy
                                       ? null
                                       : () => widget.onComplete(s),
-                                  icon: const Icon(Icons.task_alt, size: 18),
-                                ),
-                              )
-                            : OutlinedButton.icon(
-                                onPressed: widget.busy
-                                    ? null
-                                    : () => widget.onComplete(s),
-                                style: OutlinedButton.styleFrom(
-                                  visualDensity: VisualDensity.compact,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12),
-                                  textStyle: const TextStyle(
+                                  style: OutlinedButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    textStyle: const TextStyle(
                                       fontSize: 12.5,
-                                      fontWeight: FontWeight.w600),
-                                ),
-                                icon: const Icon(Icons.task_alt, size: 15),
-                                label: const Text('Completar servicio'),
-                              )),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.task_alt, size: 15),
+                                  label: const Text('Completar servicio'),
+                                )),
                   if (hasDetail)
                     AnimatedRotation(
                       turns: _open ? .5 : 0,
                       duration: const Duration(milliseconds: 200),
-                      child: Icon(Icons.keyboard_arrow_down_rounded,
-                          size: 20, color: scheme.onSurfaceVariant),
+                      child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     )
                   else
                     const SizedBox(width: 8),
@@ -3888,9 +4324,9 @@ class _ServiceTileState extends State<_ServiceTile> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Divider(
-                            height: 1,
-                            color:
-                                scheme.outlineVariant.withValues(alpha: .5)),
+                          height: 1,
+                          color: scheme.outlineVariant.withValues(alpha: .5),
+                        ),
                         const SizedBox(height: 9),
                         if (desc.isNotEmpty)
                           Text(
@@ -3928,17 +4364,20 @@ class _ServiceTileState extends State<_ServiceTile> {
                             onTap: () => widget.onCopy(shareLink),
                           ),
                         ],
-                        if (pickPhotos || (showFolder && shareFolder.isNotEmpty)) ...[
+                        if (pickPhotos ||
+                            (showFolder && shareFolder.isNotEmpty)) ...[
                           const SizedBox(height: 7),
                           Wrap(
                             spacing: 6,
                             runSpacing: 4,
                             children: [
                               if (pickPhotos)
-                                const _MiniPill(
+                                _MiniPill(
                                   icon: Icons.photo_library_outlined,
-                                  label: 'Elegir fotos',
-                                  color: _kViolet,
+                                  label: photosMax > 0
+                                      ? 'Elegir fotos · máx. $photosMax'
+                                      : 'Elegir fotos',
+                                  color: _kTeal,
                                 ),
                               if (showFolder && shareFolder.isNotEmpty)
                                 const _MiniPill(
@@ -3953,17 +4392,41 @@ class _ServiceTileState extends State<_ServiceTile> {
                           const SizedBox(height: 7),
                           Row(
                             children: [
-                              const Icon(Icons.photo_library_outlined,
-                                  size: 13, color: _kViolet),
+                              const Icon(
+                                Icons.photo_library_outlined,
+                                size: 13,
+                                color: _kTeal,
+                              ),
                               const SizedBox(width: 5),
                               Expanded(
                                 child: Text(
-                                  '$items ${items == 1 ? 'elemento elegido' : 'elementos elegidos'} por el cliente',
+                                  '$items ${items == 1 ? 'foto elegida' : 'fotos elegidas'} por el cliente',
                                   style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: _kViolet),
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: _kTeal,
+                                  ),
                                 ),
+                              ),
+                              TextButton.icon(
+                                onPressed: widget.busy
+                                    ? null
+                                    : () => widget.onPhotos(s),
+                                style: TextButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                icon: const Icon(
+                                  Icons.visibility_outlined,
+                                  size: 15,
+                                ),
+                                label: const Text('Ver fotos'),
                               ),
                             ],
                           ),
@@ -3972,16 +4435,20 @@ class _ServiceTileState extends State<_ServiceTile> {
                           const SizedBox(height: 7),
                           Row(
                             children: [
-                              const Icon(Icons.event_available,
-                                  size: 13, color: _kGreen),
+                              const Icon(
+                                Icons.event_available,
+                                size: 13,
+                                color: _kGreen,
+                              ),
                               const SizedBox(width: 5),
                               Expanded(
                                 child: Text(
                                   'Terminado el ${hsDateLabel(when)}',
                                   style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: _kGreen),
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: _kGreen,
+                                  ),
                                 ),
                               ),
                             ],
@@ -4003,7 +4470,8 @@ class _ServiceTileState extends State<_ServiceTile> {
   /// Las opciones del servicio: en el celular se deslizan de lado (UNA fila),
   /// en escritorio caben en la tarjeta.
   Widget _serviceActions(Map<String, dynamic> s) {
-    final hasShare = (s['shareFolder'] ?? '').toString().trim().isNotEmpty ||
+    final hasShare =
+        (s['shareFolder'] ?? '').toString().trim().isNotEmpty ||
         (s['shareLink'] ?? '').toString().trim().isNotEmpty;
     final hasNote = (s['description'] ?? '').toString().trim().isNotEmpty;
     final hasUrl = (s['url'] ?? '').toString().trim().isNotEmpty;
@@ -4029,6 +4497,13 @@ class _ServiceTileState extends State<_ServiceTile> {
             icon: const Icon(Icons.folder_shared_outlined, size: 15),
             label: Text(hasShare ? 'Editar lo compartido' : 'Compartir'),
           ),
+          if (s['pickPhotos'] == true)
+            TextButton.icon(
+              onPressed: widget.busy ? null : () => widget.onNotify(s),
+              style: _kServiceAction,
+              icon: const Icon(Icons.notifications_active_outlined, size: 15),
+              label: const Text('Avisar al cliente'),
+            ),
         ],
       ),
     );
@@ -4177,13 +4652,15 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                           if (tier.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
                                 color: look.accent.withValues(alpha: .14),
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
-                                    color:
-                                        look.accent.withValues(alpha: .40)),
+                                  color: look.accent.withValues(alpha: .40),
+                                ),
                               ),
                               child: Text(
                                 tier.toUpperCase(),
@@ -4199,7 +4676,9 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                           if (statusLabel.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 2.5),
+                                horizontal: 7,
+                                vertical: 2.5,
+                              ),
                               decoration: BoxDecoration(
                                 color: statusColor.withValues(alpha: .16),
                                 borderRadius: BorderRadius.circular(999),
@@ -4224,9 +4703,7 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(
-                              (categoryName.isEmpty
-                                      ? 'General'
-                                      : categoryName)
+                              (categoryName.isEmpty ? 'General' : categoryName)
                                   .toUpperCase(),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -4246,9 +4723,10 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 15.5,
-                            height: 1.2,
-                            fontWeight: FontWeight.w800),
+                          fontSize: 15.5,
+                          height: 1.2,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       if (subtitle.isNotEmpty) ...[
                         const SizedBox(height: 3),
@@ -4273,11 +4751,11 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                               child: LinearProgressIndicator(
                                 value: pct,
                                 minHeight: 6,
-                                backgroundColor: scheme
-                                    .surfaceContainerHighest
+                                backgroundColor: scheme.surfaceContainerHighest
                                     .withValues(alpha: .6),
                                 valueColor: AlwaysStoppedAnimation(
-                                    widget.finished ? _kGreen : look.accent),
+                                  widget.finished ? _kGreen : look.accent,
+                                ),
                               ),
                             ),
                           ),
@@ -4361,8 +4839,11 @@ class _PackageTargetCardState extends State<_PackageTargetCard> {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          Icon(Icons.arrow_forward_rounded,
-                              size: 15, color: scheme.primary),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 15,
+                            color: scheme.primary,
+                          ),
                         ],
                       ),
                     ],
@@ -4400,15 +4881,17 @@ class _AgendaEventCard extends StatelessWidget {
     final date = hsParseDate(agenda['eventDate']);
     final service = (agenda['serviceName'] ?? '').toString();
     final desc = (agenda['description'] ?? '').toString();
-    final monthAbbr =
-        date == null ? '' : kHsMonths[date.month - 1].substring(0, 3);
-    final accent = past ? _kViolet.withValues(alpha: .55) : _kViolet;
+    final monthAbbr = date == null
+        ? ''
+        : kHsMonths[date.month - 1].substring(0, 3);
+    final accent = past ? _kTeal.withValues(alpha: .55) : _kTeal;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest
-            .withValues(alpha: past ? .20 : .35),
+        color: scheme.surfaceContainerHighest.withValues(
+          alpha: past ? .20 : .35,
+        ),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: accent.withValues(alpha: past ? .25 : .45)),
       ),
@@ -4426,12 +4909,18 @@ class _AgendaEventCard extends StatelessWidget {
                 Text(
                   date == null ? '--' : '${date.day}',
                   style: TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 18, color: accent),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: accent,
+                  ),
                 ),
                 Text(
                   monthAbbr,
                   style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w700, color: accent),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  ),
                 ),
               ],
             ),
@@ -4449,14 +4938,17 @@ class _AgendaEventCard extends StatelessWidget {
                             ? 'Fecha por definir'
                             : '${hsDateLabel(date)} · ${hsTimeLabel(date)}',
                         style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 13),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     if (past)
                       const _MiniPill(
-                          icon: Icons.history,
-                          label: 'Pasado',
-                          color: _kViolet),
+                        icon: Icons.history,
+                        label: 'Pasado',
+                        color: _kTeal,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 2),
@@ -4465,7 +4957,9 @@ class _AgendaEventCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 if (desc.isNotEmpty)
                   Text(
@@ -4473,7 +4967,9 @@ class _AgendaEventCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
               ],
             ),
@@ -4490,8 +4986,11 @@ class _AgendaEventCard extends StatelessWidget {
               tooltip: 'Eliminar',
               visualDensity: VisualDensity.compact,
               onPressed: onDelete,
-              icon: Icon(Icons.delete_outline,
-                  size: 18, color: scheme.error.withValues(alpha: .8)),
+              icon: Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: scheme.error.withValues(alpha: .8),
+              ),
             ),
         ],
       ),
@@ -4541,10 +5040,11 @@ class _TabButton extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon,
-                    size: 16,
-                    color:
-                        selected ? AppColors.brand : scheme.onSurfaceVariant),
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? AppColors.brand : scheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 7),
                 Text(
                   label,
@@ -4733,7 +5233,10 @@ class _MoneyTile extends StatelessWidget {
             child: Text(
               value,
               style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 13, color: tint),
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                color: tint,
+              ),
             ),
           ),
         ],
@@ -4772,7 +5275,10 @@ class _MiniStat extends StatelessWidget {
           child: Text(
             value,
             style: TextStyle(
-                fontWeight: FontWeight.w800, fontSize: 13, color: color),
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              color: color,
+            ),
           ),
         ),
       ],
@@ -4885,9 +5391,11 @@ class _MovementDialogState extends State<_MovementDialog> {
     if (_saving) return;
     final amount = _resolvedAmount;
     if (amount <= 0) {
-      setState(() => _error = _byPercent
-          ? 'El porcentaje debe dar un monto mayor a 0'
-          : 'Escribe un monto mayor a 0');
+      setState(
+        () => _error = _byPercent
+            ? 'El porcentaje debe dar un monto mayor a 0'
+            : 'Escribe un monto mayor a 0',
+      );
       return;
     }
     setState(() {
@@ -4960,9 +5468,9 @@ class _MovementDialogState extends State<_MovementDialog> {
           : 'Movimiento del paquete',
       subtitle: _editing
           ? 'Solo mientras el paquete no esté finalizado · '
-              '${_moveLabel(_kind)}'
+                '${_moveLabel(_kind)}'
           : '${(widget.package['name'] ?? '').toString()} · inversión, gasto, '
-              'ahorro, abono externo o pago',
+                'ahorro, abono externo o pago',
       saving: _saving,
       error: _error,
       saveLabel: _editing ? 'Guardar cambios' : 'Registrar',
@@ -4977,7 +5485,8 @@ class _MovementDialogState extends State<_MovementDialog> {
               color: _moveColor('abono').withValues(alpha: .10),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                  color: _moveColor('abono').withValues(alpha: .45)),
+                color: _moveColor('abono').withValues(alpha: .45),
+              ),
             ),
             child: Row(
               children: [
@@ -4988,7 +5497,9 @@ class _MovementDialogState extends State<_MovementDialog> {
                     'Este registro es un abono: se descontará del saldo del '
                     'paquete al guardar.',
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -4999,67 +5510,78 @@ class _MovementDialogState extends State<_MovementDialog> {
         !showKinds
             ? const SizedBox.shrink()
             : FormSection(
-          label: 'Tipo de movimiento',
-          child: Column(
-            children: [
-              for (final kind in _kMovementKinds)
-                InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: _saving ? null : () => setState(() => _kind = kind),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 6),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: _kind == kind
-                          ? _moveColor(kind).withValues(alpha: .10)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _kind == kind
-                            ? _moveColor(kind).withValues(alpha: .55)
-                            : scheme.outlineVariant.withValues(alpha: .5),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _kind == kind
-                              ? Icons.radio_button_checked
-                              : Icons.radio_button_unchecked,
-                          size: 17,
-                          color: _kind == kind
-                              ? _moveColor(kind)
-                              : scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 8),
-                        Icon(_moveIcon(kind), size: 17, color: _moveColor(kind)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                label: 'Tipo de movimiento',
+                child: Column(
+                  children: [
+                    for (final kind in _kMovementKinds)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: _saving
+                            ? null
+                            : () => setState(() => _kind = kind),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _kind == kind
+                                ? _moveColor(kind).withValues(alpha: .10)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _kind == kind
+                                  ? _moveColor(kind).withValues(alpha: .55)
+                                  : scheme.outlineVariant.withValues(alpha: .5),
+                            ),
+                          ),
+                          child: Row(
                             children: [
-                              Text(
-                                _moveLabel(kind),
-                                style: const TextStyle(
-                                    fontSize: 13, fontWeight: FontWeight.w600),
+                              Icon(
+                                _kind == kind
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                size: 17,
+                                color: _kind == kind
+                                    ? _moveColor(kind)
+                                    : scheme.onSurfaceVariant,
                               ),
-                              Text(
-                                _moveHint(kind),
-                                style: TextStyle(
-                                    fontSize: 11.5,
-                                    color: scheme.onSurfaceVariant),
+                              const SizedBox(width: 8),
+                              Icon(
+                                _moveIcon(kind),
+                                size: 17,
+                                color: _moveColor(kind),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _moveLabel(kind),
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      _moveHint(kind),
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                  ],
                 ),
-            ],
-          ),
-        ),
+              ),
         const SizedBox(height: 14),
         if (showKinds && _kind == 'pago') ...[
           FormSection(
@@ -5068,7 +5590,9 @@ class _MovementDialogState extends State<_MovementDialog> {
                 ? Text(
                     'No hay colaboradores ni empleados activos.',
                     style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   )
                 : DropdownButtonFormField<int>(
                     initialValue: _recipientId,
@@ -5113,15 +5637,18 @@ class _MovementDialogState extends State<_MovementDialog> {
                     'Disponible del paquete (abonado - gastado - ahorro + '
                     'abono externo)',
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 Text(
                   hsMoney(widget.disponible, widget.currency),
                   style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      color: _kTeal),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: _kTeal,
+                  ),
                 ),
               ],
             ),
@@ -5161,8 +5688,9 @@ class _MovementDialogState extends State<_MovementDialog> {
             child: TextField(
               controller: _percent,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Porcentaje',
@@ -5186,13 +5714,18 @@ class _MovementDialogState extends State<_MovementDialog> {
                   child: Text(
                     'Se ahorrarán',
                     style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 Text(
                   hsMoney(amount, widget.currency),
                   style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w800, color: color),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
                 ),
               ],
             ),
@@ -5203,8 +5736,9 @@ class _MovementDialogState extends State<_MovementDialog> {
             child: TextField(
               controller: _amount,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Monto',
                 prefixIcon: Icon(Icons.attach_money, size: 20),
@@ -5302,8 +5836,7 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
       _selected.fold<num>(0, (sum, id) => sum + _amountOf(id));
 
   /// Lo que le toca a cada elegido en partes iguales.
-  num get _perPerson =>
-      _selected.isEmpty ? 0 : _totalValue / _selected.length;
+  num get _perPerson => _selected.isEmpty ? 0 : _totalValue / _selected.length;
 
   /// Montos positivos de los ELEGIDOS (los vacíos se ignoran).
   List<Map<String, dynamic>> _numberParts() {
@@ -5333,8 +5866,7 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
     setState(() {
       for (var i = 0; i < ids.length; i++) {
         final last = i == ids.length - 1;
-        final amount =
-            last ? ((total - acumulado) * 100).round() / 100 : base;
+        final amount = last ? ((total - acumulado) * 100).round() / 100 : base;
         acumulado += amount;
         _amounts[ids[i]]?.text = amount.toStringAsFixed(2);
       }
@@ -5406,7 +5938,8 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
     return FormDialog(
       icon: Icons.handshake_outlined,
       title: 'Repartir pago',
-      subtitle: '${(widget.package['name'] ?? '').toString()} · se registra a '
+      subtitle:
+          '${(widget.package['name'] ?? '').toString()} · se registra a '
           'quién se le pagó y cuánto. NO se descuenta del paquete.',
       saving: _saving,
       error: _error,
@@ -5429,20 +5962,24 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
                     onPressed: _saving
                         ? null
                         : () => setState(() {
-                              if (allChosen) {
-                                _selected.clear();
-                              } else {
-                                _selected
-                                  ..clear()
-                                  ..addAll(widget.recipients
-                                      .map((r) => (r['id'] as num).toInt()));
-                              }
-                            }),
+                            if (allChosen) {
+                              _selected.clear();
+                            } else {
+                              _selected
+                                ..clear()
+                                ..addAll(
+                                  widget.recipients.map(
+                                    (r) => (r['id'] as num).toInt(),
+                                  ),
+                                );
+                            }
+                          }),
                     icon: Icon(
-                        allChosen
-                            ? Icons.check_box_outline_blank
-                            : Icons.select_all,
-                        size: 18),
+                      allChosen
+                          ? Icons.check_box_outline_blank
+                          : Icons.select_all,
+                      size: 18,
+                    ),
                     label: Text(allChosen ? 'Quitar todos' : 'Todos'),
                   ),
                   const Spacer(),
@@ -5450,13 +5987,14 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
                     _selected.isEmpty
                         ? 'Nadie seleccionado'
                         : (_selected.length == 1
-                            ? '1 persona'
-                            : '${_selected.length} personas'),
+                              ? '1 persona'
+                              : '${_selected.length} personas'),
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
-                      color:
-                          _selected.isEmpty ? scheme.onSurfaceVariant : color,
+                      color: _selected.isEmpty
+                          ? scheme.onSurfaceVariant
+                          : color,
                     ),
                   ),
                 ],
@@ -5472,123 +6010,142 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
               color: scheme.surfaceContainerHighest.withValues(alpha: .35),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                  color: scheme.outlineVariant.withValues(alpha: .5)),
+                color: scheme.outlineVariant.withValues(alpha: .5),
+              ),
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline,
-                    size: 16, color: scheme.onSurfaceVariant),
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: scheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Marca arriba a quién se le reparte y luego elige cómo '
                     'repartirlo.',
                     style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
             ),
           )
         else ...[
-        // 2) DESPUÉS, cómo se reparte entre los elegidos.
-        FormSection(
-          label: '2. ¿Cómo se reparte?',
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            style: const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            segments: const [
-              ButtonSegment(
-                value: 'iguales',
-                icon: Icon(Icons.balance, size: 16),
-                label: Text('Partes iguales'),
+          // 2) DESPUÉS, cómo se reparte entre los elegidos.
+          FormSection(
+            label: '2. ¿Cómo se reparte?',
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              ButtonSegment(
-                value: 'numeracion',
-                icon: Icon(Icons.tag, size: 16),
-                label: Text('Por numeración'),
+              segments: const [
+                ButtonSegment(
+                  value: 'iguales',
+                  icon: Icon(Icons.balance, size: 16),
+                  label: Text('Partes iguales'),
+                ),
+                ButtonSegment(
+                  value: 'numeracion',
+                  icon: Icon(Icons.tag, size: 16),
+                  label: Text('Por numeración'),
+                ),
+              ],
+              selected: {_mode},
+              onSelectionChanged: _saving
+                  ? null
+                  : (s) => setState(() => _mode = s.first),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_mode == 'iguales') ...[
+            FormSection(
+              label: 'Total a repartir',
+              child: TextField(
+                controller: _total,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Total',
+                  prefixIcon: Icon(Icons.attach_money, size: 20),
+                ),
+              ),
+            ),
+            if (_totalValue > 0) ...[
+              const SizedBox(height: 10),
+              _summary(
+                color,
+                scheme,
+                'A cada uno de los elegidos le toca',
+                hsMoney(_perPerson, widget.currency),
               ),
             ],
-            selected: {_mode},
-            onSelectionChanged:
-                _saving ? null : (s) => setState(() => _mode = s.first),
-          ),
-        ),
-        const SizedBox(height: 14),
-        if (_mode == 'iguales') ...[
+          ] else ...[
+            FormSection(
+              label: 'Monto de cada elegido',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final r in _chosen) _amountRow(r),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _total,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Total (opcional)',
+                      helperText:
+                          'Escríbelo y toca «Repartir en partes iguales» '
+                          'para llenar los montos.',
+                      prefixIcon: Icon(Icons.attach_money, size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: _saving || _totalValue <= 0
+                          ? null
+                          : _spreadEquals,
+                      icon: const Icon(Icons.balance, size: 16),
+                      label: const Text('Repartir en partes iguales'),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _summary(
+                    color,
+                    scheme,
+                    'Total a repartir',
+                    hsMoney(_byNumberTotal, widget.currency),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
           FormSection(
-            label: 'Total a repartir',
+            label: 'Concepto (opcional)',
             child: TextField(
-              controller: _total,
-              autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              onChanged: (_) => setState(() {}),
+              controller: _concept,
+              minLines: 1,
+              maxLines: 2,
+              textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(
-                labelText: 'Total',
-                prefixIcon: Icon(Icons.attach_money, size: 20),
+                labelText: 'Descripción',
+                hintText: 'Ej. Pago de la semana…',
               ),
             ),
           ),
-          if (_totalValue > 0) ...[
-            const SizedBox(height: 10),
-            _summary(color, scheme, 'A cada uno de los elegidos le toca',
-                hsMoney(_perPerson, widget.currency)),
-          ],
-        ] else ...[
-          FormSection(
-            label: 'Monto de cada elegido',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final r in _chosen) _amountRow(r),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _total,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(
-                    labelText: 'Total (opcional)',
-                    helperText: 'Escríbelo y toca «Repartir en partes iguales» '
-                        'para llenar los montos.',
-                    prefixIcon: Icon(Icons.attach_money, size: 20),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed:
-                        _saving || _totalValue <= 0 ? null : _spreadEquals,
-                    icon: const Icon(Icons.balance, size: 16),
-                    label: const Text('Repartir en partes iguales'),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _summary(color, scheme, 'Total a repartir',
-                    hsMoney(_byNumberTotal, widget.currency)),
-              ],
-            ),
-          ),
-        ],
-        const SizedBox(height: 14),
-        FormSection(
-          label: 'Concepto (opcional)',
-          child: TextField(
-            controller: _concept,
-            minLines: 1,
-            maxLines: 2,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Descripción',
-              hintText: 'Ej. Pago de la semana…',
-            ),
-          ),
-        ),
         ],
       ],
     );
@@ -5653,13 +6210,17 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     if (role.isNotEmpty)
                       Text(
                         role,
                         style: TextStyle(
-                            fontSize: 11, color: scheme.onSurfaceVariant),
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                   ],
                 ),
@@ -5692,8 +6253,9 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
             width: 128,
             child: TextField(
               controller: _amounts[id],
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 isDense: true,
@@ -5709,7 +6271,11 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
 
   /// Recuadro resumen del dinero (con el color del pago).
   Widget _summary(
-      Color color, ColorScheme scheme, String label, String amount) {
+    Color color,
+    ColorScheme scheme,
+    String label,
+    String amount,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -5730,7 +6296,10 @@ class _SplitPaymentDialogState extends State<_SplitPaymentDialog> {
           Text(
             amount,
             style: TextStyle(
-                fontSize: 13.5, fontWeight: FontWeight.w800, color: color),
+              fontSize: 13.5,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -5768,8 +6337,9 @@ class _NoteDialog extends StatefulWidget {
 }
 
 class _NoteDialogState extends State<_NoteDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
   String? _error;
 
   @override
@@ -5881,8 +6451,10 @@ class _DriveFolderPickerState extends State<_DriveFolderPicker> {
       : drivePathNormalize(path).split('/').where((s) => s.isNotEmpty).toList();
 
   /// Ruta ABSOLUTA de la carpeta abierta ([extra] mira una subcarpeta suya).
-  List<String> _absolute([List<String>? extra]) =>
-      [..._segments(_base), ...(extra ?? _rel)];
+  List<String> _absolute([List<String>? extra]) => [
+    ..._segments(_base),
+    ...(extra ?? _rel),
+  ];
 
   /// Ruta absoluta de la carpeta abierta, como texto (para el solapamiento).
   String get _here => _absolute().join('/');
@@ -5982,8 +6554,7 @@ class _DriveFolderPickerState extends State<_DriveFolderPicker> {
           child: const Text('Cancelar'),
         ),
         FilledButton.icon(
-          onPressed:
-              canPick ? () => Navigator.pop(context, _absolute()) : null,
+          onPressed: canPick ? () => Navigator.pop(context, _absolute()) : null,
           icon: const Icon(Icons.check_rounded, size: 18),
           label: const Text('Compartir esta carpeta'),
         ),
@@ -6013,8 +6584,11 @@ class _DriveFolderPickerState extends State<_DriveFolderPicker> {
               ),
             ],
           ),
-          child: const Icon(Icons.folder_open_outlined,
-              color: Colors.white, size: 22),
+          child: const Icon(
+            Icons.folder_open_outlined,
+            color: Colors.white,
+            size: 22,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -6378,6 +6952,8 @@ class _ServiceShareDialog extends StatefulWidget {
     required this.link,
     required this.pickPhotos,
     required this.showFolder,
+    this.photosMax = 0,
+    this.allowFolder = true,
     this.onPickFolder,
   });
 
@@ -6389,6 +6965,11 @@ class _ServiceShareDialog extends StatefulWidget {
   final bool pickPhotos;
   final bool showFolder;
 
+  /// Parámetros del SERVICIO (catálogo): máximo de fotos (0 = no ofrece) y si
+  /// usa carpeta del Drive.
+  final int photosMax;
+  final bool allowFolder;
+
   /// Abre el selector de carpetas del Drive y devuelve la ruta elegida.
   /// null = sin permiso para ver el Drive: la opción no se dibuja.
   final Future<List<String>?> Function()? onPickFolder;
@@ -6398,8 +6979,9 @@ class _ServiceShareDialog extends StatefulWidget {
 }
 
 class _ServiceShareDialogState extends State<_ServiceShareDialog> {
-  late final TextEditingController _link =
-      TextEditingController(text: widget.link);
+  late final TextEditingController _link = TextEditingController(
+    text: widget.link,
+  );
   late String _folder = widget.folder;
   late bool _pickPhotos = widget.pickPhotos;
   late bool _showFolder = widget.showFolder;
@@ -6418,14 +7000,19 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
     setState(() => _folder = segments.join('/'));
   }
 
+  /// ¿Se puede encender «Elegir fotos»? Necesita que el servicio lo ofrezca
+  /// (photosMax > 0) y una carpeta compartida (el cliente elige DENTRO de ella).
+  bool get _canPickPhotos => widget.photosMax > 0 && _folder.trim().isNotEmpty;
+
   void _save() => Navigator.of(context).pop(
-        _ServiceShare(
-          folder: _folder,
-          link: _link.text.trim(),
-          pickPhotos: _pickPhotos,
-          showFolder: _showFolder,
-        ),
-      );
+    _ServiceShare(
+      folder: _folder,
+      link: _link.text.trim(),
+      pickPhotos: _pickPhotos && _canPickPhotos,
+      showFolder:
+          _showFolder && widget.allowFolder && _folder.trim().isNotEmpty,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -6476,20 +7063,31 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
               _option(
                 icon: Icons.photo_library_outlined,
                 title: 'Elegir fotos',
-                subtitle: 'El cliente marca fotos de SU Drive para este '
-                    'servicio. Apagado, no le sale el botón.',
-                value: _pickPhotos,
+                subtitle: widget.photosMax <= 0
+                    ? 'Este servicio no lo ofrece. Actívalo en el módulo '
+                          'Servicios (parámetros especiales).'
+                    : _folder.isEmpty
+                    ? 'Comparte primero una carpeta: el cliente elige las '
+                          'fotos DENTRO de ella.'
+                    : 'El cliente puede marcar hasta ${widget.photosMax} '
+                          '${widget.photosMax == 1 ? 'foto' : 'fotos'} de la '
+                          'carpeta compartida.',
+                value: _pickPhotos && _canPickPhotos,
+                enabled: _canPickPhotos,
                 onChanged: (v) => setState(() => _pickPhotos = v),
               ),
               const SizedBox(height: 4),
               _option(
                 icon: Icons.folder_open_outlined,
                 title: 'Abrir carpeta',
-                subtitle: _folder.isEmpty
+                subtitle: !widget.allowFolder
+                    ? 'Este servicio no usa carpeta del Drive.'
+                    : _folder.isEmpty
                     ? 'Se verá cuando el servicio tenga una carpeta '
-                        'compartida.'
+                          'compartida.'
                     : 'Acceso directo a la carpeta compartida del servicio.',
-                value: _showFolder,
+                value: _showFolder && widget.allowFolder && _folder.isNotEmpty,
+                enabled: widget.allowFolder && _folder.isNotEmpty,
                 onChanged: (v) => setState(() => _showFolder = v),
               ),
             ],
@@ -6506,18 +7104,20 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
+    bool enabled = true,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return SwitchListTile.adaptive(
       contentPadding: EdgeInsets.zero,
       value: value,
-      onChanged: onChanged,
+      onChanged: enabled ? onChanged : null,
       secondary: Container(
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: (value ? AppColors.brand : scheme.onSurfaceVariant)
-              .withValues(alpha: .12),
+          color: (value ? AppColors.brand : scheme.onSurfaceVariant).withValues(
+            alpha: .12,
+          ),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(
@@ -6532,7 +7132,11 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
       ),
       subtitle: Text(
         subtitle,
-        style: TextStyle(fontSize: 11, height: 1.3, color: scheme.onSurfaceVariant),
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.3,
+          color: scheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -6548,7 +7152,9 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withValues(alpha: .25),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: scheme.outlineVariant.withValues(alpha: .6)),
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: .6),
+          ),
         ),
         child: Row(
           children: [
@@ -6559,8 +7165,11 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
                 color: AppColors.brand.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(11),
               ),
-              child: const Icon(Icons.create_new_folder_outlined,
-                  size: 20, color: AppColors.brand),
+              child: const Icon(
+                Icons.create_new_folder_outlined,
+                size: 20,
+                color: AppColors.brand,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -6569,19 +7178,27 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
                 children: [
                   const Text(
                     'Compartir una carpeta del Drive',
-                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     'Dentro de lo que el cliente ya tiene compartido.',
                     style: TextStyle(
-                        fontSize: 11, color: scheme.onSurfaceVariant),
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
-                size: 18, color: scheme.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -6606,8 +7223,11 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
               color: AppColors.brand.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(Icons.folder_rounded,
-                color: AppColors.brand, size: 20),
+            child: const Icon(
+              Icons.folder_rounded,
+              color: AppColors.brand,
+              size: 20,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -6619,14 +7239,18 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      height: 1.2),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   'Carpeta del Drive compartida con el servicio.',
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -6634,13 +7258,20 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
           Tooltip(
             message: 'Desvincular la carpeta del servicio',
             child: TextButton.icon(
-              onPressed: () => setState(() => _folder = ''),
+              onPressed: () => setState(() {
+                _folder = '';
+                // Sin carpeta no hay dónde elegir fotos.
+                _pickPhotos = false;
+                _showFolder = false;
+              }),
               style: TextButton.styleFrom(
                 foregroundColor: scheme.error,
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 textStyle: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               icon: const Icon(Icons.link_off, size: 16),
               label: const Text('Desvincular'),

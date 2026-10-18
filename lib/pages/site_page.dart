@@ -17,6 +17,7 @@ import '../widgets/common.dart';
 import '../widgets/drive_photo_picker.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
+import '../widgets/site_html_editor.dart';
 import '../widgets/site_section_preview.dart';
 
 // ==================================================================
@@ -129,6 +130,7 @@ class SitePage extends StatefulWidget {
     super.key,
     this.api = const HsSiteContentApi(),
     this.supported,
+    this.previewBuilder,
   });
 
   /// Cómo se lee y se guarda el contenido (en pruebas, un doble).
@@ -136,6 +138,10 @@ class SitePage extends StatefulWidget {
 
   /// Fuerza si el módulo es usable (por defecto, según la plataforma).
   final bool? supported;
+
+  /// Cómo se pinta la vista previa del editor HTML. `null` = el WebView real
+  /// con el sitio empaquetado; las pruebas pasan un doble (sin nativo).
+  final SiteHtmlPreviewBuilder? previewBuilder;
 
   @override
   State<SitePage> createState() => _SitePageState();
@@ -172,6 +178,10 @@ class _SitePageState extends State<SitePage> {
 
   /// Tarjetas abiertas (las que muestran sus campos).
   final Set<String> _open = <String>{};
+
+  /// HTML propio de una sección (id de instancia → contenido). Vacío = la
+  /// sección se arma con sus campos y los datos, como siempre.
+  final Map<String, String> _html = {};
 
   /// Categorías del catálogo (para la galería) y dorado del diseño.
   List<({String key, String name})> _categories = const [];
@@ -329,6 +339,7 @@ class _SitePageState extends State<SitePage> {
     _visible.remove(id);
     _open.remove(id);
     _order.remove(id);
+    _html.remove(id);
   }
 
   /// Quita TODAS las secciones agregadas.
@@ -348,6 +359,10 @@ class _SitePageState extends State<SitePage> {
     final id = siteExtraSectionId(t.key, _order);
     setState(() {
       _mountExtra(id, t.key, copyFrom: t.key);
+      // La copia arranca con el HTML propio de la original (si lo tiene): así
+      // se ve igual desde el primer momento y se edita sobre eso.
+      final sourceHtml = _html[t.key]?.trim() ?? '';
+      if (sourceHtml.isNotEmpty) _html[id] = sourceHtml;
       // Entra justo debajo de la sección de la que es copia: se ve al lado y de
       // ahí se mueve a donde tenga que ir.
       final i = _order.indexOf(t.key);
@@ -437,6 +452,15 @@ class _SitePageState extends State<SitePage> {
           _mountExtra(extra.id, extra.key,
               texts: extra.texts, images: extra.images, props: extra.props);
           _visible[extra.id] = extra.visible;
+        }
+        // HTML propio (de fábrica y de las copias) tal como se guardó.
+        _html
+          ..clear()
+          ..addEntries(
+            content.html.entries.where((e) => e.value.trim().isNotEmpty),
+          );
+        for (final extra in content.extraSections) {
+          if (extra.html.trim().isNotEmpty) _html[extra.id] = extra.html.trim();
         }
         final extraOrder = {
           for (final e in content.extraSections) e.id: e.order,
@@ -539,6 +563,7 @@ class _SitePageState extends State<SitePage> {
             f.key: _imageValue(id, f),
         },
         props: {...siteSectionDefaults(key), ...(_props[id] ?? const {})},
+        html: _html[id] ?? '',
       ));
     }
     // Las secciones fijas (pie y marca) sólo viajan si se tocó su contenido.
@@ -554,11 +579,18 @@ class _SitePageState extends State<SitePage> {
         );
       }
     }
+    // El HTML propio de cada sección viaja aparte (no tiene valor de fábrica:
+    // vacío = la web arma la sección como siempre).
+    final html = <String, String>{
+      for (final e in _html.entries)
+        if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
+    };
     return SiteContent(
       texts: texts,
       images: images,
       sections: sections,
       extraSections: extras,
+      html: html,
     );
   }
 
@@ -802,6 +834,7 @@ class _SitePageState extends State<SitePage> {
           'miniatura, sus textos, sus imágenes y sus opciones. Lo que guardes '
           'se aplica en la web al instante, sin volver a publicar el sitio.',
       icon: Icons.language_rounded,
+      onRefresh: _load,
       stats: [
         StatPill(
             icon: Icons.edit_note_outlined,
@@ -819,12 +852,6 @@ class _SitePageState extends State<SitePage> {
             label: _stored ? 'En la base de datos' : 'En el HTML del sitio'),
       ],
       actions: [
-        HsActionButton(
-          icon: Icons.refresh,
-          label: 'Recargar',
-          primary: false,
-          onPressed: _loading ? null : _load,
-        ),
         HsActionButton(
           icon: Icons.save_outlined,
           label: 'Guardar cambios',
@@ -1032,6 +1059,7 @@ class _SitePageState extends State<SitePage> {
     final isExtra = _isExtra(instance);
     final open = _open.contains(instance);
     final visible = _visible[instance] ?? t.defaultVisible;
+    final hasHtml = (_html[instance] ?? '').trim().isNotEmpty;
     final edited = sitePropsChanged(t.key, _props[instance] ?? const {}) +
         kSiteTexts
             .where((f) => f.sectionKey == t.key)
@@ -1040,7 +1068,8 @@ class _SitePageState extends State<SitePage> {
         kSiteImages
             .where((f) => f.sectionKey == t.key)
             .where((f) => _images[_hookKey(instance, f.key)]!.text.trim().isNotEmpty)
-            .length;
+            .length +
+        (hasHtml ? 1 : 0);
 
     // Es un Material (y no un Container con decoration) porque adentro hay
     // interruptores y casillas: ellos pintan su fondo y su onda sobre el
@@ -1103,6 +1132,11 @@ class _SitePageState extends State<SitePage> {
                                   color: scheme.primary),
                             ),
                           _tag(scheme, 'Plantilla', Icons.dashboard_customize_outlined),
+                          if (hasHtml) ...[
+                            const SizedBox(width: 6),
+                            _tag(scheme, 'HTML', Icons.code_rounded,
+                                color: scheme.primary),
+                          ],
                           if (position != null) ...[
                             const SizedBox(width: 6),
                             _tag(scheme, '${position + 1}', Icons.swap_vert_rounded),
@@ -1180,15 +1214,59 @@ class _SitePageState extends State<SitePage> {
               ],
             ),
           ),
-          // ---- Miniatura de cómo se ve la sección ----
+          // ---- Miniatura de cómo se ve la sección (se puede ver en grande) ----
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-            child: SiteSectionPreview(
-              section: t.key,
-              values: _values(instance),
-              images: _imageValues(instance),
-              props: _props[instance] ?? const {},
-              gold: _goldColor,
+            child: Stack(
+              children: [
+                SiteSectionPreview(
+                  section: t.key,
+                  values: _values(instance),
+                  images: _imageValues(instance),
+                  props: _props[instance] ?? const {},
+                  gold: _goldColor,
+                ),
+                // Abre LA MISMA maqueta en grande: así se revisa el HTML de la
+                // sección sin salir del módulo ni abrir el navegador.
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: .55),
+                    shape: const StadiumBorder(),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      key: ValueKey('site-preview-$instance'),
+                      onTap: () => _openSectionPreview(t, instance),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.open_in_full_rounded,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                            SizedBox(width: 5),
+                            Text(
+                              'Ver en grande',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (open) ...[
@@ -1204,6 +1282,73 @@ class _SitePageState extends State<SitePage> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// La MAQUETA de una sección, en grande: el mismo dibujo de la miniatura,
+  /// escalado (nada se recorta ni se deforma) para revisarlo con detalle sin
+  /// salir del módulo.
+  Future<void> _openSectionPreview(
+    SiteSectionTemplate t,
+    String instance,
+  ) async {
+    final screen = MediaQuery.sizeOf(context);
+    final w = (screen.width * .84).clamp(320.0, 1040.0);
+    final h = (screen.height * .58).clamp(200.0, 520.0);
+    await showHsModal<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+        title: Row(
+          children: [
+            const Icon(Icons.web_asset_rounded, size: 20),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                t.label,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: w,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Así se verá esta parte de la página con lo que hay escrito '
+                'ahora (es la misma maqueta de la miniatura, solo más grande).',
+                style: TextStyle(
+                  fontSize: 11.8,
+                  height: 1.3,
+                  color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SiteSectionPreview(
+                section: t.key,
+                values: _values(instance),
+                images: _imageValues(instance),
+                props: _props[instance] ?? const {},
+                gold: _goldColor,
+                height: h,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
         ],
       ),
     );
@@ -1232,12 +1377,107 @@ class _SitePageState extends State<SitePage> {
     );
   }
 
+  // ---------------- HTML propio de una sección ----------------
+
+  /// Barra de la tarjeta para abrir el EDITOR DE HTML de la sección.
+  Widget _htmlRow(ColorScheme scheme, String instance) {
+    final has = (_html[instance] ?? '').trim().isNotEmpty;
+    final compact = MediaQuery.sizeOf(context).width < 560;
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'HTML de la sección',
+          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          has
+              ? 'La web pinta ESTE HTML en lugar del contenido de los campos. '
+                  'Se edita con vista previa real del sitio.'
+              : 'Opcional: escribe el HTML que quieres que la web muestre dentro '
+                  'de esta sección (con el CSS del sitio).',
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.3,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+    final button = FilledButton.tonalIcon(
+      key: ValueKey('site-html-$instance'),
+      onPressed: () => _editHtml(instance),
+      icon: const Icon(Icons.code_rounded, size: 17),
+      label: Text(has ? 'Editar HTML' : 'Escribir HTML'),
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .055),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.primary.withValues(alpha: .25)),
+      ),
+      child: compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.code_rounded, size: 17, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(child: text),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                button,
+              ],
+            )
+          : Row(
+              children: [
+                Icon(Icons.code_rounded, size: 18, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(child: text),
+                const SizedBox(width: 10),
+                button,
+              ],
+            ),
+    );
+  }
+
+  /// Abre el editor de HTML de [instance] y deja el resultado en el borrador.
+  Future<void> _editHtml(String instance) async {
+    final t = _templateOf(instance);
+    if (t == null) return;
+    final result = await showSiteHtmlEditor(
+      context,
+      sectionId: instance,
+      sectionLabel: _labelOf(instance),
+      sectionTemplate: t.key,
+      initialHtml: _html[instance] ?? '',
+      previewBuilder: widget.previewBuilder,
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      final code = result.trim();
+      if (code.isEmpty) {
+        _html.remove(instance);
+      } else {
+        _html[instance] = code;
+      }
+    });
+  }
+
   // ---------------- Campos de una sección ----------------
 
   List<Widget> _fields(ColorScheme scheme, SiteSectionTemplate t, String instance) {
     final out = <Widget>[];
     final texts = kSiteTexts.where((f) => f.sectionKey == t.key).toList();
     final images = kSiteImages.where((f) => f.sectionKey == t.key).toList();
+
+    // HTML propio: va PRIMERO, porque manda sobre los campos de abajo.
+    out.add(_htmlRow(scheme, instance));
+    out.add(const SizedBox(height: 10));
 
     if (texts.isNotEmpty) {
       out.add(_groupHeader('TEXTOS'));

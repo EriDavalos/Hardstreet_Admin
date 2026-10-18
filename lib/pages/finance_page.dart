@@ -7,6 +7,8 @@ import '../hs_format.dart';
 import '../widgets/common.dart';
 import '../widgets/finance_chart.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
@@ -31,31 +33,31 @@ import '../widgets/hs_toast.dart';
 /// Etiqueta / icono / color de cada tipo de movimiento (mismo lenguaje que el
 /// administrador del paquete del cliente).
 String _kindLabel(String kind) => switch (kind) {
-      'abono' => 'Abonos',
-      'abono_externo' => 'Abonos externos',
-      'inversion' => 'Inversiones',
-      'ahorro' => 'Ahorro',
-      'pago' => 'Pagos',
-      _ => 'Gastos',
-    };
+  'abono' => 'Abonos',
+  'abono_externo' => 'Abonos externos',
+  'inversion' => 'Inversiones',
+  'ahorro' => 'Ahorro',
+  'pago' => 'Pagos',
+  _ => 'Gastos',
+};
 
 IconData _kindIcon(String kind) => switch (kind) {
-      'abono' => Icons.payments_outlined,
-      'abono_externo' => Icons.account_balance_wallet_outlined,
-      'inversion' => Icons.trending_up,
-      'ahorro' => Icons.savings_rounded,
-      'pago' => Icons.handshake_outlined,
-      _ => Icons.trending_down,
-    };
+  'abono' => Icons.payments_outlined,
+  'abono_externo' => Icons.account_balance_wallet_outlined,
+  'inversion' => Icons.trending_up,
+  'ahorro' => Icons.savings_rounded,
+  'pago' => Icons.handshake_outlined,
+  _ => Icons.trending_down,
+};
 
 Color _kindColor(String kind) => switch (kind) {
-      'abono' => FinanceColors.green,
-      'abono_externo' => FinanceColors.blue,
-      'inversion' => FinanceColors.violet,
-      'ahorro' => FinanceColors.teal,
-      'pago' => FinanceColors.amber,
-      _ => FinanceColors.red,
-    };
+  'abono' => FinanceColors.green,
+  'abono_externo' => FinanceColors.blue,
+  'inversion' => FinanceColors.investment,
+  'ahorro' => FinanceColors.teal,
+  'pago' => FinanceColors.amber,
+  _ => FinanceColors.red,
+};
 
 /// Tipos de movimiento que se listan como filas de la tabla (en orden).
 /// Los PAGOS van al final y con la etiqueta que aclara que son un registro:
@@ -104,6 +106,14 @@ class _FinancePageState extends State<FinancePage> {
   /// pantalla a la tabla de "Dinero por paquete y movimiento".
   bool _kpisOpen = true;
 
+  // Paginación de la tabla de paquetes (30 de fábrica; 50/100/200 abajo).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
+  /// Búsqueda y filtro de la tabla ("Ver": todo, paquetes o movimientos).
+  String _query = '';
+  String _viewFilter = '';
+
   @override
   void initState() {
     super.initState();
@@ -146,6 +156,71 @@ class _FinancePageState extends State<FinancePage> {
     });
   }
 
+  /// Paquetes que pasan la búsqueda de la tabla.
+  List<FinancePackage> get _visiblePackages {
+    final q = _query.trim().toLowerCase();
+    return _data.packages
+        .where((p) {
+          if (q.isEmpty) return true;
+          return '${p.name} ${p.clientName}'.toLowerCase().contains(q);
+        })
+        .toList(growable: false);
+  }
+
+  /// Tipos de movimiento que pasan la búsqueda.
+  List<String> get _visibleKinds {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _kKindRows;
+    return _kKindRows
+        .where((k) => _kindLabel(k).toLowerCase().contains(q))
+        .toList(growable: false);
+  }
+
+  bool get _showPackages => _viewFilter != 'movimientos';
+  bool get _showMovements => _viewFilter != 'paquetes';
+
+  /// MÓDULO DE FILTROS de la tabla de finanzas.
+  List<HsFilterGroup> get _filterGroups {
+    final q = _query.trim().toLowerCase();
+    final pkgCount = _data.packages
+        .where(
+          (p) =>
+              q.isEmpty ||
+              '${p.name} ${p.clientName}'.toLowerCase().contains(q),
+        )
+        .length;
+    return [
+      HsFilterGroup(
+        id: 'view',
+        title: 'Qué quieres ver',
+        help:
+            'La búsqueda filtra paquetes por cliente/nombre y movimientos '
+            'por su tipo.',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Paquetes y movimientos',
+            count: pkgCount + _kKindRows.length,
+            icon: Icons.table_rows_rounded,
+          ),
+          HsFilterOption(
+            value: 'paquetes',
+            label: 'Solo paquetes',
+            count: pkgCount,
+            icon: Icons.inventory_2_outlined,
+          ),
+          HsFilterOption(
+            value: 'movimientos',
+            label: 'Solo movimientos',
+            count: _kKindRows.length,
+            icon: Icons.receipt_long_outlined,
+            color: FinanceColors.investment,
+          ),
+        ],
+      ),
+    ];
+  }
+
   /// Abre el diálogo para REGISTRAR un movimiento.
   ///
   /// SIN [package] el movimiento es GENERAL (del negocio): el módulo ya no
@@ -157,7 +232,7 @@ class _FinancePageState extends State<FinancePage> {
   }) async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _FinanceMovementDialog(
         packages: _data.packages,
         currency: _data.currency,
@@ -167,9 +242,11 @@ class _FinancePageState extends State<FinancePage> {
       ),
     );
     if (saved == true) {
-      _snack(package == null
-          ? 'Movimiento general registrado'
-          : 'Movimiento registrado en ${package.name}');
+      _snack(
+        package == null
+            ? 'Movimiento general registrado'
+            : 'Movimiento registrado en ${package.name}',
+      );
       await _reload();
     }
   }
@@ -182,32 +259,26 @@ class _FinancePageState extends State<FinancePage> {
   /// el [Wrap] las apilaba en tres renglones y se comía el espacio de la
   /// información; así todo el desglose vive en un renglón.
   Widget _pillsRow(List<Widget> pills) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(right: 2),
-        child: Row(
-          children: [
-            for (final p in pills) ...[
-              p,
-              const SizedBox(width: 8),
-            ],
-          ],
-        ),
-      );
+    scrollDirection: Axis.horizontal,
+    padding: const EdgeInsets.only(right: 2),
+    child: Row(
+      children: [
+        for (final p in pills) ...[p, const SizedBox(width: 8)],
+      ],
+    ),
+  );
 
   /// Botones de acción del desglose, también en UNA fila (se desliza si no
   /// caben) en vez de apilarse uno por renglón.
   Widget _buttonsRow(List<Widget> buttons) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(right: 2),
-        child: Row(
-          children: [
-            for (final b in buttons) ...[
-              b,
-              const SizedBox(width: 8),
-            ],
-          ],
-        ),
-      );
+    scrollDirection: Axis.horizontal,
+    padding: const EdgeInsets.only(right: 2),
+    child: Row(
+      children: [
+        for (final b in buttons) ...[b, const SizedBox(width: 8)],
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -222,23 +293,38 @@ class _FinancePageState extends State<FinancePage> {
       description: narrow
           ? 'Cada paquete y cada movimiento, con su desglose.'
           : 'El dinero en una tabla: cada paquete y cada tipo de '
-              'movimiento, con su desglose al expandir.',
+                'movimiento, con su desglose al expandir.',
       icon: Icons.account_balance_wallet_outlined,
+      onRefresh: _reload,
       // Sin scroll de página: la tabla scrollea por dentro.
       expand: true,
+      // La paginación de la tabla va en el PIE FIJO (no se va con las filas).
+      footer: HsPager(
+        total: _visiblePackages.length,
+        page: _page,
+        pageSize: _pageSize,
+        onPage: (p) => setState(() => _page = p),
+        onPageSize: (n) => setState(() {
+          _pageSize = n;
+          _page = 1;
+        }),
+      ),
       // En el teléfono los dos botones van en UNA fila (se desliza si no
       // caben): apilados se comían el alto de la tabla.
       actionsInline: true,
       stats: [
         StatPill(
-            icon: Icons.savings_outlined,
-            label: 'Ganado ${hsMoney(t.disponible, currency)}'),
+          icon: Icons.savings_outlined,
+          label: 'Ganado ${hsMoney(t.disponible, currency)}',
+        ),
         StatPill(
-            icon: Icons.lock_outline_rounded,
-            label: 'Ahorro ${hsMoney(t.ahorro, currency)}'),
+          icon: Icons.lock_outline_rounded,
+          label: 'Ahorro ${hsMoney(t.ahorro, currency)}',
+        ),
         StatPill(
-            icon: Icons.trending_down_rounded,
-            label: 'Salidas ${hsMoney(t.gastado, currency)}'),
+          icon: Icons.trending_down_rounded,
+          label: 'Salidas ${hsMoney(t.gastado, currency)}',
+        ),
       ],
       actions: [
         if (_canSave) ...[
@@ -324,65 +410,68 @@ class _FinancePageState extends State<FinancePage> {
     // bloques de arriba (encabezado + resumen) tienen alto propio y, si no
     // caben junto con la tabla, todo baja a UNA zona con scroll en vez de
     // recortarse.
-    return LayoutBuilder(builder: (context, box) {
-      const header = 48.0; // encabezado del resumen + su separación
-      final summary = _kpisOpen ? _kSummaryHeight : 0.0;
-      final caben = box.maxWidth >= 980 &&
-          box.maxHeight >= header + summary + _kTableMinHeight;
+    return LayoutBuilder(
+      builder: (context, box) {
+        const header = 48.0; // encabezado del resumen + su separación
+        final summary = _kpisOpen ? _kSummaryHeight : 0.0;
+        final caben =
+            box.maxWidth >= 980 &&
+            box.maxHeight >= header + summary + _kTableMinHeight;
 
-      // Resumen arriba: encabezado + (si está abierto) los cuatro grupos.
-      final top = <Widget>[
-        _kpiHeader(scheme, t, showEarned: false),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          alignment: Alignment.topCenter,
-          child: _kpisOpen
-              ? Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: _MoneySummary(totals: t, currency: currency),
-                )
-              : const SizedBox(width: double.infinity),
-        ),
-      ];
+        // Resumen arriba: encabezado + (si está abierto) los cuatro grupos.
+        final top = <Widget>[
+          _kpiHeader(scheme, t, showEarned: false),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: _kpisOpen
+                ? Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _MoneySummary(totals: t, currency: currency),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
+        ];
 
-      // Cabe: el resumen queda fijo arriba y abajo la tabla | gráfica + ahorro
-      // se reparten el resto del alto (sin scroll de página).
-      if (caben) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ...top,
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(flex: 3, child: _tableCard(scheme, currency)),
-                  const SizedBox(width: 14),
-                  Expanded(flex: 2, child: _sideColumn(scheme, t, currency)),
-                ],
+        // Cabe: el resumen queda fijo arriba y abajo la tabla | gráfica + ahorro
+        // se reparten el resto del alto (sin scroll de página).
+        if (caben) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...top,
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 3, child: _tableCard(scheme, currency)),
+                    const SizedBox(width: 14),
+                    Expanded(flex: 2, child: _sideColumn(scheme, t, currency)),
+                  ],
+                ),
               ),
-            ),
-          ],
-        );
-      }
+            ],
+          );
+        }
 
-      // Angosto o bajo: todo en UNA zona con scroll (la página no crece y cada
-      // pieza conserva su espacio; nada se recorta).
-      return SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ...top,
-            _tableCard(scheme, currency, inline: true),
-            const SizedBox(height: 14),
-            _chartCard(scheme),
-            const SizedBox(height: 14),
-            _savingsCard(scheme, t, currency),
-          ],
-        ),
-      );
-    });
+        // Angosto o bajo: todo en UNA zona con scroll (la página no crece y cada
+        // pieza conserva su espacio; nada se recorta).
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...top,
+              _tableCard(scheme, currency, inline: true),
+              const SizedBox(height: 14),
+              _chartCard(scheme),
+              const SizedBox(height: 14),
+              _savingsCard(scheme, t, currency),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   /// Encabezado del bloque de cuadros: título + botón para minimizar/mostrar
@@ -391,14 +480,20 @@ class _FinancePageState extends State<FinancePage> {
   /// Se usa en móvil y en escritorio. En escritorio el "Ganado" del extremo
   /// se omite ([showEarned] = false): ese número ya va en la píldora de la
   /// cabecera y repetirlo sería ruido.
-  Widget _kpiHeader(ColorScheme scheme, FinanceTotals t,
-      {bool showEarned = true}) {
+  Widget _kpiHeader(
+    ColorScheme scheme,
+    FinanceTotals t, {
+    bool showEarned = true,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Icon(Icons.account_balance_wallet_outlined,
-              size: 16, color: scheme.primary),
+          Icon(
+            Icons.account_balance_wallet_outlined,
+            size: 16,
+            color: scheme.primary,
+          ),
           const SizedBox(width: 7),
           Expanded(
             child: Text(
@@ -421,15 +516,20 @@ class _FinancePageState extends State<FinancePage> {
             ),
           const SizedBox(width: 4),
           Tooltip(
-            message: _kpisOpen ? 'Minimizar los cuadros' : 'Mostrar los cuadros',
+            message: _kpisOpen
+                ? 'Minimizar los cuadros'
+                : 'Mostrar los cuadros',
             child: IconButton(
               visualDensity: VisualDensity.compact,
               onPressed: () => setState(() => _kpisOpen = !_kpisOpen),
               icon: AnimatedRotation(
                 turns: _kpisOpen ? 0 : .5,
                 duration: const Duration(milliseconds: 180),
-                child: Icon(Icons.keyboard_arrow_up_rounded,
-                    size: 20, color: scheme.onSurfaceVariant),
+                child: Icon(
+                  Icons.keyboard_arrow_up_rounded,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
@@ -453,33 +553,31 @@ class _FinancePageState extends State<FinancePage> {
   }
 
   Widget _chartCard(ColorScheme scheme) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Icon(Icons.bar_chart_rounded,
-                      size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Últimos 6 meses',
-                      style: TextStyle(
-                          fontSize: 13.5, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ],
+              Icon(Icons.bar_chart_rounded, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Últimos 6 meses',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                ),
               ),
-              const SizedBox(height: 12),
-              FinanceMonthBars(months: _data.months, height: 120),
-              const SizedBox(height: 12),
-              const FinanceLegend(),
             ],
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          FinanceMonthBars(months: _data.months, height: 120),
+          const SizedBox(height: 12),
+          const FinanceLegend(),
+        ],
+      ),
+    ),
+  );
 
   /// Tarjeta del AHORRO: su total y el botón para apartar más.
   /// En pantallas angostas el botón baja a su propia línea: así el monto no
@@ -518,44 +616,43 @@ class _FinancePageState extends State<FinancePage> {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: LayoutBuilder(builder: (context, box) {
-          final header = Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: teal.withValues(alpha: .13),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(Icons.savings_rounded, color: teal, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: texts),
-            ],
-          );
-          if (button != null && box.maxWidth < 480) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final header = Row(
               children: [
-                header,
-                const SizedBox(height: 12),
-                button,
+                Container(
+                  width: 42,
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: teal.withValues(alpha: .13),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(
+                    Icons.savings_rounded,
+                    color: teal,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: texts),
               ],
             );
-          }
-          return Row(
-            children: [
-              Expanded(child: header),
-              if (button != null) ...[
-                const SizedBox(width: 12),
-                button,
+            if (button != null && box.maxWidth < 480) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [header, const SizedBox(height: 12), button],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: header),
+                if (button != null) ...[const SizedBox(width: 12), button],
               ],
-            ],
-          );
-        }),
+            );
+          },
+        ),
       ),
     );
   }
@@ -566,8 +663,11 @@ class _FinancePageState extends State<FinancePage> {
 
   /// La tarjeta de la tabla. [inline] = sin lista propia (la usa la vista
   /// angosta, que mete todo en una sola zona con scroll).
-  Widget _tableCard(ColorScheme scheme, String currency,
-      {bool inline = false}) {
+  Widget _tableCard(
+    ColorScheme scheme,
+    String currency, {
+    bool inline = false,
+  }) {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
@@ -575,17 +675,39 @@ class _FinancePageState extends State<FinancePage> {
           final wide = box.maxWidth >= 620;
           final head = <Widget>[
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+              child: HsSearchFilterBar(
+                hint: 'Buscar paquete, cliente o movimiento…',
+                initial: _query,
+                onChanged: (v) => setState(() {
+                  _query = v;
+                  _page = 1;
+                }),
+                groups: _filterGroups,
+                selected: {'view': _viewFilter},
+                onApply: (filters) => setState(() {
+                  _viewFilter = filters['view'] ?? '';
+                  _page = 1;
+                }),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
               child: Row(
                 children: [
-                  Icon(Icons.table_chart_outlined,
-                      size: 18, color: scheme.primary),
+                  Icon(
+                    Icons.table_chart_outlined,
+                    size: 18,
+                    color: scheme.primary,
+                  ),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
                       'Dinero por paquete y movimiento',
                       style: TextStyle(
-                          fontSize: 13.5, fontWeight: FontWeight.w800),
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
@@ -633,28 +755,55 @@ class _FinancePageState extends State<FinancePage> {
     );
   }
 
-  List<Widget> _tableRows(ColorScheme scheme, bool wide, String currency) => [
+  List<Widget> _tableRows(ColorScheme scheme, bool wide, String currency) {
+    // Paginado: la tabla muestra la página actual (30 de fábrica). Los totales
+    // de arriba siguen siendo de TODO el catálogo: los calcula el backend.
+    final visible = _visiblePackages;
+    final pagedRows = HsPages(
+      total: visible.length,
+      page: _page,
+      pageSize: _pageSize,
+    ).slice(visible);
+    final kinds = _visibleKinds;
+    return [
+      if (_showPackages) ...[
         _groupHead(scheme, 'PAQUETES', Icons.inventory_2_outlined),
-        if (_data.packages.isEmpty)
+        if (visible.isEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
             child: Text(
-              'Todavía no hay paquetes activos.',
+              _data.packages.isEmpty
+                  ? 'Todavía no hay paquetes activos.'
+                  : 'Ningún paquete coincide con la búsqueda.',
               style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           )
-        else
-          for (final p in _data.packages)
-            _packageRow(scheme, p, wide, currency),
+        else ...[
+          for (final p in pagedRows) _packageRow(scheme, p, wide, currency),
+        ],
         const SizedBox(height: 6),
+      ],
+      if (_showMovements) ...[
         _groupHead(scheme, 'MOVIMIENTOS', Icons.receipt_long_outlined),
         // El dinero del negocio (sin paquete) va PRIMERO y aparte: es el que
         // se registra con "Agregar movimiento" sin elegir paquete.
-        if (_data.generalMovements.isNotEmpty || !_data.general.isEmpty)
+        if ((_data.generalMovements.isNotEmpty || !_data.general.isEmpty) &&
+            (_query.trim().isEmpty ||
+                'general sin paquete'.contains(_query.trim().toLowerCase())))
           _generalRow(scheme, wide, currency),
-        for (final kind in _kKindRows) _kindRow(scheme, kind, wide, currency),
-        const SizedBox(height: 8),
-      ];
+        for (final kind in kinds) _kindRow(scheme, kind, wide, currency),
+        if (kinds.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: Text(
+              'Ningún tipo de movimiento coincide con la búsqueda.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ),
+      ],
+      const SizedBox(height: 8),
+    ];
+  }
 
   /// Fila de los movimientos GENERALES (sin paquete): el dinero del negocio
   /// que no se atribuye a ningún paquete del cliente.
@@ -680,12 +829,18 @@ class _FinancePageState extends State<FinancePage> {
                       AnimatedRotation(
                         turns: open ? .25 : 0,
                         duration: const Duration(milliseconds: 180),
-                        child: Icon(Icons.chevron_right_rounded,
-                            size: 18, color: scheme.onSurfaceVariant),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(width: 6),
-                      const Icon(Icons.storefront_outlined,
-                          size: 16, color: FinanceColors.blue),
+                      const Icon(
+                        Icons.storefront_outlined,
+                        size: 16,
+                        color: FinanceColors.blue,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Column(
@@ -696,19 +851,21 @@ class _FinancePageState extends State<FinancePage> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: wide ? 12.5 : 12,
-                                  fontWeight: FontWeight.w700),
+                                fontSize: wide ? 12.5 : 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             Text(
                               moves.isEmpty
                                   ? 'Movimientos del negocio'
                                   : '${moves.length} movimiento'
-                                      '${moves.length == 1 ? '' : 's'} del negocio',
+                                        '${moves.length == 1 ? '' : 's'} del negocio',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: 10.5,
-                                  color: scheme.onSurfaceVariant),
+                                fontSize: 10.5,
+                                color: scheme.onSurfaceVariant,
+                              ),
                             ),
                           ],
                         ),
@@ -724,18 +881,12 @@ class _FinancePageState extends State<FinancePage> {
                 ),
                 if (wide)
                   _amountCell(
-                    g.ahorro > 0
-                        ? hsMoney(g.ahorro, currency)
-                        : '—',
-                    g.ahorro > 0
-                        ? FinanceColors.teal
-                        : scheme.onSurfaceVariant,
+                    g.ahorro > 0 ? hsMoney(g.ahorro, currency) : '—',
+                    g.ahorro > 0 ? FinanceColors.teal : scheme.onSurfaceVariant,
                   ),
                 if (wide)
                   _amountCell(
-                    g.salidas > 0
-                        ? hsMoney(g.salidas, currency)
-                        : '—',
+                    g.salidas > 0 ? hsMoney(g.salidas, currency) : '—',
                     g.salidas > 0 ? FinanceColors.red : scheme.onSurfaceVariant,
                   ),
               ],
@@ -752,28 +903,38 @@ class _FinancePageState extends State<FinancePage> {
               children: [
                 _pillsRow([
                   _DetailPill('Gastos', g.gastos, FinanceColors.red, currency),
-                  _DetailPill('Inversión', g.inversiones, FinanceColors.violet,
-                      currency),
+                  _DetailPill(
+                    'Inversión',
+                    g.inversiones,
+                    FinanceColors.investment,
+                    currency,
+                  ),
                   _DetailPill('Ahorro', g.ahorro, FinanceColors.teal, currency),
-                  _DetailPill('Abono externo', g.abonoExterno,
-                      FinanceColors.blue, currency),
+                  _DetailPill(
+                    'Abono externo',
+                    g.abonoExterno,
+                    FinanceColors.blue,
+                    currency,
+                  ),
                 ]),
                 if (_canSave) ...[
                   const SizedBox(height: 10),
                   _buttonsRow([
-                      FilledButton.icon(
-                        onPressed: () => _addMovement(kind: 'gasto'),
-                        icon: const Icon(Icons.add, size: 16),
-                        label: const Text('Agregar movimiento general'),
-                      ),
+                    FilledButton.icon(
+                      onPressed: () => _addMovement(kind: 'gasto'),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Agregar movimiento general'),
+                    ),
                   ]),
                 ],
                 const SizedBox(height: 10),
                 if (moves.isEmpty)
                   Text(
                     'Sin movimientos generales registrados.',
-                    style:
-                        TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   )
                 else
                   for (final m in moves.take(8))
@@ -792,23 +953,23 @@ class _FinancePageState extends State<FinancePage> {
   Widget _headRow(ColorScheme scheme, bool wide) {
     final conceptFlex = wide ? 5 : 7;
     Widget head(String label, int flex) => Expanded(
-          flex: flex,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Text(
-              label.toUpperCase(),
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 9.5,
-                letterSpacing: .4,
-                fontWeight: FontWeight.w800,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
+      flex: flex,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Text(
+          label.toUpperCase(),
+          textAlign: TextAlign.right,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 9.5,
+            letterSpacing: .4,
+            fontWeight: FontWeight.w800,
+            color: scheme.onSurfaceVariant,
           ),
-        );
+        ),
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 7, 0, 7),
       child: Row(
@@ -861,7 +1022,11 @@ class _FinancePageState extends State<FinancePage> {
 
   /// Fila de UN paquete (se expande para ver su desglose).
   Widget _packageRow(
-      ColorScheme scheme, FinancePackage p, bool wide, String currency) {
+    ColorScheme scheme,
+    FinancePackage p,
+    bool wide,
+    String currency,
+  ) {
     final key = 'pkg:${p.id}';
     final open = _open.contains(key);
     return Column(
@@ -879,12 +1044,18 @@ class _FinancePageState extends State<FinancePage> {
                       AnimatedRotation(
                         turns: open ? .25 : 0,
                         duration: const Duration(milliseconds: 180),
-                        child: Icon(Icons.chevron_right_rounded,
-                            size: 18, color: scheme.onSurfaceVariant),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(width: 6),
-                      Icon(Icons.inventory_2_outlined,
-                          size: 16, color: scheme.primary),
+                      Icon(
+                        Icons.inventory_2_outlined,
+                        size: 16,
+                        color: scheme.primary,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Column(
@@ -895,16 +1066,18 @@ class _FinancePageState extends State<FinancePage> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: wide ? 12.5 : 12,
-                                  fontWeight: FontWeight.w700),
+                                fontSize: wide ? 12.5 : 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             Text(
                               p.clientName.isEmpty ? '—' : p.clientName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: 10.5,
-                                  color: scheme.onSurfaceVariant),
+                                fontSize: 10.5,
+                                color: scheme.onSurfaceVariant,
+                              ),
                             ),
                           ],
                         ),
@@ -914,10 +1087,11 @@ class _FinancePageState extends State<FinancePage> {
                 ),
                 // GANADO = el disponible del paquete.
                 _amountCell(
-                    hsMoney(p.disponible, currency), FinanceColors.green),
+                  hsMoney(p.disponible, currency),
+                  FinanceColors.green,
+                ),
                 if (wide)
-                  _amountCell(
-                      hsMoney(p.ahorro, currency), FinanceColors.teal),
+                  _amountCell(hsMoney(p.ahorro, currency), FinanceColors.teal),
                 if (wide)
                   _amountCell(hsMoney(p.salidas, currency), FinanceColors.red),
               ],
@@ -948,19 +1122,39 @@ class _FinancePageState extends State<FinancePage> {
         _pillsRow([
           _DetailPill('Cobrado', p.paid, FinanceColors.green, currency),
           _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
-          _DetailPill('Ganado (disponible)', p.disponible,
-              FinanceColors.green, currency),
+          _DetailPill(
+            'Ganado (disponible)',
+            p.disponible,
+            FinanceColors.green,
+            currency,
+          ),
           _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
           _DetailPill('Gastos', p.gastos, FinanceColors.red, currency),
           _DetailPill(
-              'Inversión', p.inversiones, FinanceColors.violet, currency),
+            'Inversión',
+            p.inversiones,
+            FinanceColors.investment,
+            currency,
+          ),
           _DetailPill(
-              'Abono externo', p.abonoExterno, FinanceColors.blue, currency),
+            'Abono externo',
+            p.abonoExterno,
+            FinanceColors.blue,
+            currency,
+          ),
           if (p.pagos > 0)
-            _DetailPill('Pagos (solo registro)', p.pagos, FinanceColors.amber,
-                currency),
-          _DetailPill('Ganancia estimada', p.gananciaEstimada,
-              FinanceColors.teal, currency),
+            _DetailPill(
+              'Pagos (solo registro)',
+              p.pagos,
+              FinanceColors.amber,
+              currency,
+            ),
+          _DetailPill(
+            'Ganancia estimada',
+            p.gananciaEstimada,
+            FinanceColors.teal,
+            currency,
+          ),
         ]),
         if (_canSave) ...[
           const SizedBox(height: 12),
@@ -1037,8 +1231,11 @@ class _FinancePageState extends State<FinancePage> {
                       AnimatedRotation(
                         turns: open ? .25 : 0,
                         duration: const Duration(milliseconds: 180),
-                        child: Icon(Icons.chevron_right_rounded,
-                            size: 18, color: scheme.onSurfaceVariant),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(width: 6),
                       Icon(_kindIcon(kind), size: 16, color: color),
@@ -1049,15 +1246,15 @@ class _FinancePageState extends State<FinancePage> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: wide ? 12.5 : 12,
-                              fontWeight: FontWeight.w700),
+                            fontSize: wide ? 12.5 : 12,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                _amountCell(
-                    monto, total > 0 ? color : scheme.onSurfaceVariant),
+                _amountCell(monto, total > 0 ? color : scheme.onSurfaceVariant),
                 if (wide)
                   _amountCell(
                     kind == 'ahorro' && total > 0
@@ -1085,7 +1282,9 @@ class _FinancePageState extends State<FinancePage> {
                 ? Text(
                     'Sin registros de "${_kindLabel(kind)}".',
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1098,8 +1297,9 @@ class _FinancePageState extends State<FinancePage> {
                           child: Text(
                             'y ${moves.length - 12} más…',
                             style: TextStyle(
-                                fontSize: 11,
-                                color: scheme.onSurfaceVariant),
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
                     ],
@@ -1124,14 +1324,13 @@ class _FinancePageState extends State<FinancePage> {
   }
 
   /// Una línea de movimiento: concepto, paquete/cliente, fecha y monto.
-  Widget _movementLine(
-      ColorScheme scheme, FinanceMovement m, String currency) {
+  Widget _movementLine(ColorScheme scheme, FinanceMovement m, String currency) {
     final when = hsParseDate(m.created);
     final where = m.packageName.isEmpty
         ? m.clientName
         : (m.clientName.isEmpty
-            ? m.packageName
-            : '${m.packageName} · ${m.clientName}');
+              ? m.packageName
+              : '${m.packageName} · ${m.clientName}');
     final detail = [
       if (m.userName.trim().isNotEmpty) '→ ${m.userName.trim()}',
       if (m.description.trim().isNotEmpty) m.description.trim(),
@@ -1156,7 +1355,10 @@ class _FinancePageState extends State<FinancePage> {
           Text(
             hsMoney(m.amount, currency),
             style: TextStyle(
-                fontSize: 11.5, fontWeight: FontWeight.w800, color: color),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -1165,43 +1367,43 @@ class _FinancePageState extends State<FinancePage> {
 
   /// Celda de dinero alineada a la derecha (nunca desborda).
   Widget _amountCell(String text, Color color) => Expanded(
-        flex: 3,
-        child: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerRight,
-            child: Text(
-              text,
-              maxLines: 1,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
-            ),
+    flex: 3,
+    child: Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerRight,
+        child: Text(
+          text,
+          maxLines: 1,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w800,
+            color: color,
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   Widget _errorCard(ColorScheme scheme) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
-              const SizedBox(height: 10),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _reload,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Reintentar'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
+          const SizedBox(height: 10),
+          Text(_error!, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _reload,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar'),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
 
 /// Píldora "Concepto monto" del desglose de un paquete.
@@ -1333,9 +1535,11 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
     if (_saving) return;
     final amount = _resolved;
     if (amount <= 0) {
-      setState(() => _error = _byPercent
-          ? 'El porcentaje debe dar un monto mayor a 0'
-          : 'Escribe un monto mayor a 0');
+      setState(
+        () => _error = _byPercent
+            ? 'El porcentaje debe dar un monto mayor a 0'
+            : 'Escribe un monto mayor a 0',
+      );
       return;
     }
     setState(() {
@@ -1430,8 +1634,8 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
                 onChanged: _saving
                     ? null
                     : (v) => setState(() {
-                          if (v != null) _packageId = v;
-                        }),
+                        if (v != null) _packageId = v;
+                      }),
               ),
             ),
           ),
@@ -1447,15 +1651,18 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
                 if (kind != 'abono')
                   ChoiceChip(
                     label: Text(_kindLabel(kind)),
-                    avatar: Icon(_kindIcon(kind),
-                        size: 15, color: _kindColor(kind)),
+                    avatar: Icon(
+                      _kindIcon(kind),
+                      size: 15,
+                      color: _kindColor(kind),
+                    ),
                     selected: _kind == kind,
                     onSelected: _saving
                         ? null
                         : (_) => setState(() {
-                              _kind = kind;
-                              if (!_isSavings) _mode = 'monto';
-                            }),
+                            _kind = kind;
+                            if (!_isSavings) _mode = 'monto';
+                          }),
                   ),
             ],
           ),
@@ -1470,25 +1677,34 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
           ),
           child: Row(
             children: [
-              Icon(_baseIsGeneral
-                  ? Icons.storefront_outlined
-                  : Icons.savings_outlined, size: 16, color: color),
+              Icon(
+                _baseIsGeneral
+                    ? Icons.storefront_outlined
+                    : Icons.savings_outlined,
+                size: 16,
+                color: color,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   _baseIsGeneral
                       ? 'Disponible general del negocio (cobrado - gastado '
-                          '- ahorro + abono externo)'
+                            '- ahorro + abono externo)'
                       : 'Disponible del paquete (abonado - gastado - ahorro + '
-                          'abono externo)',
-                  style:
-                      TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+                            'abono externo)',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
               Text(
                 hsMoney(_baseDisponible, widget.currency),
                 style: TextStyle(
-                    fontSize: 12.5, fontWeight: FontWeight.w800, color: color),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
               ),
             ],
           ),
@@ -1518,8 +1734,9 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
                 ),
               ],
               selected: {_mode},
-              onSelectionChanged:
-                  _saving ? null : (s) => setState(() => _mode = s.first),
+              onSelectionChanged: _saving
+                  ? null
+                  : (s) => setState(() => _mode = s.first),
             ),
           ),
         ],
@@ -1532,8 +1749,9 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             child: TextField(
               controller: _percent,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Porcentaje',
@@ -1559,13 +1777,18 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
                         ? 'Se ahorrarán del negocio'
                         : 'Se ahorrarán',
                     style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 Text(
                   hsMoney(amount, widget.currency),
                   style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w800, color: color),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
                 ),
               ],
             ),
@@ -1576,8 +1799,9 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             child: TextField(
               controller: _amount,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Monto',
                 prefixIcon: Icon(Icons.attach_money, size: 20),
@@ -1648,84 +1872,92 @@ class _MoneySummary extends StatelessWidget {
   /// Los cuatro grupos, en el orden en que se leen: primero lo que ganas,
   /// luego lo que entra, lo que sale y al final lo apartado.
   List<_MoneyGroup> _groups() => [
-        _MoneyGroup('Lo que ganas', Icons.workspace_premium_outlined,
-            FinanceColors.green, [
-          FinanceKpi(
-            label: 'Ganado',
-            amount: totals.disponible,
-            icon: Icons.savings_outlined,
-            tint: FinanceColors.green,
-            note: '= Disponible',
-          ),
-          FinanceKpi(
-            label: 'Ganancia real',
-            amount: totals.gananciaReal,
-            icon: Icons.verified_outlined,
-            tint: FinanceColors.green,
-            note: 'Contando los gastos',
-          ),
-          FinanceKpi(
-            label: 'Ganancia estimada',
-            amount: totals.gananciaEstimada,
-            icon: Icons.insights_outlined,
-            tint: FinanceColors.teal,
-            note: 'Ahorro e inversión aparte',
-          ),
-        ]),
-        _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.green, [
-          FinanceKpi(
-            label: 'Cobrado',
-            amount: totals.ganancias,
-            icon: Icons.payments_outlined,
-            tint: FinanceColors.green,
-            note: 'Abonos recibidos',
-          ),
-          FinanceKpi(
-            label: 'Por cobrar',
-            amount: totals.porCobrar,
-            icon: Icons.hourglass_bottom_rounded,
-            tint: FinanceColors.amber,
-            note: 'De ${hsMoney(totals.facturado, currency)}',
-          ),
-          FinanceKpi(
-            label: 'Abono externo',
-            amount: totals.abonoExterno,
-            icon: Icons.account_balance_wallet_outlined,
-            tint: FinanceColors.blue,
-            note: 'Entra por fuera',
-          ),
-        ]),
-        _MoneyGroup('Salidas', Icons.trending_down, FinanceColors.red, [
-          FinanceKpi(
-            label: 'Gastos',
-            amount: totals.gastos,
-            icon: Icons.trending_down,
-            tint: FinanceColors.red,
-          ),
-          FinanceKpi(
-            label: 'Inversión',
-            amount: totals.inversiones,
-            icon: Icons.trending_up,
-            tint: FinanceColors.violet,
-          ),
-        ]),
-        _MoneyGroup('Apartado y pagos', Icons.savings_outlined,
-            FinanceColors.teal, [
-          FinanceKpi(
-            label: 'Ahorro',
-            amount: totals.ahorro,
-            icon: Icons.lock_outline_rounded,
-            tint: FinanceColors.teal,
-          ),
-          FinanceKpi(
-            label: 'Pagos',
-            amount: totals.pagos,
-            icon: Icons.handshake_outlined,
-            tint: FinanceColors.amber,
-            note: 'Solo registro',
-          ),
-        ]),
-      ];
+    _MoneyGroup(
+      'Lo que ganas',
+      Icons.workspace_premium_outlined,
+      FinanceColors.green,
+      [
+        FinanceKpi(
+          label: 'Ganado',
+          amount: totals.disponible,
+          icon: Icons.savings_outlined,
+          tint: FinanceColors.green,
+          note: '= Disponible',
+        ),
+        FinanceKpi(
+          label: 'Ganancia real',
+          amount: totals.gananciaReal,
+          icon: Icons.verified_outlined,
+          tint: FinanceColors.green,
+          note: 'Contando los gastos',
+        ),
+        FinanceKpi(
+          label: 'Ganancia estimada',
+          amount: totals.gananciaEstimada,
+          icon: Icons.insights_outlined,
+          tint: FinanceColors.teal,
+          note: 'Ahorro e inversión aparte',
+        ),
+      ],
+    ),
+    _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.green, [
+      FinanceKpi(
+        label: 'Cobrado',
+        amount: totals.ganancias,
+        icon: Icons.payments_outlined,
+        tint: FinanceColors.green,
+        note: 'Abonos recibidos',
+      ),
+      FinanceKpi(
+        label: 'Por cobrar',
+        amount: totals.porCobrar,
+        icon: Icons.hourglass_bottom_rounded,
+        tint: FinanceColors.amber,
+        note: 'De ${hsMoney(totals.facturado, currency)}',
+      ),
+      FinanceKpi(
+        label: 'Abono externo',
+        amount: totals.abonoExterno,
+        icon: Icons.account_balance_wallet_outlined,
+        tint: FinanceColors.blue,
+        note: 'Entra por fuera',
+      ),
+    ]),
+    _MoneyGroup('Salidas', Icons.trending_down, FinanceColors.red, [
+      FinanceKpi(
+        label: 'Gastos',
+        amount: totals.gastos,
+        icon: Icons.trending_down,
+        tint: FinanceColors.red,
+      ),
+      FinanceKpi(
+        label: 'Inversión',
+        amount: totals.inversiones,
+        icon: Icons.trending_up,
+        tint: FinanceColors.investment,
+      ),
+    ]),
+    _MoneyGroup(
+      'Apartado y pagos',
+      Icons.savings_outlined,
+      FinanceColors.teal,
+      [
+        FinanceKpi(
+          label: 'Ahorro',
+          amount: totals.ahorro,
+          icon: Icons.lock_outline_rounded,
+          tint: FinanceColors.teal,
+        ),
+        FinanceKpi(
+          label: 'Pagos',
+          amount: totals.pagos,
+          icon: Icons.handshake_outlined,
+          tint: FinanceColors.amber,
+          note: 'Solo registro',
+        ),
+      ],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -1813,7 +2045,9 @@ class _MoneySummary extends StatelessWidget {
                   k.label.toUpperCase(),
                   maxLines: 1,
                   style: const TextStyle(
-                      fontSize: 11.5, fontWeight: FontWeight.w800),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -1835,7 +2069,10 @@ class _MoneySummary extends StatelessWidget {
           Text(
             hsMoney(k.amount, currency),
             style: TextStyle(
-                fontSize: 13.5, fontWeight: FontWeight.w800, color: k.tint),
+              fontSize: 13.5,
+              fontWeight: FontWeight.w800,
+              color: k.tint,
+            ),
           ),
         ],
       ),

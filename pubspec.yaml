@@ -20,6 +20,7 @@ dependencies:
   http: ^1.6.0
   http_parser: ^4.1.2
   flutter_local_notifications: ^18.0.1
+  flutter_inappwebview: ^6.1.5
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -32,3 +33,9 @@ flutter:
   # que el panel, el login y la pantalla de carga enseñan LA MISMA pieza.
   assets:
     - assets/hs_icon.png
+    # El SITIO REAL empaquetado (index.html, CSS, JS e imágenes): el editor
+    # HTML del módulo "Sitio web" lo sirve en loopback para que la vista
+    # previa sea EXACTAMENTE la web, no una maqueta de Flutter.
+    - assets/site/
+    - assets/site/gallery/assets/
+    - assets/site/images/

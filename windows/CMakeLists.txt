@@ -32,6 +32,12 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# MSVC (Visual Studio 2026) retiró <experimental/coroutine>, pero el plugin
+# flutter_inappwebview_windows todavía la usa: sin esta macro el panel no
+# compila. Se define a nivel de DIRECTORIO para que llegue también a los
+# plugins (que se agregan más abajo con add_subdirectory).
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
@@ -43,6 +49,12 @@ function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
+  # flutter_inappwebview_windows (y cualquier plugin que use <experimental/
+  # coroutine>) no compila con Visual Studio 2026: MSVC ya retiró esa cabecera
+  # y lanza un static_assert. La macro la deja pasar para no romper la build
+  # del panel por un plugin.
+  target_compile_definitions(${TARGET} PRIVATE
+    "_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
 endfunction()
 
 # Flutter library and tool build rules.

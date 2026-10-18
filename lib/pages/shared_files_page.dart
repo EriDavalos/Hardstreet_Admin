@@ -1,21 +1,23 @@
 import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../app_platform.dart';
-import '../drive_base.dart';
 import '../hs_api.dart';
-import '../hs_format.dart';
 import '../local_share_agent.dart';
 import '../local_share_service.dart';
+import '../share_permissions.dart';
+import '../shared_drive.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
-import '../widgets/drive_thumb.dart';
 import '../widgets/hs_modal.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
-import 'drive_page.dart' show showDriveImageViewer;
+import 'drive_page.dart' show DrivePage;
 
 /// Selector de carpeta LOCAL de la computadora. En pruebas se sobreescribe:
 /// el diálogo del sistema no se puede manejar desde un widget test.
@@ -73,6 +75,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   String? _error;
   List<Map<String, dynamic>> _shared = const [];
   List<Map<String, dynamic>> _received = const [];
+
+  // Paginación de las carpetas (30 de fábrica; 50/100/200 abajo).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
   List<Map<String, dynamic>> _candidates = const [];
   bool _canShare = true;
   bool _canDelete = true;
@@ -80,19 +86,34 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   /// Cuadrícula (por defecto, como el Drive) o lista.
   bool _grid = true;
 
+  /// La carpeta compartida ABIERTA, con la MISMA vista del Drive.
+  ///
+  /// Se navega DENTRO de este módulo: la sección cambia de vista, no se abre
+  /// otra ventana ni se salta al módulo Archivos.
+  SharedDrive? _open;
+
+  /// La carpeta abierta es MÍA (lo que yo comparto) o me la comparten.
+  bool _openIsMine = false;
+
+  /// No se pudo abrir la carpeta: el motivo se muestra EN PANTALLA (con el
+  /// detalle del servidor y un botón para reintentar).
+  ({Map<String, dynamic> entry, String detail, String hint})? _openProblem;
+
+  /// Última apertura pedida. Cada intento se queda con su número y, cuando
+  /// termina, si ya se pidió OTRA cosa (o se volvió al listado) se DESCARTA:
+  /// así una respuesta que llega tarde no pinta la carpeta que ya dejaste.
+  int _openTicket = 0;
+
+  /// Carpeta MARCADA en el listado (un clic con el ratón) y datos del último
+  /// clic: en la computadora un clic marca y el DOBLE clic entra, como en el
+  /// explorador de Windows. En el celular (dedo) un toque entra directo.
+  String? _markedPath;
+  String? _lastClickPath;
+  DateTime? _lastClickAt;
+  PointerDeviceKind _lastPointerKind = PointerDeviceKind.mouse;
+
   /// Sección que se está viendo: lo que me comparten o lo que yo comparto.
   _SharedView _view = _SharedView.shared;
-
-  /// CARPETA ABIERTA dentro de la sección: null = raíz (el listado).
-  Map<String, dynamic>? _open;
-
-  /// Subcarpeta dentro de una carpeta LOCAL recibida.
-  List<String> _localPath = const [];
-
-  /// Contenido de la carpeta compartida abierta.
-  List<LocalShareItem> _localItems = const [];
-  bool _localLoading = false;
-  String? _localError;
 
   /// ESTADO de cada compartido (servidor / computadora del dueño / apagada).
   /// Es lo que deja VER, desde el listado, si una carpeta está funcionando
@@ -102,20 +123,17 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   /// Último listado de estados pedido (para descartar respuestas viejas).
   int _statusTicket = 0;
 
-  /// Último listado pedido dentro de la carpeta abierta (ver [_loadLocal]).
-  int _localTicket = 0;
-
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+
+  /// Filtro del módulo: '' = todos · 'local' = computadora · 'server' = drive.
+  String _originFilter = '';
 
   /// En MÓVIL el módulo es de SOLO LECTURA: compartir exige elegir una carpeta
   /// del equipo y eso se hace en la computadora.
   bool get _readOnly => isAndroidPlatform || useLongPressDrag;
 
-  bool get _inside => _open != null;
-
-  /// El filtro del buscador (solo aplica al listado, no dentro de una carpeta:
-  /// ahí se navega, igual que en el Drive).
+  /// El filtro del buscador (solo aplica al listado de carpetas).
   String? get _filter {
     final q = _searchController.text.trim().toLowerCase();
     return q.isEmpty ? null : q;
@@ -167,11 +185,20 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       // …SALVO que el usuario lo haya encendido a mano en el switch: entonces
       // sigue encendido, que es justo lo que pidió al encenderlo.
       if (!_readOnly) {
-        if (data.shared.any((s) => s['local'] == true) ||
-            LocalShareAgent.instance.manualOn) {
-          LocalShareAgent.instance.start();
+        final agent = LocalShareAgent.instance;
+        // Si el usuario ya eligió el switch, ESA preferencia manda: apagado
+        // sigue apagado aunque haya carpetas locales compartidas. Solo sin
+        // preferencia explícita se enciende solo al haber algo que servir.
+        if (agent.manualPreferenceKnown) {
+          if (agent.manualOn) {
+            agent.start();
+          } else {
+            agent.stop();
+          }
+        } else if (data.shared.any((s) => s['local'] == true)) {
+          agent.start();
         } else {
-          LocalShareAgent.instance.stop();
+          agent.stop();
         }
       }
       // Y se pregunta al servidor del drive de dónde se sirve CADA carpeta:
@@ -261,6 +288,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           final m = o.cast<String, dynamic>();
           if (!owners.any((x) => x['id'] == m['id'])) owners.add(m);
         }
+        // Si más de un dueño comparte la MISMA carpeta, los permisos se
+        // suman: si uno me dio editar, puedo editar.
+        out[i]['permissions'] = SharePermissions.fromJson(out[i]['permissions'])
+            .merge(SharePermissions.fromJson(r['permissions']))
+            .toJson();
       }
     }
     return out;
@@ -294,109 +326,208 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     return haystack.toLowerCase().contains(q);
   }
 
+  /// ¿La carpeta pasa el filtro de origen (computadora / servidor)?
+  bool _matchesOrigin(Map<String, dynamic> entry) {
+    if (_originFilter.isEmpty) return true;
+    final local = entry['local'] == true;
+    return _originFilter == 'local' ? local : !local;
+  }
+
+  /// Carpetas de la sección visible (una por carpeta).
+  List<Map<String, dynamic>> get _currentFolders =>
+      _view == _SharedView.shared ? _receivedFolders : _myFolders;
+
+  List<HsFilterGroup> _filterGroups() {
+    final folders = _currentFolders;
+    final local = folders.where((e) => e['local'] == true).length;
+    return [
+      HsFilterGroup(
+        id: 'origen',
+        title: '¿Dónde está la carpeta?',
+        help: 'Las de la computadora las sirve la app de su dueño; las del '
+            'drive están siempre en el servidor.',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Todas',
+            count: folders.length,
+            icon: Icons.folder_copy_outlined,
+          ),
+          HsFilterOption(
+            value: 'local',
+            label: 'En la computadora',
+            count: local,
+            icon: Icons.computer_rounded,
+            color: const Color(0xFF0D9488),
+          ),
+          HsFilterOption(
+            value: 'server',
+            label: 'En el servidor',
+            count: folders.length - local,
+            icon: Icons.cloud_outlined,
+            color: const Color(0xFF3B82F6),
+          ),
+        ],
+      ),
+    ];
+  }
+
   // ---------------------------------------------------------------
   // Navegación
   // ---------------------------------------------------------------
 
-  /// Abre una carpeta recibida: navega su contenido aquí mismo (solo lectura).
-  void _openReceived(Map<String, dynamic> r) => _openFolder(r);
+  void _openReceived(Map<String, dynamic> r) => unawaited(_openEntry(r));
 
-  /// Abre el detalle de una carpeta MÍA: a quiénes se la compartí y, debajo,
-  /// su contenido (solo lectura).
-  void _openMine(Map<String, dynamic> m) => _openFolder(m);
+  void _openMine(Map<String, dynamic> m) => unawaited(_openEntry(m));
 
-  /// Abre una carpeta compartida DENTRO del módulo (nunca salta a Archivos).
-  void _openFolder(Map<String, dynamic> entry) {
-    setState(() {
-      _open = entry;
-      _localPath = const [];
-      _localItems = const [];
-      _localError = null;
-      _searchController.clear();
-    });
-    _loadLocal();
+  /// Un clic (o un toque) sobre una carpeta del listado.
+  ///
+  /// * DEDO (celular): entra directo — ahí no existe el doble clic.
+  /// * RATÓN: el primer clic la MARCA; el segundo clic seguido (mismo botón,
+  ///   misma carpeta, menos de 400 ms) entra. Así se puede marcar sin abrir,
+  ///   como en el explorador de Windows.
+  void _onFolderTap(Map<String, dynamic> entry) {
+    final path = '${entry['path'] ?? ''}';
+    if (_lastPointerKind == PointerDeviceKind.touch) {
+      unawaited(_openEntry(entry));
+      return;
+    }
+    final now = DateTime.now();
+    final isDouble =
+        path == _lastClickPath &&
+        _lastClickAt != null &&
+        now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
+    _lastClickPath = path;
+    _lastClickAt = now;
+    if (isDouble) {
+      _lastClickPath = null;
+      _lastClickAt = null;
+      unawaited(_openEntry(entry));
+      return;
+    }
+    setState(() => _markedPath = path);
   }
 
-  Future<void> _loadLocal() async {
-    final r = _open;
-    final shareId = (r?['shareId'] as num?)?.toInt() ?? 0;
-    if (r == null) return;
-    // Ticket del listado: si mientras cargaba el usuario se fue a otra carpeta
-    // (o a otro compartido), la respuesta vieja NO se pinta encima de la
-    // nueva: se descarta.
-    final ticket = ++_localTicket;
+  /// Abre una carpeta compartida con LA MISMA vista del Drive: cuadrícula y
+  /// lista, recuadro de selección, clic derecho, arrastrar y soltar, subir,
+  /// mover, renombrar, eliminar y visor. Las acciones que se ofrecen salen de
+  /// los permisos que concedió quien comparte (el dueño tiene todo).
+  Future<void> _openEntry(Map<String, dynamic> entry) async {
+    final shareId = _shareIdOf(entry);
     if (shareId <= 0) {
-      // Sin compartido no hay a quién pedirle el contenido: se dice, en vez de
-      // dejar la carpeta girando para siempre.
+      _snack('No se pudo identificar la carpeta compartida');
+      return;
+    }
+    final ticket = ++_openTicket;
+    final label = '${entry['path'] ?? ''}'
+        .split(RegExp(r'[\\/]'))
+        .where((s) => s.isNotEmpty)
+        .lastOrNull;
+    final mine = _view == _SharedView.mine;
+    // El dueño puede todo; el destinatario, lo que le dieron (la API manda
+    // los permisos de cada compartido en el listado).
+    var rights = mine
+        ? SharePermissions.owner
+        : SharePermissions.fromJson(
+            entry['permissions'],
+            fallback: SharePermissions.readOnly,
+          );
+    if (!mine && !rights.view) {
+      HsToast.error(
+        'No puedes ver esa carpeta',
+        details: 'Quien la comparte no te dio permiso para verla.',
+      );
+      return;
+    }
+
+    // ¿De dónde se puede servir AHORA? La carpeta puede estar en la
+    // computadora del dueño: si su app no está abierta (o el servidor no
+    // tiene su base de datos), se EXPLICA en pantalla —con el motivo que dio
+    // el servidor y un botón para reintentar—, en vez de un error crudo.
+    final service = _local;
+    final status = await service.status(shareId);
+    // Se pidió otra carpeta (o se volvió al listado) mientras se preguntaba:
+    // este intento ya no manda.
+    if (!mounted || ticket != _openTicket) return;
+    // Los permisos los manda también el SERVIDOR DEL DRIVE, que es quien los
+    // exige en cada operación: si los mandó, son ÉSOS. Así la vista ofrece
+    // exactamente lo que el servidor va a aceptar, aunque el panel tenga el
+    // dato viejo o su base de datos no traiga las columnas de permisos.
+    if (!mine && status.permissionsKnown) rights = status.permissions;
+    final blocked =
+        !status.available &&
+        (status.reason != null || status.servedFrom != 'unknown');
+    if (blocked) {
       setState(() {
-        _localLoading = false;
-        _localItems = const [];
-        _localError = 'No se pudo identificar la carpeta compartida';
+        _open = null;
+        _openIsMine = mine;
+        _openProblem = (
+          entry: entry,
+          detail:
+              status.detail ??
+              'El servidor del drive no puede servir esta carpeta ahora mismo.',
+          hint: _problemHint(status),
+        );
       });
       return;
     }
+
+    // La carpeta se abre AQUÍ MISMO: cambia la VISTA de esta sección (no se
+    // abre otra ventana, ni con otro encabezado, ni se salta a Archivos).
+    final drive = SharedDrive(
+      service: service,
+      shareId: shareId,
+      label: label ?? 'Carpeta compartida',
+      rights: rights,
+      // La miga raíz es el MÓDULO: tocarla vuelve a este listado.
+      sectionLabel: mine ? 'Lo que comparto' : 'Compartido conmigo',
+    );
     setState(() {
-      _localLoading = true;
-      _localError = null;
+      _open = drive;
+      _openIsMine = mine;
+      _openProblem = null;
     });
-    try {
-      // La carpeta puede estar en la computadora del dueño: si su app no está
-      // abierta, se EXPLICA (en vez de dejar un error crudo del servidor).
-      final status = await _local.status(shareId);
-      if (!mounted || ticket != _localTicket) return;
-      if (status.servedFrom == 'offline') {
-        setState(() {
-          _localItems = const [];
-          _localLoading = false;
-          _localError =
-              'Esa carpeta está en la computadora de quien la '
-              'comparte: se abre cuando su aplicación esté abierta';
-        });
-        return;
-      }
-      // El servidor CONTESTÓ que no puede servirla (el compartido se dio de
-      // baja, no tiene base de datos…): se explica en pantalla, en vez de
-      // intentar abrirla para que falle con un error crudo.
-      if (status.servedFrom == 'unavailable') {
-        final why = status.detail?.trim() ?? '';
-        setState(() {
-          _localItems = const [];
-          _localLoading = false;
-          _localError = why.isEmpty
-              ? 'El servidor del drive no pudo abrir esta carpeta compartida'
-              : why;
-        });
-        return;
-      }
-      // El servidor del drive no puede resolver el compartido (base de datos
-      // sin configurar, o compartido dado de baja): se dice tal cual, con la
-      // explicación que manda el servidor.
-      if (status.servedFrom == 'unknown' &&
-          status.hasDatabase == false &&
-          status.detail != null) {
-        setState(() {
-          _localItems = const [];
-          _localLoading = false;
-          _localError = status.detail;
-        });
-        return;
-      }
-      final data = await _local.list(shareId, _localPath);
-      if (!mounted || ticket != _localTicket) return;
-      setState(() {
-        _localItems = data.items;
-        _localLoading = false;
-      });
-      // Las miniaturas se dejan pedidas ya: al abrir la carpeta se ve la
-      // cuadrícula con las fotos en vez de ir apareciendo una por una.
-      _warmThumbs(data.items);
-    } catch (e) {
-      if (!mounted || ticket != _localTicket) return;
-      setState(() {
-        _localError = '$e';
-        _localLoading = false;
-      });
+    // La PRIMERA carga se pide YA: el Drive no carga por su cuenta, así que
+    // sin esto una carpeta CON contenido se abría vacía.
+    unawaited(drive.openPath(const []));
+  }
+
+  /// Cierra la carpeta abierta y vuelve al listado del módulo.
+  void _closeOpen() {
+    if (_open == null && _openProblem == null) return;
+    // Lo que estuviera pidiéndose deja de mandar.
+    _openTicket++;
+    setState(() {
+      _open = null;
+      _openIsMine = false;
+      _openProblem = null;
+      _markedPath = null;
+      _lastClickPath = null;
+      _lastClickAt = null;
+    });
+    // Lo que pudo cambiar dentro (o el estado del servicio) se pone al día.
+    unawaited(_load());
+  }
+
+  /// Por qué NO se puede abrir la carpeta, dicho en claro y con la salida.
+  static String _problemHint(LocalShareStatus status) {
+    // La base de datos del drive: sin ella el servidor no sabe a quién
+    // pertenece cada compartido (y el error no es "la carpeta no existe").
+    if (status.reason == 'no-db' ||
+        status.reason == 'share-db' ||
+        !status.hasDatabase) {
+      return 'El servidor del drive no tiene su base de datos (DRIVE_DB) a '
+          'mano: sin ella no puede resolver las carpetas compartidas.';
     }
+    // Las carpetas de la COMPUTADORA las sirve la app de su dueño: el
+    // servidor solo hace de puente mientras esa app esté abierta.
+    if (status.servedFrom == 'offline' || status.localFolder) {
+      return 'La carpeta vive en la computadora de quien la comparte: la sirve '
+          'SU aplicación. Pídele que la tenga abierta y vuelve a intentar.';
+    }
+    return 'Si la carpeta vive en la computadora de quien la comparte, la '
+        'sirve SU aplicación (tiene que estar abierta). Si está en el Drive, '
+        'revisa que el servidor tenga su base de datos al día.';
   }
 
   /// Enciende o apaga el SERVICIO DE COMPARTIR (el switch de la tarjeta).
@@ -607,54 +738,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     );
   }
 
-  void _enterLocalFolder(LocalShareItem item) {
-    setState(() => _localPath = [..._localPath, item.name]);
-    _loadLocal();
-  }
-
-  void _goUp() {
-    if (_open == null) return;
-    // Dentro de una carpeta compartida se sube nivel a nivel.
-    if (_localPath.isNotEmpty) {
-      setState(() => _localPath = _localPath.sublist(0, _localPath.length - 1));
-      _loadLocal();
-      return;
-    }
-    setState(() {
-      _open = null;
-      _localPath = const [];
-      _localItems = const [];
-      _localError = null;
-    });
-  }
-
   // ---------------------------------------------------------------
   // Visor y descarga de una carpeta LOCAL
   // ---------------------------------------------------------------
-
-  /// Abre una imagen de la carpeta local en el MISMO visor del Drive.
-  Future<void> _viewLocalImage(LocalShareItem item) async {
-    final r = _open;
-    final shareId = (r?['shareId'] as num?)?.toInt() ?? 0;
-    if (shareId <= 0) return;
-    final images = _localItems
-        .where((i) => !i.isFolder)
-        .map((i) => DriveItem(name: i.name, isFolder: false, size: i.size))
-        .toList(growable: false);
-    final index = images.indexWhere((i) => i.name == item.name);
-    if (images.isEmpty) return;
-    await showDriveImageViewer(
-      context,
-      drive: LocalShareDrive(
-        service: _local,
-        shareId: shareId,
-        rel: _localPath,
-      ),
-      images: images,
-      initialIndex: index < 0 ? 0 : index,
-      onDownload: (it) => _downloadLocal(it.name),
-    );
-  }
 
   /// Descarga una CARPETA compartida completa, en ZIP (el servidor la sirve
   /// archivo por archivo y el ZIP se arma en la app).
@@ -674,23 +760,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         const [],
         name: name,
       );
-      if (where == null) return;
-      HsToast.success(
-        where.isEmpty ? 'Descargado: $name' : 'Descargado en $where',
-      );
-    } catch (e) {
-      HsToast.error('No se pudo descargar "$name"', details: '$e');
-    }
-  }
-
-  /// Descarga un archivo de la carpeta local (diálogo Guardar en escritorio,
-  /// carpeta Descargas en Android, el navegador en web).
-  Future<void> _downloadLocal(String name) async {
-    final r = _open;
-    final shareId = (r?['shareId'] as num?)?.toInt() ?? 0;
-    if (shareId <= 0) return;
-    try {
-      final where = await _local.download(shareId, [..._localPath, name], name);
       if (where == null) return;
       HsToast.success(
         where.isEmpty ? 'Descargado: $name' : 'Descargado en $where',
@@ -732,37 +801,55 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     }
   }
 
-  /// Editar (sumar/quitar) los usuarios de una carpeta ya compartida.
+  /// Editar destinatarios Y SUS PERMISOS de una carpeta ya compartida.
+  ///
+  /// Los permisos (Ver / Editar / Crear / Descargar) los decide SOLO quien
+  /// comparte: son de cada compartido, no del rol del destinatario. La misma
+  /// persona puede editar una carpeta y solo ver otra.
   Future<void> _editTargets(String path) async {
     // Los que la tienen se piden al servidor: la lista en pantalla puede
     // estar vieja si alguien más compartió mientras tanto.
     var current = <int>[];
+    var permissions = <int, SharePermissions>{};
     var candidates = _candidates;
     try {
       final info = await HsApi.sharedFileTargets(path);
       current = info.targets;
+      permissions = info.permissions;
       candidates = info.candidates;
     } catch (_) {
       // Si falla, se usa lo que ya hay en pantalla.
-      current = _shared
-          .where((s) => '${s['path']}' == path)
+      final rows = _shared.where((s) => '${s['path']}' == path);
+      current = rows
           .map((s) => (s['targetId'] as num?)?.toInt() ?? 0)
           .where((n) => n > 0)
           .toList();
+      for (final s in rows) {
+        final id = (s['targetId'] as num?)?.toInt() ?? 0;
+        if (id > 0) {
+          permissions[id] = SharePermissions.fromJson(s['permissions']);
+        }
+      }
     }
     if (!mounted) return;
-    final chosen = await _showTargetsDialog(
+    final chosen = await _showPermissionsDialog(
       path: path,
       current: current,
+      currentPermissions: permissions,
       candidates: candidates,
     );
     if (chosen == null || !mounted) return;
 
-    final toAdd = chosen.where((id) => !current.contains(id)).toList();
-    final toRemove = current.where((id) => !chosen.contains(id)).toList();
+    final toRemove = current.where((id) => !chosen.containsKey(id)).toList();
     try {
-      if (toAdd.isNotEmpty) {
-        await HsApi.shareFolderWith(path: path, userIds: toAdd);
+      // Todos los elegidos viajan con SUS permisos: el servidor actualiza los
+      // que ya la tenían (sin duplicar) y agrega los nuevos.
+      if (chosen.isNotEmpty) {
+        await HsApi.shareFolderWith(
+          path: path,
+          userIds: chosen.keys.toList(),
+          permissions: chosen,
+        );
       }
       if (toRemove.isNotEmpty && _canDelete) {
         await HsApi.unshareFolderWith(path: path, userIds: toRemove);
@@ -802,10 +889,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     } catch (_) {
       // Aviso ya mostrado.
     }
-    // La carpeta abierta puede quedarse sin destinatarios: se vuelve al listado.
-    if (_open != null && '${_open!['path']}' == path) {
-      setState(() => _open = null);
-    }
     await _load();
   }
 
@@ -815,16 +898,44 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   // Selector de usuarios
   // ---------------------------------------------------------------
 
-  /// Muestra los usuarios y devuelve los marcados (o null si se canceló).
-  Future<List<int>?> _showTargetsDialog({
+  /// Usuarios + PERMISOS de cada uno. Devuelve el mapa elegido (con sus
+  /// permisos) o null si se canceló.
+  Future<Map<int, SharePermissions>?> _showPermissionsDialog({
     required String path,
     required List<int> current,
+    required Map<int, SharePermissions> currentPermissions,
     required List<Map<String, dynamic>> candidates,
   }) async {
     final selected = <int>{...current};
+    final rights = <int, SharePermissions>{
+      for (final id in current)
+        id: currentPermissions[id] ?? SharePermissions.readOnly,
+    };
     final search = TextEditingController();
 
-    final result = await showHsModal<List<int>>(
+    /// Enciende/apaga UN permiso. "Ver" es la base: sin ver no hay nada más,
+    /// y dar cualquier otro permiso implica poder ver.
+    void setPerm(int id, String key, bool on) {
+      var p = rights[id] ?? SharePermissions.readOnly;
+      p = switch (key) {
+        'view' =>
+          on
+              ? p.copyWith(view: true)
+              : const SharePermissions(
+                  view: false,
+                  edit: false,
+                  create: false,
+                  download: false,
+                ),
+        'edit' => p.copyWith(edit: on, view: on || p.view),
+        'create' => p.copyWith(create: on, view: on || p.view),
+        'download' => p.copyWith(download: on, view: on || p.view),
+        _ => p,
+      };
+      rights[id] = p;
+    }
+
+    final result = await showHsModal<Map<int, SharePermissions>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSt) {
@@ -840,7 +951,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           return AlertDialog(
             title: Text('Compartir "$path"'),
             content: SizedBox(
-              width: 460,
+              width: 500,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -854,13 +965,32 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    '${selected.length} seleccionado'
-                    '${selected.length == 1 ? '' : 's'}',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                  // El CONTEO va en su propio texto: es lo que se mira de un
+                  // vistazo al ir marcando usuarios.
+                  Row(
+                    children: [
+                      Text(
+                        '${selected.length} seleccionado'
+                        '${selected.length == 1 ? '' : 's'}',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          '· cada uno con sus permisos',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 6),
                   if (list.isEmpty)
@@ -882,37 +1012,34 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                         shrinkWrap: true,
                         children: [
                           for (final c in list)
-                            CheckboxListTile(
-                              dense: true,
-                              value: selected.contains(
+                            _TargetPermissionsTile(
+                              candidate: c,
+                              enabled: selected.contains(
                                 (c['id'] as num?)?.toInt(),
                               ),
-                              onChanged: (v) {
+                              rights:
+                                  rights[(c['id'] as num?)?.toInt() ?? 0] ??
+                                  SharePermissions.readOnly,
+                              onEnabled: (on) {
                                 final id = (c['id'] as num?)?.toInt() ?? 0;
                                 setSt(() {
-                                  if (v == true) {
+                                  if (on) {
                                     selected.add(id);
+                                    rights.putIfAbsent(
+                                      id,
+                                      () => SharePermissions.readOnly,
+                                    );
                                   } else {
                                     selected.remove(id);
                                   }
                                 });
                               },
-                              title: Text(
-                                '${c['name'] ?? ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              subtitle: Text(
-                                [
-                                  if ('${c['role'] ?? ''}'.isNotEmpty)
-                                    '${c['role']}',
-                                  if ('${c['email'] ?? ''}'.isNotEmpty)
-                                    '${c['email']}',
-                                ].join(' · '),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11),
+                              onPerm: (key, on) => setSt(
+                                () => setPerm(
+                                  (c['id'] as num?)?.toInt() ?? 0,
+                                  key,
+                                  on,
+                                ),
                               ),
                             ),
                         ],
@@ -927,8 +1054,10 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                 child: const Text('Cancelar'),
               ),
               FilledButton(
-                onPressed: () =>
-                    Navigator.of(ctx).pop(selected.toList()..sort()),
+                onPressed: () => Navigator.of(ctx).pop({
+                  for (final id in selected)
+                    id: rights[id] ?? SharePermissions.readOnly,
+                }),
                 child: const Text('Guardar'),
               ),
             ],
@@ -950,55 +1079,68 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     final isCompact = MediaQuery.sizeOf(context).width < 620;
     final hPad = isCompact ? 14.0 : 24.0;
 
+    // ===== Carpeta compartida ABIERTA: la MISMA vista del Drive, AQUÍ MISMO
+    // (la sección cambia de vista; no se abre otra ventana).
+    final open = _open;
+    if (open != null) {
+      return DrivePage(
+        drive: open,
+        title: open.label,
+        subtitle: _openIsMine
+            ? 'Lo que comparto · toca las migas para subir'
+            : 'Compartido conmigo · toca las migas para subir',
+        onBack: _closeOpen,
+        backTooltip: 'Volver a Archivos compartidos',
+        // La miga raíz de este drive es ESTE módulo: vuelve al listado.
+        onRootTap: _closeOpen,
+        // Se abre con la vista que el usuario tenía puesta en el listado.
+        initialGrid: _grid,
+      );
+    }
+    // ===== No se pudo abrir: el motivo, en pantalla =====
+    final problem = _openProblem;
+    if (problem != null) return _openProblemView(scheme, isCompact, problem);
+
     final received = _receivedFolders;
     final mine = _myFolders;
     final current = _view == _SharedView.shared ? received : mine;
 
-    return PopScope(
-      // El botón "atrás" del sistema primero sale de la carpeta abierta.
-      canPop: !_inside,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _goUp();
-      },
-      child: Column(
-        children: [
-          // ===== Encabezado: el MISMO del Drive (héroe, buscador, vista) =====
+    return Column(
+      children: [
+        // ===== Encabezado: el MISMO del Drive (héroe, buscador, vista) =====
+        Padding(
+          padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
+          child: _header(scheme, isCompact, received, mine),
+        ),
+        // ===== Franja de solo lectura (solo en móvil: allí no se comparte) =
+        if (_readOnly)
           Padding(
-            padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
-            child: _header(scheme, isCompact, received, mine),
-          ),
-          // ===== Franja de solo lectura (solo en móvil: allí no se comparte) =
-          if (_readOnly)
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 0),
-              child: _readOnlyNotice(scheme),
-            )
-          // ===== Servicio de compartir: el switch que lo enciende =====
-          else if (!isCompact)
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 12, hPad, 0),
-              child: _serviceCard(scheme),
-            ),
-          const SizedBox(height: 10),
-          // ===== Migas de pan (dentro de una carpeta, igual que el Drive) ====
-          if (_inside)
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: _breadcrumbs(scheme),
-              ),
-            ),
-          // ===== Barra de estado =====
+            padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 0),
+            child: _readOnlyNotice(scheme),
+          )
+        // ===== Servicio de compartir: el switch que lo enciende =====
+        else if (!isCompact)
           Padding(
-            padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
-            child: _statusBar(scheme, current),
+            padding: EdgeInsets.fromLTRB(hPad, 12, hPad, 0),
+            child: _serviceCard(scheme),
           ),
-          // ===== Contenido =====
-          Expanded(child: _content(scheme, isCompact, received, mine)),
-        ],
-      ),
+        const SizedBox(height: 10),
+        // ===== Barra de estado =====
+        Padding(
+          padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
+          child: _statusBar(scheme, current),
+        ),
+        // ===== Contenido =====
+        // Se recarga DESLIZANDO hacia abajo (no hay botón de recargar): el
+        // gesto funciona también con el ratón, así que vale en todas las
+        // pantallas —como en el resto de los módulos—.
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _load,
+            child: _content(scheme, isCompact, received, mine),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1140,13 +1282,8 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                           label: 'Compartir carpeta',
                           onPressed: _shareNewFolder,
                         ),
-                      if (_canPickFolder) const SizedBox(width: 10),
-                      HsActionButton(
-                        icon: Icons.refresh,
-                        label: 'Actualizar',
-                        primary: false,
-                        onPressed: _load,
-                      ),
+                      // Sin botón de recargar: en el celular se recarga
+                      // deslizando hacia abajo (RefreshIndicator).
                       // En pantalla angosta el switch del servicio va aquí (en
                       // botón de imagen): la tarjeta completa no cabe sin
                       // desbordar, pero el control sigue a mano.
@@ -1158,57 +1295,170 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                   ),
                 ],
                 // Sección: lo que me comparten / lo que yo comparto.
-                if (!_inside) ...[
-                  const SizedBox(height: 14),
-                  // En el celular las etiquetas largas no caben: se usan
-                  // nombres cortos para que las dos quepan de una.
-                  _ViewTabs(
-                    value: _view,
-                    received: received.length,
-                    mine: mine.length,
-                    compact: isCompact,
-                    onChanged: (v) => setState(() {
-                      _view = v;
-                      _open = null;
-                      _searchController.clear();
-                    }),
-                  ),
-                ],
                 const SizedBox(height: 14),
-                // Buscador + conmutador de vista (igual que el Drive).
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        onChanged: (_) => setState(() {}),
-                        decoration: InputDecoration(
-                          hintText: _inside
-                              ? 'Buscar en esta carpeta'
-                              : 'Buscar carpeta o persona',
-                          prefixIcon: const Icon(Icons.search, size: 20),
-                        ),
+                // En el celular las etiquetas largas no caben: se usan
+                // nombres cortos para que las dos quepan de una.
+                _ViewTabs(
+                  value: _view,
+                  received: received.length,
+                  mine: mine.length,
+                  compact: isCompact,
+                  onChanged: (v) => setState(() {
+                    _view = v;
+                    _page = 1;
+                    _searchController.clear();
+                  }),
+                ),
+                const SizedBox(height: 14),
+                // Buscador + filtros + conmutador de vista (igual que el Drive).
+                HsSearchFilterBar(
+                  hint: 'Buscar carpeta o persona',
+                  controller: _searchController,
+                  onChanged: (_) => setState(() => _page = 1),
+                  groups: _filterGroups(),
+                  selected: {'origen': _originFilter},
+                  onApply: (filters) => setState(() {
+                    _originFilter = filters['origen'] ?? '';
+                    _page = 1;
+                  }),
+                  trailing: Tooltip(
+                    message: _grid ? 'Vista de lista' : 'Vista de cuadrícula',
+                    child: IconButton.filledTonal(
+                      onPressed: () => setState(() => _grid = !_grid),
+                      icon: Icon(
+                        _grid
+                            ? Icons.view_list_rounded
+                            : Icons.grid_view_rounded,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Tooltip(
-                      message: _grid ? 'Vista de lista' : 'Vista de cuadrícula',
-                      child: IconButton.filledTonal(
-                        onPressed: () => setState(() => _grid = !_grid),
-                        icon: Icon(
-                          _grid
-                              ? Icons.view_list_rounded
-                              : Icons.grid_view_rounded,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// La carpeta no se pudo abrir: se dice QUÉ pasó (con el motivo del
+  /// servidor) y qué hace falta para verla, con un botón para reintentar.
+  Widget _openProblemView(
+    ColorScheme scheme,
+    bool isCompact,
+    ({Map<String, dynamic> entry, String detail, String hint}) problem,
+  ) {
+    final name = '${problem.entry['path'] ?? ''}'
+        .split(RegExp(r'[\\/]'))
+        .where((s) => s.isNotEmpty)
+        .lastOrNull;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(
+        isCompact ? 14 : 24,
+        24,
+        isCompact ? 14 : 24,
+        24,
+      ),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.folder_off_outlined,
+                          size: 26,
+                          color: scheme.error,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            name == null
+                                ? 'No se pudo abrir la carpeta'
+                                : 'No se pudo abrir "$name"',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // El motivo TAL CUAL lo dio el servidor del drive.
+                    Text(
+                      problem.detail,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.35,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: .07),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: .22),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 16,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              problem.hint,
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.35,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => unawaited(_openEntry(problem.entry)),
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Reintentar'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _closeOpen,
+                          icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                          label: const Text('Volver a Archivos compartidos'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1239,73 +1489,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     );
   }
 
-  /// Migas de pan: "Compartido conmigo > Carpeta > Subcarpeta".
-  Widget _breadcrumbs(ColorScheme scheme) {
-    final open = _open!;
-    final crumbs = <String>[
-      _view == _SharedView.shared ? 'Compartido conmigo' : 'Lo que comparto',
-      '${open['path'] ?? ''}',
-      ..._localPath,
-    ];
-    return Wrap(
-      spacing: 4,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < crumbs.length; i++) ...[
-          if (i > 0)
-            Icon(
-              Icons.chevron_right_rounded,
-              size: 16,
-              color: scheme.onSurfaceVariant,
-            ),
-          InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: i == crumbs.length - 1 ? null : () => _crumbTo(i),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Text(
-                crumbs[i],
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: i == crumbs.length - 1
-                      ? FontWeight.w800
-                      : FontWeight.w600,
-                  color: i == crumbs.length - 1
-                      ? scheme.onSurface
-                      : scheme.primary,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// Salta a una miga: 0 = el listado, 1 = la carpeta abierta, 2+ = subcarpetas.
-  void _crumbTo(int index) {
-    if (index == 0) {
-      setState(() {
-        _open = null;
-        _localPath = const [];
-        _localItems = const [];
-        _localError = null;
-      });
-      return;
-    }
-    if (index == 1) {
-      if (_localPath.isEmpty) return;
-      setState(() => _localPath = const []);
-      _loadLocal();
-      return;
-    }
-    final depth = index - 1;
-    if (depth <= 0 || depth > _localPath.length) return;
-    setState(() => _localPath = _localPath.sublist(0, depth));
-    _loadLocal();
-  }
-
   /// Píldoras de conteo del Drive ("N carpetas", "N personas", filtro).
   ///
   /// En el celular la fila se desliza de lado: con el filtro activo las
@@ -1328,13 +1511,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     List<Map<String, dynamic>> current, {
     required bool compact,
   }) {
-    // Dentro de una carpeta compartida se cuenta su contenido (venga del
-    // Drive del dueño o de su computadora), no las carpetas del listado.
-    final inside = _inside;
-    final folders = inside
-        ? _localItems.where((i) => i.isFolder).length
-        : current.length;
-    final images = inside ? _localItems.where((i) => !i.isFolder).length : 0;
+    final folders = current.length;
     final people = _view == _SharedView.shared
         ? current
               .expand(
@@ -1357,13 +1534,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         label: '$folders carpeta${folders == 1 ? '' : 's'}',
       ),
       const SizedBox(width: 8),
-      if (inside) ...[
-        _CountPill(
-          icon: Icons.image_outlined,
-          label: '$images imagen${images == 1 ? '' : 'es'}',
-        ),
-        const SizedBox(width: 8),
-      ],
       _CountPill(
         icon: Icons.people_alt_outlined,
         label: _view == _SharedView.shared
@@ -1420,20 +1590,21 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         ),
       );
     }
-    if (_inside) return _insideContent(scheme, isCompact);
     if (_view == _SharedView.shared) {
       return _folderGrid(
         scheme,
         isCompact,
         entries: [
           for (final r in received)
-            if (_matches('${r['path']} ${_ownerNames(r).join(' ')}')) r,
+            if (_matchesOrigin(r) &&
+                _matches('${r['path']} ${_ownerNames(r).join(' ')}'))
+              r,
         ],
         empty: EmptyState(
           icon: Icons.inbox_outlined,
           title: 'Nadie te ha compartido carpetas',
-          message: _filter != null
-              ? 'Ninguna carpeta coincide con la búsqueda.'
+          message: _filter != null || _originFilter.isNotEmpty
+              ? 'Ninguna carpeta coincide con la búsqueda o el filtro.'
               : 'Las carpetas que otros usuarios compartan contigo aparecerán '
                     'aquí para verlas y descargarlas.',
         ),
@@ -1445,13 +1616,15 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       isCompact,
       entries: [
         for (final m in mine)
-          if (_matches('${m['path']} ${_targetNames(m).join(' ')}')) m,
+          if (_matchesOrigin(m) &&
+              _matches('${m['path']} ${_targetNames(m).join(' ')}'))
+            m,
       ],
       empty: EmptyState(
         icon: Icons.outbox_outlined,
         title: 'Todavía no compartes carpetas',
-        message: _filter != null
-            ? 'Ninguna carpeta coincide con la búsqueda.'
+        message: _filter != null || _originFilter.isNotEmpty
+            ? 'Ninguna carpeta coincide con la búsqueda o el filtro.'
             : _canPickFolder
             ? 'Elige una carpeta de tu computadora y a qué usuarios '
                   'quieres compartírsela. La misma carpeta puede ir a varios.'
@@ -1473,8 +1646,34 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     required void Function(Map<String, dynamic>) onOpen,
   }) {
     if (entries.isEmpty) return empty;
+    // Paginado: la cuadrícula/lista muestra la página actual y la barra va
+    // fija ABAJO, para no perderla al bajar entre carpetas.
+    final rows = HsPages(
+      total: entries.length,
+      page: _page,
+      pageSize: _pageSize,
+    ).slice(entries);
+    final footer = Padding(
+      padding: EdgeInsets.fromLTRB(
+        isCompact ? 14 : 24,
+        0,
+        isCompact ? 14 : 24,
+        isCompact ? 6 : 10,
+      ),
+      child: HsPager(
+        total: entries.length,
+        page: _page,
+        pageSize: _pageSize,
+        onPage: (p) => setState(() => _page = p),
+        onPageSize: (n) => setState(() {
+          _pageSize = n;
+          _page = 1;
+        }),
+      ),
+    );
+    Widget body;
     if (_grid) {
-      return LayoutBuilder(
+      body = LayoutBuilder(
         builder: (context, constraints) {
           final minCard = isCompact ? 150.0 : 190.0;
           final crossCount = (constraints.maxWidth / minCard).floor().clamp(
@@ -1496,261 +1695,87 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
               // Alto FIJO (y no proporcional al ancho): la tarjeta lleva la
               // ficha del compartido, quién lo comparte y su estado, y en una
               // tarjeta angosta el texto ocupa más renglones.
-              mainAxisExtent: isCompact ? 208 : 214,
+              mainAxisExtent: isCompact ? 236 : 240,
             ),
-            itemCount: entries.length,
-            itemBuilder: (context, i) => _FolderCard(
-              entry: entries[i],
-              shared: _view == _SharedView.shared,
-              status: _statusOf(entries[i]),
-              onOpen: () => onOpen(entries[i]),
-              onEdit: _view == _SharedView.mine && _canPickFolder
-                  ? () => _editTargets('${entries[i]['path'] ?? ''}')
-                  : null,
-              onUnshare: _view == _SharedView.mine && _canUnshare
-                  ? () => _unshareAll(
-                      '${entries[i]['path'] ?? ''}',
-                      _targetIds(entries[i]),
-                    )
-                  : null,
-              onDownload: () => _downloadFolder(entries[i]),
+            itemCount: rows.length,
+            itemBuilder: (context, i) => Listener(
+              // El TIPO de puntero decide si un clic entra (dedo) o solo marca
+              // (ratón, donde el doble clic es el que entra).
+              onPointerDown: (e) => _lastPointerKind = e.kind,
+              child: _FolderCard(
+                entry: rows[i],
+                shared: _view == _SharedView.shared,
+                status: _statusOf(rows[i]),
+                marked: _markedPath == '${rows[i]['path'] ?? ''}',
+                onTap: () => _onFolderTap(rows[i]),
+                onOpen: () => onOpen(rows[i]),
+                onEdit: _view == _SharedView.mine && _canPickFolder
+                    ? () => _editTargets('${rows[i]['path'] ?? ''}')
+                    : null,
+                onUnshare: _view == _SharedView.mine && _canUnshare
+                    ? () => _unshareAll(
+                        '${rows[i]['path'] ?? ''}',
+                        _targetIds(rows[i]),
+                      )
+                    : null,
+                onDownload: _canDownload(rows[i])
+                    ? () => _downloadFolder(rows[i])
+                    : null,
+              ),
             ),
           );
         },
       );
-    }
-    return ListView.builder(
-      controller: _scrollController,
-      padding: EdgeInsets.fromLTRB(
-        isCompact ? 14 : 24,
-        4,
-        isCompact ? 14 : 24,
-        24,
-      ),
-      itemCount: entries.length,
-      itemBuilder: (context, i) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: _FolderRow(
-          entry: entries[i],
-          shared: _view == _SharedView.shared,
-          status: _statusOf(entries[i]),
-          onOpen: () => onOpen(entries[i]),
-          onEdit: _view == _SharedView.mine && _canPickFolder
-              ? () => _editTargets('${entries[i]['path'] ?? ''}')
-              : null,
-          onUnshare: _view == _SharedView.mine && _canUnshare
-              ? () => _unshareAll(
-                  '${entries[i]['path'] ?? ''}',
-                  _targetIds(entries[i]),
-                )
-              : null,
-          onDownload: () => _downloadFolder(entries[i]),
+    } else {
+      body = ListView.builder(
+        controller: _scrollController,
+        padding: EdgeInsets.fromLTRB(
+          isCompact ? 14 : 24,
+          4,
+          isCompact ? 14 : 24,
+          24,
         ),
-      ),
-    );
-  }
-
-  /// Contenido de la carpeta abierta, en SOLO LECTURA.
-  ///
-  /// Vale igual para una carpeta de la computadora del dueño que para una de
-  /// su Drive: las dos se navegan AQUÍ MISMO, sin saltar al módulo Archivos.
-  ///
-  /// Dentro NO se repite la ficha del compartido (de quién es, si está en
-  /// línea, a quiénes se la compartí): eso vive en el LISTADO, junto a la
-  /// carpeta, y aquí se entra a VER EL CONTENIDO, como en el Drive. Antes la
-  /// tarjeta salía dentro de cada carpeta abierta y tapaba lo que se venía a
-  /// ver (y sus botones había que buscarlos ahí dentro).
-  Widget _insideContent(ColorScheme scheme, bool isCompact) {
-    return ListView(
-      controller: _scrollController,
-      padding: EdgeInsets.fromLTRB(
-        isCompact ? 14 : 24,
-        4,
-        isCompact ? 14 : 24,
-        24,
-      ),
-      children: [..._folderBody(scheme)],
-    );
-  }
-
-  /// Cuerpo de la carpeta compartida abierta: cargando, error, vacía o su
-  /// contenido (carpetas primero, luego imágenes), todo de SOLO LECTURA.
-  List<Widget> _folderBody(ColorScheme scheme) {
-    if (_localLoading) {
-      return const [ListSkeleton(lines: 3, cardHeight: 84)];
-    }
-    if (_localError != null) {
-      // Una carpeta de la COMPUTADORA del dueño la sirve SU app (el servidor
-      // solo hace de puente): al fallar, se explica eso, y no que "el servidor
-      // tiene que poder abrirla" —eso era falso y mandaba a buscar el problema
-      // al lugar equivocado (el servidor NUNCA puede abrir la carpeta de otro
-      // equipo; para eso está la app del dueño).
-      final local = _open!['local'] == true;
-      return [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
-                const SizedBox(height: 10),
-                Text(_localError!, textAlign: TextAlign.center),
-                if (local) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Es una carpeta de la computadora de quien la comparte: la '
-                    'sirve SU aplicación, así que esa computadora tiene que '
-                    'estar encendida y con la aplicación abierta. Si sigue sin '
-                    'abrirse, pídele que la vuelva a compartir.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.35,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _loadLocal,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Reintentar'),
-                ),
-              ],
+        itemCount: rows.length,
+        itemBuilder: (context, i) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Listener(
+            onPointerDown: (e) => _lastPointerKind = e.kind,
+            child: _FolderRow(
+              entry: rows[i],
+              shared: _view == _SharedView.shared,
+              status: _statusOf(rows[i]),
+              marked: _markedPath == '${rows[i]['path'] ?? ''}',
+              onTap: () => _onFolderTap(rows[i]),
+              onOpen: () => onOpen(rows[i]),
+              onEdit: _view == _SharedView.mine && _canPickFolder
+                  ? () => _editTargets('${rows[i]['path'] ?? ''}')
+                  : null,
+              onUnshare: _view == _SharedView.mine && _canUnshare
+                  ? () => _unshareAll(
+                      '${rows[i]['path'] ?? ''}',
+                      _targetIds(rows[i]),
+                    )
+                  : null,
+              onDownload: _canDownload(rows[i])
+                  ? () => _downloadFolder(rows[i])
+                  : null,
             ),
           ),
         ),
-      ];
-    }
-
-    final items = _localItems.where((i) => _matches(i.name)).toList();
-    if (items.isEmpty) {
-      return [
-        EmptyState(
-          icon: Icons.folder_open_rounded,
-          title: _filter != null ? 'Sin resultados' : 'Esta carpeta está vacía',
-          message: _filter != null
-              ? 'No hay coincidencias en esta carpeta.'
-              : 'La carpeta compartida todavía no tiene archivos.',
-        ),
-      ];
-    }
-    // El contenido se pinta TAL CUAL lo hace el módulo Archivos: UNA sola
-    // cuadrícula, con las carpetas y las fotos mezcladas en el orden que manda
-    // el servidor (carpetas primero y, dentro de cada tipo, por nombre).
-    //
-    // Antes se partía en dos tramos con sus rótulos ("CARPETAS" / "IMÁGENES") y
-    // dos cuadrículas, que es algo que el Drive NO hace: sus carpetas y sus
-    // fotos van juntas en la misma rejilla.
-    // Conmutador de vista: la LISTA es la misma que la del Drive (icono o
-    // miniatura, nombre, peso y menú de acciones), y la cuadrícula también.
-    return [
-      if (!_grid)
-        _localList([
-          for (final i in items)
-            (
-              item: i,
-              onTap: () =>
-                  i.isFolder ? _enterLocalFolder(i) : _viewLocalImage(i),
-              onDownload: i.isFolder ? null : () => _downloadLocal(i.name),
-            ),
-        ])
-      else
-        _localGrid([
-          for (final i in items)
-            _LocalCard(
-              name: i.name,
-              folder: i.isFolder,
-              size: i.size,
-              thumb: i.isFolder ? null : _localThumb(i.name),
-              onTap: () =>
-                  i.isFolder ? _enterLocalFolder(i) : _viewLocalImage(i),
-              onDownload: i.isFolder ? null : () => _downloadLocal(i.name),
-            ),
-        ]),
-    ];
-  }
-
-  /// Vista de LISTA del contenido de una carpeta compartida: las mismas filas
-  /// del módulo Archivos (una tabla, con su encabezado en escritorio).
-  Widget _localList(
-    List<({LocalShareItem item, VoidCallback onTap, VoidCallback? onDownload})>
-    rows,
-  ) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Column(
-        children: [
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) Divider(height: 1, color: scheme.outlineVariant),
-            _LocalRow(
-              item: rows[i].item,
-              thumb: rows[i].item.isFolder
-                  ? null
-                  : _localThumb(rows[i].item.name, width: 120),
-              onTap: rows[i].onTap,
-              onDownload: rows[i].onDownload,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// URL de la miniatura de una foto de la carpeta compartida abierta.
-  ///
-  /// Mismo tamaño que usa el módulo Archivos (480 px): el servidor la reduce
-  /// UNA vez y la guarda en su caché, así la cuadrícula abre con las fotos ya
-  /// listas en vez de con recuadros vacíos.
-  String _localThumb(String name, {int width = 480}) {
-    final shareId = (_open!['shareId'] as num?)?.toInt() ?? 0;
-    return _local.thumbUrl(shareId, [..._localPath, name], width: width);
-  }
-
-  /// Cuadrícula de tarjetas con las MISMAS medidas que el módulo Archivos
-  /// (tarjeta de 150-190 px, proporción 0.86 y 12 px de separación).
-  Widget _localGrid(List<Widget> cards) {
-    final compact = MediaQuery.sizeOf(context).width < 720;
-    final minCard = compact ? 150.0 : 190.0;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final crossCount = (constraints.maxWidth / minCard).floor().clamp(2, 8);
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: crossCount,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 0.86,
-          children: cards,
-        );
-      },
-    );
-  }
-
-  /// Deja PEDIDAS las miniaturas de la carpeta abierta (las primeras [max]).
-  ///
-  /// Son las mismas direcciones que pide la cuadrícula: pedirlas al abrir la
-  /// carpeta hace que, al bajar con el dedo o la rueda, las fotos ya estén
-  /// (en RAM y en la caché del servidor) en vez de ir apareciendo una a una.
-  /// Se limita el número para no encolar toda una carpeta de cientos.
-  void _warmThumbs(List<LocalShareItem> items, {int max = 24}) {
-    var asked = 0;
-    for (final it in items) {
-      if (it.isFolder) continue;
-      if (asked >= max) break;
-      asked++;
-      // Con `onError` la miniatura que falte NO revienta la app ni ensucia el
-      // registro: la tarjeta ya tiene su propio marcador con "toca para
-      // reintentar".
-      precacheImage(
-        NetworkImage(_localThumb(it.name)),
-        context,
-        onError: (_, _) {},
       );
     }
+    return Column(
+      children: [
+        Expanded(child: body),
+        footer,
+      ],
+    );
   }
+
+  /// ¿Puedo descargar esta carpeta? (en las mías, siempre).
+  bool _canDownload(Map<String, dynamic> entry) =>
+      _view == _SharedView.mine ||
+      SharePermissions.fromJson(entry['permissions']).download;
 
   // ---------------------------------------------------------------
   // Ayudas de datos
@@ -1781,6 +1806,167 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
 // ==================================================================
 // Piezas visuales (mismo lenguaje que el Drive)
 // ==================================================================
+
+/// Permisos que resumen una entrada del listado.
+///
+/// En una carpeta MÍA, la unión de lo que di a cada destinatario; en una
+/// RECIBIDA, lo que puedo hacer yo (sumando a todos los dueños).
+SharePermissions _entryPermissions(Map<String, dynamic> entry, bool shared) {
+  if (shared) return SharePermissions.fromJson(entry['permissions']);
+  var out = const SharePermissions(
+    view: false,
+    edit: false,
+    create: false,
+    download: false,
+  );
+  for (final t in ((entry['targets'] as List?) ?? const [])) {
+    if (t is Map) out = out.merge(SharePermissions.fromJson(t['permissions']));
+  }
+  return out;
+}
+
+/// Iconos compactos de los permisos (con su tooltip), para la ficha.
+class _PermIcons extends StatelessWidget {
+  const _PermIcons({required this.perms});
+
+  final SharePermissions perms;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final entries = <(IconData, String)>[
+      if (perms.view) (Icons.visibility_outlined, 'Ver'),
+      if (perms.download) (Icons.download_rounded, 'Descargar'),
+      if (perms.edit) (Icons.edit_outlined, 'Editar'),
+      if (perms.create) (Icons.create_new_folder_outlined, 'Crear'),
+    ];
+    return Wrap(
+      spacing: 4,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final e in entries)
+          Tooltip(
+            message: e.$2,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Icon(e.$1, size: 12, color: scheme.primary),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Una fila del diálogo de permisos: el usuario y, si está elegido, lo que
+/// podrá hacer en ESA carpeta.
+class _TargetPermissionsTile extends StatelessWidget {
+  const _TargetPermissionsTile({
+    required this.candidate,
+    required this.enabled,
+    required this.rights,
+    required this.onEnabled,
+    required this.onPerm,
+  });
+
+  final Map<String, dynamic> candidate;
+  final bool enabled;
+  final SharePermissions rights;
+  final ValueChanged<bool> onEnabled;
+  final void Function(String key, bool on) onPerm;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget chip(String key, String label, bool value) => Padding(
+      padding: const EdgeInsets.only(right: 6, bottom: 4),
+      child: FilterChip(
+        label: Text(label, style: const TextStyle(fontSize: 11.5)),
+        selected: value,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        onSelected: enabled ? (v) => onPerm(key, v) : null,
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Checkbox(
+                value: enabled,
+                visualDensity: VisualDensity.compact,
+                onChanged: (v) => onEnabled(v == true),
+              ),
+              // El NOMBRE también marca y desmarca: con el dedo o el ratón se
+              // toca la fila, no el cuadradito.
+              Expanded(
+                child: InkWell(
+                  onTap: () => onEnabled(!enabled),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${candidate['name'] ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        Text(
+                          [
+                            if ('${candidate['role'] ?? ''}'.isNotEmpty)
+                              '${candidate['role']}',
+                            if ('${candidate['email'] ?? ''}'.isNotEmpty)
+                              '${candidate['email']}',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (enabled)
+                Text(
+                  rights.label.isEmpty ? 'Sin acceso' : rights.label,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+          if (enabled)
+            Padding(
+              padding: const EdgeInsets.only(left: 36),
+              child: Wrap(
+                children: [
+                  chip('view', 'Ver', rights.view),
+                  chip('edit', 'Editar', rights.edit),
+                  chip('create', 'Crear', rights.create),
+                  chip('download', 'Descargar', rights.download),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 /// Conmutador de sección: "Compartido conmigo" / "Lo que comparto".
 class _ViewTabs extends StatelessWidget {
@@ -1844,7 +2030,9 @@ class _FolderCard extends StatelessWidget {
   const _FolderCard({
     required this.entry,
     required this.shared,
+    required this.onTap,
     required this.onOpen,
+    this.marked = false,
     this.status,
     this.onUnshare,
     this.onEdit,
@@ -1856,11 +2044,17 @@ class _FolderCard extends StatelessWidget {
   /// true = la recibí (muestra quién la comparte); false = es mía.
   final bool shared;
 
-  /// De dónde se puede servir AHORA (null = todavía sin comprobar).
-  final LocalShareStatus? status;
+  /// Un clic/toque sobre la tarjeta (marca o entra, según el puntero).
+  final VoidCallback onTap;
 
   /// Abre la carpeta AQUÍ MISMO (este módulo nunca salta a Archivos).
   final VoidCallback onOpen;
+
+  /// Marcada con un clic (en la computadora el doble clic es el que entra).
+  final bool marked;
+
+  /// De dónde se puede servir AHORA (null = todavía sin comprobar).
+  final LocalShareStatus? status;
 
   /// Elegir qué usuarios la reciben (solo en una carpeta MÍA).
   final VoidCallback? onEdit;
@@ -1882,18 +2076,23 @@ class _FolderCard extends StatelessWidget {
       builder: (context, hovered) => Card(
         margin: EdgeInsets.zero,
         child: InkWell(
-          onTap: onOpen,
+          onTap: onTap,
           borderRadius: BorderRadius.circular(14),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: hovered
+                color: marked
+                    ? scheme.primary
+                    : hovered
                     ? scheme.primary.withValues(alpha: .45)
                     : Colors.transparent,
                 width: 2.5,
               ),
+              // La carpeta MARCADA se tiñe: se distingue de la que solo tiene
+              // el ratón encima (esa lleva un borde suave).
+              color: marked ? scheme.primary.withValues(alpha: .10) : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1987,7 +2186,11 @@ class _FolderCard extends StatelessWidget {
                           ),
                         ),
                       ],
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
+                      // Lo que se concedió (o lo que YO puedo hacer): se ve en
+                      // el listado, sin abrir el diálogo de permisos.
+                      _PermIcons(perms: _entryPermissions(entry, shared)),
+                      const SizedBox(height: 6),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: _ShareStatusPill(status: status),
@@ -2009,7 +2212,9 @@ class _FolderRow extends StatelessWidget {
   const _FolderRow({
     required this.entry,
     required this.shared,
+    required this.onTap,
     required this.onOpen,
+    this.marked = false,
     this.status,
     this.onUnshare,
     this.onEdit,
@@ -2019,11 +2224,17 @@ class _FolderRow extends StatelessWidget {
   final Map<String, dynamic> entry;
   final bool shared;
 
-  /// De dónde se puede servir AHORA (null = todavía sin comprobar).
-  final LocalShareStatus? status;
+  /// Un clic/toque sobre la fila (marca o entra, según el puntero).
+  final VoidCallback onTap;
 
   /// Abre la carpeta AQUÍ MISMO (este módulo nunca salta a Archivos).
   final VoidCallback onOpen;
+
+  /// Marcada con un clic (en la computadora el doble clic es el que entra).
+  final bool marked;
+
+  /// De dónde se puede servir AHORA (null = todavía sin comprobar).
+  final LocalShareStatus? status;
 
   /// Elegir qué usuarios la reciben (solo en una carpeta MÍA).
   final VoidCallback? onEdit;
@@ -2035,6 +2246,9 @@ class _FolderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // En un teléfono la fila lleva el nombre, la ficha, el estado y el menú:
+    // los iconos de permisos NO caben (el estado, sí: se recorta solo).
+    final compact = MediaQuery.sizeOf(context).width < 620;
     final local = entry['local'] == true;
     final path = '${entry['path'] ?? ''}';
     final people = shared
@@ -2043,8 +2257,16 @@ class _FolderRow extends StatelessWidget {
 
     return Card(
       margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: marked ? scheme.primary : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      color: marked ? scheme.primary.withValues(alpha: .08) : null,
       child: InkWell(
-        onTap: onOpen,
+        onTap: onTap,
         hoverColor: scheme.primary.withValues(alpha: .07),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
@@ -2111,11 +2333,16 @@ class _FolderRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (!compact) ...[
+                const SizedBox(width: 8),
+                _PermIcons(perms: _entryPermissions(entry, shared)),
+              ],
               const SizedBox(width: 8),
-              _ShareStatusPill(status: status, dense: true),
-              // El mismo menú "⋮" del Drive, con lo que se puede hacer con
-              // esta carpeta: Ver, Editar (destinatarios) y Eliminar (dejar de
-              // compartir).
+              // Va FLEXIBLE: una etiqueta larga ("Servidor sin base de datos")
+              // se recorta en vez de desbordar la fila.
+              Flexible(child: _ShareStatusPill(status: status, dense: true)),
+              // El mismo menú "⋮" del Drive: Ver, Descargar, Permisos y
+              // Eliminar (dejar de compartir).
               _EntryMenu(
                 onOpen: onOpen,
                 onEdit: onEdit,
@@ -2160,254 +2387,6 @@ Widget _typeChip(ColorScheme scheme, String label) {
       ),
     ),
   );
-}
-
-/// Fila de la LISTA de una carpeta compartida: la misma del módulo Archivos
-/// (icono o miniatura, nombre, peso y el menú de lo que se puede hacer).
-class _LocalRow extends StatelessWidget {
-  const _LocalRow({
-    required this.item,
-    required this.onTap,
-    this.thumb,
-    this.onDownload,
-  });
-
-  final LocalShareItem item;
-
-  /// Miniatura (solo fotos; null en carpetas).
-  final String? thumb;
-  final VoidCallback onTap;
-  final VoidCallback? onDownload;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      hoverColor: scheme.primary.withValues(alpha: .07),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: item.isFolder
-                  ? Icon(Icons.folder_rounded, color: scheme.primary, size: 26)
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: DriveThumb(
-                        source: thumb ?? '',
-                        isRemote: true,
-                        size: 40,
-                      ),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                item.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13.5,
-                ),
-              ),
-            ),
-            Text(
-              item.isFolder
-                  ? 'Carpeta'
-                  : item.size == null
-                  ? 'Imagen'
-                  : hsBytes(item.size!),
-              style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(width: 6),
-            PopupMenuButton<String>(
-              tooltip: 'Opciones',
-              padding: EdgeInsets.zero,
-              splashRadius: 18,
-              icon: Icon(
-                Icons.more_vert,
-                size: 18,
-                color: scheme.onSurfaceVariant,
-              ),
-              onSelected: (v) {
-                if (v == 'open') onTap();
-                if (v == 'download') onDownload?.call();
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'open', child: Text('Ver')),
-                if (onDownload != null)
-                  const PopupMenuItem(
-                    value: 'download',
-                    child: Text('Descargar'),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Tarjeta de la cuadrícula de una carpeta compartida: la MISMA forma que las
-/// del módulo Archivos (carpeta con su cabecera degradada, o foto con su
-/// miniatura, su nombre, su peso y su botón de descargar).
-///
-/// Es de SOLO LECTURA: no hay renombrar, mover ni borrar, porque el servidor
-/// tampoco los ofrece para una carpeta que no es tuya.
-class _LocalCard extends StatefulWidget {
-  const _LocalCard({
-    required this.name,
-    required this.folder,
-    required this.onTap,
-    this.size,
-    this.thumb,
-    this.onDownload,
-  });
-
-  final String name;
-  final bool folder;
-
-  /// Peso en bytes (solo fotos).
-  final int? size;
-
-  /// URL de la miniatura (solo fotos).
-  final String? thumb;
-  final VoidCallback onTap;
-  final VoidCallback? onDownload;
-
-  @override
-  State<_LocalCard> createState() => _LocalCardState();
-}
-
-class _LocalCardState extends State<_LocalCard> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final theme = Theme.of(context);
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        elevation: _hover ? 6 : null,
-        child: InkWell(
-          onTap: widget.onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (widget.folder)
-                Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        scheme.primary.withValues(alpha: .24),
-                        scheme.primary.withValues(alpha: .07),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 12),
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.folder_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                Expanded(
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      DriveThumb(
-                        source: widget.thumb ?? '',
-                        isRemote: true,
-                        size: double.infinity,
-                        big: true,
-                        rounded: false,
-                      ),
-                      if (widget.onDownload != null)
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: Material(
-                            color: Colors.black.withValues(alpha: .45),
-                            shape: const CircleBorder(),
-                            child: IconButton(
-                              tooltip: 'Descargar',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: widget.onDownload,
-                              icon: const Icon(
-                                Icons.download_rounded,
-                                size: 17,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  widget.folder ? 14 : 12,
-                  widget.folder ? 12 : 8,
-                  widget.folder ? 14 : 12,
-                  widget.folder ? 12 : 10,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      widget.folder
-                          ? 'Carpeta compartida'
-                          : widget.size == null
-                          ? 'Imagen'
-                          : hsBytes(widget.size!),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// Menú "⋮" de una carpeta compartida: dice, con sus iconos, QUÉ se puede
@@ -2471,8 +2450,12 @@ class _EntryMenu extends StatelessWidget {
             child: ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.edit_outlined, size: 18),
+              leading: Icon(Icons.admin_panel_settings_outlined, size: 18),
               title: Text('Editar destinatarios'),
+              subtitle: Text(
+                'Permisos: ver, editar, crear y descargar',
+                style: TextStyle(fontSize: 10.5),
+              ),
             ),
           ),
         if (onUnshare != null)

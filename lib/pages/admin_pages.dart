@@ -10,6 +10,7 @@ import '../hs_format.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/finance_chart.dart';
+import '../widgets/notifications_card.dart';
 
 /// Ítems del menú de administración (aún no disponibles).
 class AdminSection {
@@ -67,7 +68,9 @@ class ComingSoonPage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: scheme.primary.withValues(alpha: .07),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: scheme.primary.withValues(alpha: .25)),
+                border: Border.all(
+                  color: scheme.primary.withValues(alpha: .25),
+                ),
               ),
               child: Column(
                 children: [
@@ -86,9 +89,7 @@ class ComingSoonPage extends StatelessWidget {
                   const SizedBox(height: 14),
                   Text(
                     'Próximamente',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
+                    style: Theme.of(context).textTheme.titleLarge
                         ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 6),
@@ -96,10 +97,8 @@ class ComingSoonPage extends StatelessWidget {
                     section?.description ??
                         'Módulo en desarrollo del panel de administración.',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          height: 1.4,
-                        ),
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
                   ),
                 ],
               ),
@@ -108,9 +107,7 @@ class ComingSoonPage extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'Lo que viene en el panel',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
+            style: Theme.of(context).textTheme.titleMedium
                 ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
@@ -256,11 +253,12 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Agendas futuras, ordenadas de la más próxima a la más lejana.
   List<Map<String, dynamic>> get _upcomingAgendas {
     final now = DateTime.now();
-    final out = _agendas.where((a) {
-      final d = hsParseDate(a['eventDate']);
-      return d != null && d.isAfter(now);
-    }).toList()
-      ..sort((a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}'));
+    final out =
+        _agendas.where((a) {
+            final d = hsParseDate(a['eventDate']);
+            return d != null && d.isAfter(now);
+          }).toList()
+          ..sort((a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}'));
     return out;
   }
 
@@ -273,8 +271,10 @@ class _DashboardPageState extends State<DashboardPage> {
     // (tres columnas en tarjetas compactas). En pantallas angostas se usa el
     // acomodo en una columna con scroll, que es lo único que cabe.
     final wide = size.width >= 1000;
-    final catalogValue =
-        _packages.fold<num>(0, (a, p) => a + ((p['price'] as num?) ?? 0));
+    final catalogValue = _packages.fold<num>(
+      0,
+      (a, p) => a + ((p['price'] as num?) ?? 0),
+    );
     final upcoming = _upcomingAgendas;
 
     return PageContainer(
@@ -290,35 +290,45 @@ class _DashboardPageState extends State<DashboardPage> {
           ? const <StatPill>[]
           : [
               StatPill(
-                  icon: Icons.people_alt_outlined,
-                  label: '${_users.length} usuarios internos'),
+                icon: Icons.people_alt_outlined,
+                label: '${_users.length} usuarios internos',
+              ),
               StatPill(
-                  icon: Icons.badge_outlined, label: '${_clients.length} clientes'),
+                icon: Icons.badge_outlined,
+                label: '${_clients.length} clientes',
+              ),
               StatPill(
-                  icon: Icons.card_giftcard_outlined,
-                  label: '${_packages.length} paquetes'),
+                icon: Icons.card_giftcard_outlined,
+                label: '${_packages.length} paquetes',
+              ),
             ],
       child: RefreshIndicator(
         onRefresh: _load,
         child: _error != null
             ? _errorCard(scheme)
             : _loading
-                ? const ListSkeleton(lines: 3, cardHeight: 96)
-                : wide
-                    ? _board(scheme, catalogValue, upcoming)
-                    : _scrollSections(scheme, catalogValue, upcoming, compact),
+            ? const ListSkeleton(lines: 3, cardHeight: 96)
+            : wide
+            ? _board(scheme, catalogValue, upcoming)
+            : _scrollSections(scheme, catalogValue, upcoming, compact),
       ),
     );
   }
 
   /// Acomodo en UNA columna con scroll (pantallas angostas): el de siempre.
   Widget _scrollSections(
-      ColorScheme scheme, num catalogValue, List<Map<String, dynamic>> upcoming, bool compact) {
+    ColorScheme scheme,
+    num catalogValue,
+    List<Map<String, dynamic>> upcoming,
+    bool compact,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _SectionHeader(
-            icon: Icons.insights_outlined, label: 'Resumen general'),
+          icon: Icons.insights_outlined,
+          label: 'Resumen general',
+        ),
         const SizedBox(height: 10),
         // En el CELULAR el resumen va en cuadros COMPACTOS (una línea cada uno,
         // 2-3 por fila): las tarjetas grandes se veían desordenadas y robaban
@@ -330,13 +340,17 @@ class _DashboardPageState extends State<DashboardPage> {
         if (_finance != null) ...[
           const SizedBox(height: 22),
           const _SectionHeader(
-              icon: Icons.account_balance_wallet_outlined, label: 'Finanzas'),
+            icon: Icons.account_balance_wallet_outlined,
+            label: 'Finanzas',
+          ),
           const SizedBox(height: 10),
           _financeSection(scheme, _finance!),
         ],
         const SizedBox(height: 22),
         const _SectionHeader(
-            icon: Icons.bar_chart_rounded, label: 'Distribución'),
+          icon: Icons.bar_chart_rounded,
+          label: 'Distribución',
+        ),
         const SizedBox(height: 10),
         _charts(scheme),
         if (_space != null) ...[
@@ -345,17 +359,28 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
         const SizedBox(height: 22),
         const _SectionHeader(
-            icon: Icons.event_available_outlined, label: 'Próximos eventos'),
+          icon: Icons.event_available_outlined,
+          label: 'Próximos eventos',
+        ),
         const SizedBox(height: 10),
         _upcomingCard(scheme, upcoming),
+        // Widget de NOTIFICACIONES: solo aparece cuando hay avisos, así el
+        // tablero no se alarga de más.
+        const SizedBox(height: 12),
+        const NotificationsPanel(limit: 4),
         const SizedBox(height: 22),
-        const _SectionHeader(icon: Icons.bolt_outlined, label: 'Accesos rápidos'),
+        const _SectionHeader(
+          icon: Icons.bolt_outlined,
+          label: 'Accesos rápidos',
+        ),
         const SizedBox(height: 10),
         _shortcuts(),
         if (_clients.isNotEmpty) ...[
           const SizedBox(height: 22),
           const _SectionHeader(
-              icon: Icons.badge_outlined, label: 'Clientes recientes'),
+            icon: Icons.badge_outlined,
+            label: 'Clientes recientes',
+          ),
           const SizedBox(height: 10),
           _recentClients(compact),
         ],
@@ -368,7 +393,10 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Tres columnas que llenan el alto disponible: la página NO scrollea y, si
   /// una columna tiene más contenido del que cabe, scrollea SOLO ella.
   Widget _board(
-      ColorScheme scheme, num catalogValue, List<Map<String, dynamic>> upcoming) {
+    ColorScheme scheme,
+    num catalogValue,
+    List<Map<String, dynamic>> upcoming,
+  ) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -394,8 +422,12 @@ class _DashboardPageState extends State<DashboardPage> {
               _panel(
                 icon: Icons.account_balance_wallet_outlined,
                 label: 'Finanzas',
-                child: _financeSection(scheme, _finance!,
-                    bare: true, chartHeight: 84),
+                child: _financeSection(
+                  scheme,
+                  _finance!,
+                  bare: true,
+                  chartHeight: 84,
+                ),
               ),
             ],
           ]),
@@ -428,6 +460,9 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Distribución',
               child: _charts(scheme, bare: true),
             ),
+            // El panel de avisos se pinta solo si HAY avisos: así el tablero
+            // de escritorio sigue cabiendo entero cuando no hay nada nuevo.
+            const NotificationsPanel(limit: 2, compact: true),
             const SizedBox(height: 10),
             _panel(
               icon: Icons.bolt_outlined,
@@ -442,11 +477,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   /// Una columna del tablero: si su contenido no cabe, scrollea por dentro.
   Widget _boardColumn(List<Widget> children) => SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
-      );
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    ),
+  );
 
   /// Tarjeta del tablero: encabezado de sección + contenido compacto.
   Widget _panel({
@@ -473,47 +508,72 @@ class _DashboardPageState extends State<DashboardPage> {
   /// obligar a bajar en el tablero.
   Widget _metricStrip(ColorScheme scheme, num catalogValue, int upcomingCount) {
     final metrics = <_Metric>[
-      _Metric('Usuarios internos', '${_users.length}',
-          Icons.people_alt_rounded, scheme.primary),
-      _Metric('Clientes', '${_clients.length}', Icons.badge_rounded,
-          const Color(0xFF8B5CF6)),
-      _Metric('En catálogo', '${_packages.length}',
-          Icons.card_giftcard_rounded, const Color(0xFF10B981)),
-      _Metric('Valor del catálogo', hsMoney(catalogValue),
-          Icons.payments_rounded, const Color(0xFFF59E0B)),
-      _Metric('Agendas próximas', '$upcomingCount',
-          Icons.event_available_rounded, const Color(0xFF3B82F6)),
+      _Metric(
+        'Usuarios internos',
+        '${_users.length}',
+        Icons.people_alt_rounded,
+        scheme.primary,
+      ),
+      _Metric(
+        'Clientes',
+        '${_clients.length}',
+        Icons.badge_rounded,
+        const Color(0xFF0D9488),
+      ),
+      _Metric(
+        'En catálogo',
+        '${_packages.length}',
+        Icons.card_giftcard_rounded,
+        const Color(0xFF10B981),
+      ),
+      _Metric(
+        'Valor del catálogo',
+        hsMoney(catalogValue),
+        Icons.payments_rounded,
+        const Color(0xFFF59E0B),
+      ),
+      _Metric(
+        'Agendas próximas',
+        '$upcomingCount',
+        Icons.event_available_rounded,
+        const Color(0xFF3B82F6),
+      ),
     ];
-    return LayoutBuilder(builder: (context, box) {
-      final w = box.maxWidth;
-      final cols = w < 380
-          ? 2
-          : w < 620
-              ? 3
-              : 5;
-      const gap = 8.0;
-      final tileW = (w - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (var i = 0; i < metrics.length; i++)
-            SizedBox(
-              width: tileW,
-              child: StaggeredItem(
-                index: i,
-                child: _MiniMetricCard(metric: metrics[i]),
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = box.maxWidth;
+        final cols = w < 380
+            ? 2
+            : w < 620
+            ? 3
+            : 5;
+        const gap = 8.0;
+        final tileW = (w - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (var i = 0; i < metrics.length; i++)
+              SizedBox(
+                width: tileW,
+                child: StaggeredItem(
+                  index: i,
+                  child: _MiniMetricCard(metric: metrics[i]),
+                ),
               ),
-            ),
-        ],
-      );
-    });
+          ],
+        );
+      },
+    );
   }
 
   /// Eventos próximos SIN la tarjeta exterior (el tablero ya es una tarjeta).
   /// Van AGRUPADOS POR DÍA: arriba la fecha y debajo los eventos de ese día
   /// (un mismo día puede tener dos o más).
-  Widget _upcomingRows(ColorScheme scheme, List<Map<String, dynamic>> upcoming) {
+  Widget _upcomingRows(
+    ColorScheme scheme,
+    List<Map<String, dynamic>> upcoming,
+  ) {
     if (upcoming.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -575,64 +635,91 @@ class _DashboardPageState extends State<DashboardPage> {
         for (var i = 0; i < shown.length; i++) ...[
           if (i > 0) Divider(height: 1, color: Theme.of(context).dividerColor),
           StaggeredItem(
-              index: i, child: _DashboardClientRow(client: shown[i])),
+            index: i,
+            child: _DashboardClientRow(client: shown[i]),
+          ),
         ],
       ],
     );
   }
 
   Widget _errorCard(ColorScheme scheme) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            children: [
-              Icon(Icons.cloud_off_outlined, size: 36, color: scheme.error),
-              const SizedBox(height: 10),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Reintentar'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 36, color: scheme.error),
+          const SizedBox(height: 10),
+          Text(_error!, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar'),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   /// Métricas clave: 2 columnas en móvil, hasta 5 en pantallas anchas.
   Widget _metrics(ColorScheme scheme, num catalogValue, int upcomingCount) {
     final metrics = <_Metric>[
-      _Metric('Usuarios internos', '${_users.length}',
-          Icons.people_alt_rounded, scheme.primary),
-      _Metric('Clientes', '${_clients.length}', Icons.badge_rounded,
-          const Color(0xFF8B5CF6)),
-      _Metric('Paquetes en catálogo', '${_packages.length}',
-          Icons.card_giftcard_rounded, const Color(0xFF10B981)),
-      _Metric('Valor del catálogo', hsMoney(catalogValue),
-          Icons.payments_rounded, const Color(0xFFF59E0B)),
-      _Metric('Agendas próximas', '$upcomingCount',
-          Icons.event_available_rounded, const Color(0xFF3B82F6)),
+      _Metric(
+        'Usuarios internos',
+        '${_users.length}',
+        Icons.people_alt_rounded,
+        scheme.primary,
+      ),
+      _Metric(
+        'Clientes',
+        '${_clients.length}',
+        Icons.badge_rounded,
+        const Color(0xFF0D9488),
+      ),
+      _Metric(
+        'Paquetes en catálogo',
+        '${_packages.length}',
+        Icons.card_giftcard_rounded,
+        const Color(0xFF10B981),
+      ),
+      _Metric(
+        'Valor del catálogo',
+        hsMoney(catalogValue),
+        Icons.payments_rounded,
+        const Color(0xFFF59E0B),
+      ),
+      _Metric(
+        'Agendas próximas',
+        '$upcomingCount',
+        Icons.event_available_rounded,
+        const Color(0xFF3B82F6),
+      ),
     ];
-    return LayoutBuilder(builder: (context, box) {
-      final cols = box.maxWidth < 520
-          ? 2
-          : box.maxWidth < 900
-              ? 3
-              : metrics.length.clamp(3, 5);
-      return GridView.count(
-        crossAxisCount: cols,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: cols == 2 ? 1.5 : 2.0,
-        children: [
-          for (var i = 0; i < metrics.length; i++)
-            StaggeredItem(index: i, child: _MetricCard(metric: metrics[i])),
-        ],
-      );
-    });
+    return LayoutBuilder(
+      builder: (context, box) {
+        final cols = box.maxWidth < 520
+            ? 2
+            : box.maxWidth < 900
+            ? 3
+            : metrics.length.clamp(3, 5);
+        return GridView.count(
+          crossAxisCount: cols,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: cols == 2 ? 1.5 : 2.0,
+          children: [
+            for (var i = 0; i < metrics.length; i++)
+              StaggeredItem(
+                index: i,
+                child: _MetricCard(metric: metrics[i]),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   /// FINANZAS del negocio: el dinero en cuadros horizontales + la gráfica de
@@ -688,8 +775,12 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _chartBox(ColorScheme scheme, FinanceData f, double height,
-      {required bool bare}) {
+  Widget _chartBox(
+    ColorScheme scheme,
+    FinanceData f,
+    double height, {
+    required bool bare,
+  }) {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -700,9 +791,7 @@ class _DashboardPageState extends State<DashboardPage> {
             Expanded(
               child: Text(
                 'Últimos 6 meses',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
+                style: Theme.of(context).textTheme.titleSmall
                     ?.copyWith(fontWeight: FontWeight.w800),
               ),
             ),
@@ -720,37 +809,38 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     if (bare) return content;
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: content,
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: content),
     );
   }
 
   /// Gráficas compactas (sin exceso): donut de paquetes por PLAN y
   /// barras de los paquetes más caros del catálogo.
   Widget _charts(ColorScheme scheme, {bool bare = false}) {
-    return LayoutBuilder(builder: (context, box) {
-      Widget wrap(Widget child) => bare
-          ? Padding(padding: const EdgeInsets.all(4), child: child)
-          : Card(child: Padding(padding: const EdgeInsets.all(16), child: child));
-      final donut = wrap(_TierDonut(packages: _packages));
-      final bars = wrap(_PriceBars(packages: _packages));
-      if (box.maxWidth < 720) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [donut, const SizedBox(height: 12), bars],
+    return LayoutBuilder(
+      builder: (context, box) {
+        Widget wrap(Widget child) => bare
+            ? Padding(padding: const EdgeInsets.all(4), child: child)
+            : Card(
+                child: Padding(padding: const EdgeInsets.all(16), child: child),
+              );
+        final donut = wrap(_TierDonut(packages: _packages));
+        final bars = wrap(_PriceBars(packages: _packages));
+        if (box.maxWidth < 720) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [donut, const SizedBox(height: 12), bars],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: donut),
+            const SizedBox(width: 12),
+            Expanded(child: bars),
+          ],
         );
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: donut),
-          const SizedBox(width: 12),
-          Expanded(child: bars),
-        ],
-      );
-    });
+      },
+    );
   }
 
   /// Espacio del drive en UNA línea (versión de tablero de [_spaceCard]).
@@ -762,8 +852,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final total = quota ?? (space['totalBytes'] as num?);
     final files = (space['files'] as num?) ?? 0;
     final folders = (space['folders'] as num?) ?? 0;
-    final pct =
-        (total != null && total > 0) ? (used / total).clamp(0.0, 1.0) : null;
+    final pct = (total != null && total > 0)
+        ? (used / total).clamp(0.0, 1.0)
+        : null;
     const green = Color(0xFF10B981);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -826,8 +917,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final total = quota ?? (space['totalBytes'] as num?);
     final files = (space['files'] as num?) ?? 0;
     final folders = (space['folders'] as num?) ?? 0;
-    final pct =
-        (total != null && total > 0) ? (used / total).clamp(0.0, 1.0) : null;
+    final pct = (total != null && total > 0)
+        ? (used / total).clamp(0.0, 1.0)
+        : null;
     const green = Color(0xFF10B981);
     return Card(
       child: Padding(
@@ -850,18 +942,23 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Espacio del drive',
-                      style:
-                          TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800)),
+                  const Text(
+                    'Espacio del drive',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     '${_fmtBytes(used)}${total != null ? ' de ${_fmtBytes(total)}' : ''}'
                     '${quota != null ? ' de cuota' : ''}'
                     ' · $files archivos · $folders carpetas',
                     style: TextStyle(
-                        fontSize: 12,
-                        height: 1.35,
-                        color: scheme.onSurfaceVariant),
+                      fontSize: 12,
+                      height: 1.35,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                   if (pct != null) ...[
                     const SizedBox(height: 10),
@@ -885,22 +982,29 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _upcomingCard(
-      ColorScheme scheme, List<Map<String, dynamic>> upcoming) {
+    ColorScheme scheme,
+    List<Map<String, dynamic>> upcoming,
+  ) {
     if (upcoming.isEmpty) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Row(
             children: [
-              Icon(Icons.event_busy_outlined,
-                  size: 26, color: scheme.onSurfaceVariant),
+              Icon(
+                Icons.event_busy_outlined,
+                size: 26,
+                color: scheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'No hay eventos próximos. Crea agendas desde los paquetes '
                   'del cliente.',
-                  style:
-                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -942,52 +1046,78 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _shortcuts({bool dense = false}) {
     final shortcuts = <_Shortcut>[
       if (_canSee('Archivos'))
-        const _Shortcut('Archivos', 'Carpetas y fotos',
-            Icons.folder_copy_outlined, 'drive'),
+        const _Shortcut(
+          'Archivos',
+          'Carpetas y fotos',
+          Icons.folder_copy_outlined,
+          'drive',
+        ),
       if (_canSee('Agendas'))
-        const _Shortcut('Agendas', 'Eventos agendados',
-            Icons.event_available_outlined, 'agendas'),
+        const _Shortcut(
+          'Agendas',
+          'Eventos agendados',
+          Icons.event_available_outlined,
+          'agendas',
+        ),
       if (_showModule('Finanzas'))
-        const _Shortcut('Finanzas', 'Ganancias y ahorro',
-            Icons.account_balance_wallet_outlined, 'finance'),
+        const _Shortcut(
+          'Finanzas',
+          'Ganancias y ahorro',
+          Icons.account_balance_wallet_outlined,
+          'finance',
+        ),
       if (_canSee('Clientes'))
-        const _Shortcut('Clientes', 'Directorio y paquetes',
-            Icons.badge_outlined, 'clients'),
+        const _Shortcut(
+          'Clientes',
+          'Directorio y paquetes',
+          Icons.badge_outlined,
+          'clients',
+        ),
       if (_canSee('Paquetes'))
-        const _Shortcut('Paquetes', 'Catálogo de la web',
-            Icons.card_giftcard_outlined, 'packages'),
+        const _Shortcut(
+          'Paquetes',
+          'Catálogo de la web',
+          Icons.card_giftcard_outlined,
+          'packages',
+        ),
       if (_canSee('Roles'))
-        const _Shortcut('Roles', 'Permisos por módulo',
-            Icons.admin_panel_settings_outlined, 'roles'),
+        const _Shortcut(
+          'Roles',
+          'Permisos por módulo',
+          Icons.admin_panel_settings_outlined,
+          'roles',
+        ),
     ];
     if (shortcuts.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(builder: (context, box) {
-      // En el tablero los accesos van COMPACTOS (3 por fila) para no comer
-      // alto; en el acomodo con scroll se quedan como siempre.
-      final cols = dense
-          ? (box.maxWidth < 300 ? 2 : 3)
-          : (box.maxWidth < 520 ? 2 : 4);
-      return GridView.count(
-        crossAxisCount: cols,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: dense
-            ? (cols == 2 ? 1.35 : 1.05)
-            : (cols == 2 ? 1.4 : 1.95),
-        children: [
-          for (var i = 0; i < shortcuts.length; i++)
-            StaggeredItem(
-              index: i,
-              child: _ShortcutTile(
-                shortcut: shortcuts[i],
-                onTap: () => widget.onNavigate?.call(shortcuts[i].key),
+    return LayoutBuilder(
+      builder: (context, box) {
+        // En el tablero los accesos van COMPACTOS (3 por fila) para no comer
+        // alto; en el acomodo con scroll se quedan como siempre.
+        final cols = dense
+            ? (box.maxWidth < 300 ? 2 : 3)
+            : (box.maxWidth < 520 ? 2 : 4);
+        return GridView.count(
+          crossAxisCount: cols,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: dense
+              ? (cols == 2 ? 1.35 : 1.05)
+              : (cols == 2 ? 1.4 : 1.95),
+          children: [
+            for (var i = 0; i < shortcuts.length; i++)
+              StaggeredItem(
+                index: i,
+                child: _ShortcutTile(
+                  shortcut: shortcuts[i],
+                  onTap: () => widget.onNavigate?.call(shortcuts[i].key),
+                ),
               ),
-            ),
-        ],
-      );
-    });
+          ],
+        );
+      },
+    );
   }
 
   Widget _recentClients(bool compact) {
@@ -1000,7 +1130,9 @@ class _DashboardPageState extends State<DashboardPage> {
             if (i > 0)
               Divider(height: 1, color: Theme.of(context).dividerColor),
             StaggeredItem(
-                index: i, child: _DashboardClientRow(client: shown[i])),
+              index: i,
+              child: _DashboardClientRow(client: shown[i]),
+            ),
           ],
         ],
       ),
@@ -1031,9 +1163,7 @@ class _SectionHeader extends StatelessWidget {
             child: Text(
               label,
               maxLines: 1,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
+              style: Theme.of(context).textTheme.titleMedium
                   ?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
@@ -1087,7 +1217,9 @@ class _MetricCard extends StatelessWidget {
                     child: Text(
                       metric.value,
                       style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 17),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                      ),
                     ),
                   ),
                   Text(
@@ -1095,7 +1227,9 @@ class _MetricCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -1161,7 +1295,9 @@ class _MiniMetricCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 9.5, color: scheme.onSurfaceVariant),
+                    fontSize: 9.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -1170,7 +1306,9 @@ class _MiniMetricCard extends StatelessWidget {
       ),
     );
   }
-}/// Día de un grupo de eventos próximos (etiqueta + sus agendas).
+}
+
+/// Día de un grupo de eventos próximos (etiqueta + sus agendas).
 class _UpcomingGroup {
   const _UpcomingGroup(this.label, this.agendas);
 
@@ -1232,7 +1370,7 @@ class _UpcomingRow extends StatelessWidget {
   final Map<String, dynamic> agenda;
 
   static const _palette = [
-    Color(0xFF8B5CF6),
+    Color(0xFF0D9488),
     Color(0xFF10B981),
     Color(0xFFF59E0B),
     Color(0xFF3B82F6),
@@ -1245,8 +1383,9 @@ class _UpcomingRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final date = hsParseDate(agenda['eventDate']);
     final sid = (agenda['serviceId'] as num?)?.toInt();
-    final color =
-        sid == null ? scheme.primary : _palette[sid.abs() % _palette.length];
+    final color = sid == null
+        ? scheme.primary
+        : _palette[sid.abs() % _palette.length];
     final client = (agenda['clientName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
     final package = (agenda['packageName'] ?? '').toString().trim();
@@ -1266,7 +1405,10 @@ class _UpcomingRow extends StatelessWidget {
             child: Text(
               date == null ? '--:--' : hsTimeLabel(date),
               style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 11.5, color: color),
+                fontWeight: FontWeight.w800,
+                fontSize: 11.5,
+                color: color,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -1279,7 +1421,9 @@ class _UpcomingRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 13.5),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -1290,7 +1434,9 @@ class _UpcomingRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 11.5, color: scheme.onSurfaceVariant),
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -1337,15 +1483,19 @@ class _ShortcutTile extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 13.5),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
               ),
               Flexible(
                 child: Text(
                   shortcut.sub,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:
-                      TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -1365,8 +1515,9 @@ class _DashboardClientRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final name =
-        '${client['name'] ?? ''} ${client['lastname'] ?? ''}'.trim().trim();
+    final name = '${client['name'] ?? ''} ${client['lastname'] ?? ''}'
+        .trim()
+        .trim();
     final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final pkgCount = (client['packagesCount'] as num?)?.toInt() ?? 0;
     final email = (client['email'] ?? '').toString().trim();
@@ -1397,7 +1548,9 @@ class _DashboardClientRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 13.5),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                  ),
                 ),
                 if (email.isNotEmpty)
                   Text(
@@ -1405,7 +1558,9 @@ class _DashboardClientRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 11.5, color: scheme.onSurfaceVariant),
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
               ],
             ),
@@ -1441,7 +1596,7 @@ class _TierDonut extends StatelessWidget {
   final List<Map<String, dynamic>> packages;
 
   static const _palette = <Color>[
-    Color(0xFF8B5CF6), // violeta
+    Color(0xFF0D9488), // turquesa
     Color(0xFF3B82F6), // azul
     Color(0xFFF59E0B), // ámbar
     Color(0xFF10B981), // verde
@@ -1515,15 +1670,18 @@ class _TierDonut extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 12.5, fontWeight: FontWeight.w600),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                       Text(
                         '${e.value} · ${((e.value / total) * 100).round()}%',
                         style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: scheme.onSurfaceVariant),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -1552,7 +1710,7 @@ class _DonutPainter extends CustomPainter {
     canvas.drawCircle(
       center,
       radius * 0.83,
-      Paint()..color = const Color(0xFF8B5CF6).withValues(alpha: .10),
+      Paint()..color = const Color(0xFF0D9488).withValues(alpha: .10),
     );
     var start = -math.pi / 2;
     for (var i = 0; i < values.length; i++) {
@@ -1563,7 +1721,13 @@ class _DonutPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = radius * 0.30
         ..strokeCap = StrokeCap.butt;
-      canvas.drawArc(rect.deflate(paint.strokeWidth / 2), start, sweep, false, paint);
+      canvas.drawArc(
+        rect.deflate(paint.strokeWidth / 2),
+        start,
+        sweep,
+        false,
+        paint,
+      );
       start += values[i] * 2 * math.pi;
     }
   }
@@ -1589,8 +1753,11 @@ class _PriceBars extends StatelessWidget {
       );
     }
     final sorted = [...packages]
-      ..sort((a, b) => (((b['price'] as num?) ?? 0))
-          .compareTo(((a['price'] as num?) ?? 0)));
+      ..sort(
+        (a, b) => (((b['price'] as num?) ?? 0)).compareTo(
+          ((a['price'] as num?) ?? 0),
+        ),
+      );
     final top = sorted.take(4).toList();
     final max = ((top.first['price'] as num?) ?? 0).toDouble();
     return Column(
@@ -1607,16 +1774,19 @@ class _PriceBars extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 hsMoney(((top[i]['price'] as num?) ?? 0)),
                 style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                    color: scheme.primary),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.primary,
+                ),
               ),
             ],
           ),
@@ -1631,13 +1801,15 @@ class _PriceBars extends StatelessWidget {
             child: FractionallySizedBox(
               widthFactor: max <= 0
                   ? 0
-                  : (((top[i]['price'] as num?) ?? 0) / max)
-                      .clamp(0.02, 1.0),
+                  : (((top[i]['price'] as num?) ?? 0) / max).clamp(0.02, 1.0),
               heightFactor: 1,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [scheme.primary, scheme.primary.withValues(alpha: .6)],
+                    colors: [
+                      scheme.primary,
+                      scheme.primary.withValues(alpha: .6),
+                    ],
                   ),
                   borderRadius: BorderRadius.circular(4),
                 ),

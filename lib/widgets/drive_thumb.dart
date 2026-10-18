@@ -27,6 +27,7 @@ class DriveThumb extends StatefulWidget {
     this.big = false,
     this.contain = false,
     this.rounded = true,
+    this.onReady,
   });
 
   /// URL (drive remoto) o ruta absoluta (drive local) de la miniatura.
@@ -50,6 +51,10 @@ class DriveThumb extends StatefulWidget {
   /// foto se ve a pantalla completa, sin bordes curvos.
   final bool rounded;
 
+  /// Avisa cuando la imagen ya se está viendo. El visor lo usa para pedir la
+  /// ORIGINAL justo después de mostrar la miniatura rápida.
+  final VoidCallback? onReady;
+
   /// Reintentos automáticos de descarga antes de darla por fallida.
   static const int maxRetries = 3;
 
@@ -71,6 +76,7 @@ class _DriveThumbState extends State<DriveThumb> {
   bool _failed = false; // agotó reintentos (o el visor pidió parar)
   bool _errorScheduled = false; // evita programar el reintento dos veces
   bool _ready = false; // hay imagen visible: se oculta el marcador
+  bool _notified = false; // ya se llamó a [DriveThumb.onReady]
   Timer? _timer;
 
   @override
@@ -85,6 +91,7 @@ class _DriveThumbState extends State<DriveThumb> {
       _failed = false;
       _errorScheduled = false;
       _ready = false;
+      _notified = false;
     }
   }
 
@@ -147,9 +154,14 @@ class _DriveThumbState extends State<DriveThumb> {
   /// Marca que ya hay imagen en pantalla (tras el primer frame) para quitar
   /// el marcador. Se hace fuera del build (post-frame) por seguridad.
   void _markReady() {
-    if (_ready) return;
+    if (_ready && _notified) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_ready) setState(() => _ready = true);
+      if (!mounted) return;
+      if (!_ready) setState(() => _ready = true);
+      if (!_notified) {
+        _notified = true;
+        widget.onReady?.call();
+      }
     });
   }
 

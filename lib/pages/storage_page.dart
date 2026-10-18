@@ -101,6 +101,7 @@ class _StoragePageState extends State<StoragePage> {
           'cuota y lo que queda libre.',
       icon: Icons.sd_storage_outlined,
       expand: false,
+      onRefresh: _load,
       // El botón de ACTUALIZAR ya no vive en el encabezado: va como botón de
       // imagen en la esquina de la tarjeta de presentación (igual que en el
       // Drive), que es donde se busca.
@@ -213,7 +214,7 @@ class _StoragePageState extends State<StoragePage> {
               icon: Icons.folder_copy_outlined,
               label: 'Carpetas',
               value: '$folders',
-              tint: const Color(0xFF8B5CF6),
+              tint: const Color(0xFF0D9488),
             ),
             _DataBox(
               icon: Icons.save_outlined,
@@ -325,23 +326,6 @@ class _StoragePageState extends State<StoragePage> {
                     ],
                   ),
                 ),
-                // BOTÓN DE IMAGEN de actualizar, arriba a la derecha de la
-                // tarjeta de presentación (el mismo gesto que en el Drive).
-                Tooltip(
-                  message: 'Actualizar el espacio',
-                  child: IconButton(
-                    onPressed: _loading ? null : _load,
-                    visualDensity: VisualDensity.compact,
-                    icon: _loading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(Icons.refresh_rounded,
-                            size: 20, color: scheme.onSurfaceVariant),
-                  ),
-                ),
               ],
             ),
             SizedBox(height: phone ? 10 : 14),
@@ -450,7 +434,7 @@ class _StoragePageState extends State<StoragePage> {
           label: 'Disco usado',
           detail: '${hsBytes(diskTotal! - diskFree!)} de ${hsBytes(diskTotal)}',
           value: diskUsedPct,
-          color: const Color(0xFF8B5CF6),
+          color: const Color(0xFF0D9488),
         ),
       if (diskFree != null && diskTotal != null && diskTotal > 0)
         _PercentBar(

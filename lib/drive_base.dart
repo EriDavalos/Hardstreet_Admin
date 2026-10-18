@@ -4,6 +4,8 @@ import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 
 import 'app_constants.dart';
+import 'drive_host.dart';
+import 'hs_access.dart';
 import 'hs_api.dart' show HsSession;
 
 /// Una carpeta compartida con el cliente, tal como se VE: [shown] es el nombre
@@ -113,9 +115,17 @@ bool isDriveImageUrl(String url) {
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
   if (!uri.pathSegments.contains('files')) return false;
   final host = uri.host.toLowerCase();
-  final driveHost =
-      (Uri.tryParse(AppConstants.apiBase)?.host ?? '').toLowerCase();
-  if (driveHost.isNotEmpty && host == driveHost) return true;
+  // Cualquiera de las direcciones con las que la app llega al MISMO drive
+  // cuenta como interna: la configurada, la de fábrica y los respaldos. Así
+  // una foto guardada como `https://oriongo…/files/…` se sigue reconociendo
+  // aunque la sesión esté usando la IP local o el HTTP directo.
+  final driveHosts = <String>{
+    (Uri.tryParse(AppConstants.apiBase)?.host ?? '').toLowerCase(),
+    (Uri.tryParse(DriveHost.compiled)?.host ?? '').toLowerCase(),
+    (Uri.tryParse(DriveHost.publicHttp)?.host ?? '').toLowerCase(),
+    (Uri.tryParse(DriveHost.lanFallback)?.host ?? '').toLowerCase(),
+  }..remove('');
+  if (driveHosts.contains(host)) return true;
   return _isLocalDriveHost(host);
 }
 
@@ -132,12 +142,15 @@ String get driveImageToken => HsSession.token ?? '';
 ///
 ///   * foto del Drive interno → la versión REDIMENSIONADA del servidor
 ///     (`<servidor>/thumb/<ruta>?w=N`): pesa unos KB en vez de varios MB, así
-///     las miniaturas del panel aparecen al instante. Lleva el token de la
-///     sesión (`?apikey=`), porque el servidor del drive exige permiso de
-///     lectura y una imagen no puede mandar cabeceras: sin él respondía 403 y
-///     las fotos del panel no cargaban nunca;
+///     las miniaturas del panel aparecen al instante. NO lleva token: el
+///     endpoint `/thumb` es público (son las imágenes del catálogo y de la
+///     web). Antes se mandaba `?apikey=` y un rol sin permiso de Drive veía un
+///     403 en las portadas de categorías y paquetes;
 ///   * cualquier otro enlace (una foto de otro sitio, una ruta del propio
 ///     sitio como `images/…`) → se devuelve TAL CUAL.
+///
+/// El token se sigue agregando a las URLs de ARCHIVO (`/files/...`), que sí
+/// exigen sesión.
 String driveImagePreview(String url, {int width = 320, String? token}) {
   final clean = url.trim();
   if (!isDriveImageUrl(clean)) return clean;
@@ -149,11 +162,15 @@ String driveImagePreview(String url, {int width = 320, String? token}) {
   // acentos o `#` (y `uri.path` los entrega ya decodificados).
   final path = segments.sublist(i + 1).map(Uri.encodeComponent).join('/');
   final w = width.clamp(32, 2048);
-  // El token va DESPUÉS de `w` a propósito: así la clave de caché de la
-  // imagen (`width`) sigue siendo visible en la URL.
-  final t = (token ?? driveImageToken).trim();
-  final extra = t.isEmpty ? '' : '&apikey=${Uri.encodeQueryComponent(t)}';
-  return '${uri.scheme}://${uri.authority}/thumb/$path?w=$w$extra';
+  // Sin token: `/thumb` es público (ver el comentario de arriba). El parámetro
+  // [token] se conserva por compatibilidad con quien lo pase, pero no viaja.
+  // Si la sesión usa un respaldo (IP local / HTTP directo), la miniatura se
+  // pide a ESA dirección: la URL guardada puede apuntar al nombre público que
+  // el teléfono no puede abrir.
+  final server = (DriveHost.usingFallback || DriveHost.isCustom)
+      ? AppConstants.apiBase
+      : '${uri.scheme}://${uri.authority}';
+  return '$server/thumb/$path?w=$w';
 }
 
 /// El mismo criterio para la URL ORIGINAL de una foto del drive
@@ -327,6 +344,30 @@ class DriveDownloadJob {
 
 /// Contrato común del drive (local o servidor).
 abstract class DriveBase extends ChangeNotifier {
+  /// ¿La sesión puede hacer [action] en ESTE drive?
+  ///
+  /// Las acciones son las mismas del módulo Archivos: `download`, `update`,
+  /// `create` y `delete`. El Drive normal las resuelve con los permisos del
+  /// rol; una carpeta compartida las resuelve con lo que el DUEÑO concedió a
+  /// cada destinatario, así que la vista es la misma pero puede ofrecer menos.
+  bool canDo(String action) =>
+      HsAccess.instance.degraded || HsAccess.instance.can('Archivos', action);
+
+  /// Primer nombre de las migas de pan ("Mi Drive" en el Drive).
+  ///
+  /// En una carpeta COMPARTIDA es el nombre del MÓDULO del que se abrió
+  /// ("Compartido conmigo"): la miga raíz representa el módulo, así que
+  /// tocarla vuelve a su listado.
+  String get rootLabel => 'Mi Drive';
+
+  /// Nombre de la CARPETA que se está viendo (null = no aplica).
+  ///
+  /// Es la miga que va entre la raíz y las subcarpetas: en una carpeta
+  /// compartida, `rootLabel` es el módulo ("Compartido conmigo") y esta es la
+  /// carpeta en sí ("Bodas/Ana Ruiz"), para poder volver a su contenido desde
+  /// una subcarpeta sin salir del módulo.
+  String? get crumbFolderLabel => null;
+
   /// ¿Este drive se sirve por RED (HTTP)?
   ///
   /// Importa para pintar una miniatura: un drive local (una carpeta real del
@@ -906,6 +947,19 @@ abstract class DriveBase extends ChangeNotifier {
   /// (el visor muestra el preview al instante y la original no se baja).
   String fullSource(DriveItem item, {int? previewWidth}) =>
       absolutePathOf(item);
+
+  /// Igual que [fullSource] pero para un archivo dentro de [rel], sin mover la
+  /// carpeta que el drive está mostrando. La usa el visor para pedir la ORIGINAL
+  /// después de la miniatura rápida.
+  String fullSourceIn(List<String> rel, DriveItem item, {int? previewWidth}) {
+    final saved = path;
+    path = List<String>.of(rel);
+    try {
+      return fullSource(item, previewWidth: previewWidth);
+    } finally {
+      path = saved;
+    }
+  }
 
   // ---------- Helpers ----------
 

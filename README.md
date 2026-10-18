@@ -363,6 +363,40 @@ así que no hay que volver a publicar el sitio.
   ahora (HTML + CSS + defaults de `site.js`) y lo escribe en
   `site_config.landing` (`--dry-run` para verlo sin tocar la base).
 
+### HTML propio de cada sección (vista previa REAL del sitio)
+
+Cada tarjeta de sección trae **HTML de la sección**. Ahí se escribe el HTML
+que la web pintará DENTRO de esa sección (conserva su `<section>`, su lugar y
+su visibilidad); si se deja vacío, la sección se arma con sus campos y los
+datos, como siempre. Lo que se escribe se guarda junto al resto del documento
+(`landing.html`) al presionar **Guardar cambios**.
+
+El editor tiene dos paneles: el HTML (con botones que insertan las etiquetas
+que el sitio ya estiliza: título, etiqueta, párrafo, botón, imagen…) y la
+**vista previa del sitio real**, no una maqueta de Flutter. El sitio
+(`index.html`, `index.css`, `index.js`, `gallery/assets/…` e imágenes) viaja
+EMPAQUETADO en la app (`assets/site/`) y se sirve en loopback
+(`lib/site_preview_server_io.dart`); un `WebView` lo abre, oculta las demás
+secciones y escribe dentro de la sección el HTML que se está editando. Así se
+ven las tipografías, la rejilla, los botones y las fotos EXACTAMENTE como en la
+web. **Cargar HTML actual** lee del sitio lo que la sección tiene ahora (con los
+textos y fotos ya aplicados) para editar sobre eso en vez de reescribirlo.
+
+Al cambiar la web hay que volver a copiarla dentro de la app antes de compilar
+(las dos copias deben ser idénticas):
+
+```bash
+cd Hardstreet_Admin
+node tool/sync_site_assets.mjs
+```
+
+El backend (`PUT /api/admin/site`) quita `<script>`, los manejadores en línea
+(`onclick`, `onerror`…) y los enlaces `javascript:`, y topa cada sección a
+100 KB. La web aplica el HTML al final de pintar el contenido (después de los
+textos, las fotos y los datos), así que manda sobre todo lo demás
+(`applySectionHtml` en `gallery/assets/site.js`), y vuelve a observar los
+`.reveal` nuevos para que las animaciones de entrada funcionen.
+
 Por ahora el módulo se ofrece **sólo en Windows** (en Android y en la web del
 panel ni aparece en el menú): es un editor pensado para trabajar con el sitio a
 la vista en la computadora.
@@ -371,7 +405,10 @@ Pruebas: `test/site_page_test.dart` comprueba que los ganchos del HTML y el
 catálogo del panel coincidan, que los valores de fábrica sean los del sitio y
 que editar/guardar haga lo que dice (incluido que un documento COMPLETO —el que
 sube "Guardar lo actual en la base"— pinta la portada igual que los defaults:
-`Hardstreet/tests/site-sections.test.mjs`).
+`Hardstreet/tests/site-sections.test.mjs`). `test/site_html_test.dart` cubre el
+HTML por sección de punta a punta (documento, editor y guardado) y
+`test/site_preview_server_test.dart` pide el sitio empaquetado por HTTP
+(contenido, tipos MIME, `..` y métodos).
 
 ## Módulo Servicios
 

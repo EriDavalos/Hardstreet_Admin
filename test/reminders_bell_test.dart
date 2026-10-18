@@ -113,8 +113,11 @@ void main() {
     await tester.tap(find.byType(RemindersBell));
     await tester.pumpAndSettle();
 
-    // Fila 1 ANTES de marcar: no leída (icono "circle").
-    expect(_rowIcons(tester, 1), <IconData?>[Icons.circle]);
+    // Fila 1 ANTES de marcar: no leída (punto "circle" en la ficha). La fila
+    // lleva además su icono de evento, así que se busca el estado, no la
+    // lista exacta de iconos.
+    expect(_rowIcons(tester, 1), contains(Icons.circle));
+    expect(_rowIcons(tester, 1), isNot(contains(Icons.check_circle_outline)));
 
     await tester.tap(find.text('Marcar leídos'));
     await tester.pumpAndSettle();

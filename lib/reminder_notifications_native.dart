@@ -34,6 +34,17 @@ class NativeReminderPlugin implements ReminderNotifier {
     priority: Priority.high,
   );
 
+  /// Avisos del PAQUETE (fotos disponibles, servicio terminado…). Canal
+  /// aparte para que el cliente pueda silenciarlos por separado.
+  static const AndroidNotificationDetails _packageDetails =
+      AndroidNotificationDetails(
+    'paquete',
+    'Avisos de mi paquete',
+    channelDescription: 'Fotos disponibles, servicios terminados y avisos del estudio',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
   /// Inicializa el plugin y pide el permiso de notificaciones (Android 13+).
   /// Seguro llamar varias veces; si algo falla se marca como no listo y las
   /// notificaciones se omiten sin romper la app.
@@ -58,24 +69,37 @@ class NativeReminderPlugin implements ReminderNotifier {
 
   /// Notifica cada aviso nuevo. No lanza nunca.
   @override
-  Future<void> showAll(List<Map<String, dynamic>> fresh) async {
+  Future<void> showAll(List<Map<String, dynamic>> fresh) =>
+      _showAll(fresh, _androidDetails, 0, 'Aviso de evento');
+
+  /// Notifica los avisos nuevos del PAQUETE. Los ids se desplazan para no
+  /// chocar con los de los recordatorios en la bandeja del teléfono.
+  Future<void> showPackageAll(List<Map<String, dynamic>> fresh) =>
+      _showAll(fresh, _packageDetails, 500000, 'Aviso de tu paquete');
+
+  Future<void> _showAll(
+    List<Map<String, dynamic>> fresh,
+    AndroidNotificationDetails details,
+    int idOffset,
+    String fallbackTitle,
+  ) async {
     if (_kWeb) return;
     if (!_ready) await init();
     if (!_ready) return;
     for (var i = 0; i < fresh.length; i++) {
       final r = fresh[i];
-      final id = (r['id'] is int)
+      final base = (r['id'] is int)
           ? r['id'] as int
           : int.tryParse('${r['id']}') ?? (i + 1);
       try {
         await _plugin.show(
-          id,
-          '${r['title'] ?? 'Aviso de evento'}',
+          idOffset + base.abs(),
+          '${r['title'] ?? fallbackTitle}',
           '${r['body'] ?? ''}',
-          const NotificationDetails(android: _androidDetails),
+          NotificationDetails(android: details),
         );
       } catch (_) {
-        // Mejor esfuerzo: la campanita sigue siendo el aviso principal.
+        // Mejor esfuerzo: el panel sigue siendo el aviso principal.
       }
     }
   }

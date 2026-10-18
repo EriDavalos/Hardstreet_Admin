@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../hs_access.dart';
@@ -6,6 +8,9 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_folder.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 
 /// Módulo USUARIOS: CRUD completo + asignación de rol.
 /// Conecta con la misma API que la web (Hardstreet-Backend):
@@ -20,9 +25,39 @@ class UsersPage extends StatefulWidget {
 class _UsersPageState extends State<UsersPage> {
   bool _loading = true;
   String? _error;
+
+  /// Filas de la PÁGINA actual (el backend manda solo estas).
   List<Map<String, dynamic>> _users = const [];
   List<Map<String, dynamic>> _roles = const [];
   String _query = '';
+
+  /// Filtro por ROL ('' = todos). Sale de los conteos del backend.
+  String _roleFilter = '';
+
+  // Paginación (30 de fábrica; 50/100/200 desde el pie).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
+  /// Total de filas que calculó el SERVIDOR con la búsqueda/filtros puestos.
+  int _total = 0;
+
+  /// Total sin el filtro de rol (para el chip "Todos").
+  int _allTotal = 0;
+
+  /// Conteo por rol que manda el backend (chips), respetando la búsqueda.
+  Map<String, int> _roleCounts = const {};
+
+  /// true = el backend paginó/filtró (llegó `total`); false = respuesta vieja
+  /// sin metadatos y el listado pagina en pantalla como antes.
+  bool _serverPaged = false;
+
+  Timer? _debounce;
+
+  /// REGLA DEL ROL MÁS ALTO: las cuentas Admin solo las ve un Admin.
+  bool get _iAmAdmin => HsSession.isAdmin;
+
+  static String _roleOf(Map<String, dynamic> u) =>
+      (u['role'] ?? '').toString().trim().toLowerCase();
 
   @override
   void initState() {
@@ -30,25 +65,76 @@ class _UsersPageState extends State<UsersPage> {
     _reload();
   }
 
-  Future<void> _reload() async {
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  /// Busca en el servidor con una pequeña espera, para no lanzar una petición
+  /// por cada tecla.
+  void _search(String value) {
+    setState(() {
+      _query = value;
+      _page = 1;
+    });
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), _reload);
+  }
+
+  /// Pide la página actual al backend (con búsqueda y filtro de rol).
+  ///
+  /// [reset] vuelve a la página 1: al buscar, filtrar, crear o eliminar.
+  Future<void> _reload({bool reset = false}) async {
+    if (reset) _page = 1;
+    // Página pedida (antes de que el servidor la recorte).
+    final asked = _page;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final users = await HsApi.adminUsers();
-      List<Map<String, dynamic>> roles = const [];
-      try {
-        roles = await HsApi.roles();
-      } catch (_) {
-        // los roles solo fallan si el backend es viejo: el CRUD sigue
+      final result = await HsApi.adminUsersPage(
+        page: _page,
+        limit: _pageSize,
+        q: _query,
+        role: _roleFilter,
+      );
+      // Los roles cambian poco: se piden una sola vez (y solo si el primero
+      // intento falló, se reintentan en la siguiente carga).
+      var roles = _roles;
+      if (roles.isEmpty) {
+        try {
+          roles = await HsApi.roles();
+        } catch (_) {
+          // los roles solo fallan si el backend es viejo: el CRUD sigue
+        }
       }
       if (!mounted) return;
       setState(() {
-        _users = users;
+        _users = result.items;
         _roles = roles;
+        _serverPaged = result.serverPaged;
+        _total = result.total;
+        _allTotal = (result.meta['allTotal'] as num?)?.toInt() ?? result.total;
+        _roleCounts = {
+          for (final e
+              in ((result.meta['roleCounts'] as Map?) ?? const {}).entries)
+            e.key.toString(): (e.value as num?)?.toInt() ?? 0,
+        };
+        if (result.serverPaged) _page = result.page;
         _loading = false;
       });
+      // Si la última fila de la última página se borró, la página pedida ya no
+      // existe (el servidor devuelve las filas vacías): pide la última real.
+      if (result.serverPaged &&
+          result.items.isEmpty &&
+          result.total > 0 &&
+          _page > 1 &&
+          _page < asked) {
+        _page = result.pages;
+        await _reload();
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -67,10 +153,11 @@ class _UsersPageState extends State<UsersPage> {
   Future<void> _openForm([Map<String, dynamic>? user]) async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _UserFormDialog(user: user, roles: _roles),
     );
-    if (saved == true) _reload();
+    // Al CREAR se vuelve a la página 1 (la fila nueva queda a la vista).
+    if (saved == true) _reload(reset: user == null);
   }
 
   Future<void> _delete(Map<String, dynamic> user) async {
@@ -89,16 +176,88 @@ class _UsersPageState extends State<UsersPage> {
     _reload();
   }
 
-  List<Map<String, dynamic>> get _filtered {
+  /// Roles que aparecen en el filtro.
+  ///
+  /// Con el backend paginado salen de los CONTEOS que manda (así aparecen
+  /// roles que todavía no están en esta página); Admin solo para un Admin.
+  List<String> get _filterRoles {
+    final names = <String>{};
+    if (_serverPaged) {
+      names.addAll(_roleCounts.keys);
+    } else {
+      for (final u in _users) {
+        final r = (u['role'] ?? '').toString().trim();
+        if (r.isNotEmpty) names.add(r);
+      }
+    }
+    final out =
+        names.where((r) => _iAmAdmin || r.toLowerCase() != 'admin').toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return out;
+  }
+
+  /// Total del chip "Todos" (respeta la búsqueda, no el rol elegido).
+  int get _countAll => _serverPaged ? _allTotal : _users.length;
+
+  int _countOfRole(String role) => _serverPaged
+      ? (_roleCounts[role] ?? 0)
+      : _users.where((u) => _roleOf(u) == role.toLowerCase()).length;
+
+  /// Filas que se pintan.
+  ///
+  /// Con el backend nuevo son TAL CUAL la página que devolvió (ya filtró él).
+  /// Con uno viejo (respuesta sin `total`) se filtra aquí, como antes.
+  List<Map<String, dynamic>> get _visible {
+    if (_serverPaged) return _users;
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _users;
+    final role = _roleFilter.trim().toLowerCase();
     return _users.where((u) {
+      // Los Admin no se listan a quien no es Admin.
+      if (!_iAmAdmin && _roleOf(u) == 'admin') return false;
+      if (role.isNotEmpty && _roleOf(u) != role) return false;
+      if (q.isEmpty) return true;
       final hay =
           '${u['name'] ?? ''} ${u['lastname'] ?? ''} ${u['email'] ?? ''} ${u['role'] ?? ''}'
               .toLowerCase();
       return hay.contains(q);
     }).toList();
   }
+
+  /// Filas de la página actual.
+  List<Map<String, dynamic>> get _pageRows => _serverPaged
+      ? _visible
+      : HsPages(
+          total: _visible.length,
+          page: _page,
+          pageSize: _pageSize,
+        ).slice(_visible);
+
+  /// Total que se le pasa a la barra: el del servidor o el local.
+  int get _pagerTotal => _serverPaged ? _total : _visible.length;
+
+  /// Opciones del módulo de filtros: los roles con su conteo.
+  List<HsFilterGroup> get _filterGroups => [
+    HsFilterGroup(
+      id: 'role',
+      title: 'Rol de la cuenta',
+      help: 'El conteo respeta la búsqueda que escribas arriba.',
+      options: [
+        HsFilterOption(
+          value: '',
+          label: 'Todos los usuarios',
+          count: _countAll,
+          icon: Icons.groups_rounded,
+        ),
+        for (final r in _filterRoles)
+          HsFilterOption(
+            value: r,
+            label: r,
+            count: _countOfRole(r),
+            icon: Icons.badge_outlined,
+          ),
+      ],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -108,37 +267,62 @@ class _UsersPageState extends State<UsersPage> {
       description:
           'Crea, actualiza y elimina cuentas del equipo, y asígnales su rol.',
       icon: Icons.people_alt_rounded,
+      onRefresh: _reload,
       stats: [
-        StatPill(icon: Icons.person_outline, label: '${_users.length} usuarios'),
+        StatPill(icon: Icons.person_outline, label: '$_countAll usuarios'),
         if (_roles.isNotEmpty)
           StatPill(
-              icon: Icons.admin_panel_settings_outlined,
-              label: '${_roles.length} roles'),
+            icon: Icons.admin_panel_settings_outlined,
+            label: '${_roles.length} roles',
+          ),
       ],
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
-        if (HsAccess.instance.degraded || HsAccess.instance.can('Usuarios', 'create'))
+        if (HsAccess.instance.degraded ||
+            HsAccess.instance.can('Usuarios', 'create'))
           HsActionButton(
             onPressed: () => _openForm(),
             icon: Icons.person_add_alt,
             label: 'Nuevo usuario',
           ),
       ],
+      // La barra de páginas queda como PIE FIJO: no se va con el último dato.
+      footer: HsPager(
+        total: _pagerTotal,
+        page: _page,
+        pageSize: _pageSize,
+        enabled: !_loading && _error == null,
+        onPage: (p) {
+          setState(() => _page = p);
+          _reload();
+        },
+        onPageSize: (n) {
+          setState(() {
+            _pageSize = n;
+            _page = 1;
+          });
+          _reload();
+        },
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: 'Buscar por nombre, correo o rol…',
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () => setState(() => _query = ''),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-            ),
+          // Buscar vuelve a la página 1 y consulta al servidor.
+          HsSearchFilterBar(
+            hint: 'Buscar por nombre, correo o rol…',
+            onChanged: _search,
+            initial: _query,
+            groups: _filterGroups,
+            selected: {'role': _roleFilter},
+            onApply: (filters) {
+              final next = filters['role'] ?? '';
+              if (next == _roleFilter) return;
+              setState(() {
+                _roleFilter = next;
+                _page = 1;
+              });
+              _reload();
+            },
           ),
           const SizedBox(height: 16),
           if (_loading)
@@ -149,8 +333,11 @@ class _UsersPageState extends State<UsersPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined,
-                        size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -163,32 +350,35 @@ class _UsersPageState extends State<UsersPage> {
                 ),
               ),
             )
-          else if (_filtered.isEmpty)
+          else if (_visible.isEmpty)
             const EmptyState(
               icon: Icons.people_alt_outlined,
               title: 'Sin usuarios',
-              message:
-                  'No hay usuarios que coincidan con la búsqueda. Crea el primero con el botón "Nuevo usuario".',
+              message: 'No hay usuarios que coincidan con la búsqueda. Crea el primero con el botón "Nuevo usuario".',
             )
-          else
+          else ...[
             Card(
               clipBehavior: Clip.antiAlias,
               child: Column(
                 children: [
-                  for (var i = 0; i < _filtered.length; i++) ...[
+                  for (var i = 0; i < _pageRows.length; i++) ...[
                     if (i > 0)
                       Divider(height: 1, color: Theme.of(context).dividerColor),
                     StaggeredItem(
                       index: i,
                       child: _UserTile(
-                        user: _filtered[i],
-                        onEdit: HsAccess.instance.degraded ||
-                                HsAccess.instance.can('Usuarios', 'update')
-                            ? () => _openForm(_filtered[i])
+                        user: _pageRows[i], // La cuenta Admin solo la toca un Admin.
+                        onEdit:
+                            (_iAmAdmin || _roleOf(_pageRows[i]) != 'admin') &&
+                                (HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Usuarios', 'update'))
+                            ? () => _openForm(_pageRows[i])
                             : null,
-                        onDelete: HsAccess.instance.degraded ||
-                                HsAccess.instance.can('Usuarios', 'delete')
-                            ? () => _delete(_filtered[i])
+                        onDelete:
+                            (_iAmAdmin || _roleOf(_pageRows[i]) != 'admin') &&
+                                (HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Usuarios', 'delete'))
+                            ? () => _delete(_pageRows[i])
                             : null,
                       ),
                     ),
@@ -196,6 +386,7 @@ class _UsersPageState extends State<UsersPage> {
                 ],
               ),
             ),
+          ],
         ],
       ),
     );
@@ -218,8 +409,9 @@ class _UserTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final name =
-        '${user['name'] ?? ''} ${user['lastname'] ?? ''}'.trim().trim();
+    final name = '${user['name'] ?? ''} ${user['lastname'] ?? ''}'
+        .trim()
+        .trim();
     final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final role = (user['role'] ?? '').toString();
 
@@ -314,8 +506,11 @@ class _UserTile extends StatelessWidget {
               IconButton(
                 tooltip: 'Eliminar',
                 onPressed: onDelete,
-                icon: Icon(Icons.delete_outline,
-                    size: 20, color: scheme.error.withValues(alpha: .8)),
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: scheme.error.withValues(alpha: .8),
+                ),
               ),
           ],
         ],
@@ -417,8 +612,10 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     };
     try {
       if (_editing) {
-        await HsApi.updateUser(
-            {'id': (widget.user!['id'] as num).toInt(), ...body});
+        await HsApi.updateUser({
+          'id': (widget.user!['id'] as num).toInt(),
+          ...body,
+        });
       } else {
         await HsApi.createUser({...body, 'password': _password.text});
       }
@@ -497,24 +694,40 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ),
       ),
     );
-    final roleField = DropdownButtonFormField<int>(
-      initialValue: _roleId,
-      decoration: const InputDecoration(
-        labelText: 'Rol de la cuenta',
-        prefixIcon: Icon(Icons.admin_panel_settings_outlined, size: 20),
-      ),
-      items: [
-        const DropdownMenuItem<int>(
-          value: null,
-          child: Text('Sin rol'),
+    // ROL como CARPETITAS: elegir el rol es abrir una carpeta, no desplegar
+    // una lista gris. Se marca la elegida con el color de la marca.
+    final roleField = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Elige la carpeta del rol',
+          style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
         ),
-        for (final r in widget.roles)
-          DropdownMenuItem<int>(
-            value: (r['id'] as num).toInt(),
-            child: Text((r['name'] ?? '').toString()),
-          ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 10,
+          children: [
+            HsFolderTile(
+              label: 'Sin rol',
+              subtitle: 'Solo cuenta',
+              icon: Icons.person_outline_rounded,
+              selected: _roleId == null,
+              onTap: () => setState(() => _roleId = null),
+            ),
+            for (final r in _assignableRoles)
+              HsFolderTile(
+                key: ValueKey('user-role-${r['id']}'),
+                label: (r['name'] ?? '').toString(),
+                subtitle: _roleSubtitle(r),
+                icon: _roleIcon(r),
+                badge: _rolePermCount(r) > 0 ? '${_rolePermCount(r)}' : '',
+                selected: _roleId == (r['id'] as num?)?.toInt(),
+                onTap: () => setState(() => _roleId = (r['id'] as num).toInt()),
+              ),
+          ],
+        ),
       ],
-      onChanged: (v) => setState(() => _roleId = v),
     );
 
     return FormDialog(
@@ -575,14 +788,16 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                   children: [
                     Text(
                       '${_name.text.trim()} ${_lastname.text.trim()}'
-                          .trim()
-                          .isEmpty
+                              .trim()
+                              .isEmpty
                           ? 'Nuevo usuario'
                           : '${_name.text.trim()} ${_lastname.text.trim()}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 14.5),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -633,21 +848,51 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         FormSection(
           label: 'Acceso',
           child: Column(
-            children: [
-              emailField,
-              const SizedBox(height: 12),
-              passwordField,
-            ],
+            children: [emailField, const SizedBox(height: 12), passwordField],
           ),
         ),
         const SizedBox(height: 16),
-        FormSection(
-          label: 'Rol',
-          child: roleField,
-        ),
+        FormSection(label: 'Rol', child: roleField),
       ],
     );
   }
 
   bool get _wide => MediaQuery.sizeOf(context).width > 560;
+
+  /// Roles que se pueden asignar desde aquí.
+  ///
+  /// El rol Admin es el más alto: solo un Admin puede darlo (el backend
+  /// devuelve 403 si otro rol lo intenta).
+  List<Map<String, dynamic>> get _assignableRoles => widget.roles
+      .where(
+        (r) =>
+            HsSession.isAdmin ||
+            (r['name'] ?? '').toString().toLowerCase() != 'admin',
+      )
+      .toList();
+
+  int _rolePermCount(Map<String, dynamic> r) =>
+      ((r['permissions'] as List?) ?? const []).length;
+
+  String _roleSubtitle(Map<String, dynamic> r) {
+    final n = _rolePermCount(r);
+    if (n == 0) return 'Sin permisos';
+    final modules = ((r['permissions'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((p) => p['moduleId'])
+        .toSet()
+        .length;
+    return '$modules módulos · $n acciones';
+  }
+
+  IconData _roleIcon(Map<String, dynamic> r) {
+    final name = (r['name'] ?? '').toString().toLowerCase();
+    if (name.contains('admin')) return Icons.shield_rounded;
+    if (name.contains('client')) return Icons.people_alt_rounded;
+    if (name.contains('emple')) return Icons.badge_rounded;
+    if (name.contains('foto') || name.contains('video')) {
+      return Icons.photo_camera_rounded;
+    }
+    return Icons.folder_rounded;
+  }
 }

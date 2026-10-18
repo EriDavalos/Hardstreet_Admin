@@ -6,6 +6,9 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_folder.dart';
+import '../widgets/hs_pager.dart';
+import '../widgets/hs_search_filter.dart';
 
 /// Módulo ROLES: CRUD + asignación de acciones por módulo.
 /// El modal muestra la lista de MÓDULOS que existen en la base de datos
@@ -22,6 +25,15 @@ class _RolesPageState extends State<RolesPage> {
   String? _error;
   List<Map<String, dynamic>> _roles = const [];
   List<Map<String, dynamic>> _modules = const [];
+
+  String _query = '';
+
+  /// Filtro por permisos: '' todos · 'con' con permisos · 'sin' sin permisos.
+  String _permFilter = '';
+
+  // Paginación del listado de roles (30 de fábrica).
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
 
   /// Permisos del usuario logueado (módulo "Roles").
   bool get _canCreate =>
@@ -55,6 +67,7 @@ class _RolesPageState extends State<RolesPage> {
       setState(() {
         _roles = roles;
         _modules = modules;
+        _page = 1;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -72,10 +85,61 @@ class _RolesPageState extends State<RolesPage> {
     }
   }
 
+  int _permCount(Map<String, dynamic> role) =>
+      ((role['permissions'] as List?) ?? const []).length;
+
+  /// Roles que se muestran (búsqueda y filtro en memoria: son pocos).
+  List<Map<String, dynamic>> get _filtered {
+    final q = _query.trim().toLowerCase();
+    return _roles
+        .where((r) {
+          final perms = _permCount(r);
+          if (_permFilter == 'con' && perms == 0) return false;
+          if (_permFilter == 'sin' && perms > 0) return false;
+          if (q.isEmpty) return true;
+          return '${r['name'] ?? ''}'.toLowerCase().contains(q) ||
+              '$perms'.contains(q);
+        })
+        .toList(growable: false);
+  }
+
+  List<HsFilterGroup> get _filterGroups {
+    final con = _roles.where((r) => _permCount(r) > 0).length;
+    return [
+      HsFilterGroup(
+        id: 'perms',
+        title: 'Permisos asignados',
+        help: 'Un rol sin permisos no puede entrar a ningún módulo.',
+        options: [
+          HsFilterOption(
+            value: '',
+            label: 'Todos los roles',
+            count: _roles.length,
+            icon: Icons.groups_rounded,
+          ),
+          HsFilterOption(
+            value: 'con',
+            label: 'Con permisos',
+            count: con,
+            icon: Icons.verified_user_outlined,
+            color: const Color(0xFF16A34A),
+          ),
+          HsFilterOption(
+            value: 'sin',
+            label: 'Sin permisos',
+            count: _roles.length - con,
+            icon: Icons.lock_outline_rounded,
+            color: const Color(0xFFD97706),
+          ),
+        ],
+      ),
+    ];
+  }
+
   Future<void> _openForm([Map<String, dynamic>? role]) async {
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _RoleFormDialog(role: role),
     );
     if (saved == true) _reload();
@@ -100,7 +164,7 @@ class _RolesPageState extends State<RolesPage> {
     if (!mounted) return;
     final saved = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _PermissionsDialog(role: role, modules: _modules),
     );
     if (saved == true) _reload();
@@ -127,14 +191,19 @@ class _RolesPageState extends State<RolesPage> {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
       title: 'Roles',
-      description:
-          'Define a qué módulos puede entrar cada rol y qué acciones puede realizar.',
+      description: 'Define a qué módulos puede entrar cada rol y qué acciones puede realizar.',
       icon: Icons.admin_panel_settings_rounded,
+      onRefresh: _reload,
       stats: [
-        StatPill(icon: Icons.workspace_premium_outlined, label: '${_roles.length} roles'),
+        StatPill(
+          icon: Icons.workspace_premium_outlined,
+          label: '${_roles.length} roles',
+        ),
         if (_modules.isNotEmpty)
           StatPill(
-              icon: Icons.window_outlined, label: '${_modules.length} módulos'),
+            icon: Icons.window_outlined,
+            label: '${_modules.length} módulos',
+          ),
       ],
       actions: [
         // "Crear" (create): sin el permiso, el botón no aparece.
@@ -145,9 +214,36 @@ class _RolesPageState extends State<RolesPage> {
             label: 'Nuevo rol',
           ),
       ],
+      // Barra de páginas como PIE FIJO (fuera del scroll).
+      footer: HsPager(
+        total: _filtered.length,
+        page: _page,
+        pageSize: _pageSize,
+        enabled: !_loading && _error == null,
+        onPage: (p) => setState(() => _page = p),
+        onPageSize: (n) => setState(() {
+          _pageSize = n;
+          _page = 1;
+        }),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          HsSearchFilterBar(
+            hint: 'Buscar rol por nombre…',
+            initial: _query,
+            onChanged: (v) => setState(() {
+              _query = v;
+              _page = 1;
+            }),
+            groups: _filterGroups,
+            selected: {'perms': _permFilter},
+            onApply: (filters) => setState(() {
+              _permFilter = filters['perms'] ?? '';
+              _page = 1;
+            }),
+          ),
+          const SizedBox(height: 16),
           if (_loading)
             const ListSkeleton(lines: 5)
           else if (_error != null)
@@ -156,7 +252,11 @@ class _RolesPageState extends State<RolesPage> {
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
+                    Icon(
+                      Icons.cloud_off_outlined,
+                      size: 40,
+                      color: scheme.error,
+                    ),
                     const SizedBox(height: 10),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
@@ -169,34 +269,54 @@ class _RolesPageState extends State<RolesPage> {
                 ),
               ),
             )
-          else if (_roles.isEmpty)
-            const EmptyState(
+          else if (_filtered.isEmpty)
+            EmptyState(
               icon: Icons.admin_panel_settings_outlined,
-              title: 'Sin roles',
-              message: 'Crea el primer rol con el botón "Nuevo rol".',
+              title: _roles.isEmpty ? 'Sin roles' : 'Sin resultados',
+              message: _roles.isEmpty
+                  ? 'Crea el primer rol con el botón "Nuevo rol".'
+                  : 'Ningún rol coincide con la búsqueda o el filtro elegido.',
             )
-          else
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  for (var i = 0; i < _roles.length; i++) ...[
-                    if (i > 0)
-                      Divider(height: 1, color: Theme.of(context).dividerColor),
-                    StaggeredItem(
-                      index: i,
-                      child: _RoleTile(
-                        role: _roles[i],
-                        onEdit: _canUpdate ? () => _openForm(_roles[i]) : null,
-                        onPermissions:
-                            _canUpdate ? () => _openPermissions(_roles[i]) : null,
-                        onDelete: _canDelete ? () => _delete(_roles[i]) : null,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+          else ...[
+            Builder(
+              builder: (context) {
+                final rows = HsPages(
+                  total: _filtered.length,
+                  page: _page,
+                  pageSize: _pageSize,
+                ).slice(_filtered);
+                return Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        StaggeredItem(
+                          index: i,
+                          child: _RoleTile(
+                            role: rows[i],
+                            onEdit: _canUpdate
+                                ? () => _openForm(rows[i])
+                                : null,
+                            onPermissions: _canUpdate
+                                ? () => _openPermissions(rows[i])
+                                : null,
+                            onDelete: _canDelete
+                                ? () => _delete(rows[i])
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
+          ],
         ],
       ),
     );
@@ -252,9 +372,13 @@ class _RoleTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 14.5)),
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14.5,
+                  ),
+                ),
                 const SizedBox(height: 3),
                 Text(
                   '$moduleCount ${moduleCount == 1 ? 'módulo' : 'módulos'} · '
@@ -311,8 +435,11 @@ class _RoleTile extends StatelessWidget {
               IconButton(
                 tooltip: 'Eliminar',
                 onPressed: onDelete,
-                icon: Icon(Icons.delete_outline,
-                    size: 20, color: scheme.error.withValues(alpha: .8)),
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: scheme.error.withValues(alpha: .8),
+                ),
               ),
           ],
         ],
@@ -341,7 +468,9 @@ class _RoleFormDialogState extends State<_RoleFormDialog> {
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController(text: (widget.role?['name'] ?? '').toString());
+    _name = TextEditingController(
+      text: (widget.role?['name'] ?? '').toString(),
+    );
   }
 
   @override
@@ -363,8 +492,10 @@ class _RoleFormDialogState extends State<_RoleFormDialog> {
     });
     try {
       if (_editing) {
-        await HsApi.updateRole(
-            {'id': (widget.role!['id'] as num).toInt(), 'name': name});
+        await HsApi.updateRole({
+          'id': (widget.role!['id'] as num).toInt(),
+          'name': name,
+        });
       } else {
         await HsApi.createRole({'name': name});
       }
@@ -468,8 +599,9 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
 
   void _toggleModule(Map<String, dynamic> module, bool? v) {
     if (_saving) return;
-    final keys =
-        _actions(module).map((a) => _k(module['id'], a['id'])).toList();
+    final keys = _actions(module)
+        .map((a) => _k(module['id'], a['id']))
+        .toList();
     setState(() {
       if (v ?? true) {
         _selected.addAll(keys);
@@ -480,8 +612,11 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
     });
   }
 
-  void _toggleAction(Map<String, dynamic> module, Map<String, dynamic> action,
-      bool? v) {
+  void _toggleAction(
+    Map<String, dynamic> module,
+    Map<String, dynamic> action,
+    bool? v,
+  ) {
     if (_saving) return;
     setState(() {
       if (v ?? false) {
@@ -536,7 +671,9 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
       // Sin contentHeight: la lista es plana (shrinkWrap) y mide lo que
       // ocupa; el scroll del diálogo la desplaza si no cabe.
       saving: _saving,
-      saveLabel: _selected.isEmpty ? 'Guardar' : 'Guardar ${_selected.length} permisos',
+      saveLabel: _selected.isEmpty
+          ? 'Guardar'
+          : 'Guardar ${_selected.length} permisos',
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
@@ -551,8 +688,11 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.window_outlined,
-                    size: 40, color: scheme.onSurfaceVariant),
+                Icon(
+                  Icons.window_outlined,
+                  size: 40,
+                  color: scheme.onSurfaceVariant,
+                ),
                 const SizedBox(height: 12),
                 const Text(
                   'No hay módulos registrados en la base de datos',
@@ -571,41 +711,83 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
               ],
             ),
           )
-        else ..._buildModuleList(scheme),
+        else
+          ..._buildModuleList(scheme),
       ],
     );
   }
 
-  /// Módulos en orden, con el encabezado de su CATEGORÍA (Operación,
-  /// Administración…) cuando cambia. Los módulos sueltos (Dashboard) salen
-  /// sin encabezado. El backend ya entrega la lista ordenada y con SOLO las
-  /// acciones aplicables a cada módulo.
+  /// CATEGORÍAS como CARPETAS: cada grupo (Operación, Administración,
+  /// Catálogos…) es una carpeta que se abre y se cierra, y dentro van sus
+  /// módulos, también con forma de carpeta. Los módulos sueltos (Dashboard)
+  /// caen en “General”.
+  ///
+  /// El contador de cada carpeta ("8/20") es la suma de sus módulos, así se ve
+  /// de un vistazo qué grupo está tocado sin abrirlo.
   List<Widget> _buildModuleList(ColorScheme scheme) {
-    final out = <Widget>[];
-    String? prevCategory;
-    for (final module in widget.modules) {
-      final category =
-          (module['categoryName'] ?? '').toString().trim();
-      if (category.isNotEmpty && category != prevCategory) {
-        out.add(Padding(
-          padding: EdgeInsets.fromLTRB(4, out.isEmpty ? 0 : 16, 4, 6),
-          child: Text(
-            category.toUpperCase(),
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.1,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ));
-        prevCategory = category;
-      } else if (out.isNotEmpty) {
-        out.add(const SizedBox(height: 10));
+    final groups = <String, List<Map<String, dynamic>>>{};
+    final order = <String>[];
+    for (final m in widget.modules) {
+      final cat = (m['categoryName'] ?? '').toString().trim();
+      final key = cat.isEmpty ? 'General' : cat;
+      if (!groups.containsKey(key)) {
+        groups[key] = <Map<String, dynamic>>[];
+        order.add(key);
       }
-      out.add(_ModuleCard(module: module, state: this));
+      groups[key]!.add(m);
+    }
+
+    final out = <Widget>[];
+    for (final key in order) {
+      final mods = groups[key]!;
+      var selected = 0;
+      var total = 0;
+      for (final m in mods) {
+        final acts = _actions(m);
+        total += acts.length;
+        selected += acts
+            .where((a) => _selected.contains(_k(m['id'], a['id'])))
+            .length;
+      }
+      out.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: HsFolderGroup(
+            key: ValueKey('perm-folder-$key'),
+            title: key,
+            subtitle:
+                '${mods.length} ${mods.length == 1 ? 'módulo' : 'módulos'}',
+            icon: _categoryIcon(key),
+            selected: selected,
+            total: total,
+            // Se abre la carpeta que ya tiene algo marcado (o todas si hay
+            // pocas): lo demás queda plegado para no perder el hilo.
+            initiallyOpen: selected > 0 || order.length <= 3,
+            children: [
+              for (var i = 0; i < mods.length; i++) ...[
+                if (i > 0) const SizedBox(height: 8),
+                _ModuleCard(module: mods[i], state: this),
+              ],
+            ],
+          ),
+        ),
+      );
     }
     return out;
+  }
+
+  /// Icono de la carpeta según el nombre de la categoría.
+  IconData _categoryIcon(String name) {
+    final n = name.toLowerCase();
+    if (n.contains('oper')) return Icons.handyman_rounded;
+    if (n.contains('admin')) return Icons.shield_rounded;
+    if (n.contains('catalog')) return Icons.collections_bookmark_rounded;
+    if (n.contains('finan')) return Icons.account_balance_wallet_rounded;
+    if (n.contains('sitio') || n.contains('web')) return Icons.language_rounded;
+    if (n.contains('archiv') || n.contains('drive')) {
+      return Icons.folder_shared_rounded;
+    }
+    return Icons.folder_copy_rounded;
   }
 }
 
@@ -624,8 +806,7 @@ class _ModuleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final keys =
-        _actions.map((a) => state._k(module['id'], a['id'])).toList();
+    final keys = _actions.map((a) => state._k(module['id'], a['id'])).toList();
     final selectedCount = keys.where(state._selected.contains).length;
     final _Check stateChk;
     if (selectedCount == 0) {
@@ -636,81 +817,122 @@ class _ModuleCard extends StatelessWidget {
       stateChk = _Check.some;
     }
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: BoxDecoration(
-        color: selectedCount > 0
-            ? scheme.primary.withValues(alpha: .05)
-            : scheme.surfaceContainerHighest.withValues(alpha: .30),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: selectedCount > 0
-              ? scheme.primary.withValues(alpha: .35)
-              : scheme.outlineVariant.withValues(alpha: .45),
+    // Módulo como SUB-CARPETA dentro de su categoría: pestaña corta + cuerpo.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 28,
+          height: 7,
+          margin: const EdgeInsets.only(left: 10),
+          decoration: BoxDecoration(
+            color: selectedCount > 0
+                ? scheme.primary.withValues(alpha: .55)
+                : scheme.surfaceContainerHighest,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+            border: Border.all(
+              color: selectedCount > 0
+                  ? scheme.primary.withValues(alpha: .45)
+                  : scheme.outlineVariant.withValues(alpha: .5),
+            ),
+          ),
         ),
-      ),
-      child: Column(
-        children: [
-          Row(
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          decoration: BoxDecoration(
+            color: selectedCount > 0
+                ? scheme.primary.withValues(alpha: .05)
+                : scheme.surfaceContainerHighest.withValues(alpha: .30),
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(5),
+              topRight: Radius.circular(12),
+              bottomLeft: Radius.circular(12),
+              bottomRight: Radius.circular(12),
+            ),
+            border: Border.all(
+              color: selectedCount > 0
+                  ? scheme.primary.withValues(alpha: .35)
+                  : scheme.outlineVariant.withValues(alpha: .45),
+            ),
+          ),
+          child: Column(
             children: [
-              Checkbox(
-                tristate: true,
-                visualDensity: VisualDensity.compact,
-                value: switch (stateChk) {
-                  _Check.all => true,
-                  _Check.some => null,
-                  _Check.none => false,
-                },
-                onChanged: state._saving ? null : (v) => state._toggleModule(module, v),
-              ),
-              Icon(Icons.window_outlined,
-                  size: 18,
-                  color: selectedCount > 0
-                      ? scheme.primary
-                      : scheme.onSurfaceVariant),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  (module['name'] ?? '').toString(),
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 14),
-                ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: selectedCount > 0
-                      ? scheme.primary.withValues(alpha: .12)
-                      : scheme.surfaceContainerHighest.withValues(alpha: .7),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  '$selectedCount/${_actions.length}',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
+              Row(
+                children: [
+                  Checkbox(
+                    tristate: true,
+                    visualDensity: VisualDensity.compact,
+                    value: switch (stateChk) {
+                      _Check.all => true,
+                      _Check.some => null,
+                      _Check.none => false,
+                    },
+                    onChanged: state._saving
+                        ? null
+                        : (v) => state._toggleModule(module, v),
+                  ),
+                  Icon(
+                    selectedCount > 0
+                        ? Icons.folder_rounded
+                        : Icons.folder_outlined,
+                    size: 18,
                     color: selectedCount > 0
                         ? scheme.primary
                         : scheme.onSurfaceVariant,
                   ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      (module['name'] ?? '').toString(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selectedCount > 0
+                          ? scheme.primary.withValues(alpha: .12)
+                          : scheme.surfaceContainerHighest.withValues(
+                              alpha: .7,
+                            ),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$selectedCount/${_actions.length}',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: selectedCount > 0
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final a in _actions)
+                      _ActionChip(module: module, action: a, state: state),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.only(left: 30),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final a in _actions) _ActionChip(module: module, action: a, state: state),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -718,7 +940,11 @@ class _ModuleCard extends StatelessWidget {
 enum _Check { none, some, all }
 
 class _ActionChip extends StatelessWidget {
-  const _ActionChip({required this.module, required this.action, required this.state});
+  const _ActionChip({
+    required this.module,
+    required this.action,
+    required this.state,
+  });
 
   final Map<String, dynamic> module;
   final Map<String, dynamic> action;
@@ -751,7 +977,9 @@ class _ActionChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              checked ? Icons.check_box_outlined : Icons.check_box_outline_blank,
+              checked
+                  ? Icons.check_box_outlined
+                  : Icons.check_box_outline_blank,
               size: 16,
               color: color,
             ),
