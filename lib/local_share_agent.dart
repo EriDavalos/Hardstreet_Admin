@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -59,6 +60,8 @@ class AgentReply {
     this.name = '',
     this.status = 200,
     this.error = '',
+    this.rawWidth = 0,
+    this.rawHeight = 0,
   });
 
   final List<int> bytes;
@@ -66,6 +69,18 @@ class AgentReply {
   final String name;
   final int status;
   final String error;
+
+  /// Si [bytes] son PÍXELES CRUDOS (RGBA) ya reducidos, sus medidas. El servidor
+  /// los convierte a JPEG (`sharp`): así una miniatura no obliga a subir el
+  /// original de varios MB por la conexión de quien comparte.
+  final int rawWidth;
+  final int rawHeight;
+
+  /// ¿La respuesta son píxeles crudos? (ver [rawWidth]).
+  bool get isRawRgba => rawWidth > 0 && rawHeight > 0;
+
+  /// MIME con el que viajan los píxeles crudos.
+  static const String rawMime = 'application/x-raw-rgba';
 }
 
 class LocalShareAgent {
@@ -82,6 +97,28 @@ class LocalShareAgent {
 
   /// Tope de un archivo servido (una foto enorme no se manda entera).
   static const int maxFileBytes = 64 * 1024 * 1024;
+
+  /// Tope de UNA respuesta del agente (lo que el proxy deja pasar sin cortarla).
+  /// Una miniatura reducida nunca se acerca: 320 px son ~0,5 MB.
+  static const int maxReplyBytes = 8 * 1024 * 1024;
+
+  /// Tamaño de CADA trozo de la respuesta ([_reply] parte lo que pese más).
+  ///
+  /// 512 KB deja aire debajo del límite de 1 MB que traen los proxies de
+  /// fábrica (`client_max_body_size 1m`). Se partía el cuerpo por esa razón:
+  /// las fotos grandes se cortaban al subir la respuesta, la app se tragaba el
+  /// error y el usuario veía miniaturas que no cargan, una vista previa en
+  /// blanco y descargas que fallaban justo por encima de 1 MB.
+  static const int replyChunkBytes = 512 * 1024;
+
+  /// Cuánto se espera la respuesta de UN trozo (512 KB dan de sobra; si un
+  /// trozo se atasca, se reintenta o se abandona en vez de colgar 5 minutos).
+  static const Duration replyChunkTimeout = Duration(seconds: 60);
+
+  /// Trozo mínimo al partir de nuevo una respuesta rechazada (413): por debajo
+  /// de esto, partir no arregla nada (el problema no es el tamaño).
+  static const int minReplyChunkBytes = 2 * 1024;
+
 
   bool _running = false;
   bool get running => _running;
@@ -313,13 +350,39 @@ class LocalShareAgent {
     final id = '${request['id'] ?? ''}';
     if (id.isEmpty) return;
 
-    final reply = await describeRequest(
-      op: '${request['op'] ?? ''}',
-      root: '${request['root'] ?? ''}',
-      path: '${request['path'] ?? ''}',
-    );
+    // La app SIEMPRE contesta, aunque la lectura se atasque: si se queda
+    // callada, el servidor espera minutos y el usuario ve "tardó demasiado"
+    // sin saber por qué. Con este tope, la respuesta (con su motivo) llega a
+    // tiempo.
+    AgentReply reply;
+    try {
+      reply = await describeRequest(
+        op: '${request['op'] ?? ''}',
+        root: '${request['root'] ?? ''}',
+        path: '${request['path'] ?? ''}',
+        width: int.tryParse('${request['w'] ?? ''}') ?? 0,
+      ).timeout(_readTimeout('${request['op'] ?? ''}'));
+    } on TimeoutException {
+      reply = const AgentReply(
+        status: 504,
+        error:
+            'La lectura tardó demasiado en esta computadora (¿la carpeta está '
+            'en la nube, en un disco desconectado o la foto es enorme?)',
+      );
+    } catch (e) {
+      // Un error inesperado tampoco puede dejar al servidor esperando.
+      reply = AgentReply(status: 500, error: 'No se pudo leer: $e');
+    }
     await _reply(id, reply);
   }
+
+  /// Tope de una lectura: un listado es rápido; una foto grande por un disco
+  /// lento necesita más, pero nunca minutos.
+  static Duration _readTimeout(String op) => switch (op) {
+    'list' => const Duration(seconds: 20),
+    'thumb' => const Duration(seconds: 45),
+    _ => const Duration(seconds: 120),
+  };
 
   /// Arma la respuesta de una petición. Público y puro (salvo la lectura del
   /// disco) para poder verificarlo en pruebas sin red.
@@ -328,6 +391,7 @@ class LocalShareAgent {
     required String op,
     required String root,
     required String path,
+    int width = 0,
   }) async {
     try {
       final target = resolveInside(root, path);
@@ -368,7 +432,7 @@ class LocalShareAgent {
           mime: 'application/json',
         );
       }
-      if (op == 'file') {
+      if (op == 'file' || op == 'thumb') {
         final file = File(target);
         if (!await file.exists()) {
           return const AgentReply(
@@ -384,6 +448,42 @@ class LocalShareAgent {
           );
         }
         final name = target.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).last;
+        // MINIATURA: la foto se reduce AQUÍ, antes de mandarla. Subir el
+        // original de varios MB solo para pintar 480 px es lo que hacía que
+        // las fotos "tardaran demasiado" en las carpetas compartidas.
+        if (op == 'thumb' && width > 0) {
+          final original = await file.readAsBytes();
+          // El cuerpo de la respuesta NO puede pasarse del límite del proxy: si
+          // al reducir todavía sale enorme (una vista previa de 1600 px son
+          // varios MB de píxeles), se reduce a la mitad y se vuelve a probar.
+          // Antes, cuando no cabía, el proxy cortaba la respuesta y el servidor
+          // se quedaba esperando minutos: el usuario veía "tardó demasiado".
+          var w = width;
+          while (true) {
+            final small = await shrinkToRgba(original, w);
+            if (small == null) break;
+            if (small.bytes.length <= maxReplyBytes) {
+              return AgentReply(
+                bytes: small.bytes,
+                mime: AgentReply.rawMime,
+                name: name,
+                rawWidth: small.width,
+                rawHeight: small.height,
+              );
+            }
+            // Todavía no cabe: la mitad de ancho (hasta un mínimo legible).
+            if (w <= 32) break;
+            w = (w / 2).round();
+          }
+          // No se pudo reducir y el original tampoco cabe: se explica en vez de
+          // mandar un cuerpo que el proxy va a cortar en silencio.
+          if (st.size > maxReplyBytes) {
+            return const AgentReply(
+              status: 413,
+              error: 'La foto es demasiado grande para hacer la miniatura',
+            );
+          }
+        }
         return AgentReply(
           bytes: await file.readAsBytes(),
           mime: _mimeOf(name),
@@ -484,29 +584,153 @@ class LocalShareAgent {
     }
   }
 
-  /// Manda la respuesta al servidor (bytes crudos; la URL lleva el cómo).
-  Future<void> _reply(String id, AgentReply reply) async {
-    final uri = _u('/api/local/agent/reply', {
-      'id': id,
-      'status': '${reply.status}',
-      if (reply.mime.isNotEmpty) 'mime': reply.mime,
-      if (reply.name.isNotEmpty) 'name': reply.name,
-      if (reply.error.isNotEmpty) 'error': reply.error,
-    });
+  /// Reduce una imagen a [maxWidth] de ancho y devuelve sus píxeles CRUDOS
+  /// (RGBA) con las medidas del resultado; null si no se pudo (no es una
+  /// imagen, formato no soportado o plataforma sin decodificador).
+  ///
+  /// Se usa el decodificador del propio Flutter (`dart:ui`), que respeta la
+  /// orientación EXIF y escala DURANTE el decodificado: una foto de 6000 px no
+  /// llega a ocupar su tamaño completo en memoria. El JPEG final lo hace el
+  /// servidor, que es quien manda la calidad.
+  @visibleForTesting
+  Future<({List<int> bytes, int width, int height})?> shrinkToRgba(
+    List<int> original,
+    int maxWidth,
+  ) async {
+    if (kIsWeb || original.isEmpty || maxWidth <= 0) return null;
     try {
-      await client
-          .post(
-            uri,
-            headers: {
-              ..._headers,
-              'Content-Type': 'application/octet-stream',
-            },
-            body: Uint8List.fromList(reply.bytes),
-          )
-          .timeout(const Duration(seconds: 120));
-      _served++;
+      final codec = await ui.instantiateImageCodec(
+        Uint8List.fromList(original),
+        targetWidth: maxWidth,
+      );
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final width = image.width;
+      final height = image.height;
+      image.dispose();
+      codec.dispose();
+      if (data == null) return null;
+      return (
+        bytes: data.buffer.asUint8List(
+          data.offsetInBytes,
+          data.lengthInBytes,
+        ),
+        width: width,
+        height: height,
+      );
     } catch (_) {
-      // Si el servidor ya no espera, no hay nada que hacer: se sigue.
+      return null;
     }
+  }
+
+  /// Parte una respuesta en trozos de como mucho [maxBytes]. Puro y público
+  /// para poder verificarlo sin red; una respuesta vacía es UN trozo vacío
+  /// (el servidor espera al menos una petición).
+  @visibleForTesting
+  static List<Uint8List> replyChunks(List<int> bytes, {int? maxBytes}) {
+    final size = maxBytes ?? replyChunkBytes;
+    if (bytes.isEmpty) return [Uint8List(0)];
+    if (size <= 0) return [Uint8List.fromList(bytes)];
+    final out = <Uint8List>[];
+    for (var i = 0; i < bytes.length; i += size) {
+      final end = (i + size < bytes.length) ? i + size : bytes.length;
+      out.add(Uint8List.fromList(bytes.sublist(i, end)));
+    }
+    return out;
+  }
+
+  /// Manda la respuesta al servidor (bytes crudos; la URL lleva el cómo).
+  ///
+  /// Va en TROZOS (`seq` + `last`) para no chocar con el límite de cuerpo de
+  /// los proxies: un solo cuerpo de varios MB se cortaba y el servidor se
+  /// quedaba esperando. Cada trozo se confirma antes de mandar el siguiente, y
+  /// se reintenta EL TROZO, no la respuesta entera.
+  Future<void> _reply(String id, AgentReply reply) async {
+    // La lista es MUTABLE: si el servidor (un proxy delante de él) rechaza un
+    // trozo por tamaño, se parte en dos y se sigue. Así la respuesta funciona
+    // también con un proxy más estrecho de lo normal.
+    final chunks = List<Uint8List>.from(replyChunks(reply.bytes));
+    for (var i = 0; i < chunks.length;) {
+      final uri = _u('/api/local/agent/reply', {
+        'id': id,
+        'seq': '$i',
+        'last': i == chunks.length - 1 ? '1' : '0',
+        'status': '${reply.status}',
+        if (reply.mime.isNotEmpty) 'mime': reply.mime,
+        if (reply.name.isNotEmpty) 'name': reply.name,
+        if (reply.error.isNotEmpty) 'error': reply.error,
+        if (reply.isRawRgba) 'fmt': 'rgba',
+        if (reply.isRawRgba) 'w': '${reply.rawWidth}',
+        if (reply.isRawRgba) 'h': '${reply.rawHeight}',
+      });
+      var sent = false;
+      var tooBig = false;
+      var gone = false;
+      for (var attempt = 0; attempt < 3 && !sent && _running; attempt++) {
+        try {
+          final r = await client
+              .post(
+                uri,
+                headers: {
+                  ..._headers,
+                  'Content-Type': 'application/octet-stream',
+                },
+                body: chunks[i],
+              )
+              .timeout(replyChunkTimeout);
+          // 404 = el servidor ya dio la petición por perdida: no sirve seguir.
+          // 413 = el cuerpo no pasó: se parte el trozo (si se puede).
+          if (r.statusCode == 404) {
+            gone = true;
+            break;
+          }
+          if (r.statusCode == 413) {
+            tooBig = true;
+            break;
+          }
+          if (r.statusCode >= 200 && r.statusCode < 300) sent = true;
+        } catch (_) {
+          // Corte pasajero del enlace: se reintenta el mismo trozo.
+        }
+        if (!sent) await _sleep(Duration(seconds: 1 + attempt));
+      }
+      if (gone) {
+        debugPrint('Agente: la petición $id ya no existe en el servidor');
+        return;
+      }
+      if (sent) {
+        i++;
+        continue;
+      }
+      if (tooBig) {
+        // El proxy no deja pasar cuerpos de ese tamaño: se vuelve a partir TODO
+        // lo que queda a la mitad del trozo rechazado (así no se repite el
+        // rechazo en cada trozo) y se sigue. Si ya es diminuto, el problema no
+        // es el tamaño: se abandona y el servidor explicará el motivo.
+        final cur = chunks[i];
+        if (cur.length <= minReplyChunkBytes) {
+          debugPrint(
+            'Agente: el servidor rechaza hasta los trozos de '
+            '${cur.length ~/ 1024} KB de la respuesta $id',
+          );
+          return;
+        }
+        final rest = <int>[];
+        for (final c in chunks.sublist(i)) {
+          rest.addAll(c);
+        }
+        chunks
+          ..removeRange(i, chunks.length)
+          ..addAll(replyChunks(rest, maxBytes: (cur.length / 2).floor()));
+        continue;
+      }
+      debugPrint(
+        'Agente: no se pudo mandar el trozo ${i + 1}/${chunks.length} '
+        'de la respuesta $id',
+      );
+      return;
+    }
+    _served++;
   }
 }

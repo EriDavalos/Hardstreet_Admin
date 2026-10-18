@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// Marca de HardStreet: el cuadro con el degradado azul de la app y el icono
-/// del estudio. Vive aquí (y no dentro del login) porque la usan tanto el
-/// login como la animación de arranque, y así son EXACTAMENTE la misma pieza.
+/// Marca de HardStreet: el ICONO de la app (`assets/hs_icon.png`, el mismo con
+/// el que se generan los iconos de Windows, Android y el navegador).
+///
+/// Vive aquí (y no dentro del login) porque la usan el panel, el login y la
+/// animación de arranque, y así son EXACTAMENTE la misma pieza. Antes dibujaba
+/// un icono de edificio (`Icons.apartment_rounded`) sobre el degradado azul;
+/// ahora se enseña el icono de verdad, recortado con la misma esquina.
 class BrandBadge extends StatelessWidget {
   const BrandBadge({
     super.key,
@@ -12,6 +16,9 @@ class BrandBadge extends StatelessWidget {
     required this.radius,
     this.elevated = true,
   });
+
+  /// Ruta del icono de la marca (declarado en pubspec.yaml).
+  static const String iconAsset = 'assets/hs_icon.png';
 
   final double size;
   final double radius;
@@ -25,6 +32,9 @@ class BrandBadge extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
+        // El PNG del icono llena su cuadro (no trae esquinas transparentes),
+        // así que el degradado de marca queda por detrás como respaldo: se ve
+        // si el archivo faltara (y entonces aparece el icono de abajo).
         gradient: const LinearGradient(
           colors: [AppColors.brand, AppColors.brandDark],
           begin: Alignment.topLeft,
@@ -40,7 +50,22 @@ class BrandBadge extends StatelessWidget {
             ),
         ],
       ),
-      child: Icon(Icons.apartment_rounded, color: Colors.white, size: size * .58),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Image.asset(
+          iconAsset,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          // Si el archivo faltara, la app no se cae: se ve la marca dibujada.
+          errorBuilder: (_, _, _) => Icon(
+            Icons.storefront_rounded,
+            color: Colors.white,
+            size: size * .58,
+          ),
+        ),
+      ),
     );
   }
 }

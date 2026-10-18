@@ -51,7 +51,7 @@ const _packages = [
   },
 ];
 
-void _installMock() {
+void _installMock({String imageMode = 'top'}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -67,7 +67,7 @@ void _installMock() {
       return http.Response(
         jsonEncode({
           'design': {
-            'card': {'imageMode': 'top', 'imageHeight': 150},
+            'card': {'imageMode': imageMode, 'imageHeight': 150},
           },
         }),
         200,
@@ -90,7 +90,7 @@ void _installMock() {
   });
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {String imageMode = 'top'}) async {
   const size = Size(1240, 1000);
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
@@ -98,7 +98,7 @@ Future<void> _pump(WidgetTester tester) async {
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
-  _installMock();
+  _installMock(imageMode: imageMode);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -142,18 +142,56 @@ void main() {
     expect(photo.isRemote, isTrue);
   });
 
-  testWidgets('un paquete SIN foto lo dice (la web usa una del sitio)',
-      (tester) async {
+  testWidgets('un paquete SIN foto se ve limpio (no inventa foto)', (
+    tester,
+  ) async {
     await _pump(tester);
 
-    // El paquete sin foto no inventa una imagen: lo explica.
-    expect(find.text('Sin foto · la web usa una del sitio'), findsOneWidget);
-    // Y el que sí la tiene no lleva ese rótulo.
+    // El paquete sin foto NO pone una imagen de relleno ni un rótulo que lo
+    // explique: su tarjeta se ve como la del panel (fondo del tier y ya).
+    expect(find.text('Sin foto · la web usa una del sitio'), findsNothing);
+    expect(find.text('Foto del paquete'), findsNothing);
+    // La única foto pintada es la del paquete que SÍ la tiene.
     final withPhoto = tester
         .widgetList<DriveThumb>(find.byType(DriveThumb))
         .where((t) => t.source.contains('IMG_3196'))
         .length;
     expect(withPhoto, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('con la foto de FONDO, el paquete SIN foto pinta el degradado', (
+    tester,
+  ) async {
+    await _pump(tester, imageMode: 'bg');
+
+    // El hueco de la foto es el MISMO degradado del diseñador ("Así se verá en
+    // la web"): un lavado del acento que se apaga a negro, en diagonal. Antes
+    // el paquete sin foto quedaba como un bloque plano.
+    final huecos = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((d) => d.decoration)
+        .whereType<BoxDecoration>()
+        .map((d) => d.gradient)
+        .whereType<LinearGradient>()
+        .where(
+          (g) =>
+              g.begin == Alignment.topLeft &&
+              g.colors.length == 2 &&
+              (g.colors[0].a - .28).abs() < .02,
+        )
+        .toList();
+    expect(huecos, isNotEmpty, reason: 'el hueco sin foto no tiene degradado');
+    expect(huecos.first.colors[1].a, moreOrLessEquals(.35, epsilon: .02));
+
+    // Y el paquete que SÍ tiene foto sigue enseñando su foto encima.
+    expect(
+      tester
+          .widgetList<DriveThumb>(find.byType(DriveThumb))
+          .where((t) => t.source.contains('IMG_3196'))
+          .length,
+      1,
+    );
     expect(tester.takeException(), isNull);
   });
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'drive_host.dart';
 import 'hs_api.dart';
 
 /// Configuraciones persistentes de la app (modo oscuro, sesión, etc.).
@@ -24,6 +25,7 @@ class AppSettings extends ChangeNotifier {
   static const _kToken = 'app.token';
   static const _kUser = 'app.user';
   static const _kShareServing = 'app.share.serving';
+  static const _kDriveHost = 'app.drive.host';
 
   bool _loaded = false;
   bool _dark = false;
@@ -48,6 +50,10 @@ class AppSettings extends ChangeNotifier {
   /// no quede ningún compartido a la vista, y lo sigue haciendo en la próxima
   /// apertura: es lo que pide el switch del módulo "Archivos compartidos".
   bool get shareServing => _shareServing;
+
+  /// Dirección del servidor del drive guardada por el usuario, o `null` si se
+  /// usa la de fábrica ([DriveHost.compiled]).
+  String? get driveHost => DriveHost.custom;
 
   /// ¿Hay sesión guardada para restaurar automáticamente?
   bool get hasSavedSession => _remember && (_savedToken?.isNotEmpty ?? false);
@@ -114,6 +120,9 @@ class AppSettings extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
       _dark = sp.getBool(_kDark) ?? false;
       _shareServing = sp.getBool(_kShareServing) ?? false;
+      // Antes que nada: la dirección del servidor. Los servicios del drive la
+      // leen al construirse, así que tiene que estar puesta ya al arrancar.
+      DriveHost.set(sp.getString(_kDriveHost));
       _remember = sp.getBool(_kRemember) ?? false;
       _savedToken = sp.getString(_kToken);
       final userJson = sp.getString(_kUser);
@@ -134,6 +143,28 @@ class AppSettings extends ChangeNotifier {
       _loaded = true;
       notifyListeners();
     }
+  }
+
+  /// Guarda la dirección del servidor del drive (vacío = la de fábrica).
+  ///
+  /// Se aplica al REINICIAR la app: los servicios del drive ya construidos se
+  /// quedan con la dirección anterior, así que se pide cerrar y volver a abrir.
+  /// Devuelve `false` si lo escrito no es una dirección válida.
+  Future<bool> setDriveHost(String? value) async {
+    if (!DriveHost.set(value)) return false;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final saved = DriveHost.custom;
+      if (saved == null) {
+        await sp.remove(_kDriveHost);
+      } else {
+        await sp.setString(_kDriveHost, saved);
+      }
+    } catch (_) {
+      // Sin storage: el cambio vale solo para esta sesión.
+    }
+    notifyListeners();
+    return true;
   }
 
   /// Enciende o apaga el servicio de compartir y lo recuerda.

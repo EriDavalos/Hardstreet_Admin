@@ -178,6 +178,14 @@ class HsAccess {
   /// ¿El módulo aparece en el menú? (requiere "read"; admin incluido).
   bool canSee(String module) => _actionsOf(module)?.contains('read') ?? false;
 
+  /// ¿Se puede ABRIR el Drive desde esta sesión?
+  ///
+  /// Es la misma regla que el módulo "Archivos": sin "Ver", las opciones de
+  /// ELEGIR FOTOS DEL DRIVE no se dibujan en ningún formulario (quien no puede
+  /// ver el Drive tampoco puede elegir archivos de ahí). En modo degradado se
+  /// deja todo visible, como el resto del panel.
+  bool get canUseDrive => degraded || canSee('Archivos') || canSee('drive');
+
   /// ¿Tiene la acción [action] sobre [module]? (admin incluido).
   bool can(String module, String action) =>
       _actionsOf(module)?.contains(action) ?? false;

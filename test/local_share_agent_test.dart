@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -160,6 +161,46 @@ void main() {
     expect(reply.bytes.length, 8);
   });
 
+  test('la MINIATURA se reduce ANTES de mandarla (no sube el original)', () async {
+    // Una foto de verdad (PNG 8x8 de un color) para poder reducirla: el
+    // agente manda píxeles crudos y el servidor arma el JPEG.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAA'
+      'EUlEQVR4nGM4oaGBFTEMLQkAgl1GAWqNFmsAAAAASUVORK5CYII=',
+    );
+    File('${tmp.path}/chica.png').writeAsBytesSync(png);
+
+    final reply = await LocalShareAgent.instance.describeRequest(
+      op: 'thumb',
+      root: tmp.path,
+      path: 'chica.png',
+      width: 4,
+    );
+
+    expect(reply.status, 200);
+    expect(reply.mime, AgentReply.rawMime, reason: 'van píxeles, no el JPEG');
+    expect(reply.isRawRgba, isTrue);
+    expect(reply.rawWidth, 4, reason: 'se reduce al ancho pedido');
+    expect(reply.rawHeight, 4, reason: 'mantiene la proporción');
+    expect(
+      reply.bytes.length,
+      reply.rawWidth * reply.rawHeight * 4,
+      reason: 'RGBA: 4 bytes por píxel',
+    );
+
+    // Si no se puede reducir (no es una imagen), se manda el original y el
+    // servidor se encarga: nunca se queda sin respuesta.
+    final txt = await LocalShareAgent.instance.describeRequest(
+      op: 'thumb',
+      root: tmp.path,
+      path: 'nota.txt',
+      width: 4,
+    );
+    expect(txt.status, 200);
+    expect(txt.isRawRgba, isFalse);
+    expect(txt.bytes, isNotEmpty);
+  });
+
   test('lo que ya no existe se explica y lo desconocido se rechaza', () async {
     final gone = await LocalShareAgent.instance
         .describeRequest(op: 'file', root: tmp.path, path: 'no-esta.jpg');
@@ -284,6 +325,152 @@ void main() {
     expect(agent.serving.value, isFalse);
     expect(agent.problem.value, ShareProblem.unsupported);
     expect(agent.manualOn, isFalse);
+  });
+
+  test('una respuesta grande viaja en trozos de 512 KB, en orden', () async {
+    // El servidor detrás de un proxy corta los cuerpos de más de 1 MB (es el
+    // valor de fábrica de Nginx). Por eso la app parte la respuesta: lo que se
+    // partía en silencio era justo la miniatura grande, la vista previa y la
+    // descarga de más de 1 MB.
+    final bytes = Uint8List.fromList(
+      List<int>.generate(1200 * 1024 + 31, (i) => i % 251),
+    );
+    File('${tmp.path}/grande.jpg').writeAsBytesSync(bytes);
+
+    final pieces = LocalShareAgent.replyChunks(bytes, maxBytes: 512 * 1024);
+    expect(pieces, hasLength(3));
+    expect(pieces[0].length, 512 * 1024);
+    expect(pieces[1].length, 512 * 1024);
+    expect(pieces[2].length, bytes.length - 2 * 512 * 1024);
+    expect(
+      pieces.expand((p) => p).toList(),
+      bytes.toList(),
+      reason: 'los trozos juntos son la respuesta original, sin perder nada',
+    );
+    expect(
+      LocalShareAgent.replyChunks(const []),
+      hasLength(1),
+      reason: 'una respuesta vacía sigue siendo UNA petición (last=1)',
+    );
+
+    // Y el ciclo real: el servidor pide el archivo y la app lo manda por trozos.
+    final sent = <http.Request>[];
+    final agent = LocalShareAgent.instance;
+    agent.retryDelay = const Duration(milliseconds: 10);
+    var asked = false;
+    agent.client = MockClient((request) async {
+      if (request.url.path.endsWith('/api/local/agent/wait')) {
+        if (asked) return http.Response('', 204);
+        asked = true;
+        return http.Response(
+          jsonEncode({
+            'request': {
+              'id': 'a9',
+              'op': 'file',
+              'root': tmp.path.replaceAll('\\', '/'),
+              'path': 'grande.jpg',
+            }
+          }),
+          200,
+        );
+      }
+      sent.add(request);
+      return http.Response('{"ok":true}', 200);
+    });
+
+    final before = agent.served;
+    agent.start();
+    for (var i = 0; i < 400 && agent.served == before; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(agent.served, before + 1);
+    expect(sent, hasLength(3));
+    expect(
+      sent.map((r) => r.url.queryParameters['seq']).toList(),
+      ['0', '1', '2'],
+      reason: 'los trozos van en orden: el servidor los pega en ese orden',
+    );
+    expect(
+      sent.map((r) => r.url.queryParameters['last']).toList(),
+      ['0', '0', '1'],
+      reason: 'sólo el último cierra la respuesta',
+    );
+    expect(
+      sent.every((r) => r.bodyBytes.length <= 512 * 1024),
+      isTrue,
+      reason: 'ningún trozo pasa del límite que corta el proxy',
+    );
+    expect(
+      sent.expand((r) => r.bodyBytes).toList(),
+      bytes.toList(),
+      reason: 'el servidor recibe el archivo completo',
+    );
+    agent.stop();
+  });
+
+  test('si el proxy rechaza un trozo (413), la app lo parte y sigue', () async {
+    // Un proxy más estrecho de lo normal: deja pasar 2 KB por petición.
+    const limit = 2048;
+    final bytes = Uint8List.fromList(
+      List<int>.generate(60000, (i) => i % 251),
+    );
+    File('${tmp.path}/mediana.jpg').writeAsBytesSync(bytes);
+
+    final accepted = <http.Request>[];
+    final rejected = <http.Request>[];
+    final agent = LocalShareAgent.instance;
+    agent.retryDelay = const Duration(milliseconds: 5);
+    var asked = false;
+    agent.client = MockClient((request) async {
+      if (request.url.path.endsWith('/api/local/agent/wait')) {
+        if (asked) return http.Response('', 204);
+        asked = true;
+        return http.Response(
+          jsonEncode({
+            'request': {
+              'id': 'a12',
+              'op': 'file',
+              'root': tmp.path.replaceAll('\\', '/'),
+              'path': 'mediana.jpg',
+            }
+          }),
+          200,
+        );
+      }
+      // El "proxy" no deja pasar nada de más de [limit].
+      if (request.bodyBytes.length > limit) {
+        rejected.add(request);
+        return http.Response('La petición es demasiado grande', 413);
+      }
+      accepted.add(request);
+      return http.Response('{"ok":true}', 200);
+    });
+
+    final before = agent.served;
+    agent.start();
+    for (var i = 0; i < 400 && agent.served == before; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(agent.served, before + 1, reason: 'acaba mandando TODO');
+    expect(rejected, isNotEmpty, reason: 'el proxy rechazó trozos grandes');
+    expect(
+      accepted.every((r) => r.bodyBytes.length <= limit),
+      isTrue,
+      reason: 'ningún trozo aceptado pasaba del límite',
+    );
+    // Lo que el servidor recibe, trozo a trozo y en orden, es el archivo.
+    expect(accepted.expand((r) => r.bodyBytes).toList(), bytes.toList());
+    expect(
+      accepted.map((r) => r.url.queryParameters['seq']).toList(),
+      List<String>.generate(accepted.length, (i) => '$i'),
+      reason: 'los trozos van numerados del 0 en adelante, sin huecos',
+    );
+    expect(
+      accepted.last.url.queryParameters['last'],
+      '1',
+      reason: 'el último trozo (y sólo él) cierra la respuesta',
+    );
+    agent.stop();
   });
 
   test('el 204 sin trabajo no pregunta en bucle apretado', () async {

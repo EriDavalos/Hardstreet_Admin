@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'brand_badge.dart';
 import 'reminders_bell.dart';
 
 /// Shell de la app: sidebar flotante que se desliza sobre el contenido
@@ -129,22 +130,13 @@ class AdminShell extends StatelessWidget {
                           padding: const EdgeInsets.fromLTRB(18, 18, 12, 4),
                           child: Row(
                             children: [
-                              Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [AppColors.brand, AppColors.brandDark],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(11),
-                                ),
-                                child: const Icon(
-                                  Icons.apartment_rounded,
-                                  color: Colors.white,
-                                  size: 22,
-                                ),
+                              // La marca de la app: el MISMO icono que el
+                              // login y la pantalla de carga (hs_icon.png),
+                              // no un icono de edificio dibujado aparte.
+                              const BrandBadge(
+                                size: 38,
+                                radius: 11,
+                                elevated: false,
                               ),
                               const SizedBox(width: 10),
                               Expanded(

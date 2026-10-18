@@ -19,6 +19,7 @@ import '../widgets/confirm_dialog.dart';
 import '../widgets/drive_photo_picker.dart';
 import '../widgets/drive_thumb.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/package_designer.dart';
 import '../widgets/service_form_dialog.dart';
@@ -68,56 +69,37 @@ String _photoSource(Map<String, dynamic> pkg, {int width = 640}) =>
 /// Foto del paquete en BANDA (arriba de la tarjeta), igual que la web:
 /// ancho completo, alto del diseño y recorte tipo `object-fit: cover`.
 ///
-/// Sin foto queda el hueco visible con su rótulo: la web, en ese caso, usa una
-/// de las fotos del sitio (el pool de `images/…`), que el panel no puede
-/// abrir desde aquí.
+/// Sin foto NO se pinta banda: la tarjeta se ve completa, como la del panel
+/// (antes se ponía una foto de relleno del sitio y la tarjeta cambiaba).
 Widget _photoBand(Map<String, dynamic> pkg, Color accent, double height) {
-  if (_hasPhoto(pkg)) {
-    return SizedBox(
-      height: height,
-      width: double.infinity,
-      child: DriveThumb(
-        source: _photoSource(pkg),
-        isRemote: true,
-        size: double.infinity,
-        big: true,
-        rounded: false,
-      ),
-    );
-  }
-  return Container(
+  if (!_hasPhoto(pkg)) return const SizedBox.shrink();
+  return SizedBox(
     height: height,
     width: double.infinity,
-    decoration: BoxDecoration(gradient: _photoFallbackGradient(accent)),
-    alignment: Alignment.center,
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.image_outlined,
-          size: 20,
-          color: accent.withValues(alpha: .9),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          'Sin foto · la web usa una del sitio',
-          style: TextStyle(
-            fontSize: 10,
-            letterSpacing: .6,
-            fontWeight: FontWeight.w700,
-            color: accent.withValues(alpha: .9),
-          ),
-        ),
-      ],
+    child: DriveThumb(
+      source: _photoSource(pkg),
+      isRemote: true,
+      size: double.infinity,
+      big: true,
+      rounded: false,
     ),
   );
 }
 
 /// El hueco (degradado) que se ve mientras NO hay foto que enseñar.
+///
+/// Son los MISMOS números del diseñador ("Foto del paquete"): un lavado del
+/// acento que se apaga hacia negro en diagonal. Así una tarjeta sin foto se ve
+/// como la de la vista previa —con su degradado— y no como un bloque plano.
 LinearGradient _photoFallbackGradient(Color accent) => LinearGradient(
   begin: Alignment.topLeft,
   end: Alignment.bottomRight,
-  colors: [accent.withValues(alpha: .26), Colors.black.withValues(alpha: .35)],
+  colors: [accent.withValues(alpha: .28), Colors.black.withValues(alpha: .35)],
+);
+
+/// El degradado del hueco de la foto, a tamaño completo (fondo de la tarjeta).
+Widget _photoPlaceholderGradient(Color accent) => DecoratedBox(
+  decoration: BoxDecoration(gradient: _photoFallbackGradient(accent)),
 );
 
 /// Miniatura de la foto del paquete, para la vista de filas.
@@ -151,15 +133,16 @@ Widget _photoThumb(Map<String, dynamic> pkg, Color accent) {
   );
 }
 
-/// Foto de FONDO en la tarjeta del catálogo, si el diseño la pide ahí.
+/// Fondo de la tarjeta del catálogo cuando el diseño pide la foto ahí
+/// (`imageMode: 'bg'`).
 ///
-/// Es EXACTAMENTE lo que emite la web: la foto a todo color con
-/// `background-size: cover` y, encima, el degradado `hsPhotoFade` con la fuerza
-/// del diseño (`card.imageFade`).
-///
-/// El degradado es NEGRO (no el color oscuro del tier): sobre la foto, un velo
-/// negro es lo que hace resaltar las letras, y así el mismo diseño se ve en la
-/// web (`site.js`) sin depender de la paleta de cada tier.
+/// Es EXACTAMENTE lo que pinta el diseñador y lo que emite la web:
+///   * con foto: la foto a todo color (`background-size: cover`) y ENCIMA el
+///     velo del diseño ([hsPhotoFadeOverlay]), con el color, la dirección y la
+///     fuerza que se elijan en el diseñador;
+///   * sin foto: el degradado del hueco (acento → negro en diagonal), en vez de
+///     un bloque plano: la tarjeta se ve como la de la vista previa aunque el
+///     paquete todavía no tenga foto.
 Widget _photoBackdrop(
   SiteCardDesign card,
   Map<String, dynamic> pkg,
@@ -167,11 +150,49 @@ Widget _photoBackdrop(
   Color dark,
   Widget child,
 ) {
+  final hasPhoto = _hasPhoto(pkg);
+  if (card.imageMode == 'fade') {
+    // FONDO CON DESVANECIDO: la foto se ve de un lado y se funde con el fondo
+    // (el color o el degradado elegidos en el diseñador). Es la MISMA máscara
+    // y los mismos números que aplica la web (`mask-image`).
+    final bg = hsCardBgGradient(card);
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: bg == null ? hsCardBgColor(card) : null,
+              gradient: bg,
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: hsPhotoFadeMask(
+            from: card.imageFadeFrom,
+            angle: card.imageFadeAngle,
+            start: card.imageFadeStart,
+            end: card.imageFadeEnd,
+            child: hasPhoto
+                ? DriveThumb(
+                    source: _photoSource(pkg),
+                    isRemote: true,
+                    size: double.infinity,
+                    big: true,
+                    rounded: false,
+                  )
+                : _photoPlaceholderGradient(accent),
+          ),
+        ),
+        child,
+      ],
+    );
+  }
   if (card.imageMode != 'bg') return child;
   return Stack(
     children: [
+      // La foto… o su hueco degradado.
       Positioned.fill(
-        child: _hasPhoto(pkg)
+        child: hasPhoto
             ? DriveThumb(
                 source: _photoSource(pkg),
                 isRemote: true,
@@ -179,18 +200,67 @@ Widget _photoBackdrop(
                 big: true,
                 rounded: false,
               )
-            : DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: _photoFallbackGradient(accent),
-                ),
-              ),
+            : _photoPlaceholderGradient(accent),
       ),
+      // El velo va en los DOS casos (el diseño lo pinta siempre).
       Positioned.fill(
-        child: hsPhotoFadeOverlay(kPhotoFadeColor, card.imageFade),
+        child: hsPhotoFadeOverlay(
+          card.imageFadeColor,
+          card.imageFade,
+          from: card.imageFadeFrom,
+          angle: card.imageFadeAngle,
+          shadow: card.imageShadow,
+          shadowStart: card.imageShadowStart,
+          shadowEnd: card.imageShadowEnd,
+        ),
       ),
       child,
     ],
   );
+}
+
+/// Botón pequeño en la ESQUINA de una tarjeta (eliminar).
+///
+/// Velo oscuro + borde del color de la acción: se lee igual sobre el flyer
+/// oscuro que sobre una foto, como los botones de las portadas de categoría.
+class _CardAction extends StatelessWidget {
+  const _CardAction({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.accent,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = accent ?? Colors.white;
+    // Icono SUELTO (sin círculo ni pastilla): solo el símbolo, en su color y
+    // un poco más grande, con un halo oscuro que lo despega de la foto.
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            icon,
+            size: 19,
+            color: tint,
+            shadows: const [
+              Shadow(color: Color(0xAA000000), blurRadius: 6),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Tamaño MÁXIMO de una tarjeta de paquete (ancho × alto).
@@ -301,7 +371,9 @@ class _PackagesPageState extends State<PackagesPage> {
   }
 
   Future<void> _openForm([Map<String, dynamic>? pkg]) async {
-    final saved = await showDialog<bool>(
+    // El mismo modal que el diseñador de tarjetas: en móvil, a pantalla
+    // completa; en computadora, el diálogo flotante.
+    final saved = await showHsModal<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _PackageFormDialog(
@@ -310,20 +382,48 @@ class _PackagesPageState extends State<PackagesPage> {
         categories: _categories,
         services: _services,
         gold: hsHexColor(_design.gold),
+        // El diseño guardado de las tarjetas: la vista previa del formulario es
+        // LA MISMA tarjeta del catálogo y de la web, no un boceto aparte.
+        design: _design,
         // Al crear desde dentro de una categoría, el paquete nace EN ESA
         // categoría (no hay que volver a elegirla).
         initialCategory: pkg == null ? _activeCategory : null,
+        // Eliminar vive en la ESQUINA de la tarjeta (con su confirmación), no
+        // dentro del formulario.
       ),
     );
     if (saved == true) _reload();
   }
 
-  /// Crea una categoría del catálogo (p. ej. "Bautizo") desde la galería.
-  Future<void> _openCategoryForm() async {
+  bool get _degraded => HsAccess.instance.degraded;
+
+  bool get _canCreatePackages =>
+      _degraded || HsAccess.instance.can('Paquetes', 'create');
+
+  bool get _canUpdatePackages =>
+      _degraded || HsAccess.instance.can('Paquetes', 'update');
+
+  bool get _canDeletePackages =>
+      _degraded || HsAccess.instance.can('Paquetes', 'delete');
+
+  // Las CATEGORÍAS tienen su propio permiso (módulo "Categorías"): quien puede
+  // editar paquetes no necesariamente puede tocar las categorías, y al revés.
+  bool get _canCreateCategories =>
+      _degraded || HsAccess.instance.can('Categorías', 'create');
+
+  bool get _canUpdateCategories =>
+      _degraded || HsAccess.instance.can('Categorías', 'update');
+
+  bool get _canDeleteCategories =>
+      _degraded || HsAccess.instance.can('Categorías', 'delete');
+
+  /// Crea una categoría del catálogo (p. ej. "Bautizo") o EDITA una de la
+  /// galería: su nombre y su foto (enlace o Drive).
+  Future<void> _openCategoryForm([Map<String, dynamic>? category]) async {
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _CategoryFormDialog(),
+      builder: (_) => _CategoryFormDialog(category: category),
     );
     if (saved == true && mounted) _reload();
   }
@@ -345,7 +445,9 @@ class _PackagesPageState extends State<PackagesPage> {
     _reload();
   }
 
-  Future<void> _delete(Map<String, dynamic> pkg) async {
+  /// Elimina el paquete (previo confirmar). Devuelve si de verdad se borró:
+  /// el formulario lo usa para cerrarse solo cuando el borrado salió bien.
+  Future<bool> _delete(Map<String, dynamic> pkg) async {
     final ok = await confirmDelete(
       context,
       title: '¿Eliminar paquete?',
@@ -353,9 +455,31 @@ class _PackagesPageState extends State<PackagesPage> {
           '"${pkg['name'] ?? ''}" dejará de aparecer en el catálogo y en la web. '
           'No se puede eliminar si ya fue asignado a un cliente.',
     );
-    if (!ok) return;
+    if (!ok) return false;
+    var done = true;
     try {
       await HsApi.deletePackage((pkg['id'] as num).toInt());
+    } catch (_) {
+      // El backend ya avisó con la notificación roja.
+      done = false;
+    }
+    _reload();
+    return done;
+  }
+
+  /// Elimina una CATEGORÍA desde su portada (previo confirmar). Los paquetes
+  /// que tenía NO se pierden: el backend los pasa a "General".
+  Future<void> _deleteCategory(CategoryGroup c) async {
+    final ok = await confirmDelete(
+      context,
+      title: '¿Eliminar categoría?',
+      message:
+          '"${c.name}" dejará de aparecer en el catálogo. Sus paquetes NO se '
+          'pierden: pasan a "General".',
+    );
+    if (!ok) return;
+    try {
+      await HsApi.deletePackageCategory(c.id);
     } catch (_) {
       // El backend ya avisó con la notificación roja.
     }
@@ -432,9 +556,9 @@ class _PackagesPageState extends State<PackagesPage> {
       packages: _packages,
       categories: _categories,
     );
-    final canCreate =
-        HsAccess.instance.degraded ||
-        HsAccess.instance.can('Paquetes', 'create');
+    // Crear depende de DÓNDE se esté: en la galería se crea una CATEGORÍA
+    // (módulo "Categorías"); dentro de una categoría, un PAQUETE.
+    final canCreate = gallery ? _canCreateCategories : _canCreatePackages;
 
     return PageContainer(
       title: 'Paquetes',
@@ -508,6 +632,7 @@ class _PackagesPageState extends State<PackagesPage> {
   /// salen; arriba va la de "Todo el catálogo" (la opción de ver todos los
   /// paquetes de una sola vez).
   Widget _galleryLevel(ColorScheme scheme, List<CategoryGroup> groups) {
+    final canUpdate = _canUpdateCategories;
     if (_loading) return const ListSkeleton(lines: 3, cardHeight: 200);
     if (_error != null) return _errorCard(scheme, _error!);
 
@@ -570,6 +695,14 @@ class _PackagesPageState extends State<PackagesPage> {
           minPrice: minPrice,
           onOpenAll: _openAllPackages,
           onOpen: (c) => _openCategory(c.id),
+          onEdit: canUpdate
+              ? (c) => _openCategoryForm({
+                  'id': c.id,
+                  'name': c.name,
+                  'urlImage': c.urlImage,
+                })
+              : null,
+          onDelete: _canDeleteCategories ? _deleteCategory : null,
         ),
       ],
     );
@@ -684,12 +817,8 @@ class _PackagesPageState extends State<PackagesPage> {
                     child: _PackageRow(
                       pkg: _filtered[i],
                       design: _design,
-                      canEdit:
-                          HsAccess.instance.degraded ||
-                          HsAccess.instance.can('Paquetes', 'update'),
-                      canDelete:
-                          HsAccess.instance.degraded ||
-                          HsAccess.instance.can('Paquetes', 'delete'),
+                      canEdit: _canUpdatePackages,
+                      canDelete: _canDeletePackages,
                       onEdit: () => _openForm(_filtered[i]),
                       onDelete: () => _delete(_filtered[i]),
                     ),
@@ -720,12 +849,8 @@ class _PackagesPageState extends State<PackagesPage> {
                         child: WebPackageCard(
                           pkg: _filtered[i],
                           design: _design,
-                          canEdit:
-                              HsAccess.instance.degraded ||
-                              HsAccess.instance.can('Paquetes', 'update'),
-                          canDelete:
-                              HsAccess.instance.degraded ||
-                              HsAccess.instance.can('Paquetes', 'delete'),
+                          canEdit: _canUpdatePackages,
+                          canDelete: _canDeletePackages,
                           onEdit: () => _openForm(_filtered[i]),
                           onDelete: () => _delete(_filtered[i]),
                         ),
@@ -918,13 +1043,13 @@ class _PackagesPageState extends State<PackagesPage> {
   }
 }
 
-/// Colores de la tarjeta de un paquete SEGÚN EL TEMA del panel.
+/// Colores de la tarjeta de un paquete: SIEMPRE el flyer de la web.
 ///
-/// La tarjeta imita el flyer de la web (oscuro, con el acento del tier), pero
-/// el módulo también se usa en CLARO: ahí el fondo es la superficie del tema
-/// con un tinte del acento y los textos son los del tema (antes se quedaba
-/// oscura también en claro y desentonaba). El acento del tier se conserva —es
-/// la identidad del paquete— oscurecido solo lo justo para leerse.
+/// El módulo se usa en claro y en oscuro, pero la tarjeta NO cambia con el
+/// tema: es la MISMA que se ve en el diseñador ("Así se verá en la web") y la
+/// misma que pinta la página —fondo oscuro del tier, textos claros y el acento
+/// como única identidad—. Antes en claro se aclaraba y el panel y la web
+/// enseñaban dos tarjetas distintas.
 class _CardPalette {
   const _CardPalette({
     required this.dark,
@@ -971,49 +1096,28 @@ class _CardPalette {
 /// paleta es la oscura SIEMPRE (texto claro), porque el texto del tema claro se
 /// perdía sobre la foto.
 _CardPalette _cardPalette(
-  ThemeData theme,
   HsTierLook look,
   SiteTierDesign tier, {
   bool overPhoto = false,
 }) {
-  final scheme = theme.colorScheme;
-  final dark = overPhoto || theme.brightness == Brightness.dark;
-  // Sobre el fondo claro, el acento del tier necesita un poco más de cuerpo:
-  // se oscurece SOLO para textos e iconos (bordes y tintes usan el puro).
-  final accent = dark
-      ? look.accent
-      : Color.lerp(look.accent, Colors.black, .30)!;
-  final accentSoft = dark
-      ? look.accentSoft
-      : Color.lerp(look.accentSoft, Colors.black, .22)!;
   return _CardPalette(
-    dark: dark,
-    bg: dark
-        ? Color.alphaBlend(look.dark.withValues(alpha: .94), scheme.surface)
-        : Color.alphaBlend(look.accent.withValues(alpha: .05), scheme.surface),
-    onCard: dark ? Colors.white : scheme.onSurface,
-    muted: dark ? Colors.white.withValues(alpha: .58) : scheme.onSurfaceVariant,
-    faint: dark
-        ? Colors.white.withValues(alpha: .42)
-        : scheme.onSurfaceVariant.withValues(alpha: .8),
-    accent: accent,
-    accentSoft: accentSoft,
-    border: look.accent.withValues(
-      alpha: dark ? tier.borderAlpha : (tier.borderAlpha + .18).clamp(0.0, 1.0),
-    ),
-    divider: dark
-        ? Colors.white.withValues(alpha: .07)
-        : scheme.outlineVariant.withValues(alpha: .55),
-    footerBg: overPhoto
-        ? Colors.black.withValues(alpha: .34)
-        : look.accent.withValues(alpha: dark ? .05 : .07),
-    badgeBg: tier.badgeFilled
-        ? null
-        : look.accent.withValues(alpha: dark ? .12 : .14),
+    dark: true,
+    bg: look.dark,
+    onCard: Colors.white,
+    muted: Colors.white.withValues(alpha: .58),
+    faint: Colors.white.withValues(alpha: .42),
+    accent: look.accent,
+    accentSoft: look.accentSoft,
+    border: look.accent.withValues(alpha: tier.borderAlpha),
+    divider: Colors.white.withValues(alpha: .07),
+    // El pie NO se pinta como una banda aparte (el diseñador tampoco): el
+    // precio y el botón viven en el mismo fondo de la tarjeta.
+    footerBg: Colors.transparent,
+    badgeBg: tier.badgeFilled ? null : look.accent.withValues(alpha: .12),
     badgeGradient: tier.badgeFilled
         ? LinearGradient(colors: [look.accent, look.accentSoft])
         : null,
-    badgeText: tier.badgeFilled ? look.dark : accentSoft,
+    badgeText: tier.badgeFilled ? look.dark : look.accentSoft,
   );
 }
 
@@ -1021,11 +1125,10 @@ _CardPalette _cardPalette(
 /// superior degradada, badge de tier, categoría con icono, nombre serif,
 /// subtítulo en itálica, servicios con checks y precio "Desde".
 ///
-/// Dos diferencias a propósito con el flyer:
-///   * los colores salen del TEMA del panel ([_CardPalette]): en claro la
-///     tarjeta es clara con el acento del tier, en oscuro sigue el flyer;
-///   * el pie lleva un botón "Editar" (y la tarjeta entera abre el paquete):
-///     en el panel las tarjetas SON el contenido editable, y hay que verlo.
+/// Es LA MISMA tarjeta del diseñador ("Así se verá en la web"): mismo fondo
+/// del tier en claro y en oscuro, mismo pie sin banda y mismo precio.
+/// La única diferencia es el botón del pie: dice "Personalizar" porque el panel
+/// es donde se editan los paquetes (la tarjeta entera también los abre).
 /// La TARJETA del paquete tal como la pinta la web (mismo diseño guardado).
 ///
 /// Es pública porque la comparte la galería de Categorías: ahí se abre una
@@ -1061,7 +1164,6 @@ class _WebPackageCardState extends State<WebPackageCard> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final pkg = widget.pkg;
     final tier = (pkg['tierName'] ?? '').toString();
     // Cada tier tiene su propio look (Premium = oro sobre negro,
@@ -1070,9 +1172,9 @@ class _WebPackageCardState extends State<WebPackageCard> {
     final card = widget.design.card;
     final tierLook = widget.design.tierOf(tier);
     final look = _lookFromDesign(widget.design, tier);
-    // El relleno del diseñador es para el ancho de la web (1 columna); aquí la
-    // tarjeta vive en una rejilla, así que se escala sin perder la proporción.
-    final pad = (card.padding * .62).clamp(12.0, 30.0);
+    // El relleno es el MISMO número que usa la web (el del diseñador): así la
+    // tarjeta del panel y la del catálogo tienen la misma densidad.
+    final pad = card.padding.clamp(12.0, 40.0);
     final services = ((pkg['serviceNames'] as List?) ?? const [])
         .map((s) => s.toString())
         .where((s) => s.isNotEmpty)
@@ -1083,7 +1185,6 @@ class _WebPackageCardState extends State<WebPackageCard> {
         : card.servicesLimit;
     final categoryName = (pkg['categoryName'] ?? '').toString();
     final price = (pkg['price'] as num?) ?? 0;
-    final currency = (pkg['currency'] ?? 'MXN').toString();
 
     final s = price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2);
     final parts = s.split('.');
@@ -1094,11 +1195,10 @@ class _WebPackageCardState extends State<WebPackageCard> {
     final priceLabel = '\$$intPart${parts.length > 1 ? '.${parts[1]}' : ''}';
 
     final canEdit = widget.canEdit;
-    final canDelete = widget.canDelete;
-    // Con la foto DE FONDO, los textos van encima de la foto: la paleta se
-    // vuelve oscura (texto claro) aunque el panel esté en claro.
-    final overPhoto = card.imageMode == 'bg' && _hasPhoto(pkg);
-    final pal = _cardPalette(theme, look, tierLook, overPhoto: overPhoto);
+    // Con la foto DE FONDO, los textos van encima de la foto (o de su hueco
+    // degradado): el fondo de la tarjeta ya no manda.
+    final overPhoto = card.imageMode == 'bg';
+    final pal = _cardPalette(look, tierLook, overPhoto: overPhoto);
     final radius = BorderRadius.circular(card.radius.clamp(10.0, 24.0));
 
     // Tamaño MÁXIMO: la tarjeta no pasa de [kPackageCardMaxWidth] de ancho (se
@@ -1239,48 +1339,18 @@ class _WebPackageCardState extends State<WebPackageCard> {
                                         ),
                                       ),
                                       const Spacer(),
-                                      // CELULAR: las acciones del paquete van en el menú "⋮"
-                                      // (en escritorio se mantienen los botones fantasma).
-                                      // Sin permisos para ninguna, el menú NO se dibuja.
-                                      if (hsRowCompact(context))
-                                        HsRowMenu(
-                                          actions: [
-                                            HsMenuAction(
-                                              icon: Icons.edit_rounded,
-                                              label: 'Editar paquete',
-                                              onTap: canEdit
-                                                  ? widget.onEdit
-                                                  : null,
-                                            ),
-                                            HsMenuAction(
-                                              icon:
-                                                  Icons.delete_outline_rounded,
-                                              label: 'Eliminar',
-                                              onTap: canDelete
-                                                  ? widget.onDelete
-                                                  : null,
-                                              destructive: true,
-                                            ),
-                                          ],
-                                        )
-                                      else ...[
-                                        if (canDelete)
-                                          _IconGhost(
-                                            icon: Icons.delete_outline_rounded,
-                                            tooltip: 'Eliminar',
-                                            color: pal.muted,
-                                            onTap: widget.onDelete,
-                                          ),
-                                        if (canEdit) ...[
-                                          const SizedBox(width: 4),
-                                          _IconGhost(
-                                            icon: Icons.edit_rounded,
-                                            tooltip: 'Editar paquete',
-                                            color: pal.accent,
-                                            onTap: widget.onEdit,
-                                          ),
-                                        ],
-                                      ],
+                                      // ESQUINA superior derecha: eliminar el
+                                      // paquete (con su confirmación).
+                                      // Personalizarlo sigue siendo el botón
+                                      // del pie —y toda la tarjeta—.
+                                      if (widget.canDelete)
+                                        _CardAction(
+                                          key: const ValueKey('package-delete'),
+                                          icon: Icons.delete_outline_rounded,
+                                          tooltip: 'Eliminar paquete',
+                                          accent: const Color(0xFFFF8A8A),
+                                          onTap: widget.onDelete,
+                                        ),
                                     ],
                                   ),
                                   const SizedBox(height: 14),
@@ -1428,12 +1498,12 @@ class _WebPackageCardState extends State<WebPackageCard> {
                         ),
                       ),
                       // ===== Pie: precio + acción del PANEL =====
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                        decoration: BoxDecoration(
-                          color: pal.footerBg,
-                          border: Border(top: BorderSide(color: pal.divider)),
-                        ),
+                      //
+                      // Sin banda ni borde (el diseñador tampoco los pinta): el
+                      // precio y el botón siguen el MISMO relleno del contenido,
+                      // así el pie no se separa de la tarjeta.
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(pad, 0, pad, pad),
                         child: Row(
                           children: [
                             // El precio se oculta si el diseño lo apaga (el precio se
@@ -1461,22 +1531,14 @@ class _WebPackageCardState extends State<WebPackageCard> {
                                         fontFamily: 'serif',
                                       ),
                                     ),
-                                    Text(
-                                      currency,
-                                      style: TextStyle(
-                                        fontSize: 10.5,
-                                        letterSpacing: 1.2,
-                                        color: pal.faint,
-                                      ),
-                                    ),
                                   ],
                                 ),
                               )
                             else
                               const Spacer(),
-                            // Botón del PANEL: abre el paquete para editarlo. Se
-                            // llama "Editar" (no el CTA de la web) para que quede
-                            // claro que esto es un formulario, no el catálogo.
+                            // Botón del PANEL: abre el paquete para personalizarlo.
+                            // Se llama "Personalizar" (no el CTA de la web) para que
+                            // quede claro que esto es un formulario, no el catálogo.
                             if (canEdit)
                               FilledButton.icon(
                                 onPressed: widget.onEdit,
@@ -1497,8 +1559,8 @@ class _WebPackageCardState extends State<WebPackageCard> {
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                icon: const Icon(Icons.edit_rounded, size: 16),
-                                label: const Text('Editar'),
+                                icon: const Icon(Icons.tune_rounded, size: 16),
+                                label: const Text('Personalizar'),
                               ),
                           ],
                         ),
@@ -1564,14 +1626,11 @@ class _PackageRowState extends State<_PackageRow> {
     final categoryName = (pkg['categoryName'] ?? '').toString();
     final subtitle = (pkg['subtitle'] ?? '').toString();
     final price = (pkg['price'] as num?) ?? 0;
-    final currency = (pkg['currency'] ?? 'MXN').toString();
     final priceLabel = hsMoney(price, '').trim();
     final compact = hsRowCompact(context);
-    final theme = Theme.of(context);
-    // Mismos colores que la tarjeta, según el tema (en claro la fila también
-    // se aclara: antes se quedaba negra en modo light).
+    // Mismos colores que la tarjeta: la fila también es el flyer (en claro y en
+    // oscuro), así el catálogo se ve igual en las dos vistas.
     final pal = _cardPalette(
-      theme,
       look,
       widget.design.tierOf((pkg['tierName'] ?? '').toString()),
     );
@@ -1774,14 +1833,6 @@ class _PackageRowState extends State<_PackageRow> {
                             fontFamily: 'serif',
                           ),
                         ),
-                        Text(
-                          currency,
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            letterSpacing: 1,
-                            color: pal.faint,
-                          ),
-                        ),
                       ],
                     ),
                   const SizedBox(width: 10),
@@ -1810,9 +1861,12 @@ class _PackageRowState extends State<_PackageRow> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (widget.canDelete)
+                                // Borrar se ve como una acción de peligro (rojo
+                                // y con fondo), no como un icono apagado al
+                                // lado del de editar.
                                 _IconGhost(
                                   icon: Icons.delete_outline_rounded,
-                                  color: pal.muted,
+                                  danger: true,
                                   tooltip: 'Eliminar',
                                   onTap: widget.onDelete,
                                 ),
@@ -1848,6 +1902,7 @@ class _IconGhost extends StatelessWidget {
     required this.onTap,
     this.color,
     this.tooltip,
+    this.danger = false,
   });
 
   final IconData icon;
@@ -1855,18 +1910,24 @@ class _IconGhost extends StatelessWidget {
   final Color? color;
   final String? tooltip;
 
+  /// Acción destructiva (eliminar): en ROJO y con fondo, no apagada.
+  final bool danger;
+
   @override
   Widget build(BuildContext context) {
+    final dangerTint = const Color(0xFFFF8A8A);
+    final tint =
+        color ??
+        (danger
+            ? dangerTint
+            : Theme.of(context).colorScheme.onSurfaceVariant);
     final button = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(9),
       child: Padding(
         padding: const EdgeInsets.all(7),
-        child: Icon(
-          icon,
-          size: 17,
-          color: color ?? Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+        // Sin fondo ni aro: el icono de borrar se distingue por su COLOR.
+        child: Icon(icon, size: danger ? 18 : 17, color: tint),
       ),
     );
     if (tooltip == null) return button;
@@ -1876,7 +1937,8 @@ class _IconGhost extends StatelessWidget {
 
 /// Diálogo de alta/edición de paquete con el diseño estándar (FormDialog).
 /// Aquí se PERSONALIZA el paquete: datos, precio, tier, categoría,
-/// servicios incluidos (chips) e imagen para la web.
+/// servicios incluidos (chips) e imagen para la web. Arriba lleva la VISTA
+/// PREVIA en vivo: la misma tarjeta del catálogo y de la web.
 class _PackageFormDialog extends StatefulWidget {
   const _PackageFormDialog({
     this.pkg,
@@ -1884,6 +1946,7 @@ class _PackageFormDialog extends StatefulWidget {
     required this.categories,
     required this.services,
     required this.gold,
+    required this.design,
     this.initialCategory,
   });
 
@@ -1894,6 +1957,10 @@ class _PackageFormDialog extends StatefulWidget {
 
   /// Dorado de la marca SEGÚN EL DISEÑO guardado (minivista previa).
   final Color gold;
+
+  /// Diseño guardado de las tarjetas: con él se pinta la vista previa, así lo
+  /// que se ve al personalizar es exactamente lo que saldrá en la página.
+  final SiteDesign design;
 
   /// Categoría con la que nace un paquete NUEVO (la que se está viendo en el
   /// módulo). Al editar uno existente manda la del propio paquete.
@@ -1925,6 +1992,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
 
   /// Pestaña del diálogo: 0 = Datos, 1 = Servicios (como el administrador).
   int _tab = 0;
+
+  /// Desplazamiento de los campos: al cambiar de pestaña se vuelve arriba.
+  final ScrollController _fieldsScroll = ScrollController();
 
   bool get _editing => widget.pkg != null;
 
@@ -1965,7 +2035,25 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     _price.dispose();
     _urlImage.dispose();
     _serviceQuery.dispose();
+    _fieldsScroll.dispose();
     super.dispose();
+  }
+
+  /// Cambia de pestaña y regresa los campos al principio (cada pestaña se lee
+  /// desde arriba, como en el administrador del paquete).
+  void _goTab(int tab) {
+    if (mounted && _fieldsScroll.hasClients) _fieldsScroll.jumpTo(0);
+    if (_tab != tab) setState(() => _tab = tab);
+  }
+
+  /// Regresa a la pestaña Datos (con los campos al principio) y muestra el
+  /// motivo: si falta un dato, se ve justo dónde se llena.
+  void _failInDatos(String message) {
+    setState(() {
+      _tab = 0;
+      _error = message;
+    });
+    if (_fieldsScroll.hasClients) _fieldsScroll.jumpTo(0);
   }
 
   /// Abre el diálogo de NUEVO servicio y, al crearlo, refresca el catálogo y
@@ -2014,24 +2102,15 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     final name = _name.text.trim();
     // Si falta algo de la pestaña Datos, se regresa a ella con el motivo.
     if (name.isEmpty) {
-      setState(() {
-        _tab = 0;
-        _error = 'Escribe el nombre del paquete';
-      });
+      _failInDatos('Escribe el nombre del paquete');
       return;
     }
     if (_tierId == null) {
-      setState(() {
-        _tab = 0;
-        _error = 'Selecciona el tier (Premium/Gold/Basic)';
-      });
+      _failInDatos('Selecciona el tier (Premium/Gold/Basic)');
       return;
     }
     if (_categoryId == null) {
-      setState(() {
-        _tab = 0;
-        _error = 'Selecciona la categoría del paquete';
-      });
+      _failInDatos('Selecciona la categoría del paquete');
       return;
     }
     setState(() {
@@ -2081,219 +2160,380 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // La MISMA estructura del diseñador de tarjetas ("Personalizar" de las
+    // cards generales): con espacio, los campos a la IZQUIERDA y la vista
+    // previa a la DERECHA; en pantalla angosta, en dos pestañas. Así se
+    // personaliza viendo siempre cómo va a quedar.
+    final wide = MediaQuery.sizeOf(context).width > 980;
 
-    return FormDialog(
-      icon: _editing ? Icons.tune_rounded : Icons.add_card,
-      title: _editing ? 'Personalizar paquete' : 'Nuevo paquete',
-      subtitle: 'Este paquete aparece en la web ("Nuestros Paquetes") y se asigna a clientes.',
-      saving: _saving,
-      error: _error,
-      saveLabel: _editing ? 'Guardar cambios' : 'Crear paquete',
-      maxWidth: 560,
-      onCancel: () => Navigator.of(context).pop(false),
-      onSave: _save,
-      children: [
-        // Vista previa EN VIVO del flyer del paquete (se actualiza al
-        // escribir): hace la personalización visual e intuitiva.
-        _previewCard(scheme),
-        const SizedBox(height: 14),
-        // Pestañas HORIZONTALES (mismo lenguaje que el administrador del
-        // paquete): Datos y Servicios, con el contador de seleccionados.
-        Row(
+    return Dialog(
+      key: const ValueKey('package-form'),
+      insetPadding: const EdgeInsets.all(18),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1080, maxHeight: 900),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            _header(scheme),
+            _hr(scheme),
             Expanded(
-              child: _FormTabButton(
-                icon: Icons.tune_rounded,
-                label: 'Datos',
-                selected: _tab == 0,
-                onTap: () => setState(() => _tab = 0),
-              ),
+              child: wide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: _fields(scheme)),
+                        _vr(scheme),
+                        SizedBox(width: 430, child: _preview(scheme)),
+                      ],
+                    )
+                  : DefaultTabController(
+                      length: 2,
+                      child: Column(
+                        children: [
+                          const TabBar(
+                            tabs: [
+                              Tab(text: 'Editar'),
+                              Tab(text: 'Vista previa'),
+                            ],
+                          ),
+                          Expanded(
+                            child: TabBarView(
+                              children: [_fields(scheme), _preview(scheme)],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _FormTabButton(
-                icon: Icons.checklist_rtl,
-                label: 'Servicios',
-                badge: '${_serviceIds.length}',
-                selected: _tab == 1,
-                onTap: () => setState(() => _tab = 1),
-              ),
-            ),
+            _hr(scheme),
+            _footer(scheme),
           ],
         ),
-        const SizedBox(height: 14),
-        if (_tab == 1) ...[
-          _servicesSection(scheme),
-        ] else ...[
-          FormSection(
-            label: 'Datos del paquete',
+      ),
+    );
+  }
+
+  Widget _hr(ColorScheme s) =>
+      Divider(height: 1, color: s.outlineVariant.withValues(alpha: .5));
+
+  Widget _vr(ColorScheme s) =>
+      VerticalDivider(width: 1, color: s.outlineVariant.withValues(alpha: .5));
+
+  /// Cabecera: icono, título (y de qué va el paquete) y cerrar.
+  Widget _header(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+      child: Row(
+        children: [
+          Icon(
+            _editing ? Icons.tune_rounded : Icons.add_card,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _name,
-                  autofocus: !_editing,
-                  onChanged: (_) => setState(() {}),
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Nombre',
-                    prefixIcon: Icon(Icons.card_giftcard_outlined, size: 20),
+                Text(
+                  _editing ? 'Personalizar paquete' : 'Nuevo paquete',
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _subtitle,
-                  onChanged: (_) => setState(() {}),
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    labelText: 'Subtítulo (corto, para la tarjeta)',
-                    prefixIcon: Icon(Icons.short_text, size: 20),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _description,
-                  maxLines: 3,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    labelText: 'Descripción',
-                    alignLabelWithHint: true,
-                    prefixIcon: Icon(Icons.notes, size: 20),
+                const SizedBox(height: 2),
+                Text(
+                  'Este paquete aparece en la web ("Nuestros Paquetes") y se '
+                  'asigna a clientes.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          FormSection(
-            label: 'Precio',
-            child: TextField(
-              controller: _price,
-              onChanged: (_) => setState(() {}),
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Precio (MXN)',
-                prefixIcon: Icon(Icons.payments_outlined, size: 20),
+          IconButton(
+            tooltip: 'Cerrar',
+            onPressed: () => Navigator.of(context).pop(false),
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Pie: el aviso (o el error) a la izquierda y las acciones a la derecha.
+  Widget _footer(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+      child: Row(
+        children: [
+          Icon(
+            _error == null ? Icons.visibility_outlined : Icons.error_outline,
+            size: 16,
+            color: _error == null ? scheme.onSurfaceVariant : scheme.error,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _error ?? 'La vista previa se actualiza mientras escribes.',
+              style: TextStyle(
+                fontSize: 12,
+                color: _error == null ? scheme.onSurfaceVariant : scheme.error,
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          FormSection(
-            label: 'Clasificación',
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _tierId,
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_outlined, size: 18),
+            label: Text(_editing ? 'Guardar cambios' : 'Crear paquete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Campos del formulario (columna izquierda, como los controles del
+  /// diseñador): las pestañas Datos/Servicios con su contenido.
+  Widget _fields(ColorScheme scheme) {
+    // Pestañas HORIZONTALES (mismo lenguaje que el administrador del
+    // paquete): Datos y Servicios, con el contador de seleccionados. Van FUERA
+    // del desplazamiento para tenerlas siempre a la vista mientras se llena el
+    // formulario, como las del diseñador de tarjetas.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: _FormTabButton(
+                  icon: Icons.tune_rounded,
+                  label: 'Datos',
+                  selected: _tab == 0,
+                  onTap: () => _goTab(0),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _FormTabButton(
+                  icon: Icons.checklist_rtl,
+                  label: 'Servicios',
+                  badge: '${_serviceIds.length}',
+                  selected: _tab == 1,
+                  onTap: () => _goTab(1),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            controller: _fieldsScroll,
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+            children: [
+              if (_tab == 1) ...[
+                _servicesSection(scheme),
+              ] else ...[
+                FormSection(
+                  label: 'Datos del paquete',
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _name,
+                        autofocus: !_editing,
+                        onChanged: (_) => setState(() {}),
+                        textCapitalization: TextCapitalization.words,
                         decoration: const InputDecoration(
-                          labelText: 'Tier',
+                          labelText: 'Nombre',
                           prefixIcon: Icon(
-                            Icons.military_tech_outlined,
+                            Icons.card_giftcard_outlined,
                             size: 20,
                           ),
                         ),
-                        items: [
-                          for (final t in widget.tiers)
-                            DropdownMenuItem<int>(
-                              value: (t['id'] as num).toInt(),
-                              child: Text((t['name'] ?? '').toString()),
-                            ),
-                        ],
-                        onChanged: (v) => setState(() => _tierId = v),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _categoryId,
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _subtitle,
+                        onChanged: (_) => setState(() {}),
+                        textCapitalization: TextCapitalization.sentences,
                         decoration: const InputDecoration(
-                          labelText: 'Categoría',
-                          prefixIcon: Icon(Icons.category_outlined, size: 20),
+                          labelText: 'Subtítulo (corto, para la tarjeta)',
+                          prefixIcon: Icon(Icons.short_text, size: 20),
                         ),
-                        items: [
-                          for (final c in widget.categories)
-                            DropdownMenuItem<int>(
-                              value: (c['id'] as num).toInt(),
-                              child: Text((c['name'] ?? '').toString()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _description,
+                        maxLines: 3,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          labelText: 'Descripción',
+                          alignLabelWithHint: true,
+                          prefixIcon: Icon(Icons.notes, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FormSection(
+                  label: 'Precio',
+                  child: TextField(
+                    controller: _price,
+                    onChanged: (_) => setState(() {}),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Precio (MXN)',
+                      prefixIcon: Icon(Icons.payments_outlined, size: 20),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FormSection(
+                  label: 'Clasificación',
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              initialValue: _tierId,
+                              decoration: const InputDecoration(
+                                labelText: 'Tier',
+                                prefixIcon: Icon(
+                                  Icons.military_tech_outlined,
+                                  size: 20,
+                                ),
+                              ),
+                              items: [
+                                for (final t in widget.tiers)
+                                  DropdownMenuItem<int>(
+                                    value: (t['id'] as num).toInt(),
+                                    child: Text((t['name'] ?? '').toString()),
+                                  ),
+                              ],
+                              onChanged: (v) => setState(() => _tierId = v),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              initialValue: _categoryId,
+                              decoration: const InputDecoration(
+                                labelText: 'Categoría',
+                                prefixIcon: Icon(
+                                  Icons.category_outlined,
+                                  size: 20,
+                                ),
+                              ),
+                              items: [
+                                for (final c in widget.categories)
+                                  DropdownMenuItem<int>(
+                                    value: (c['id'] as num).toInt(),
+                                    child: Text((c['name'] ?? '').toString()),
+                                  ),
+                              ],
+                              onChanged: (v) => setState(() => _categoryId = v),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      CheckboxListTile(
+                        value: _isExtern,
+                        onChanged: (v) =>
+                            setState(() => _isExtern = v ?? false),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text(
+                          'Paquete externo (servicio destacado de la web)',
+                          style: TextStyle(fontSize: 13.5),
+                        ),
+                        subtitle: const Text(
+                          'Los externos aparecen en el carrusel "Nuestros servicios".',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FormSection(
+                  label: 'Imagen para la web (opcional)',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _urlImage,
+                        decoration: const InputDecoration(
+                          labelText: 'Ruta de imagen (ej. images/banner.jpg)',
+                          prefixIcon: Icon(Icons.image_outlined, size: 20),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          // La foto se elige del DRIVE con el mismo selector de toda
+                          // la app (rejilla con miniatura, vista previa y descarga)
+                          // y se guarda su URL pública: es la que la web abre.
+                          // Sin permiso para ver el Drive, la opción no se dibuja.
+                          if (HsAccess.instance.canUseDrive)
+                            OutlinedButton.icon(
+                              onPressed: _saving ? null : _pickImageFromDrive,
+                              icon: const Icon(
+                                Icons.photo_library_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('Elegir una foto del Drive'),
+                            ),
+                          const Spacer(),
+                          if (_urlImage.text.trim().isNotEmpty)
+                            TextButton.icon(
+                              onPressed: () =>
+                                  setState(() => _urlImage.text = ''),
+                              icon: const Icon(Icons.close_rounded, size: 17),
+                              label: const Text('Quitar'),
                             ),
                         ],
-                        onChanged: (v) => setState(() => _categoryId = v),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  value: _isExtern,
-                  onChanged: (v) => setState(() => _isExtern = v ?? false),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'Paquete externo (servicio destacado de la web)',
-                    style: TextStyle(fontSize: 13.5),
-                  ),
-                  subtitle: const Text(
-                    'Los externos aparecen en el carrusel "Nuestros servicios".',
-                    style: TextStyle(fontSize: 11.5),
+                      if (_urlImage.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        // Miniatura de la foto elegida (sin `big`: el recuadro lo
+                        // fija el alto de la tarjeta, no el ancho del diálogo).
+                        DriveThumb(
+                          source: driveImagePreview(
+                            _urlImage.text.trim(),
+                            width: 640,
+                          ),
+                          isRemote: true,
+                          size: 132,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ], // fin de la pestaña Datos
+            ],
           ),
-          const SizedBox(height: 16),
-          FormSection(
-            label: 'Imagen para la web (opcional)',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _urlImage,
-                  decoration: const InputDecoration(
-                    labelText: 'Ruta de imagen (ej. images/banner.jpg)',
-                    prefixIcon: Icon(Icons.image_outlined, size: 20),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    // La foto se elige del DRIVE con el mismo selector de toda
-                    // la app (rejilla con miniatura, vista previa y descarga)
-                    // y se guarda su URL pública: es la que la web abre.
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : _pickImageFromDrive,
-                      icon: const Icon(Icons.photo_library_outlined, size: 18),
-                      label: const Text('Elegir una foto del Drive'),
-                    ),
-                    const Spacer(),
-                    if (_urlImage.text.trim().isNotEmpty)
-                      TextButton.icon(
-                        onPressed: () => setState(() => _urlImage.text = ''),
-                        icon: const Icon(Icons.close_rounded, size: 17),
-                        label: const Text('Quitar'),
-                      ),
-                  ],
-                ),
-                if (_urlImage.text.trim().isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  // Miniatura de la foto elegida (sin `big`: el recuadro lo
-                  // fija el alto de la tarjeta, no el ancho del diálogo).
-                  DriveThumb(
-                    source: driveImagePreview(
-                      _urlImage.text.trim(),
-                      width: 640,
-                    ),
-                    isRemote: true,
-                    size: 132,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ], // fin de la pestaña Datos
+        ),
       ],
     );
   }
@@ -2323,115 +2563,87 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     setState(() => _urlImage.text = drivePublicUrl(picked.first));
   }
 
-  /// Vista previa EN VIVO del paquete: refleja lo que se escribe en el
-  /// formulario (nombre, subtítulo, precio, clasificación y servicios).
-  Widget _previewCard(ColorScheme scheme) {
+  /// El paquete "en vivo" con lo que hay escrito ahora en el formulario.
+  ///
+  /// Mismos campos y MISMOS nombres que usa el catálogo, para que la tarjeta de
+  /// la vista previa sea la de verdad (tier, categoría, servicios y foto).
+  Map<String, dynamic> _previewPkg() {
     final name = _name.text.trim();
-    final subtitle = _subtitle.text.trim();
-    final price = num.tryParse(_price.text.replaceAll(',', '')) ?? 0;
+    final services = <String>[
+      for (final s in _services)
+        if (_serviceIds.contains((s['id'] as num?)?.toInt()))
+          (s['name'] ?? '').toString().trim(),
+    ].where((s) => s.isNotEmpty).toList();
+    return {
+      'id': (widget.pkg?['id'] as num?)?.toInt() ?? 0,
+      'name': name.isEmpty ? 'Nombre del paquete' : name,
+      'subtitle': _subtitle.text.trim(),
+      'description': _description.text.trim(),
+      'price': num.tryParse(_price.text.replaceAll(',', '')) ?? 0,
+      'currency': (widget.pkg?['currency'] ?? 'MXN').toString(),
+      'tierName': _tierName(_tierId),
+      'categoryName': _categoryName(_categoryId),
+      'serviceNames': services,
+      'serviceIds': _serviceIds.toList(),
+      'tierId': _tierId,
+      'categoryId': _categoryId,
+      'urlImage': _urlImage.text.trim(),
+    };
+  }
+
+  /// La vista previa (columna derecha, como el panel "Así se verá en la web"
+  /// del diseñador): LA MISMA tarjeta del catálogo y de la página web, y la
+  /// FILA de la lista, con el diseño guardado y armadas con lo que hay escrito
+  /// ahora mismo (nombre, subtítulo, precio, tier, categoría, servicios y foto).
+  Widget _preview(ColorScheme scheme) {
+    final pkg = _previewPkg();
+    final services = (pkg['serviceNames'] as List).length;
     final tier = _tierName(_tierId);
-    final category = _categoryName(_categoryId);
-    final soft = Colors.white.withValues(alpha: .55);
-    final gold = widget.gold;
+    final price = num.tryParse(_price.text.replaceAll(',', '')) ?? 0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1C2433), Color(0xFF0F1420)],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: gold.withValues(alpha: .45)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      color: scheme.surfaceContainerHighest.withValues(alpha: .25),
+      child: ListView(
+        padding: const EdgeInsets.all(20),
         children: [
           Row(
             children: [
-              if (tier.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: gold.withValues(alpha: .18),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: gold.withValues(alpha: .5)),
-                  ),
-                  child: Text(
-                    tier.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      letterSpacing: 1.3,
-                      fontWeight: FontWeight.w800,
-                      color: gold,
-                    ),
-                  ),
-                ),
-              const Spacer(),
-              Text(
-                price > 0 ? hsMoney(price) : 'Sin precio',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: gold,
-                  fontFamily: 'serif',
-                ),
+              Icon(Icons.visibility_outlined, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              const Text(
+                'Así se verá en la web',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            name.isEmpty ? 'Nombre del paquete' : name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: name.isEmpty ? soft : Colors.white,
-            ),
-          ),
-          if (subtitle.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Color(0xFFB9C2D0)),
-              ),
-            ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Icon(Icons.category_outlined, size: 13, color: soft),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  category.isEmpty ? 'Sin categoría' : category,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: soft,
-                  ),
-                ),
+          Text(
+            'La tarjeta del catálogo, con el diseño guardado',
+            style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          // Alto acotado: la tarjeta se recorta sola (su pie con el precio nunca
+          // se pierde) para que todo siga cabiendo en pantalla.
+          Center(
+            child: SizedBox(
+              height: 380,
+              child: WebPackageCard(
+                pkg: pkg,
+                design: widget.design,
+                // Es una VISTA PREVIA: la tarjeta no se abre ni lleva botones.
+                canEdit: false,
+                canDelete: false,
+                onEdit: () {},
+                onDelete: () {},
               ),
-              const SizedBox(width: 14),
-              Icon(Icons.checklist_rtl, size: 13, color: soft),
-              const SizedBox(width: 6),
-              Text(
-                '${_serviceIds.length} servicios',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: soft,
-                ),
-              ),
-            ],
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            'Tier: ${tier.isEmpty ? 'sin elegir' : tier} · '
+            'servicios: $services · '
+            'foto: ${_urlImage.text.trim().isEmpty ? 'sin foto' : 'elegida'} · '
+            'precio: ${price > 0 ? hsMoney(price) : 'sin precio'}',
+            style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -2713,26 +2925,39 @@ class _FormTabButton extends StatelessWidget {
   }
 }
 
-/// Diálogo para CREAR una categoría del catálogo (Boda, XV Años, Bautizo…).
+/// Diálogo para CREAR o EDITAR una categoría del catálogo (Boda, XV Años…).
 ///
 /// El icono no se pide: el panel y la web lo sacan del NOMBRE de la categoría
-/// (la columna `packages_categories.icon` está reservada y no se usa), así que
-/// una categoría nueva ya sale con su emoji en la galería y en la página.
+/// (la columna `packages_categories.icon` está reservada y no se usa). La FOTO
+/// sí: es la portada de la categoría en la galería y se puede poner con un
+/// ENLACE o elegirla del DRIVE (igual que la foto de un paquete).
 class _CategoryFormDialog extends StatefulWidget {
-  const _CategoryFormDialog();
+  const _CategoryFormDialog({this.category});
+
+  /// Categoría a editar (null = crear una nueva).
+  final Map<String, dynamic>? category;
 
   @override
   State<_CategoryFormDialog> createState() => _CategoryFormDialogState();
 }
 
 class _CategoryFormDialogState extends State<_CategoryFormDialog> {
-  final TextEditingController _name = TextEditingController();
+  late final TextEditingController _name = TextEditingController(
+    text: (widget.category?['name'] ?? '').toString(),
+  );
+  late final TextEditingController _urlImage = TextEditingController(
+    text: (widget.category?['urlImage'] ?? '').toString(),
+  );
   bool _saving = false;
   String? _error;
+
+  bool get _editing => widget.category != null;
+  int? get _id => (widget.category?['id'] as num?)?.toInt();
 
   @override
   void dispose() {
     _name.dispose();
+    _urlImage.dispose();
     super.dispose();
   }
 
@@ -2748,7 +2973,16 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
       _error = null;
     });
     try {
-      await HsApi.createPackageCategory(name);
+      final image = _urlImage.text.trim();
+      if (_editing && _id != null) {
+        await HsApi.updatePackageCategory({
+          'id': _id,
+          'name': name,
+          'urlImage': image,
+        });
+      } else {
+        await HsApi.createPackageCategory(name, urlImage: image);
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {
@@ -2761,31 +2995,59 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
     } catch (_) {
       if (mounted) {
         setState(() {
-          _error = 'No se pudo crear la categoría';
+          _error = _editing
+              ? 'No se pudo guardar la categoría'
+              : 'No se pudo crear la categoría';
           _saving = false;
         });
       }
     }
   }
 
+  /// Elige la foto de la categoría en el Drive (el mismo selector de toda la
+  /// app) y deja su URL pública en el campo: es la que la galería (y la web)
+  /// pueden abrir sin sesión.
+  Future<void> _pickFromDrive() async {
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) {
+      HsToast.info('El Drive no está disponible en esta pantalla');
+      return;
+    }
+    final picked = await showDrivePhotoPicker(
+      context,
+      drive: drive,
+      title: 'Foto de la categoría',
+      subtitle: 'La portada de la categoría en la galería del catálogo.',
+      confirmLabel: 'Usar esta foto',
+      note:
+          'Se enlaza desde el servidor del Drive '
+          '(${AppConstants.apiBase}): la página la abre sin iniciar sesión.',
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+    setState(() => _urlImage.text = drivePublicUrl(picked.first));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final src = _urlImage.text.trim();
     return FormDialog(
-      icon: Icons.create_new_folder_outlined,
-      title: 'Nueva categoría',
+      icon: _editing ? Icons.edit_outlined : Icons.create_new_folder_outlined,
+      title: _editing ? 'Personalizar categoría' : 'Nueva categoría',
       subtitle:
           'Las categorías agrupan los paquetes del catálogo (y la web las usa '
-          'para filtrarlos).',
-      maxWidth: 480,
+          'para filtrarlos). La foto es su portada en la galería.',
+      maxWidth: 520,
       saving: _saving,
       error: _error,
-      saveLabel: 'Crear categoría',
+      saveLabel: _editing ? 'Guardar categoría' : 'Crear categoría',
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
         FormSection(
           label: 'Nombre',
           child: TextField(
+            key: const ValueKey('category-name'),
             controller: _name,
             autofocus: true,
             textCapitalization: TextCapitalization.sentences,
@@ -2795,6 +3057,72 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
               prefixIcon: Icon(Icons.category_outlined, size: 20),
             ),
             onSubmitted: (_) => _save(),
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Foto (opcional)',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                key: const ValueKey('category-image-url'),
+                controller: _urlImage,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Enlace de la imagen',
+                  hintText: 'https://… o la foto de un paquete',
+                  prefixIcon: Icon(Icons.link_rounded, size: 20),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  // Sin permiso para ver el Drive, esta opción no se dibuja.
+                  if (HsAccess.instance.canUseDrive)
+                    OutlinedButton.icon(
+                      key: const ValueKey('category-image-drive'),
+                      onPressed: _saving ? null : _pickFromDrive,
+                      icon: const Icon(Icons.photo_library_outlined, size: 18),
+                      label: const Text('Elegir del Drive'),
+                    ),
+                  const Spacer(),
+                  if (src.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => setState(() => _urlImage.text = ''),
+                      icon: const Icon(Icons.close_rounded, size: 17),
+                      label: const Text('Quitar'),
+                    ),
+                ],
+              ),
+              if (src.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    height: 132,
+                    width: double.infinity,
+                    child: DriveThumb(
+                      source: driveImagePreview(src, width: 640),
+                      isRemote: true,
+                      size: double.infinity,
+                      big: true,
+                      rounded: false,
+                    ),
+                  ),
+                ),
+              ] else
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Sin foto se usa la del primer paquete de la categoría.',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ],

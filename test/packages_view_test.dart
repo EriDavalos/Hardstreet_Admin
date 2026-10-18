@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/hs_access.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
+import 'package:hardstreet_admin/site_design.dart';
 
 /// El módulo Paquetes abre en la GALERÍA de categorías y de ahí se entra a los
 /// paquetes (de todo el catálogo o de una categoría). Ya dentro, el listado se
@@ -16,8 +18,15 @@ import 'package:hardstreet_admin/pages/packages_page.dart';
 ///
 /// Además: el diseño de las cards se personaliza AL INICIO del catálogo (la
 /// barra va antes de las tarjetas, para no tener que bajar toda la lista), y
-/// las cards dejan claro que se EDITAN (botón "Editar" y toda la tarjeta
-/// clicable).
+/// las cards dejan claro que se EDITAN: el botón "Personalizar" va en el PIE
+/// de cada tarjeta (arriba ya no hay acciones) y toda la tarjeta es clicable.
+
+/// El botón "Personalizar" DENTRO de las cards. La barra de diseño también
+/// se llama así, y aquí lo que interesa es el de cada tarjeta.
+final _cardEdit = find.descendant(
+  of: find.byType(WebPackageCard),
+  matching: find.text('Personalizar'),
+);
 
 const _packages = [
   {
@@ -48,10 +57,18 @@ const _packages = [
   },
 ];
 
+/// Paquetes borrados desde una tarjeta (para comprobar que borran de verdad).
+final _deleted = <String>[];
+
 void _installMock() {
+  _deleted.clear();
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
+    if (path.endsWith('/api/admin/packages') && request.method == 'DELETE') {
+      _deleted.add(request.url.queryParameters['id'] ?? '');
+      return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+    }
     if (path.endsWith('/api/admin/packages')) {
       return http.Response(
         jsonEncode({'packages': _packages}),
@@ -148,7 +165,7 @@ void main() {
     expect(find.text('Boda Full'), findsOneWidget);
     expect(find.text('XV Años Gold'), findsOneWidget);
     // El card trae su botón de edición y el precio del flyer.
-    expect(find.text('Editar'), findsNWidgets(2));
+    expect(_cardEdit, findsNWidgets(2));
     expect(find.text('Desde'), findsNWidgets(2));
     // El conmutador ofrece pasar a filas.
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
@@ -166,13 +183,13 @@ void main() {
     tester,
   ) async {
     await _pump(tester);
-    expect(find.text('Editar'), findsNWidgets(2));
+    expect(_cardEdit, findsNWidgets(2));
 
     await _toggle(tester);
 
     // Vista de filas: mismo catálogo, presentación compacta (sin CTA grande).
     expect(find.byIcon(Icons.grid_view_rounded), findsOneWidget);
-    expect(find.text('Editar'), findsNothing);
+    expect(_cardEdit, findsNothing);
     expect(find.byIcon(Icons.edit_rounded), findsNWidgets(2));
     expect(find.text('Boda Full'), findsOneWidget);
     expect(find.text('XV Años Gold'), findsOneWidget);
@@ -184,7 +201,7 @@ void main() {
     // Y se puede volver a los cards.
     await _toggle(tester);
     expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
-    expect(find.text('Editar'), findsNWidgets(2));
+    expect(_cardEdit, findsNWidgets(2));
     // La barra de diseño sigue disponible (y arriba) en las dos vistas.
     final bar = find.byKey(const ValueKey('packages-design-bar'));
     expect(bar, findsOneWidget);
@@ -230,6 +247,103 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('al personalizar se ve la VISTA PREVIA de la tarjeta en vivo', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Se abre el paquete con el botón del pie de su tarjeta.
+    await tester.tap(_cardEdit.first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // La misma estructura del diseñador: campos y vista previa, con el panel
+    // "Así se verá en la web" al lado.
+    final form = find.byKey(const ValueKey('package-form'));
+    expect(form, findsOneWidget);
+    expect(find.textContaining('Así se verá'), findsOneWidget);
+
+    // La vista previa es LA MISMA tarjeta del catálogo (y de la web), no un
+    // boceto aparte: sale del diseño guardado.
+    final preview = find.descendant(
+      of: form,
+      matching: find.byType(WebPackageCard),
+    );
+    expect(preview, findsOneWidget);
+    // Y trae los datos del paquete que se está editando.
+    expect(
+      find.descendant(of: preview, matching: find.text('Boda Full')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: preview, matching: find.text(r'$25,000')),
+      findsOneWidget,
+    );
+
+    // Al escribir, la vista previa cambia EN VIVO (el primer campo del
+    // formulario es el nombre, en la pestaña "Datos").
+    await tester.enterText(
+      find.descendant(of: form, matching: find.byType(TextField)).first,
+      'Boda Única',
+    );
+    await tester.pump();
+    expect(
+      find.descendant(of: preview, matching: find.text('Boda Única')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('eliminar un paquete se hace desde la ESQUINA de su card', (
+    tester,
+  ) async {
+    HsAccess.seedForTest(
+      modules: const {
+        'Paquetes': {'read', 'update', 'delete'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    HsSession.token = 'token-de-prueba';
+    addTearDown(HsSession.clear);
+    await _pump(tester);
+
+    // Una papelera por tarjeta, arriba a la derecha; el formulario ya no borra.
+    final trash = find.byKey(const ValueKey('package-delete'));
+    expect(trash, findsNWidgets(2));
+    expect(
+      tester.getTopLeft(find.byType(WebPackageCard).first).dx,
+      lessThan(tester.getTopLeft(trash.first).dx),
+      reason: 'la papelera va en la esquina, a la derecha de la tarjeta',
+    );
+
+    await tester.tap(trash.first);
+    await tester.pump();
+    // Pide confirmación antes de borrar (y avisa de las consecuencias).
+    expect(find.text('¿Eliminar paquete?'), findsOneWidget);
+    expect(find.textContaining('dejará de aparecer'), findsOneWidget);
+    await tester.tap(find.text('Eliminar').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(_deleted, ['1']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin permiso de borrar, la card no lleva papelera', (
+    tester,
+  ) async {
+    HsAccess.seedForTest(
+      modules: const {
+        'Paquetes': {'read', 'update'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    expect(find.byKey(const ValueKey('package-delete')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   // El módulo se usa en claro y en oscuro: el catálogo tiene que pintarse
   // entero (cards y filas) sin desbordes ni excepciones de layout.
   for (final brightness in [Brightness.light, Brightness.dark]) {
@@ -237,7 +351,7 @@ void main() {
       tester,
     ) async {
       await _pump(tester, brightness: brightness);
-      expect(find.text('Editar'), findsNWidgets(2));
+      expect(_cardEdit, findsNWidgets(2));
       expect(tester.takeException(), isNull);
 
       await _toggle(tester);
@@ -245,4 +359,63 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  // El estilo nuevo ("fondo con degradado de desaparición"): la foto se funde
+  // con el color —o el degradado— de fondo elegido en el diseñador. Aquí se
+  // comprueba que la tarjeta del panel lo pinta de verdad.
+  testWidgets('el fondo con degradado pinta el fondo del diseño y la máscara', (
+    tester,
+  ) async {
+    const design = SiteDesign(
+      card: SiteCardDesign(
+        imageMode: 'fade',
+        cardBgFrom: '#123456',
+        cardBgTo: '#654321',
+        cardBgGradient: true,
+        cardBgAngle: 200,
+        imageFadeStart: .2,
+        imageFadeEnd: .7,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 420,
+              height: 900,
+              child: WebPackageCard(
+                pkg: _packages.first,
+                design: design,
+                onEdit: () {},
+                onDelete: () {},
+                canEdit: false,
+                canDelete: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // El fondo de la tarjeta es el DEGRADADO del diseño (no el color del tier).
+    final fondos = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((b) => b.decoration)
+        .whereType<BoxDecoration>()
+        .map((d) => d.gradient)
+        .whereType<LinearGradient>()
+        .where(
+          (g) =>
+              g.colors.first == const Color(0xFF123456) &&
+              g.colors.last == const Color(0xFF654321),
+        );
+    expect(fondos, isNotEmpty, reason: 'el fondo del diseño debe pintarse');
+
+    // Y la foto va con la MÁSCARA del desvanecido (no con un velo encima).
+    expect(find.byType(ShaderMask), findsWidgets);
+    expect(find.text('Boda Full'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

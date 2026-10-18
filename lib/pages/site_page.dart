@@ -1363,12 +1363,15 @@ class _SitePageState extends State<SitePage> {
               ),
             ),
             const SizedBox(width: 6),
-            IconButton(
-              tooltip: 'Elegir una foto del Drive',
-              onPressed: () =>
-                  _pickImagesFor(_images[_hookKey(instance, f.key)]!),
-              icon: const Icon(Icons.folder_open_rounded, size: 18),
-            ),
+            // Sin permiso para ver el Drive, la opción de elegir del Drive no
+            // se dibuja (el campo de URL sigue disponible).
+            if (HsAccess.instance.canUseDrive)
+              IconButton(
+                tooltip: 'Elegir una foto del Drive',
+                onPressed: () =>
+                    _pickImagesFor(_images[_hookKey(instance, f.key)]!),
+                icon: const Icon(Icons.folder_open_rounded, size: 18),
+              ),
             _restoreButton(
               active: _images[_hookKey(instance, f.key)]!.text.trim().isNotEmpty,
               tooltip: 'Volver a la imagen original',
@@ -1671,15 +1674,17 @@ class _SitePageState extends State<SitePage> {
           Wrap(
             spacing: 8,
             children: [
-              TextButton.icon(
-                onPressed: () async {
-                  final picked = await _pickImages();
-                  if (picked.isEmpty) return;
-                  _setGalleryItems(section, key, name, [...items, ...picked]);
-                },
-                icon: const Icon(Icons.folder_open_rounded, size: 17),
-                label: const Text('Elegir del Drive'),
-              ),
+              // Sin permiso para ver el Drive, la opción no se dibuja.
+              if (HsAccess.instance.canUseDrive)
+                TextButton.icon(
+                  onPressed: () async {
+                    final picked = await _pickImages();
+                    if (picked.isEmpty) return;
+                    _setGalleryItems(section, key, name, [...items, ...picked]);
+                  },
+                  icon: const Icon(Icons.folder_open_rounded, size: 17),
+                  label: const Text('Elegir del Drive'),
+                ),
               TextButton.icon(
                 onPressed: () => _addGalleryPhotoByUrl(section, name),
                 icon: const Icon(Icons.link_rounded, size: 17),

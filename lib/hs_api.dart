@@ -383,7 +383,7 @@ class HsApi {
         .toList();
   }
 
-  /// Categorías de paquetes: [{ id, name, icon }]
+  /// Categorías de paquetes: [{ id, name, icon, urlImage }]
   static Future<List<Map<String, dynamic>>> packageCategories() async {
     final data = await get('/api/categories');
     return ((data['categories'] as List?) ?? const [])
@@ -391,12 +391,18 @@ class HsApi {
         .toList();
   }
 
-  /// Crea una categoría del catálogo (Boda, XV Años, Bautizo…).
+  /// Crea una categoría del catálogo (Boda, XV Años, Bautizo…), con su foto
+  /// opcional (un enlace o una foto del Drive).
   ///
   /// Requiere permiso de CREAR en el módulo "Paquetes" (las categorías son
   /// parte del catálogo, igual que en el menú).
-  static Future<void> createPackageCategory(String name) =>
-      post('/api/admin/categories', {'name': name});
+  static Future<void> createPackageCategory(
+    String name, {
+    String? urlImage,
+  }) => post('/api/admin/categories', {
+    'name': name,
+    if ((urlImage ?? '').trim().isNotEmpty) 'urlImage': urlImage!.trim(),
+  });
 
   /// Renombra una categoría del catálogo.
   static Future<void> updatePackageCategory(Map<String, dynamic> body) =>

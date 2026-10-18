@@ -3,6 +3,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../app_constants.dart';
 import '../drive_scope.dart';
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../theme.dart';
@@ -575,7 +576,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     // servicio (antes «Elegir fotos» salía en TODOS). Sin backend nuevo se
     // mantiene como siempre: la carpeta sí, las fotos no.
     final showFolder = s['showFolder'] != false;
-    final pickPhotos = s['pickPhotos'] == true;
+    // Elegir fotos del Drive necesita poder VER el Drive: sin ese permiso la
+    // opción no se dibuja (el resto de la tarjeta sigue igual).
+    final pickPhotos =
+        s['pickPhotos'] == true && HsAccess.instance.canUseDrive;
     final items = (s['items'] as num?)?.toInt() ?? 0;
     final done = _isDone(s);
     final progress = _isInProgress(s);

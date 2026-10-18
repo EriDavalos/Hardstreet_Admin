@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  cross_file: ^0.3.4
   file_selector: ^1.0.3
   path_provider: ^2.1.4
   shared_preferences: ^2.3.2
@@ -19,7 +20,6 @@ dependencies:
   http: ^1.6.0
   http_parser: ^4.1.2
   flutter_local_notifications: ^18.0.1
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -27,3 +27,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Icono de la marca (el mismo `hs_icon.png` con el que se generan el icono de
+  # Windows, el de Android y el del navegador): lo usa la marca de la app, así
+  # que el panel, el login y la pantalla de carga enseñan LA MISMA pieza.
+  assets:
+    - assets/hs_icon.png

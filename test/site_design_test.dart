@@ -308,6 +308,296 @@ void main() {
       expect(result!.card.animStagger, SiteDesign.defaults.card.animStagger);
     });
 
+    testWidgets('el degradado de la foto se personaliza (color y dirección)',
+        (tester) async {
+      SiteDesign? result;
+      await _pumpDesigner(
+        tester,
+        size: const Size(1300, 950),
+        onSaved: (d) => result = d,
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Los controles del velo salen cuando la foto va DE FONDO.
+      await _scrollTo(tester, find.byKey(const ValueKey('design-image-bg')));
+      await tester.tap(find.byKey(const ValueKey('design-image-bg')));
+      await tester.pumpAndSettle();
+
+      // Dirección: con el CÍRCULO (la rosa de flechas ya no existe).
+      final dial = find.byKey(const ValueKey('design-fade-angle'));
+      await _scrollTo(tester, dial);
+      final c = tester.getCenter(dial);
+      await tester.dragFrom(c + const Offset(0, -50), const Offset(0, 50));
+      await tester.pumpAndSettle();
+
+      // Color del velo: una muestra de un toque.
+      await _scrollTo(
+        tester,
+        find.byKey(const ValueKey(r'design-fade-color-#1B2A4A')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey(r'design-fade-color-#1B2A4A')),
+      );
+      await tester.pumpAndSettle();
+      // Y la vista previa del degradado está a la vista.
+      expect(
+        find.byKey(const ValueKey('design-fade-preview')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(result!.card.imageMode, 'bg');
+      expect(result!.card.imageFadeColor, '#1B2A4A');
+      // El círculo fijó una dirección propia (0..359, ya no -1).
+      expect(result!.card.imageFadeAngle, inInclusiveRange(0, 359));
+      // Lo que no se tocó sigue igual.
+      expect(result!.card.imageFade, SiteDesign.defaults.card.imageFade);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la dirección del velo se fija con el CÍRCULO de grados', (
+      tester,
+    ) async {
+      SiteDesign? result;
+      await _pumpDesigner(
+        tester,
+        size: const Size(1300, 950),
+        onSaved: (d) => result = d,
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Los controles del velo salen con la foto DE FONDO.
+      await _scrollTo(tester, find.byKey(const ValueKey('design-image-bg')));
+      await tester.tap(find.byKey(const ValueKey('design-image-bg')));
+      await tester.pumpAndSettle();
+
+      // La rosa de flechas se retiró: la dirección se fija SOLO con el
+      // círculo (era el mismo ajuste dos veces).
+      expect(
+        find.byKey(const ValueKey('design-fade-from-top')),
+        findsNothing,
+        reason: 'los botones de dirección ya no están',
+      );
+
+      final angle = find.byKey(const ValueKey('design-fade-angle'));
+      await _scrollTo(tester, angle);
+      // En el preset «arriba» (0°) el punto está arriba del círculo: se
+      // arrastra hacia la derecha para poner ~90°.
+      final center = tester.getCenter(angle);
+      await tester.dragFrom(center + const Offset(0, -50), const Offset(50, 0));
+      await tester.pumpAndSettle();
+      // El círculo DICE los grados: ya no es un slider a ciegas.
+      expect(
+        find.textContaining('°'),
+        findsWidgets,
+        reason: 'el dial muestra el ángulo en el centro',
+      );
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      // El círculo movió el ángulo: manda sobre la dirección guardada.
+      expect(result!.card.imageFadeAngle, isNot(-1));
+      expect(
+        result!.card.imageFadeAngle,
+        inInclusiveRange(0, 359),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('las paradas del desvanecido se ARRASTRAN sobre la tarjeta',
+        (tester) async {
+      SiteDesign? result;
+      await _pumpDesigner(tester, onSaved: (d) => result = d);
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Con la foto de fondo aparece la sombra y, encima de la tarjeta, sus dos
+      // asas (antes solo se podía con los sliders).
+      await _scrollTo(tester, find.byKey(const ValueKey('design-image-bg')));
+      await tester.tap(find.byKey(const ValueKey('design-image-bg')));
+      await tester.pumpAndSettle();
+
+      final fin = find.byKey(const ValueKey('design-shadow-end'));
+      await _scrollTo(tester, fin);
+      expect(fin, findsOneWidget);
+
+      // Arrastrar hacia ARRIBA estira el degradado (la parada de fin sube).
+      await tester.drag(fin, const Offset(0, -40));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(
+        result!.card.imageShadowEnd,
+        greaterThan(const SiteCardDesign().imageShadowEnd),
+        reason: 'la parada movida a mano llega al diseño',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('los campos de color abren la PALETA y aplican lo elegido', (
+      tester,
+    ) async {
+      SiteDesign? result;
+      await _pumpDesigner(tester, onSaved: (d) => result = d);
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Tocar la muestra del color "Dorado" abre la paleta (antes el cuadrito
+      // no se podía tocar y no salía ninguna paleta).
+      final swatch = find.byKey(
+        const ValueKey('design-color-swatch-Dorado'),
+      );
+      await _scrollTo(tester, swatch);
+      await tester.tap(swatch);
+      await tester.pumpAndSettle();
+      expect(find.text('Muestras'), findsOneWidget);
+
+      // Un toque en una muestra de la paleta la elige.
+      await tester.tap(find.byKey(const ValueKey('design-palette-#EF4444')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(result!.gold.toUpperCase(), '#EF4444');
+      expect(tester.takeException(), isNull);
+    });
+
+    test('la sombra de la foto se guarda y se lee acotada (0..1)', () {
+      const base = SiteCardDesign();
+      // De fábrica SÍ hay sombra (es el desvanecido negro de la foto), con sus
+      // dos paradas: dónde empieza y dónde se apaga.
+      expect(base.imageShadow, .55);
+      expect(base.imageShadowStart, .08);
+      expect(base.imageShadowEnd, .72);
+      final conSombra = SiteDesign.defaults.copyWith(
+        card: base.copyWith(
+          imageMode: 'bg',
+          imageShadow: .45,
+          imageFadeAngle: 200,
+        ),
+      );
+      final vuelta = SiteDesign.fromJsonText(
+        jsonEncode(conSombra.toJson()),
+      );
+      expect(vuelta.card.imageShadow, .45);
+      // Un valor absurdo se acota, no revienta la tarjeta.
+      final raro = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {
+            'imageShadow': 7.5,
+            'imageShadowStart': .2,
+            'imageShadowEnd': .9,
+          },
+        }),
+      );
+      expect(raro.card.imageShadow, 1);
+    });
+
+    test('un diseño guardado ANTES de la sombra la estrena con los defaults',
+        () {
+      // Guardado con la versión vieja (sin las paradas): el degradado negro se
+      // enciende solo, en vez de quedarse apagado para siempre.
+      final viejo = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {'imageMode': 'bg', 'imageShadow': 0},
+        }),
+      );
+      expect(viejo.card.imageShadow, SiteCardDesign().imageShadow);
+      expect(viejo.card.imageShadowStart, SiteCardDesign().imageShadowStart);
+      // Pero un 0 GUARDADO a propósito (con sus paradas) se respeta.
+      final apagada = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {
+            'imageShadow': 0,
+            'imageShadowStart': .08,
+            'imageShadowEnd': .72,
+          },
+        }),
+      );
+      expect(apagada.card.imageShadow, 0);
+    });
+
+    test('el velo guardado se lee tolerante (color raro → default)', () {
+      final d = SiteDesign.fromJsonText(jsonEncode({
+        'card': {'imageFadeColor': 'no-es-color', 'imageFadeFrom': 'lateral'},
+      }));
+      expect(d.card.imageFadeColor, SiteDesign.defaults.card.imageFadeColor);
+      expect(d.card.imageFadeFrom, SiteDesign.defaults.card.imageFadeFrom);
+      // Direcciones nuevas (las 8) y ángulo: se leen y se normalizan.
+      final nuevo = SiteDesign.fromJsonText(jsonEncode({
+        'card': {
+          'imageFadeFrom': 'topLeft',
+          'imageFadeAngle': 400,
+        },
+      }));
+      expect(nuevo.card.imageFadeFrom, 'topLeft');
+      expect(nuevo.card.imageFadeAngle, 40); // 400 % 360
+      final libre = SiteDesign.fromJsonText(jsonEncode({
+        'card': {'imageFadeAngle': -1},
+      }));
+      expect(libre.card.imageFadeAngle, -1); // sigue a la dirección
+      expect(
+        SiteDesign.fromJsonText(
+          jsonEncode({
+            'card': {'imageFadeColor': '#1b2a4a', 'imageFadeFrom': 'top'},
+          }),
+        ).card.imageFadeColor,
+        '#1B2A4A',
+      );
+    });
+
+    test('el fondo con degradado se guarda y se lee acotado', () {
+      const base = SiteCardDesign();
+      expect(base.imageFadeStart, .15);
+      expect(base.imageFadeEnd, .85);
+      expect(base.cardBgFrom, kCardBgFrom);
+      expect(base.cardBgTo, kCardBgTo);
+      expect(base.cardBgGradient, isFalse);
+      expect(base.cardBgAngle, 135);
+
+      final d = SiteDesign.defaults.copyWith(
+        card: base.copyWith(
+          imageMode: 'fade',
+          imageFadeStart: .3,
+          imageFadeEnd: .75,
+          cardBgFrom: '#123456',
+          cardBgTo: '#654321',
+          cardBgGradient: true,
+          cardBgAngle: 400,
+        ),
+      );
+      final vuelta = SiteDesign.fromJsonText(jsonEncode(d.toJson()));
+      expect(vuelta.card.imageMode, 'fade');
+      expect(vuelta.card.imageFadeStart, .3);
+      expect(vuelta.card.imageFadeEnd, .75);
+      expect(vuelta.card.cardBgFrom, '#123456');
+      expect(vuelta.card.cardBgGradient, isTrue);
+      expect(vuelta.card.cardBgAngle, 40); // 400 % 360
+
+      // Valores absurdos: se acotan y el fin nunca queda antes que el inicio.
+      final raro = SiteDesign.fromJsonText(jsonEncode({
+        'card': {
+          'imageMode': 'fade',
+          'imageFadeStart': 1.4,
+          'imageFadeEnd': -2,
+          'cardBgAngle': -30,
+          'cardBgFrom': 'no-es-color',
+        },
+      }));
+      expect(raro.card.imageFadeStart, .95);
+      expect(raro.card.imageFadeEnd, 1);
+      expect(raro.card.cardBgAngle, 135);
+      expect(raro.card.cardBgFrom, kCardBgFrom);
+    });
+
     test('un modo de foto o de animación desconocido cae al default', () {
       final d = SiteDesign.fromJsonText(jsonEncode({
         'card': {'imageMode': 'flotando', 'animMode': 'explotar', 'animMs': 'raro'},
@@ -315,6 +605,53 @@ void main() {
       expect(d.card.imageMode, SiteDesign.defaults.card.imageMode);
       expect(d.card.animMode, SiteDesign.defaults.card.animMode);
       expect(d.card.animMs, SiteDesign.defaults.card.animMs);
+    });
+
+    testWidgets('el fondo con degradado se ajusta y se guarda', (tester) async {
+      SiteDesign? result;
+      await _pumpDesigner(tester, onSaved: (d) => result = d);
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // El estilo nuevo está entre las opciones de la foto.
+      final chip = find.byKey(const ValueKey('design-image-fade'));
+      await _scrollTo(tester, chip);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+
+      // Encima de la tarjeta salen las DOS asas del desvanecido (se ve /
+      // desaparece), como las de la sombra.
+      final fin = find.byKey(const ValueKey('design-fade-end'));
+      await _scrollTo(tester, fin);
+      expect(fin, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('design-fade-start')),
+        findsOneWidget,
+      );
+
+      // El fondo se puede poner en degradado: aparece el segundo color.
+      final fondo = find.text('Fondo en degradado');
+      await _scrollTo(tester, fondo);
+      await tester.tap(fondo);
+      await tester.pumpAndSettle();
+      expect(find.text('Fondo (color 2)'), findsOneWidget);
+
+      // Arrastrar el asa de «desaparece» hacia arriba estira el desvanecido.
+      await _scrollTo(tester, fin);
+      await tester.drag(fin, const Offset(0, -40));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Guardar diseño'));
+      await tester.pumpAndSettle();
+      expect(result, isNotNull);
+      expect(result!.card.imageMode, 'fade');
+      expect(result!.card.cardBgGradient, isTrue);
+      expect(
+        result!.card.imageFadeEnd,
+        greaterThan(const SiteCardDesign().imageFadeEnd),
+        reason: 'la parada movida a mano llega al diseño',
+      );
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('cancelar no devuelve diseño (no se guarda nada)',

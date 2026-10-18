@@ -98,6 +98,18 @@ class SiteCardDesign {
     this.imageMode = 'none',
     this.imageHeight = 150,
     this.imageFade = .7,
+    this.imageFadeColor = kPhotoFadeColor,
+    this.imageFadeFrom = 'bottom',
+    this.imageFadeAngle = -1,
+    this.imageFadeStart = .15,
+    this.imageFadeEnd = .85,
+    this.cardBgFrom = kCardBgFrom,
+    this.cardBgTo = kCardBgTo,
+    this.cardBgGradient = false,
+    this.cardBgAngle = 135,
+    this.imageShadow = .55,
+    this.imageShadowStart = .08,
+    this.imageShadowEnd = .72,
     this.animMode = 'up',
     this.animMs = 600,
     this.animStagger = 100,
@@ -152,7 +164,9 @@ class SiteCardDesign {
 
   /// FOTO del paquete dentro de la tarjeta:
   /// `none` sin foto · `top` banda arriba · `bg` de fondo (la foto se ve y
-  /// encima lleva el degradado del color de la tarjeta).
+  /// encima lleva el degradado del color de la tarjeta) · `fade` fondo con
+  /// DESVANECIDO (la foto se ve de un lado y se desvanece hacia el otro hasta
+  /// fundirse con el fondo, que puede ser un color o un degradado).
   final String imageMode;
 
   /// Alto de la banda de la foto (`top`), en px.
@@ -161,6 +175,57 @@ class SiteCardDesign {
   /// Fuerza del degradado que oscurece la foto de fondo (`bg`, 0..1): 0 deja
   /// la foto limpia y 1 la tapa casi del todo para que el texto se lea.
   final double imageFade;
+
+  /// Color del velo que va encima de la foto de fondo (por defecto negro, que
+  /// es el que mejor hace resaltar el texto; se puede cambiar desde el
+  /// diseñador y se ve igual en el panel y en la web).
+  final String imageFadeColor;
+
+  /// De dónde viene el degradado: la dirección desde la que oscurece la foto
+  /// (`bottom` por defecto —tapa más abajo, donde van el nombre y el precio—,
+  /// `top`, `left`, `right` y las cuatro esquinas).
+  final String imageFadeFrom;
+
+  /// Ángulo LIBRE del velo en grados (0..359, estilos CSS): -1 = seguir la
+  /// dirección de [imageFadeFrom]. El ángulo manda cuando se usa el ajuste
+  /// fino del diseñador.
+  final double imageFadeAngle;
+
+  /// DÓNDE se ve la foto en el estilo `fade` (0..1, medido desde el lado
+  /// contrario a [imageFadeFrom]): hasta aquí la foto está completa.
+  final double imageFadeStart;
+
+  /// Dónde la foto TERMINA de desaparecer en el estilo `fade` (0..1). A partir
+  /// de aquí se ve sólo el fondo de la tarjeta.
+  final double imageFadeEnd;
+
+  /// Color de fondo de la tarjeta en el estilo `fade` (el primer color del
+  /// degradado cuando [cardBgGradient] está encendido).
+  final String cardBgFrom;
+
+  /// Segundo color del fondo: con [cardBgGradient] encendido, el fondo es un
+  /// degradado de [cardBgFrom] a [cardBgTo].
+  final String cardBgTo;
+
+  /// ¿El fondo de la tarjeta es un DEGRADADO (dos colores) o un color plano?
+  final bool cardBgGradient;
+
+  /// Ángulo del degradado del fondo en grados CSS (0 = hacia arriba, 90 = a la
+  /// derecha).
+  final double cardBgAngle;
+
+  /// SOMBRA de la foto de fondo (0..1): la fuerza del degradado NEGRO que sube
+  /// desde el borde inferior. Es una capa APARTE del velo (que puede ser de
+  /// cualquier color) y se ajusta en dos puntos, como en Photoshop:
+  /// [imageShadowStart] es dónde el negro deja de ser sólido y
+  /// [imageShadowEnd] dónde se apaga del todo. 0 = sin sombra.
+  final double imageShadow;
+
+  /// Inicio del desvanecido de la sombra (0..1 de la tarjeta, desde abajo).
+  final double imageShadowStart;
+
+  /// Fin del desvanecido de la sombra (0..1 de la tarjeta, desde abajo).
+  final double imageShadowEnd;
 
   /// Entrada de las tarjetas del catálogo:
   /// `up` subir · `fade` aparecer · `zoom` acercar · `none` sin animación.
@@ -195,6 +260,18 @@ class SiteCardDesign {
     String? imageMode,
     double? imageHeight,
     double? imageFade,
+    String? imageFadeColor,
+    String? imageFadeFrom,
+    double? imageFadeAngle,
+    double? imageFadeStart,
+    double? imageFadeEnd,
+    String? cardBgFrom,
+    String? cardBgTo,
+    bool? cardBgGradient,
+    double? cardBgAngle,
+    double? imageShadow,
+    double? imageShadowStart,
+    double? imageShadowEnd,
     String? animMode,
     int? animMs,
     int? animStagger,
@@ -221,6 +298,18 @@ class SiteCardDesign {
     imageMode: imageMode ?? this.imageMode,
     imageHeight: imageHeight ?? this.imageHeight,
     imageFade: imageFade ?? this.imageFade,
+    imageFadeColor: imageFadeColor ?? this.imageFadeColor,
+    imageFadeFrom: imageFadeFrom ?? this.imageFadeFrom,
+    imageFadeAngle: imageFadeAngle ?? this.imageFadeAngle,
+    imageFadeStart: imageFadeStart ?? this.imageFadeStart,
+    imageFadeEnd: imageFadeEnd ?? this.imageFadeEnd,
+    cardBgFrom: cardBgFrom ?? this.cardBgFrom,
+    cardBgTo: cardBgTo ?? this.cardBgTo,
+    cardBgGradient: cardBgGradient ?? this.cardBgGradient,
+    cardBgAngle: cardBgAngle ?? this.cardBgAngle,
+    imageShadow: imageShadow ?? this.imageShadow,
+    imageShadowStart: imageShadowStart ?? this.imageShadowStart,
+    imageShadowEnd: imageShadowEnd ?? this.imageShadowEnd,
     animMode: animMode ?? this.animMode,
     animMs: animMs ?? this.animMs,
     animStagger: animStagger ?? this.animStagger,
@@ -249,39 +338,90 @@ class SiteCardDesign {
     'imageMode': imageMode,
     'imageHeight': imageHeight,
     'imageFade': imageFade,
+    'imageFadeColor': imageFadeColor,
+    'imageFadeFrom': imageFadeFrom,
+    'imageFadeAngle': imageFadeAngle,
+    'imageFadeStart': imageFadeStart,
+    'imageFadeEnd': imageFadeEnd,
+    'cardBgFrom': cardBgFrom,
+    'cardBgTo': cardBgTo,
+    'cardBgGradient': cardBgGradient,
+    'cardBgAngle': cardBgAngle,
+    'imageShadow': imageShadow,
+    'imageShadowStart': imageShadowStart,
+    'imageShadowEnd': imageShadowEnd,
     'animMode': animMode,
     'animMs': animMs,
     'animStagger': animStagger,
   };
 
-  static SiteCardDesign fromJson(Map<String, dynamic> j, SiteCardDesign f) =>
-      f.copyWith(
-        columns: _int(j['columns'], f.columns),
-        gap: _num(j['gap'], f.gap),
-        radius: _num(j['radius'], f.radius),
-        borderWidth: _num(j['borderWidth'], f.borderWidth),
-        padding: _num(j['padding'], f.padding),
-        lineTop: _bool(j['lineTop'], f.lineTop),
-        hoverLift: _bool(j['hoverLift'], f.hoverLift),
-        shadow: _bool(j['shadow'], f.shadow),
-        serifNames: _bool(j['serifNames'], f.serifNames),
-        uppercaseNames: _bool(j['uppercaseNames'], f.uppercaseNames),
-        showCategory: _bool(j['showCategory'], f.showCategory),
-        showSubtitle: _bool(j['showSubtitle'], f.showSubtitle),
-        showServiceCount: _bool(j['showServiceCount'], f.showServiceCount),
-        showServices: _bool(j['showServices'], f.showServices),
-        servicesLimit: _int(j['servicesLimit'], f.servicesLimit),
-        showPrice: _bool(j['showPrice'], f.showPrice),
-        showCta: _bool(j['showCta'], f.showCta),
-        priceLabel: _text(j['priceLabel'], f.priceLabel),
-        ctaLabel: _text(j['ctaLabel'], f.ctaLabel),
-        imageMode: _choice(j['imageMode'], kDesignImageModes, f.imageMode),
-        imageHeight: _num(j['imageHeight'], f.imageHeight),
-        imageFade: _num(j['imageFade'], f.imageFade),
-        animMode: _choice(j['animMode'], kDesignAnimModes, f.animMode),
-        animMs: _int(j['animMs'], f.animMs),
-        animStagger: _int(j['animStagger'], f.animStagger),
-      );
+  static SiteCardDesign fromJson(Map<String, dynamic> j, SiteCardDesign f) {
+    // La SOMBRA de la foto llegó después: un documento guardado antes trae la
+    // fuerza (o nada) pero NO sus dos paradas. Ahí se estrena con los valores de
+    // fábrica, para que el degradado negro se vea sin tener que reajustarlo.
+    final hasShadow =
+        j.containsKey('imageShadowStart') && j.containsKey('imageShadowEnd');
+    // Las dos paradas del desvanecido de la foto (estilo `fade`) no pueden
+    // quedar cruzadas: el fin siempre va al menos 5 puntos después del inicio.
+    final fadeStart = _num(
+      j['imageFadeStart'],
+      f.imageFadeStart,
+    ).clamp(0, .95).toDouble();
+    return f.copyWith(
+      columns: _int(j['columns'], f.columns),
+      gap: _num(j['gap'], f.gap),
+      radius: _num(j['radius'], f.radius),
+      borderWidth: _num(j['borderWidth'], f.borderWidth),
+      padding: _num(j['padding'], f.padding),
+      lineTop: _bool(j['lineTop'], f.lineTop),
+      hoverLift: _bool(j['hoverLift'], f.hoverLift),
+      shadow: _bool(j['shadow'], f.shadow),
+      serifNames: _bool(j['serifNames'], f.serifNames),
+      uppercaseNames: _bool(j['uppercaseNames'], f.uppercaseNames),
+      showCategory: _bool(j['showCategory'], f.showCategory),
+      showSubtitle: _bool(j['showSubtitle'], f.showSubtitle),
+      showServiceCount: _bool(j['showServiceCount'], f.showServiceCount),
+      showServices: _bool(j['showServices'], f.showServices),
+      servicesLimit: _int(j['servicesLimit'], f.servicesLimit),
+      showPrice: _bool(j['showPrice'], f.showPrice),
+      showCta: _bool(j['showCta'], f.showCta),
+      priceLabel: _text(j['priceLabel'], f.priceLabel),
+      ctaLabel: _text(j['ctaLabel'], f.ctaLabel),
+      imageMode: _choice(j['imageMode'], kDesignImageModes, f.imageMode),
+      imageHeight: _num(j['imageHeight'], f.imageHeight),
+      imageFade: _num(j['imageFade'], f.imageFade),
+      imageFadeColor: _hex(j['imageFadeColor']) ?? f.imageFadeColor,
+      imageFadeFrom: _choice(
+        j['imageFadeFrom'],
+        kDesignFadeFroms,
+        f.imageFadeFrom,
+      ),
+      imageFadeAngle: _fadeAngle(j['imageFadeAngle'], f.imageFadeAngle),
+      imageFadeStart: fadeStart,
+      imageFadeEnd: _num(
+        j['imageFadeEnd'],
+        f.imageFadeEnd,
+      ).clamp(fadeStart + .05, 1),
+      cardBgFrom: _hex(j['cardBgFrom']) ?? f.cardBgFrom,
+      cardBgTo: _hex(j['cardBgTo']) ?? f.cardBgTo,
+      cardBgGradient: _bool(j['cardBgGradient'], f.cardBgGradient),
+      // El ángulo del FONDO no usa -1 (eso es "sin ángulo libre" del velo):
+      // negativo o basura se queda con el de fábrica y el resto da la vuelta.
+      cardBgAngle: _angle(j['cardBgAngle'], f.cardBgAngle),
+      imageShadow: hasShadow
+          ? _num(j['imageShadow'], f.imageShadow).clamp(0, 1)
+          : f.imageShadow,
+      imageShadowStart: hasShadow
+          ? _num(j['imageShadowStart'], f.imageShadowStart).clamp(0, .95)
+          : f.imageShadowStart,
+      imageShadowEnd: hasShadow
+          ? _num(j['imageShadowEnd'], f.imageShadowEnd).clamp(.05, 1)
+          : f.imageShadowEnd,
+      animMode: _choice(j['animMode'], kDesignAnimModes, f.animMode),
+      animMs: _int(j['animMs'], f.animMs),
+      animStagger: _int(j['animStagger'], f.animStagger),
+    );
+  }
 }
 
 /// Documento completo de diseño del sitio.
@@ -406,15 +546,93 @@ double _num(Object? v, double fallback) =>
 
 bool _bool(Object? v, bool fallback) => v is bool ? v : fallback;
 
-/// Color del velo que oscurece la FOTO DE FONDO de una tarjeta (`bg`).
-///
-/// Es NEGRO en los dos lados —aquí y en la web (`site.js` → `HS_PHOTO_FADE`)—:
-/// sobre la foto, un velo negro es lo que hace resaltar el texto.
+/// Color de fábrica del velo que oscurece la FOTO DE FONDO de una tarjeta
+/// (`bg`): es NEGRO en los dos lados —aquí y en la web (`site.js`)— porque
+/// sobre la foto es lo que mejor hace resaltar el texto. El color se puede
+/// cambiar desde el diseñador.
 const String kPhotoFadeColor = '#000000';
 
-/// Valores permitidos de un campo de opciones (foto, animación).
-const List<String> kDesignImageModes = ['none', 'top', 'bg'];
+/// Colores de fábrica del fondo de la tarjeta en el estilo `fade` (fondo con
+/// degradado de desaparición). Coinciden con los de la web (`site.js`).
+const String kCardBgFrom = '#0B0E17';
+const String kCardBgTo = '#0B111A';
+
+/// Valores permitidos de un campo de opciones (foto, degradado, animación).
+const List<String> kDesignImageModes = ['none', 'top', 'bg', 'fade'];
+
+/// Direcciones del velo que oscurece la foto de fondo. [kFadeFromDeg] es el
+/// ángulo CSS de cada una (el lado NOMBRADO es el que tapa más).
+const List<String> kDesignFadeFroms = [
+  'bottom',
+  'top',
+  'left',
+  'right',
+  'topLeft',
+  'topRight',
+  'bottomLeft',
+  'bottomRight',
+];
+
+/// Ángulo CSS de cada dirección del velo (0 = arriba, 90 = derecha…): el
+/// degradado termina del lado nombrado, que es el que queda más oscuro.
+const Map<String, double> kFadeFromDeg = {
+  'top': 0,
+  'topRight': 45,
+  'right': 90,
+  'bottomRight': 135,
+  'bottom': 180,
+  'bottomLeft': 225,
+  'left': 270,
+  'topLeft': 315,
+};
+
+/// Ángulo de la capa PERPENDICULAR (la que tapa el flanco), por dirección.
+/// Es el MISMO mapa que `HS_FADE_SIDE_DEG` de la web y el del HTML del panel:
+/// si aquí cambiara un número, la tarjeta del panel y la del sitio dejarían de
+/// verse iguales.
+const Map<String, double> kFadeSideDeg = {
+  'top': 95,
+  'bottom': 95,
+  'left': 5,
+  'right': 5,
+  'topLeft': 45,
+  'topRight': 135,
+  'bottomLeft': 315,
+  'bottomRight': 225,
+};
+
+/// Ángulo CSS del velo: el libre manda; si no hay, la dirección nombrada.
+///
+/// Está aquí (y no en cada pintor) para que el panel, el HTML de la vista
+/// previa y la web usen EXACTAMENTE el mismo número.
+double hsFadeCssDeg(String from, double angle) {
+  if (angle >= 0) return ((angle % 360) + 360) % 360;
+  return kFadeFromDeg[from] ?? 180;
+}
+
+/// Ángulo CSS de la capa perpendicular del velo.
+double hsFadeSideCssDeg(String from, double angle) {
+  if (angle >= 0) return (((angle - 85) % 360) + 360) % 360;
+  return kFadeSideDeg[from] ?? 95;
+}
+
 const List<String> kDesignAnimModes = ['up', 'fade', 'zoom', 'none'];
+
+/// Ángulo del velo leído tolerante: -1 (o lo que no sea número) = sin ángulo
+/// libre; cualquier otro valor se queda dentro de 0..359.
+double _fadeAngle(Object? v, double fallback) {
+  final n = _num(v, fallback);
+  if (n < 0) return -1;
+  return n % 360;
+}
+
+/// Ángulo normal 0..359 (el del fondo de la tarjeta): negativo o basura se
+/// queda con el de fábrica, y lo que sobra da la vuelta.
+double _angle(Object? v, double fallback) {
+  final n = _num(v, fallback);
+  if (n < 0) return fallback;
+  return n % 360;
+}
 
 /// Una opción guardada: si no es una de las válidas, se queda con el default.
 String _choice(Object? v, List<String> allowed, String fallback) {

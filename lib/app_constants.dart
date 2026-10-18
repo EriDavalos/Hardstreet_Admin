@@ -1,3 +1,5 @@
+import 'drive_host.dart';
+
 /// Constantes globales de la app Hardstreet Admin.
 /// Cambia aquí el nombre, la dirección del API y la versión — un solo lugar.
 class AppConstants {
@@ -7,11 +9,13 @@ class AppConstants {
   static const String appName = 'Hardstreet Admin';
 
   /// Base del API del drive.
-  /// Se puede sobreescribir al compilar con: --dart-define=DRIVE_API=http://ip:4000
-  static const String apiBase = String.fromEnvironment(
-    'DRIVE_API',
-    defaultValue: 'https://oriongo.ddns.net',
-  );
+  ///
+  /// Sale de [DriveHost]: la de fábrica (`https://oriongo.ddns.net`, o la que
+  /// se pase con `--dart-define=DRIVE_API=http://ip:4000`) o la que el usuario
+  /// haya guardado en la app (p. ej. `http://192.168.1.72:4000` para trabajar
+  /// desde la red de la oficina, donde el nombre público no resuelve al
+  /// servidor).
+  static String get apiBase => DriveHost.base;
 
   /// Base del API de administración/CRUD (Hardstreet-Backend en Vercel):
   /// login, usuarios, roles, clientes y paquetes. Es LA MISMA API que usa la web.

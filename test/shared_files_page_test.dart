@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -503,8 +504,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('lo que comparto: detalle con usuarios, contenido, editar y '
-      'quitar', (tester) async {
+  testWidgets('lo que comparto: la ficha y las cuatro acciones salen EN EL '
+      'LISTADO (no dentro de la carpeta)', (tester) async {
     final mock = _DriveMock();
     debugLocalShareService = mock.service;
     final calls = _installMock(targets: const [4]);
@@ -512,17 +513,20 @@ void main() {
 
     await _tap(tester, find.textContaining('Lo que comparto'));
     expect(find.text('Bodas/Ana Ruiz'), findsOneWidget);
-    // Se abre el detalle de la carpeta: a quién se la compartí y su contenido
-    // AQUÍ MISMO (sin saltar a Archivos).
-    await _tap(tester, find.text('Bodas/Ana Ruiz'));
+    // La ficha del compartido (de dónde es y con quién) vive en la tarjeta.
     expect(find.text('Carpeta de tu Drive'), findsOneWidget);
-    expect(find.text('Marta Soto'), findsWidgets);
-    expect(find.text('Bodas'), findsOneWidget);
-    expect(drive.path, isEmpty);
-    expect(find.text('Verla en Archivos'), findsNothing);
+    expect(find.textContaining('Con Marta Soto'), findsOneWidget);
 
-    // Sumar y quitar usuarios.
-    await _tap(tester, find.text('Usuarios'));
+    // El menú de la tarjeta dice qué se puede hacer: Ver, Descargar, Editar y
+    // Eliminar (las mismas acciones del Drive).
+    await _tap(tester, find.byTooltip('Opciones').first);
+    expect(find.text('Ver el contenido'), findsOneWidget);
+    expect(find.text('Descargar'), findsOneWidget);
+    expect(find.text('Editar destinatarios'), findsOneWidget);
+    expect(find.text('Eliminar el compartido'), findsOneWidget);
+
+    // Editar: sumar y quitar usuarios.
+    await _tap(tester, find.text('Editar destinatarios'));
     expect(find.text('1 seleccionado'), findsOneWidget);
     await _tap(tester, _inDialog('Ana Ruiz'));
     expect(find.text('2 seleccionados'), findsOneWidget);
@@ -536,9 +540,17 @@ void main() {
     final dels = calls.where((c) => c['method'] == 'DELETE').toList();
     expect(dels, hasLength(1));
     expect(dels.first['userIds'], [4]);
+
+    // Y la carpeta se abre AQUÍ MISMO (sin saltar a Archivos) y sin repetir la
+    // ficha: dentro solo se ve el contenido.
+    await _tap(tester, find.text('Bodas/Ana Ruiz'));
+    expect(find.text('Bodas'), findsOneWidget);
+    expect(drive.path, isEmpty);
+    expect(find.text('Verla en Archivos'), findsNothing);
+    expect(find.text('Carpeta de tu Drive'), findsNothing);
   });
 
-  testWidgets('dejar de compartir una carpeta lo pide y lo manda', (
+  testWidgets('dejar de compartir se pide desde el menú de la tarjeta', (
     tester,
   ) async {
     debugLocalShareService = _DriveMock().service;
@@ -546,8 +558,8 @@ void main() {
     await _pump(tester);
 
     await _tap(tester, find.textContaining('Lo que comparto'));
-    await _tap(tester, find.text('Bodas/Ana Ruiz'));
-    await _tap(tester, find.text('Dejar de compartir'));
+    await _tap(tester, find.byTooltip('Opciones').first);
+    await _tap(tester, find.text('Eliminar el compartido'));
     expect(find.text('¿Dejar de compartir?'), findsOneWidget);
     await _tap(tester, find.text('Dejar de compartir').last);
 
@@ -555,6 +567,137 @@ void main() {
     expect(dels, hasLength(1));
     expect(dels.first['path'], 'Bodas/Ana Ruiz');
     expect((dels.first['userIds'] as List), contains(4));
+  });
+
+  testWidgets('Descargar una carpeta compartida pide su contenido (y si '
+      'falla lo avisa sin caerse)', (tester) async {
+    // El menú de la tarjeta descarga la CARPETA entera: se recorre su
+    // contenido para armar el ZIP. Si el servidor no puede abrirla, se avisa
+    // —no se deja un botón que no hace nada—.
+    final asked = <String>[];
+    debugLocalShareService = () => LocalShareService(
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        asked.add(request.url.path);
+        if (request.url.path == '/api/local/status') {
+          return http.Response(
+            jsonEncode({'local': true, 'db': true, 'servedFrom': 'server'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({'error': 'La carpeta no existe'}),
+          404,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    _installMock();
+    await _pump(tester);
+
+    await _tap(tester, find.byTooltip('Opciones').first);
+    await _tap(tester, find.text('Descargar'));
+    expect(asked, contains('/api/local/list'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('la ficha de cada compartido se ve en el listado (cuadrícula y '
+      'lista) y no al abrir la carpeta', (tester) async {
+    debugLocalShareService = _DriveMock().service;
+    _installMock();
+    await _pump(tester);
+
+    // Cuadrícula: cada carpeta dice de dónde es.
+    expect(find.text('Carpeta del Drive'), findsOneWidget);
+    expect(find.text('Carpeta de su computadora'), findsOneWidget);
+
+    // Y en la vista de lista también (la de "Lo que comparto" dice "tuya").
+    await _tap(tester, find.byTooltip('Vista de lista'));
+    expect(find.text('Carpeta del Drive'), findsOneWidget);
+    expect(find.text('Carpeta de su computadora'), findsOneWidget);
+    await _tap(tester, find.textContaining('Lo que comparto'));
+    expect(find.text('Carpeta de tu Drive'), findsOneWidget);
+
+    // Al abrir la carpeta, la ficha se queda en el listado.
+    await _tap(tester, find.textContaining('Compartido conmigo'));
+    await _tap(tester, find.text('Estudio 2026'));
+    expect(find.text('Carpeta del Drive'), findsNothing);
+    expect(find.text('Carpeta de su computadora'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('dentro de la carpeta la vista de LISTA es la del Drive', (
+    tester,
+  ) async {
+    final mock = _DriveMock();
+    debugLocalShareService = mock.service;
+    _installMock();
+    await _pump(tester);
+
+    // Se conmuta a lista ANTES de entrar: dentro también se respeta.
+    await _tap(tester, find.byTooltip('Vista de lista'));
+    await _tap(tester, find.text('Estudio 2026'));
+
+    // Las MISMAS filas del Drive: nombre, peso y el menú de lo que se puede
+    // hacer con cada elemento (ver y descargar).
+    expect(find.byType(GridView), findsNothing);
+    expect(find.text('Bodas'), findsOneWidget);
+    expect(find.text('foto.jpg'), findsOneWidget);
+    expect(find.text('Carpeta'), findsOneWidget);
+    // La fila de la FOTO es la que ofrece Descargar (una carpeta compartida de
+    // otra persona es de solo lectura: ahí solo se puede ver).
+    await _tap(tester, find.byTooltip('Opciones').last);
+    expect(find.text('Ver'), findsOneWidget);
+    expect(find.text('Descargar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('el ZIP de una carpeta compartida recorre sus subcarpetas', () async {
+    // El servidor solo entrega archivo por archivo: la app recorre la carpeta
+    // (y sus subcarpetas) y arma el ZIP. Aquí se comprueba esa travesía.
+    final asked = <String>[];
+    final service = LocalShareService(
+      baseUrl: 'http://drive.test',
+      client: MockClient((request) async {
+        asked.add(request.url.path);
+        if (request.url.path == '/api/local/list') {
+          final sub = request.url.queryParameters['path'] ?? '';
+          final folders = sub == ''
+              ? [
+                  {'name': 'Bodas', 'isFolder': true},
+                  {'name': 'foto.jpg', 'isFolder': false, 'size': 4},
+                ]
+              : [
+                  {'name': 'Ana.jpg', 'isFolder': false, 'size': 2},
+                ];
+          return http.Response(
+            jsonEncode({'local': true, 'path': sub, 'folders': folders}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        // /api/local/file → los bytes de la imagen pedida.
+        final name = (request.url.queryParameters['path'] ?? '')
+            .split('/')
+            .last;
+        return http.Response.bytes(name == 'Ana.jpg' ? [9, 9] : [1, 2, 3], 200);
+      }),
+    );
+
+    final bytes = await service.folderZipBytes(7, const []);
+    final archive = ZipDecoder().decodeBytes(bytes);
+    expect(asked.where((p) => p == '/api/local/list'), isNotEmpty);
+    // Las subcarpetas viajan como carpetas, y cada foto con sus bytes.
+    expect(
+      archive.files.map((f) => f.name),
+      containsAll(['Bodas/', 'Bodas/Ana.jpg', 'foto.jpg']),
+    );
+    final foto = archive.files.firstWhere((f) => f.name == 'foto.jpg');
+    final ana = archive.files.firstWhere((f) => f.name == 'Bodas/Ana.jpg');
+    expect(foto.isFile, isTrue);
+    expect(foto.content, [1, 2, 3]);
+    expect(ana.content, [9, 9]);
   });
 
   testWidgets('en el CELULAR el módulo se ve completo y sin desbordes', (

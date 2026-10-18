@@ -15,7 +15,8 @@ void _installMock({
   required List<Map<String, dynamic>> posts,
   List<Map<String, dynamic>>? services,
 }) {
-  final catalog = services ??
+  final catalog =
+      services ??
       <Map<String, dynamic>>[
         {
           'id': 1,
@@ -38,8 +39,11 @@ void _installMock({
 
     if (path.endsWith('/api/admin/packages')) {
       if (request.method == 'GET') {
-        return http.Response(jsonEncode({'packages': []}), 200,
-            headers: headers);
+        return http.Response(
+          jsonEncode({'packages': []}),
+          200,
+          headers: headers,
+        );
       }
       posts.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
       return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
@@ -90,11 +94,15 @@ void _installMock({
   });
 }
 
-Future<void> _pumpPage(WidgetTester tester,
-    {List<Map<String, dynamic>>? services, bool withDrive = false}) async {
-  await tester.binding.setSurfaceSize(const Size(1200, 900));
+Future<void> _pumpPage(
+  WidgetTester tester, {
+  List<Map<String, dynamic>>? services,
+  bool withDrive = false,
+  Size size = const Size(1200, 900),
+}) async {
+  await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(1200, 900);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
@@ -103,9 +111,7 @@ Future<void> _pumpPage(WidgetTester tester,
 
   const page = MaterialApp(home: Scaffold(body: PackagesPage()));
   await tester.pumpWidget(
-    withDrive
-        ? DriveScope(drive: _FakeDrive(), child: page)
-        : page,
+    withDrive ? DriveScope(drive: _FakeDrive(), child: page) : page,
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -146,9 +152,10 @@ class _FakeDrive extends DriveBase {
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
 
   @override
-  Future<int> uploadFromPaths(List<String> sources,
-          {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
 
   @override
   Future<void> createFolder(String name) async {}
@@ -161,29 +168,50 @@ class _FakeDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
 
   @override
   Future<void> retryUpload(String jobId) async {}
 }
 
+/// Deja correr unos frames (animaciones y desplazamientos) SIN esperar a que
+/// todo quede quieto: el Drive de prueba y los menús tienen animaciones que no
+/// terminan nunca, así que `pumpAndSettle` se colgaría.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 60));
+  }
+}
+
 Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
-  await tester.pump();
+  // Frames para que el desplazamiento termine: si se toca mientras la lista
+  // todavía se mueve, el toque cae en otro widget.
+  await _settle(tester);
   await tester.tap(finder, warnIfMissed: false);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Elige una opción de un dropdown: se abre el menú y se toca la opción.
+Future<void> _pick(WidgetTester tester, Finder dropdown, String option) async {
+  await _tap(tester, dropdown);
+  // El menú del dropdown puede pintar la etiqueta más de una vez: se toma la
+  // última (la del menú desplegado).
+  await _tap(tester, find.text(option).last);
 }
 
 Future<void> _openForm(WidgetTester tester) async {
@@ -191,8 +219,9 @@ Future<void> _openForm(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('el diálogo de paquete tiene pestañas Datos y Servicios',
-      (tester) async {
+  testWidgets('el diálogo de paquete tiene pestañas Datos y Servicios', (
+    tester,
+  ) async {
     await _pumpPage(tester);
     await _openForm(tester);
 
@@ -214,8 +243,9 @@ void main() {
     expect(find.text('1'), findsWidgets);
   });
 
-  testWidgets('crear paquete manda los servicios seleccionados',
-      (tester) async {
+  testWidgets('crear paquete manda los servicios seleccionados', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpPage(tester);
     final previous = HsApi.client;
@@ -228,17 +258,9 @@ void main() {
       find.widgetWithText(TextField, 'Nombre'),
       'Boda Full',
     );
-    await _tap(tester, find.byType(DropdownButtonFormField<int>).first);
-    // El menú del dropdown puede pintar la etiqueta más de una vez: se toma
-    // la última (la del menú desplegado).
-    await _tap(tester, find.text('Gold').last);
     final dropdowns = find.byType(DropdownButtonFormField<int>);
-    await tester.ensureVisible(dropdowns.at(1));
-    await tester.pump();
-    await tester.tap(dropdowns.at(1), warnIfMissed: false);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await _tap(tester, find.text('Bodas').last);
+    await _pick(tester, dropdowns.first, 'Gold');
+    await _pick(tester, dropdowns.at(1), 'Bodas');
 
     // Servicios: los dos incluidos.
     await _tap(tester, find.text('Servicios'));
@@ -251,6 +273,20 @@ void main() {
     expect(create.first['id_tier'], 2);
     expect(create.first['id_package_category'], 7);
     expect((create.first['serviceIds'] as List).toList(), [1, 2]);
+  });
+
+  testWidgets('en pantalla angosta los campos y la vista previa van en '
+      'pestañas', (tester) async {
+    await _pumpPage(tester, size: const Size(700, 820));
+    await _openForm(tester);
+
+    // La misma estructura del diseñador, pero apilada: una pestaña para los
+    // campos (con sus Datos/Servicios dentro) y otra para la vista previa.
+    expect(find.text('Editar'), findsOneWidget);
+    expect(find.text('Vista previa'), findsOneWidget);
+    expect(find.text('Datos'), findsOneWidget);
+    expect(find.text('Servicios'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('si falta un dato de la pestaña Datos, el guardado regresa a '
@@ -275,8 +311,9 @@ void main() {
     expect(find.text('Foto del paquete'), findsOneWidget);
 
     // Se entra a la carpeta y se elige la foto.
-    await tester.tap(find.descendant(
-        of: find.byType(AlertDialog), matching: find.text('XV')));
+    await tester.tap(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('XV')),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await _tap(tester, find.byKey(const ValueKey('drive-photo-portada.jpg')));
@@ -285,7 +322,9 @@ void main() {
     // El campo queda con la URL PÚBLICA (sin sesión): es la que la web abre.
     expect(
       find.widgetWithText(
-          TextField, 'https://oriongo.ddns.net/files/XV/portada.jpg'),
+        TextField,
+        'https://oriongo.ddns.net/files/XV/portada.jpg',
+      ),
       findsWidgets,
     );
     expect(tester.takeException(), isNull);
@@ -311,8 +350,19 @@ void main() {
       'Boda Oro',
     );
     await tester.pump();
-    expect(find.text('Boda Oro'), findsNWidgets(2),
-        reason: 'campo del formulario + vista previa');
+    // El campo, la tarjeta de la vista previa y la fila compacta del catálogo.
+    expect(
+      find.text('Boda Oro'),
+      findsNWidgets(2),
+      reason: 'campo del formulario + tarjeta de la vista previa',
+    );
+    expect(
+      find.descendant(
+        of: find.byType(WebPackageCard),
+        matching: find.text('Boda Oro'),
+      ),
+      findsOneWidget,
+    );
 
     // Agregar un servicio nuevo sin salir de la personalización.
     await _tap(tester, find.text('Servicios'));
@@ -323,8 +373,13 @@ void main() {
     );
     await _tap(tester, find.text('Crear servicio'));
 
-    // El servicio entra al catálogo y queda seleccionado automáticamente.
-    expect(find.text('Dron 4K'), findsOneWidget);
+    // El servicio entra al catálogo y queda seleccionado automáticamente (se
+    // ve en la lista Y en la vista previa, que ya lo incluye).
+    expect(
+      find.text('Dron 4K'),
+      findsNWidgets(2),
+      reason: 'lista de servicios + tarjeta de la vista previa ',
+    );
     expect(find.text('1 de 2 seleccionados'), findsOneWidget);
     expect(catalog.any((s) => s['name'] == 'Dron 4K'), isTrue);
   });

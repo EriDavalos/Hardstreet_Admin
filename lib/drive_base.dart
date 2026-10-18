@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 
 import 'app_constants.dart';
@@ -235,12 +236,18 @@ class DriveUploadJob {
     required this.thumb,
     required this.total,
     this.batch = '',
+    this.file,
   });
 
   final String id;
   final String name;
   final String thumb; // ruta LOCAL del archivo fuente (miniatura)
   final int total; // bytes totales (0 = indeterminado)
+
+  /// Fuente cuando el archivo NO está en el disco: en el navegador el selector
+  /// entrega un `XFile` respaldado por un Blob (su `path` es una URL `blob:`,
+  /// no una ruta). Se guarda para poder resubir sin volver a elegir la foto.
+  final XFile? file;
 
   /// Lote al que pertenece: todas las fotos de UNA subida comparten el mismo
   /// valor. El panel mide el progreso del LOTE ("50/100 fotos"), así que las
@@ -816,6 +823,19 @@ abstract class DriveBase extends ChangeNotifier {
   /// Sube/copias los archivos. Con [overwrite] reemplaza los existentes
   /// en vez de renombrarlos.
   Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false});
+
+  /// Sube fotos elegidas con el selector del sistema o del navegador.
+  ///
+  /// En el navegador la "ruta" del archivo es una URL `blob:`: NO existe en
+  /// el disco y `dart:io` revienta al tocarla (`Unsupported operation:
+  /// _Namespace`). Por eso la subida web va por BYTES; en escritorio este
+  /// método hereda y usa las rutas reales, que es más liviano.
+  Future<int> uploadFromFiles(List<XFile> sources, {bool overwrite = false}) {
+    return uploadFromPaths(
+      [for (final f in sources) f.path],
+      overwrite: overwrite,
+    );
+  }
   Future<void> createFolder(String name);
   Future<void> rename(DriveItem item, String newName);
   Future<void> delete(DriveItem item);

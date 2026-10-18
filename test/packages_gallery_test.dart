@@ -5,9 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/hs_access.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
 import 'package:hardstreet_admin/widgets/drive_thumb.dart';
+import 'package:hardstreet_admin/widgets/form_dialog.dart';
 
 // ==================================================================
 // HARD STREET ADMIN — Módulo PAQUETES: la galería de categorías
@@ -26,11 +28,21 @@ import 'package:hardstreet_admin/widgets/drive_thumb.dart';
 //   * abrir una categoría muestra SUS paquetes con la MISMA tarjeta del
 //     catálogo, editables, y se puede volver a la galería;
 //   * "Todo el catálogo" muestra todos los paquetes;
-//   * "Nueva categoría" crea la categoría de verdad (POST /api/admin/categories).
+//   * "Nueva categoría" crea la categoría de verdad (POST /api/admin/categories),
+//     con su FOTO opcional (enlace o Drive), y el lápiz de una portada abre la
+//     categoría para EDITARLA (PUT /api/admin/categories);
+//   * sin permiso para ver el Drive, la opción "Elegir del Drive" no existe.
 // ==================================================================
 
 const _photoA =
     'https://oriongo.ddns.net/files/Boda/Ana/Fiesta/IMG_3196 Mejorado.jpg';
+
+/// El botón "Personalizar" DENTRO de las cards (la barra de diseño también se
+/// llama así: aquí interesa el de cada tarjeta de paquete).
+final _cardEdit = find.descendant(
+  of: find.byType(WebPackageCard),
+  matching: find.text('Personalizar'),
+);
 
 const _packages = [
   {
@@ -72,9 +84,13 @@ const _packages = [
 ];
 
 final _created = <Map<String, dynamic>>[];
+final _updated = <Map<String, dynamic>>[];
+final _deleted = <String>[];
 
 void _installMock() {
   _created.clear();
+  _updated.clear();
+  _deleted.clear();
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -84,6 +100,28 @@ void _installMock() {
       return http.Response(
         jsonEncode({'ok': true, 'message': 'Categoría creada exitosamente'}),
         201,
+        headers: headers,
+      );
+    }
+    if (path.endsWith('/api/admin/categories') && request.method == 'PUT') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      _updated.add(body);
+      return http.Response(
+        jsonEncode({'ok': true, 'message': 'Categoría actualizada exitosamente'}),
+        200,
+        headers: headers,
+      );
+    }
+    if (path.endsWith('/api/admin/categories') &&
+        request.method == 'DELETE') {
+      _deleted.add(request.url.queryParameters['id'] ?? '');
+      return http.Response(
+        jsonEncode({
+          'ok': true,
+          'message': 'Categoría eliminada exitosamente',
+          'item': {'movedToGeneral': 2},
+        }),
+        200,
         headers: headers,
       );
     }
@@ -99,7 +137,7 @@ void _installMock() {
         jsonEncode({
           'categories': [
             {'id': 1, 'name': 'Boda', 'icon': ''},
-            {'id': 2, 'name': 'XV Años', 'icon': ''},
+            {'id': 2, 'name': 'XV Años', 'icon': '', 'urlImage': _photoA},
             {'id': 3, 'name': 'Bautizo', 'icon': ''},
           ],
         }),
@@ -221,7 +259,7 @@ void main() {
     // Dentro de una categoría sólo están SUS paquetes…
     expect(find.text('XV Años Gold'), findsNothing);
     // …y se editan como en el catálogo (no es una vista de solo lectura).
-    expect(find.text('Editar'), findsNWidgets(2));
+    expect(_cardEdit, findsNWidgets(2));
     expect(find.text('Nuevo paquete'), findsOneWidget);
     // No hay ningún modal por medio: todo pasa en la misma pantalla.
     expect(find.byType(AlertDialog), findsNothing);
@@ -268,12 +306,183 @@ void main() {
     await _tap(tester, find.text('Nueva categoría'));
     expect(find.text('Nueva categoría'), findsWidgets);
 
-    await tester.enterText(find.byType(TextField).last, 'Bautizo');
+    // El nombre va en SU campo (el diálogo también tiene el de la foto).
+    await tester.enterText(
+      find.byKey(const ValueKey('category-name')),
+      'Bautizo',
+    );
     await _tap(tester, find.text('Crear categoría'));
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(_created, hasLength(1));
     expect(_created.single['name'], 'Bautizo');
+    // Sin foto, no se manda el campo (la categoría usa la de su paquete).
+    expect(_created.single.containsKey('urlImage'), isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('la categoría nueva puede llevar su FOTO (enlace o Drive)', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    await _tap(tester, find.text('Nueva categoría'));
+    await tester.enterText(
+      find.byKey(const ValueKey('category-name')),
+      'Graduación',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('category-image-url')),
+      'https://oriongo.ddns.net/files/Boda/Ana/portada.jpg',
+    );
+    await tester.pump();
+    // Con enlace, la opción del Drive sigue ahí y la miniatura se ve.
+    expect(find.byKey(const ValueKey('category-image-drive')), findsOneWidget);
+    expect(find.byType(DriveThumb), findsWidgets);
+
+    await _tap(tester, find.text('Crear categoría'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(_created.single['name'], 'Graduación');
+    expect(
+      _created.single['urlImage'],
+      'https://oriongo.ddns.net/files/Boda/Ana/portada.jpg',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el lápiz de una portada EDITA la categoría (nombre y foto)', (
+    tester,
+  ) async {
+    // Con permiso de actualizar, cada portada trae su botón "Personalizar".
+    HsAccess.seedForTest(
+      modules: const {
+        'Categorías': {'read', 'create', 'update', 'delete'},
+        'Paquetes': {'read', 'create', 'update'},
+        'Archivos': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    await _tap(tester, find.byTooltip('Personalizar categoría').first);
+    // El diálogo abre con lo que ya tenía la categoría.
+    expect(find.text('Personalizar categoría'), findsWidgets);
+    expect(
+      tester.widget<TextField>(find.byKey(const ValueKey('category-name')))
+          .controller!
+          .text,
+      isNotEmpty,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('category-image-url')),
+      'https://oriongo.ddns.net/files/Boda/Ana/nueva-portada.jpg',
+    );
+    await _tap(tester, find.text('Guardar categoría'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(_updated, hasLength(1));
+    expect(_updated.single['id'], isNotNull);
+    expect(
+      _updated.single['urlImage'],
+      'https://oriongo.ddns.net/files/Boda/Ana/nueva-portada.jpg',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('eliminar una categoría se hace desde su PORTADA', (
+    tester,
+  ) async {
+    HsAccess.seedForTest(
+      modules: const {
+        'Categorías': {'read', 'update', 'delete'},
+        'Paquetes': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    // El botón de borrar vive en la ESQUINA superior derecha de cada portada
+    // (una por categoría —Boda, XV Años y Bautizo—; "Todo el catálogo" no lo
+    // lleva) y no dentro del formulario, que ya no ofrece eliminar.
+    expect(find.byKey(const ValueKey('category-delete')), findsNWidgets(3));
+    await _tap(tester, find.byKey(const ValueKey('category-delete')).first);
+
+    // Se confirma (la acción avisa de que los paquetes pasan a "General").
+    expect(find.textContaining('pasan a "General"'), findsOneWidget);
+    await _tap(tester, find.text('Eliminar').last);
+
+    expect(_deleted, hasLength(1));
+    expect(_deleted.single, isNotEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('personalizar una categoría NO ofrece eliminar', (tester) async {
+    HsAccess.seedForTest(
+      modules: const {
+        'Categorías': {'read', 'update', 'delete'},
+        'Paquetes': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    await _tap(tester, find.byTooltip('Personalizar categoría').first);
+    // El formulario ya no borra: eso es cosa de la portada (que sigue detrás
+    // del modal con sus botones).
+    final dialog = find.byType(FormDialog);
+    expect(dialog, findsOneWidget);
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.byKey(const ValueKey('category-delete')),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.text('Eliminar')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin el permiso de eliminar, la portada no ofrece borrar', (
+    tester,
+  ) async {
+    HsAccess.seedForTest(
+      modules: const {
+        'Categorías': {'read', 'update'},
+        'Paquetes': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    expect(find.byKey(const ValueKey('category-delete')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin permiso para VER el Drive no se ofrece elegir del Drive', (
+    tester,
+  ) async {
+    // El rol ve Categorías, pero no Archivos: las opciones del Drive se
+    // ocultan.
+    HsAccess.seedForTest(
+      modules: const {
+        'Categorías': {'read', 'create', 'update'},
+        'Paquetes': {'read', 'create', 'update'},
+        'Usuarios': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pump(tester);
+
+    await _tap(tester, find.text('Nueva categoría'));
+    expect(find.text('Elegir del Drive'), findsNothing);
+    expect(find.byKey(const ValueKey('category-image-drive')), findsNothing);
+    // El campo del enlace sigue disponible.
+    expect(find.byKey(const ValueKey('category-image-url')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

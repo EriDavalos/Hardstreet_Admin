@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
@@ -266,34 +267,116 @@ class LocalShareService {
   /// Descarga una imagen con el MISMO comportamiento que el resto de la app:
   /// diálogo Guardar en escritorio y carpeta Descargas en Android.
   /// Devuelve el destino (o null si el usuario canceló).
+  ///
+  /// El tope es MAYOR que el del servidor (4 minutos): si la carpeta vive en la
+  /// computadora del dueño, la foto tiene que cruzar SU conexión, y el que
+  /// tiene que explicar una demora es el servidor, no un timeout mudo aquí.
   Future<String?> download(int shareId, List<String> path, String name) async {
+    final bytes = await _fileBytes(shareId, path);
+    return saveSharedBytes(bytes, name);
+  }
+
+  /// Descarga una CARPETA compartida ENTERA como ZIP.
+  ///
+  /// El servidor del drive sirve las carpetas compartidas archivo por archivo
+  /// (`/api/local/file`), así que el ZIP se arma aquí: se recorre la carpeta
+  /// (y sus subcarpetas) y se guarda con el mismo diálogo/navegador/Descargas
+  /// que el resto de la app. Devuelve el destino (null si el usuario canceló).
+  Future<String?> downloadFolderZip(
+    int shareId,
+    List<String> path, {
+    required String name,
+  }) async {
+    final bytes = await folderZipBytes(shareId, path);
+    return saveSharedBytes(bytes, name);
+  }
+
+  /// Bytes del ZIP de una carpeta compartida (sin guardarlo).
+  ///
+  /// Vive aparte de [downloadFolderZip] para poder verificarlo sin tocar el
+  /// disco del equipo.
+  Future<List<int>> folderZipBytes(int shareId, List<String> path) async {
+    final entries = <SharedZipEntry>[];
+    Future<void> walk(List<String> rel) async {
+      final listing = await list(shareId, rel);
+      for (final item in listing.items) {
+        final here = [...rel, item.name];
+        final arcName = here.sublist(path.length).join('/');
+        if (item.isFolder) {
+          entries.add(SharedZipEntry('$arcName/', null));
+          await walk(here);
+        } else {
+          entries.add(SharedZipEntry(arcName, await _fileBytes(shareId, here)));
+        }
+      }
+    }
+
+    await walk(path);
+    if (entries.isEmpty) {
+      throw 'La carpeta no tiene archivos para descargar';
+    }
+    // El ZIP se arma en un isolate: una carpeta grande no congela la pantalla.
+    return compute(encodeSharedZip, entries);
+  }
+
+  /// Bytes del archivo original (se descarga o se mete en un ZIP).
+  Future<List<int>> _fileBytes(int shareId, List<String> path) async {
     final r = await _client
         .get(
           _u('/api/local/file', {'share': '$shareId', 'path': path.join('/')}),
           headers: _headers,
         )
-        .timeout(const Duration(seconds: 120));
+        .timeout(const Duration(minutes: 5));
     if (r.statusCode != 200) {
       throw _why(r, 'No se pudo descargar (HTTP ${r.statusCode})');
     }
-    final bytes = r.bodyBytes;
-    if (kIsWeb) {
-      triggerBrowserDownload(bytes, name);
-      return null;
-    }
-    if (needsSaveDialog) {
-      final loc = await getSaveLocation(suggestedName: name);
-      if (loc == null) return null;
-      await File(loc.path).writeAsBytes(bytes);
-      return loc.path;
-    }
-    if (isAndroidPlatform) {
-      final saved = await saveToAndroidDownloads(bytes, name);
-      if (saved == null) throw 'No se pudo guardar en Descargas';
-      return saved;
-    }
-    throw 'No se pudo determinar el destino de la descarga';
+    return r.bodyBytes;
   }
+}
+
+/// Una entrada del ZIP de una carpeta compartida (`bytes` null = carpeta).
+class SharedZipEntry {
+  const SharedZipEntry(this.name, this.bytes);
+
+  final String name;
+  final List<int>? bytes;
+}
+
+/// Arma el ZIP de una carpeta compartida. Vive FUERA de la clase para poder
+/// correr en `compute` (la interfaz sigue respondiendo mientras comprime).
+List<int> encodeSharedZip(List<SharedZipEntry> entries) {
+  final archive = Archive();
+  for (final e in entries) {
+    final name = e.name.replaceAll('\\', '/');
+    final bytes = e.bytes;
+    if (bytes == null) {
+      archive.add(ArchiveFile.string(name, ''));
+    } else {
+      archive.add(ArchiveFile.bytes(name, bytes));
+    }
+  }
+  return ZipEncoder().encode(archive);
+}
+
+/// Guarda bytes con el MISMO comportamiento que el resto de la app: diálogo
+/// Guardar en escritorio, carpeta Descargas en Android y el navegador en web.
+Future<String?> saveSharedBytes(List<int> bytes, String name) async {
+  if (kIsWeb) {
+    triggerBrowserDownload(bytes, name);
+    return null;
+  }
+  if (needsSaveDialog) {
+    final loc = await getSaveLocation(suggestedName: name);
+    if (loc == null) return null;
+    await File(loc.path).writeAsBytes(bytes);
+    return loc.path;
+  }
+  if (isAndroidPlatform) {
+    final saved = await saveToAndroidDownloads(bytes, name);
+    if (saved == null) throw 'No se pudo guardar en Descargas';
+    return saved;
+  }
+  throw 'No se pudo determinar el destino de la descarga';
 }
 
 /// Adaptador de una carpeta LOCAL compartida al contrato [DriveBase].

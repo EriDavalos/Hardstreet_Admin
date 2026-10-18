@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:cross_file/cross_file.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -42,6 +44,12 @@ class DriveApiService extends DriveBase {
   /// `HsApi.client`). Las subidas y las descargas por bloques crean su propio
   /// cliente, así que no pasan por aquí.
   static http.Client client = http.Client();
+
+  /// Cliente de las SUBIDAS (cada lote abre el suyo y los comparte entre sus
+  /// trabajadores). Es inyectable igual que [client]: sin esto, una prueba
+  /// terminaría subiendo a la red de verdad.
+  @visibleForTesting
+  static http.Client Function() uploadClientFactory = () => http.Client();
 
   /// Token de sesión actual (el mismo del login contra el CRUD).
   static String get _apikey => HsSession.token ?? '';
@@ -243,11 +251,17 @@ class DriveApiService extends DriveBase {
     bool overwrite = false,
   }) async {
     if (sources.isEmpty) return 0;
+    // En el navegador no hay rutas del disco: lo que llega como "ruta" es una
+    // URL de Blob y `File` revienta ("Unsupported operation: _Namespace").
+    // Ahí se contesta con un error claro en vez de tumbar la subida.
+    if (kIsWeb) {
+      throw 'En el navegador elige las fotos con el botón Subir imágenes';
+    }
     // 1. Registrar TODOS los trabajos primero: el panel muestra la lista
     //    completa al 0% desde el primer frame. Todos van en el MISMO lote, que
     //    es el que el panel cuenta ("50/100 fotos").
     final batch = newUploadBatch();
-    final pending = <(DriveUploadJob, String, String)>[];
+    final pending = <(DriveUploadJob, _UploadSource)>[];
     var i = 0;
     for (final s in sources) {
       final f = File(s);
@@ -263,22 +277,82 @@ class DriveApiService extends DriveBase {
       );
       i++;
       addUploadJob(job);
-      pending.add((job, s, fileName));
+      pending.add((job, _UploadSource(path: s)));
     }
-    if (pending.isEmpty) return 0;
+    return _runUploads(pending, overwrite: overwrite);
+  }
 
-    // 2. Subir en paralelo con un pool de N trabajadores.
-    final client = http.Client();
+  /// Sube fotos elegidas en el SELECTOR del sistema o del navegador.
+  ///
+  /// En el navegador el `XFile` apunta a un Blob (`path` = `blob:…`): sus
+  /// BYTES son lo único que se puede mandar. En escritorio se usa la ruta real,
+  /// igual que en [uploadFromPaths] (así una foto enorme no se carga entera en
+  /// memoria para subirla).
+  @override
+  Future<int> uploadFromFiles(
+    List<XFile> sources, {
+    bool overwrite = false,
+  }) async {
+    if (sources.isEmpty) return 0;
+    final batch = newUploadBatch();
+    final pending = <(DriveUploadJob, _UploadSource)>[];
+    var i = 0;
+    for (final x in sources) {
+      // El nombre puede venir SOLO (web) o ser la ruta completa (escritorio):
+      // se toma el último segmento en los dos casos.
+      final base = x.name.isNotEmpty ? x.name : x.path;
+      final name = base.split(RegExp(r'[\\/]')).last;
+      if (name.isEmpty) continue;
+      int total = 0;
+      try {
+        total = await x.length();
+      } catch (_) {
+        // Sin tamaño: el panel lo muestra indeterminado, la subida sigue.
+      }
+      final job = DriveUploadJob(
+        id: 'u${DateTime.now().microsecondsSinceEpoch}-$i',
+        name: name,
+        // En el navegador el Blob no es una ruta de disco: no hay miniatura
+        // local (el panel dibuja su icono y la foto aparece al refrescar).
+        thumb: kIsWeb ? '' : x.path,
+        total: total,
+        batch: batch,
+        file: x,
+      );
+      i++;
+      addUploadJob(job);
+      pending.add((
+        job,
+        _UploadSource(file: x, path: kIsWeb ? null : x.path),
+      ));
+    }
+    return _runUploads(pending, overwrite: overwrite);
+  }
+
+  /// Pool de subidas (y reintentos) compartido por las dos entradas.
+  Future<int> _runUploads(
+    List<(DriveUploadJob, _UploadSource)> pending, {
+    required bool overwrite,
+  }) async {
+    if (pending.isEmpty) return 0;
+    final client = uploadClientFactory();
     var saved = 0;
     var next = 0;
     Future<void> worker() async {
       while (next < pending.length) {
-        final (job, s, fileName) = pending[next++];
+        final (job, src) = pending[next++];
         // Cancelado mientras esperaba en cola: se salta.
         if (job.cancelled) {
           job.status = 'cancelled';
           job.error = 'Cancelado';
           notifyUploadProgress();
+          continue;
+        }
+        // Formato que el Drive no guarda: se marca en el acto, sin gastar los
+        // tres intentos en algo que el servidor va a rechazar siempre.
+        final format = uploadFormatError(job.name);
+        if (format != null) {
+          finishUploadJob(job, error: format);
           continue;
         }
         // Reintentos automáticos: una subida que se corta (enlace doméstico,
@@ -290,13 +364,13 @@ class DriveApiService extends DriveBase {
             try {
               await _post('/api/delete', {
                 'path': path.join('/'),
-                'names': [fileName],
+                'names': [job.name],
               });
             } catch (_) {
               /* si no existía, sigue */
             }
           }
-          await _uploadOne(client, job, s, fileName);
+          await _uploadOne(client, job, src);
         });
         if (ok) saved++;
       }
@@ -311,23 +385,99 @@ class DriveApiService extends DriveBase {
     return saved;
   }
 
+  /// A partir de este tamaño la foto va EN TROZOS.
+  ///
+  /// Un solo cuerpo grande lo rechaza el proxy del servidor (nginx contesta una
+  /// página HTML "413 Request Entity Too Large") y, si se corta a medio camino,
+  /// había que empezar la foto completa otra vez. El umbral es UN trozo: así
+  /// ninguna petición lleva más de lo que ese proxy aceptó ya con las fotos
+  /// grandes, y una foto mediana no gasta un intento que va a rebotar.
+  @visibleForTesting
+  static int chunkThreshold = 4 * 1024 * 1024;
+
+  /// Tamaño de cada trozo (queda MUY por debajo de los límites típicos de un
+  /// proxy: 1-8 MB).
+  @visibleForTesting
+  static int chunkSize = 4 * 1024 * 1024;
+
   /// Sube un archivo con barra de progreso (stream con contador de bytes).
   Future<void> _uploadOne(
     http.Client client,
     DriveUploadJob job,
-    String filePath,
-    String fileName,
+    _UploadSource src,
+  ) async {
+    // El Drive es SOLO de imágenes (el servidor lista y sirve nada más que
+    // estos formatos): un archivo con otra extensión se rechaza al instante con
+    // un motivo claro, en vez de gastar los tres intentos de subida para
+    // recibir un error opaco del servidor.
+    final format = uploadFormatError(job.name);
+    if (format != null) throw format;
+    if (job.total > chunkThreshold) {
+      await _uploadChunked(client, job, src);
+      return;
+    }
+    final rejected = await _uploadMultipart(client, job, src);
+    if (!rejected) return;
+    // El proxy contestó 413 a una foto que iba en UNA pieza: su límite real es
+    // más bajo que [chunkThreshold] (por eso unas fotos pequeñas subían y
+    // otras no, según lo que pesaran). En vez de rendirse —o de repetir tres
+    // veces el mismo cuerpo que el proxy va a volver a rechazar—, la foto se
+    // rehace EN TROZOS, que ya saben encogerse si hace falta.
+    job.sent = 0;
+    notifyUploadProgress();
+    // Si el tamaño no se conocía, se lee ahora: el troceado lo necesita.
+    final size = job.total > 0 ? null : await _sizeOf(src);
+    await _uploadChunked(client, job, src, size: size);
+  }
+
+  /// Motivo por el que una foto NO se puede subir, o `null` si su formato vale.
+  ///
+  /// El Drive guarda y lista solo imágenes: con otra extensión la foto se
+  /// quedaría guardada pero invisible (o rechazada con un error genérico).
+  String? uploadFormatError(String name) {
+    if (hasImageExt(name)) return null;
+    final ext = extOf(name);
+    return 'Formato no admitido (${ext.isEmpty ? 'sin extensión' : ext}): '
+        'solo JPG, PNG, GIF, WEBP o BMP';
+  }
+
+  /// Tamaño real de la fuente (cuando el trabajo no lo había podido leer).
+  Future<int> _sizeOf(_UploadSource src) async {
+    try {
+      return src.file != null
+          ? await src.file!.length()
+          : await File(src.path!).length();
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Sube la foto en UNA petición multipart/form-data.
+  ///
+  /// Devuelve `true` si la petición no pasó por el proxy (413 de tamaño, o una
+  /// página HTML en vez de la API): la foto hay que rehacerla en trozos.
+  Future<bool> _uploadMultipart(
+    http.Client client,
+    DriveUploadJob job,
+    _UploadSource src,
   ) async {
     final req = http.MultipartRequest('POST', _u('/api/upload'))
       ..headers.addAll(_authHeaders)
       ..fields['path'] = path.join('/')
       ..files.add(
-        await http.MultipartFile.fromPath(
-          'files',
-          filePath,
-          filename: fileName,
-          contentType: MediaType('image', _mimeSub(extOf(fileName))),
-        ),
+        src.file != null
+            ? http.MultipartFile.fromBytes(
+                'files',
+                await src.file!.readAsBytes(),
+                filename: job.name,
+                contentType: MediaType('image', _mimeSub(extOf(job.name))),
+              )
+            : await http.MultipartFile.fromPath(
+                'files',
+                src.path!,
+                filename: job.name,
+                contentType: MediaType('image', _mimeSub(extOf(job.name))),
+              ),
       );
 
     final counted = req.finalize().transform<List<int>>(
@@ -359,23 +509,155 @@ class DriveApiService extends DriveBase {
           .timeout(const Duration(minutes: 10));
       final body = await response.stream.bytesToString();
       if (response.statusCode != 200) {
-        final msg = (() {
-          try {
-            return (jsonDecode(body) as Map<String, dynamic>)['error']
-                    as String? ??
-                body;
-          } catch (_) {
-            return body;
-          }
-        })();
-        throw 'HTTP ${response.statusCode}: $msg';
+        // Un cuerpo HTML no lo escribe el drive (siempre contesta JSON): viene
+        // del proxy que hay delante. Es la señal de que UNA petición con el
+        // cuerpo entero no pasa: la foto se rehace en trozos en vez de repetir
+        // tres veces lo mismo. El proxy corta el cuerpo al contestar, así que
+        // el bombeo se deja cerrar sin convertir eso en un fallo.
+        if (response.statusCode == 413 || _looksLikeHtml(body)) {
+          await pumping.catchError((_) {});
+          return true;
+        }
+        throw 'HTTP ${response.statusCode}: '
+            '${_errorOf(body, status: response.statusCode)}';
       }
       await pumping;
+      return false;
     } catch (_) {
       await pumping.catchError((_) {});
       rethrow;
     }
   }
+
+  /// Trozo más chico que se usa cuando el proxy rechaza los grandes (413).
+  static const int _minChunkSize = 256 * 1024;
+
+  /// Hasta dónde se puede encoger (con trozos configurados más chicos que el
+  /// mínimo —solo en pruebas— el suelo baja con ellos).
+  static int get _chunkFloor => chunkSize < _minChunkSize ? 1 : _minChunkSize;
+
+  /// Sube una foto GRANDE en trozos y la ensambla en el servidor.
+  ///
+  /// Ninguno de los trozos pasa del límite del proxy (era el 413 de las fotos
+  /// grandes) y, si ese límite es MÁS bajo de lo esperado, la subida se rehace
+  /// con trozos cuatro veces más chicos en vez de rendirse.
+  Future<void> _uploadChunked(
+    http.Client client,
+    DriveUploadJob job,
+    _UploadSource src, {
+    int? size,
+  }) async {
+    var pieces = chunkSize;
+    while (true) {
+      final tooBig = await _sendChunks(client, job, src, pieces, size: size);
+      if (!tooBig) return;
+      final floor = _chunkFloor;
+      if (pieces <= floor) {
+        throw 'El servidor rechaza hasta los trozos más chicos: revisa el '
+            'límite de subida de tu proxy (client_max_body_size)';
+      }
+      // Se rehace la subida entera con trozos más chicos.
+      final next = pieces ~/ 4;
+      pieces = next < floor ? floor : next;
+      job.sent = 0;
+      notifyUploadProgress();
+    }
+  }
+
+  /// Manda la foto troceada a [pieces] bytes y la cierra. Devuelve `true` si el
+  /// servidor rechazó el tamaño (413) y hay que reintentar más chico.
+  Future<bool> _sendChunks(
+    http.Client client,
+    DriveUploadJob job,
+    _UploadSource src,
+    int pieces, {
+    int? size,
+  }) async {
+    final total = (size != null && size > 0) ? size : job.total;
+    if (total <= 0) throw 'No se pudo leer el tamaño de la foto';
+    final id = 'up${DateTime.now().microsecondsSinceEpoch}'
+        '${job.id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '')}';
+    final count = (total + pieces - 1) ~/ pieces;
+    final rel = path.join('/');
+    var sent = 0;
+    for (var index = 0; index < count; index++) {
+      if (job.cancelled) throw 'cancelado';
+      final start = index * pieces;
+      final end = start + pieces > total ? total : start + pieces;
+      final bytes = await src.readRange(start, end);
+      final uri = _u('/api/upload/chunk', {
+        'id': id,
+        'index': '$index',
+        'total': '$count',
+        'path': rel,
+        'name': job.name,
+      });
+      final res = await client
+          .post(
+            uri,
+            headers: {
+              ..._authHeaders,
+              'Content-Type': 'application/octet-stream',
+            },
+            body: bytes,
+          )
+          .timeout(const Duration(minutes: 2));
+      if (res.statusCode == 413) return true;
+      if (res.statusCode != 200) {
+        throw 'HTTP ${res.statusCode}: ${_errorOf(res.body)}';
+      }
+      sent += bytes.length;
+      job.sent = sent;
+      notifyUploadProgress();
+    }
+    final done = await client
+        .post(
+          _u('/api/upload/finish'),
+          headers: {
+            ..._authHeaders,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'id': id,
+            'total': count,
+            'path': rel,
+            'name': job.name,
+          }),
+        )
+        .timeout(const Duration(minutes: 2));
+    if (done.statusCode != 200) {
+      throw 'HTTP ${done.statusCode}: ${_errorOf(done.body)}';
+    }
+    job.sent = total;
+    notifyUploadProgress();
+    return false;
+  }
+
+  /// Mensaje de error del servidor (JSON `{error}`) o el cuerpo tal cual.
+  ///
+  /// El cuerpo puede ser una PÁGINA HTML del proxy (el "413 Request Entity Too
+  /// Large" de nginx): volcarla entera en el panel no dice nada al usuario, así
+  /// que se resume. El resto de cuerpos sí se muestran, recortados.
+  static String _errorOf(String body, {int? status}) {
+    final text = body.trim();
+    try {
+      final msg = (jsonDecode(text) as Map<String, dynamic>)['error'];
+      if (msg is String && msg.isNotEmpty) return msg;
+    } catch (_) {
+      /* no era JSON del servidor */
+    }
+    if (_looksLikeHtml(text)) {
+      return status == 413
+          ? 'el proxy del servidor rechazó el tamaño (413): revisa '
+              'client_max_body_size'
+          : 'el proxy contestó una página HTML en vez de la API del drive';
+    }
+    if (text.isEmpty) return 'el servidor no respondió nada';
+    return text.length > 240 ? '${text.substring(0, 240)}…' : text;
+  }
+
+  /// ¿El cuerpo es una página web (proxy/wifi con login) y no la API del drive?
+  static bool _looksLikeHtml(String body) => body.trimLeft().startsWith('<');
 
   /// Resubir a mano un archivo que quedó con error (botón "Resubir").
   @override
@@ -385,11 +667,21 @@ class DriveApiService extends DriveBase {
     job.restart();
     job.attempts = 0;
     notifyUploadProgress();
-    final client = http.Client();
+    final client = uploadClientFactory();
     try {
+      final x = job.file;
       await runUploadWithRetries(
         job,
-        () => _uploadOne(client, job, job.thumb, job.name),
+        () => _uploadOne(
+          client,
+          job,
+          _UploadSource(
+            file: x,
+            path: x == null
+                ? job.thumb
+                : (kIsWeb ? null : x.path),
+          ),
+        ),
       );
     } finally {
       client.close();
@@ -835,5 +1127,28 @@ class DriveApiService extends DriveBase {
       throw msg;
     }
     return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+}
+
+/// De dónde salen los bytes de un archivo a subir.
+///
+/// En escritorio basta la RUTA (se lee por partes, sin cargar la foto entera);
+/// en el navegador solo existe el `XFile` del selector (un Blob).
+class _UploadSource {
+  const _UploadSource({this.path, this.file});
+
+  final String? path;
+  final XFile? file;
+
+  /// Bytes del rango [start, end): un trozo de la foto, no toda.
+  Future<Uint8List> readRange(int start, int end) async {
+    final bytes = BytesBuilder(copy: false);
+    final stream = file != null
+        ? file!.openRead(start, end)
+        : File(path!).openRead(start, end);
+    await for (final part in stream) {
+      bytes.add(part);
+    }
+    return bytes.takeBytes();
   }
 }

@@ -4,7 +4,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../app_settings.dart';
 import '../drive_api_service.dart';
+import '../drive_host.dart';
 
 /// Página "Conexión": estado del enlace con el servidor del drive.
 class ConnectionPage extends StatefulWidget {
@@ -18,6 +20,14 @@ class ConnectionPage extends StatefulWidget {
 
 class _ConnectionPageState extends State<ConnectionPage> {
   Timer? _timer;
+
+  /// Lo que el usuario escribe en "Dirección del servidor" (vacío = la de
+  /// fábrica). Arranca con lo que haya guardado.
+  late final TextEditingController _hostCtrl = TextEditingController(
+    text: DriveHost.custom ?? '',
+  );
+  String? _hostError;
+  String? _hostSaved;
 
   // Sondeo de salud con package:http: funciona en web y nativo.
   // (dart:io HttpClient lanza UnsupportedError en Chrome.)
@@ -53,7 +63,31 @@ class _ConnectionPageState extends State<ConnectionPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _hostCtrl.dispose();
     super.dispose();
+  }
+
+  /// Guarda la dirección escrita (o vuelve a la de fábrica si está vacía).
+  Future<void> _saveHost(String? value) async {
+    final text = (value ?? '').trim();
+    if (!DriveHost.isValid(text)) {
+      setState(() {
+        _hostError = 'Escribe una dirección como http://192.168.1.72:4000';
+        _hostSaved = null;
+      });
+      return;
+    }
+    final ok = await AppSettings.instance.setDriveHost(text);
+    if (!mounted) return;
+    setState(() {
+      _hostError = ok ? null : 'Esa dirección no se pudo guardar.';
+      _hostSaved = ok
+          ? (DriveHost.isCustom
+              ? 'Guardado: ${DriveHost.base}. Cierra y vuelve a abrir la app para usarla.'
+              : 'Guardado: se usará la dirección de fábrica (${DriveHost.compiled}) al reabrir la app.')
+          : null;
+      if (ok && !DriveHost.isCustom) _hostCtrl.text = '';
+    });
   }
 
   Future<void> _check() async {
@@ -63,8 +97,10 @@ class _ConnectionPageState extends State<ConnectionPage> {
     String? err;
     Map<String, dynamic>? health;
     try {
+      // Se prueba la dirección CONFIGURADA ([DriveHost]): así, al cambiarla, el
+      // botón "Probar conexión" comprueba la nueva ANTES de reiniciar la app.
       final r = await httpGet(
-        '${widget.driveApi.base}/api/health',
+        '${DriveHost.base}/api/health',
         timeout: const Duration(seconds: 5),
       );
       if (r.statusCode == 200) {
@@ -138,7 +174,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Servidor: ${widget.driveApi.base}',
+                'Servidor: ${DriveHost.base}',
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
                   fontSize: 13,
@@ -162,11 +198,85 @@ class _ConnectionPageState extends State<ConnectionPage> {
         ),
         const SizedBox(height: 16),
 
+        // ===== Dirección del servidor (editable) =====
+        _SectionCard(
+          title: 'Dirección del servidor',
+          children: [
+            Text(
+              'El panel llega al servidor por su dirección. Dentro de la red de '
+              'la oficina el nombre público (${DriveHost.compiled}) puede '
+              'responder el router con un certificado que el dispositivo '
+              'rechaza ("unable to get local issuer certificate") y el drive no '
+              'conecta: ahí escribe la dirección LOCAL del servidor, por '
+              'ejemplo http://192.168.1.72:4000.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('drive-host-field'),
+              controller: _hostCtrl,
+              autocorrect: false,
+              keyboardType: TextInputType.url,
+              decoration: InputDecoration(
+                labelText: 'Dirección del drive',
+                hintText: DriveHost.compiled,
+                prefixIcon: const Icon(Icons.dns_outlined),
+                helperText: 'Vacío = la de fábrica (${DriveHost.compiled})',
+                errorText: _hostError,
+                border: const OutlineInputBorder(),
+              ),
+              onSubmitted: _saveHost,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('drive-host-save'),
+                  onPressed: () => _saveHost(_hostCtrl.text),
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Guardar'),
+                ),
+                const SizedBox(width: 10),
+                TextButton(
+                  key: const ValueKey('drive-host-reset'),
+                  onPressed: () {
+                    _hostCtrl.text = '';
+                    _saveHost(null);
+                  },
+                  child: const Text('Usar la de fábrica'),
+                ),
+              ],
+            ),
+            if (_hostSaved != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  _hostSaved!,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
         // ===== Detalles =====
         _SectionCard(
           title: 'Detalles de la conexión',
           children: [
-            _Row('Dirección', widget.driveApi.base),
+            _Row('Dirección', DriveHost.base),
+            _Row(
+              'En uso ahora',
+              DriveHost.base == widget.driveApi.base
+                  ? 'La configurada'
+                  : '${widget.driveApi.base} (se cambia al reabrir la app)',
+            ),
             _Row(
               'Latencia',
               _latencyMs == null ? '—' : '$_latencyMs ms',
@@ -207,7 +317,10 @@ class _ConnectionPageState extends State<ConnectionPage> {
               _Mono('sudo systemctl status hardstreet-drive'),
               _Bullet('Que el firewall permita el puerto:'),
               _Mono('sudo ufw allow 4000/tcp'),
-              _Bullet('Que la IP coincida (configurable con --dart-define=DRIVE_API=…).'),
+              _Bullet('Que la dirección sea la correcta para la red en la que estás:'),
+              _Mono('https://oriongo.ddns.net  (desde internet)'),
+              _Mono('http://192.168.1.72:4000  (dentro de la red de la oficina)'),
+              _Bullet('Se cambia arriba, en "Dirección del servidor".'),
             ],
           ),
       ],

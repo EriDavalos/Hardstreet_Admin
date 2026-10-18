@@ -26,11 +26,15 @@ class CategoryGroup {
     required this.id,
     required this.name,
     this.packages = const [],
+    this.urlImage = '',
   });
 
   final int id;
   final String name;
   final List<Map<String, dynamic>> packages;
+
+  /// Foto propia de la categoría (la que se elige al crearla o editarla).
+  final String urlImage;
 
   /// Precio más bajo de sus paquetes (0 = sin precio definido).
   num get minPrice {
@@ -54,8 +58,12 @@ class CategoryGroup {
     return out;
   }
 
-  /// Foto que representa a la categoría: la del primer paquete que tenga una.
+  /// Foto que representa a la categoría: la SUYA si la tiene y, si no, la del
+  /// primer paquete que tenga una (así una categoría sin foto no se queda
+  /// vacía cuando ya hay paquetes con foto).
   String? get photo {
+    final own = urlImage.trim();
+    if (own.isNotEmpty) return own;
     for (final p in packages) {
       final url = (p['urlImage'] ?? '').toString().trim();
       if (url.isNotEmpty) return url;
@@ -87,7 +95,11 @@ List<CategoryGroup> hsCategoryGroups({
     if (id == 0 || !seen.add(id)) continue;
     final name = (c['name'] ?? '').toString().trim();
     out.add(
-      CategoryGroup(id: id, name: name.isEmpty ? 'Sin categoría' : name),
+      CategoryGroup(
+        id: id,
+        name: name.isEmpty ? 'Sin categoría' : name,
+        urlImage: (c['urlImage'] ?? '').toString().trim(),
+      ),
     );
   }
   for (final p in packages) {
@@ -100,6 +112,7 @@ List<CategoryGroup> hsCategoryGroups({
       CategoryGroup(
         id: c.id,
         name: c.name,
+        urlImage: c.urlImage,
         packages: packages
             .where((p) => idOf(p) == c.id)
             .toList(growable: false),
@@ -161,6 +174,8 @@ class CategoryGalleryGrid extends StatelessWidget {
     required this.gold,
     required this.onOpen,
     this.onOpenAll,
+    this.onEdit,
+    this.onDelete,
     this.total = 0,
     this.minPrice = 0,
   });
@@ -168,6 +183,12 @@ class CategoryGalleryGrid extends StatelessWidget {
   final List<CategoryGroup> categories;
   final Color gold;
   final void Function(CategoryGroup) onOpen;
+
+  /// Editar el nombre o la foto de una categoría (null = sin permiso).
+  final void Function(CategoryGroup)? onEdit;
+
+  /// Eliminar la categoría desde la PORTADA (null = sin permiso: no se pinta).
+  final void Function(CategoryGroup)? onDelete;
 
   /// Opción "Todo el catálogo" (se pinta la primera).
   final VoidCallback? onOpenAll;
@@ -200,6 +221,8 @@ class CategoryGalleryGrid extends StatelessWidget {
               count: c.packages.length,
               gold: gold,
               onTap: () => onOpen(c),
+              onEdit: onEdit == null ? null : () => onEdit!(c),
+              onDelete: onDelete == null ? null : () => onDelete!(c),
             ),
         ];
         return GridView.count(
@@ -232,6 +255,8 @@ class CategoryCoverCard extends StatelessWidget {
     required this.onTap,
     this.label,
     this.icon,
+    this.onEdit,
+    this.onDelete,
   });
 
   /// Nombre de la categoría (o "Todo el catálogo").
@@ -249,6 +274,13 @@ class CategoryCoverCard extends StatelessWidget {
 
   /// Icono del hueco sin foto (por defecto, el emoji de la categoría).
   final IconData? icon;
+
+  /// Editar la categoría (null = sin permiso: el botón no se dibuja).
+  final VoidCallback? onEdit;
+
+  /// Eliminar la categoría (null = sin permiso: el botón no se dibuja).
+  /// Va en la ESQUINA superior derecha, junto al contador.
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -279,15 +311,31 @@ class CategoryCoverCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Align(
-                  alignment: Alignment.topRight,
-                  child: HsCountPill(
-                    label: '$count',
-                    icon: Icons.photo_library_outlined,
-                    color: Colors.white,
-                    outlined: true,
-                    compact: true,
-                  ),
+                // Arriba: el contador y —en la esquina superior derecha— el
+                // botón de ELIMINAR (con su confirmación). Editar sigue en el
+                // pie, como en las cards de paquete.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Spacer(),
+                    HsCountPill(
+                      label: '$count',
+                      icon: Icons.photo_library_outlined,
+                      color: Colors.white,
+                      outlined: true,
+                      compact: true,
+                    ),
+                    if (onDelete != null) ...[
+                      const SizedBox(width: 6),
+                      _CoverAction(
+                        key: const ValueKey('category-delete'),
+                        icon: Icons.delete_outline_rounded,
+                        tooltip: 'Eliminar categoría',
+                        accent: const Color(0xFFFF8A8A),
+                        onTap: onDelete!,
+                      ),
+                    ],
+                  ],
                 ),
                 const Spacer(),
                 Text(
@@ -306,20 +354,41 @@ class CategoryCoverCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  label ??
-                      (count == 0
-                          ? 'Sin paquetes todavía'
-                          : price > 0
-                          ? '${hsCountLabel(count)} · desde ${hsMoney(price)}'
-                          : hsCountLabel(count)),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label ??
+                            (count == 0
+                                ? 'Sin paquetes todavía'
+                                : price > 0
+                                ? '${hsCountLabel(count)} · desde '
+                                      '${hsMoney(price)}'
+                                : hsCountLabel(count)),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    // El MISMO gesto que la card de un paquete: el botón de
+                    // personalizar va en el PIE. Se queda con el toque para
+                    // que no abra también la categoría.
+                    if (onEdit != null) ...[
+                      const SizedBox(width: 8),
+                      _CoverAction(
+                        icon: Icons.tune_rounded,
+                        tooltip: 'Personalizar categoría',
+                        label: 'Personalizar',
+                        accent: gold,
+                        onTap: onEdit!,
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -376,6 +445,92 @@ class _CategoryCover extends StatelessWidget {
       size: double.infinity,
       big: true,
       rounded: false,
+    );
+  }
+}
+
+/// Botón pequeño sobre la portada (editar). Se pinta oscuro y con borde para
+/// que se lea sobre cualquier foto.
+class _CoverAction extends StatelessWidget {
+  const _CoverAction({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.label,
+    this.accent,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  /// Texto del botón (null = solo el icono, en un círculo).
+  final String? label;
+
+  /// Color del texto/icono (el oro del diseño, como "Personalizar" arriba
+  /// en las cards de paquete).
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = accent ?? Colors.white;
+    // Sin texto (el botón de ELIMINAR): el icono SOLO, sin círculo ni pastilla.
+    // Se distingue por su color y por un halo oscuro que lo despega de la foto.
+    if (label == null) {
+      return Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(9),
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(
+              icon,
+              size: 19,
+              color: tint,
+              shadows: const [
+                Shadow(color: Color(0xAA000000), blurRadius: 6),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        // Velo oscuro + borde claro: se lee sobre cualquier foto.
+        color: Colors.black.withValues(alpha: .52),
+        shape: StadiumBorder(
+          side: BorderSide(color: tint.withValues(alpha: .55)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: tint),
+                if (label != null) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    label!,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .3,
+                      color: tint,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

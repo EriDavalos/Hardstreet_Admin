@@ -1689,7 +1689,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         link: (svc['shareLink'] ?? '').toString(),
         pickPhotos: svc['pickPhotos'] == true,
         showFolder: svc['showFolder'] != false,
-        onPickFolder: () => _pickDriveFolder(insideShared: true),
+        // Sin permiso para ver el Drive no se puede abrir su selector.
+        onPickFolder: HsAccess.instance.canUseDrive
+            ? () => _pickDriveFolder(insideShared: true)
+            : null,
       ),
     );
     if (out == null) return;
@@ -3068,13 +3071,20 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
             ),
           ),
         const SizedBox(height: 12),
-        if (editable)
+        // Elegir una carpeta del Drive necesita permiso para ver el Drive: sin
+        // él la opción no se dibuja (el cliente sigue viendo lo ya compartido).
+        if (editable && HsAccess.instance.canUseDrive)
           FilledButton.icon(
             onPressed: _shareClientDriveFolder,
             icon: const Icon(Icons.folder_open_outlined, size: 18),
             label: Text(paths.isEmpty
                 ? 'Compartir una carpeta del Drive'
                 : 'Compartir otra carpeta'),
+          )
+        else if (editable)
+          Text(
+            'Para compartir carpetas del Drive necesitas permiso para verlo.',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           )
         else
           Text(
@@ -6368,7 +6378,7 @@ class _ServiceShareDialog extends StatefulWidget {
     required this.link,
     required this.pickPhotos,
     required this.showFolder,
-    required this.onPickFolder,
+    this.onPickFolder,
   });
 
   final String serviceName;
@@ -6380,7 +6390,8 @@ class _ServiceShareDialog extends StatefulWidget {
   final bool showFolder;
 
   /// Abre el selector de carpetas del Drive y devuelve la ruta elegida.
-  final Future<List<String>?> Function() onPickFolder;
+  /// null = sin permiso para ver el Drive: la opción no se dibuja.
+  final Future<List<String>?> Function()? onPickFolder;
 
   @override
   State<_ServiceShareDialog> createState() => _ServiceShareDialogState();
@@ -6400,7 +6411,9 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
   }
 
   Future<void> _pick() async {
-    final segments = await widget.onPickFolder();
+    final pick = widget.onPickFolder;
+    if (pick == null) return;
+    final segments = await pick();
     if (segments == null || segments.isEmpty) return;
     setState(() => _folder = segments.join('/'));
   }
@@ -6437,10 +6450,13 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
           ),
         ),
         const SizedBox(height: 16),
-        FormSection(
-          label: 'Carpeta del Drive',
-          child: _folder.isEmpty ? _pickTile(scheme) : _folderCard(scheme),
-        ),
+        // Sin permiso para ver el Drive, esta sección no se dibuja (la liga y
+        // las demás opciones siguen igual).
+        if (widget.onPickFolder != null || _folder.isNotEmpty)
+          FormSection(
+            label: 'Carpeta del Drive',
+            child: _folder.isEmpty ? _pickTile(scheme) : _folderCard(scheme),
+          ),
         const SizedBox(height: 16),
         FormSection(
           label: 'Liga (opcional)',

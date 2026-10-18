@@ -263,8 +263,15 @@ misma pantalla (`lib/widgets/category_gallery.dart`):
 - La primera portada es **Todo el catálogo**: los paquetes de todas las
   categorías, para quien quiere verlo todo de una vez.
 - **Nueva categoría** (acción del encabezado, requiere *create* en Paquetes)
-  crea la categoría de verdad → `POST /api/admin/categories`. No se pide icono:
-  el panel y la web lo sacan del NOMBRE (Boda 💍, XV Años 👑…).
+  crea la categoría de verdad → `POST /api/admin/categories`, y el **lápiz de
+  cada portada** (requiere *update*) la **edita** → `PUT /api/admin/categories`.
+  En los dos casos se pide el **nombre** y una **foto opcional**: un **enlace**
+  o una foto **del Drive** (el mismo selector de toda la app; si el rol no
+  puede ver el Drive, esa opción no se dibuja). La foto de la categoría manda
+  sobre la del primer paquete; sin foto, la portada sigue usando la del
+  paquete. No se pide icono: el panel y la web lo sacan del NOMBRE (Boda 💍,
+  XV Años 👑…).
+  Migración: `Hardstreet-DB/2026-10-16_categorias_imagen.sql`.
 - Al abrir una portada se ven **sus paquetes con `WebPackageCard`** (la misma
   tarjeta del catálogo, editables) y una flecha para **volver a la galería**. El
   buscador, los chips de categoría y los botones de diseño y "Nuevo paquete"
@@ -285,13 +292,17 @@ vivo** de la tarjeta y de la fila, tal como quedarán en la web.
   (categoría, subtítulo, cuántos servicios, lista, precio, botón), cuántos
   servicios se listan y los textos ("Desde"/"Cotizar"…).
 - **Foto del paquete**: sin foto, en **banda arriba** (con su alto) o **de
-  fondo**. De fondo, la foto se ve a TODO color y encima va un **velo NEGRO**
-  que oscurece más abajo y a la izquierda —donde van el nombre, los servicios y
-  el precio— para que el texto resalte; el control *Oscurecido de la foto
-  (degradado)* manda cuánto tapa (0 = foto limpia). Es el mismo velo en el
-  panel, en el diseñador y en la web (`site.js` → `hsPhotoFade` con negro). La
-  foto es la del paquete (pestaña *Datos* del formulario, y puede elegirse del
-  Drive).
+  fondo**. De fondo, la foto se ve a TODO color y encima va un **velo** que
+  oscurece más del lado donde está el texto (el nombre, los servicios y el
+  precio) para que resalte.
+  El degradado se **personaliza**: *fuerza* (0 = foto limpia), *color del velo*
+  (muestras de un toque —el negro de fábrica— o un color propio) y *de dónde
+  viene* (desde abajo o desde arriba), con una **vista previa** del velo sobre
+  una foto de muestra justo debajo de los controles. Es el MISMO degradado en el
+  panel, en el diseñador y en la web (`site.js` → `hsPhotoFade`).
+  La foto es la del paquete (pestaña *Datos* del formulario, y puede elegirse
+  del Drive). Un paquete **sin foto** se ve LIMPIO —sin banda, sin velo y sin
+  una foto de relleno del sitio—: la tarjeta queda como la del panel.
 - Pestañas por **tier** (Premium / Gold / Basic): acento, acento claro, fondo,
   badge relleno o delineado y fuerza del borde, con **paletas listas** de un
   toque y la opción de copiar la paleta a los otros tiers.
@@ -309,18 +320,19 @@ chips de categoría y la minivista previa del formulario de paquete los usan.
 ### La card del panel y la de la web son LA MISMA
 
 La tarjeta de la página se pinta con las medidas de la del panel: **un solo
-relleno** (el del diseño, en `.pkg-flyer-inner`; las secciones ya no suman el
-suyo), el **badge del tier en flujo arriba a la izquierda** (no flotando sobre
-la foto), categoría → nombre → subtítulo → **descripción** → línea completa
-fina → cuántos servicios → lista sin separadores entre filas → pie con el
-precio y el botón. El nombre va en blanco en TODOS los tiers (el degradado
-dorado del nombre era una de las diferencias) y el pie lleva el tinte del
-acento de su tier.
+relleno** (el del diseño; las secciones ya no suman el suyo), el **badge del
+tier en flujo arriba a la izquierda** (no flotando sobre la foto), categoría →
+nombre (22 px) → subtítulo → **descripción** → línea fina → cuántos servicios →
+lista **con el mismo check** que el panel (antes la web dibujaba el icono de
+cada servicio) → **pie a sangre completa** (12×20, con el tinte del acento de su
+tier) con el precio a 22 px y el **botón en pastilla** (tinte del acento, sin
+MAYÚSCULAS ni borde). El nombre va en blanco en TODOS los tiers y el ancho de
+la tarjeta se topa en **450 px**, centrada, igual que en el panel.
 
 Lo que NO se toca por paridad: la **animación de entrada** del catálogo
 (`reveal` + `hsPkgIn`, la que elige el diseñador) y la elevación al pasar el
-mouse, que son de la web; y el botón del pie, que en el panel es **Editar**
-(esto es un formulario) y en la web el CTA del diseño (*Cotizar*).
+mouse, que son de la web; y el rótulo del botón del pie, que en el panel dice
+**Editar** (esto es un formulario) y en la web el CTA del diseño (*Cotizar*).
 `Hardstreet/tests/site-design.test.mjs` comprueba el marcado y el CSS de esas
 piezas.
 
@@ -382,11 +394,25 @@ sobre el módulo "Servicios"):
 
 ## Módulo Archivos (Drive)
 
+Si el rol **no puede ver este módulo** (sin *read* en Archivos), las opciones de
+**elegir una foto del Drive** desaparecen de todo el panel (formulario de
+paquete, categorías, portadas del Sitio web y "Mis fotos" del cliente): quien no
+ve el Drive tampoco elige archivos de ahí. La regla vive en
+`HsAccess.instance.canUseDrive`.
+
 - Carpetas anidadas (`ReynaCoot/SesionPrevia/Fiesta/...`), navegación por breadcrumbs.
 - **Alcance del CLIENTE**: si el usuario es un cliente, el módulo muestra solo
   las carpetas que se le comparten en sus paquetes (ver "Carpeta compartida");
   el equipo del estudio ve el Drive completo.
 - Sube varias imágenes a la vez desde el selector nativo del sistema.
+- **También desde el navegador**: ahí el archivo elegido no tiene ruta en el
+  disco (es un Blob), así que la subida va por BYTES — antes se intentaba
+  abrirlo como archivo y salía `Unsupported operation: _Namespace`.
+- **Fotos grandes**: a partir de 6 MB la subida va EN TROZOS de 4 MB y el
+  servidor la arma al final. Un solo cuerpo de decenas de MB lo rechaza el
+  proxy con `413 Request Entity Too Large` (una página HTML, no un error del
+  servidor) y, si se cortaba, había que empezar la foto entera. Si el proxy
+  contesta 413 al trozo, la subida se rehace con trozos más chicos.
 - Vista de cuadrícula con miniaturas o vista de lista (nombre, fecha, tamaño).
 - Buscar dentro de la carpeta, renombrar, eliminar, crear carpetas.
 - **Visor de imágenes a PANTALLA COMPLETA** (sin bordes curvos), con la
@@ -453,12 +479,25 @@ navega **dentro del mismo módulo** —nunca salta al módulo Archivos— con el
 diseño que el Drive y en **solo lectura** (se ve, se amplía y se descarga; no se
 escribe en la carpeta de otra persona).
 
-El contenido de la carpeta se presenta como en **Archivos**: grupos de
-**CARPETAS** e **IMÁGENES** con las mismas tarjetas (misma altura, mismo
-redondeo, misma separación) y las fotos en el mismo tamaño de miniatura (480 px,
-que el servidor reduce una vez y guarda en caché). Al abrir la carpeta se dejan
-**pedidas** las primeras miniaturas, así la cuadrícula aparece con las fotos en
-vez de ir llenándose a cuentagotas.
+El contenido de la carpeta se presenta como en **Archivos**: UNA sola
+cuadrícula con las carpetas y las fotos juntas (sin rótulos de grupo, igual que
+el Drive), con las mismas tarjetas (misma altura, mismo redondeo, misma
+separación) y con la **vista de lista** cuando se conmuta a lista (icono o
+miniatura, nombre, peso y el menú de acciones de cada elemento). Las fotos usan
+el mismo tamaño de miniatura (480 px, que el servidor reduce una vez y guarda en
+caché). Al abrir la carpeta se dejan **pedidas** las primeras miniaturas, así la
+cuadrícula aparece con las fotos en vez de ir llenándose a cuentagotas.
+
+La **ficha** de cada compartido —de dónde es la carpeta, quién la comparte (o a
+quiénes se la compartí), su estado y lo que se puede hacer— va **en el listado**,
+junto a la carpeta: antes salía dentro de la carpeta abierta y tapaba justo lo
+que se venía a ver. El menú "⋮" de cada tarjeta es el mismo del Drive: **Ver** el
+contenido, **Descargar** (la carpeta entera, en ZIP —el servidor solo entrega
+archivo por archivo, así que el ZIP se arma en la app, con sus subcarpetas y
+respetando el diálogo Guardar/Descargas del sistema—) y, en una carpeta propia,
+**Editar destinatarios** y **Eliminar el compartido**. En una carpeta que te
+comparten solo se ofrecen Ver y Descargar: ahí el servidor no da escritura y no
+se finge que se puede.
 
 El **visor** de una foto compartida pide el **preview redimensionado**
 (`/api/local/thumb?w=1600`), nunca el original: el original puede pesar 10 MB y,
@@ -518,6 +557,21 @@ antes se usaba `Directory.systemTemp`, que en Android apunta a `code_cache` y
 provocaba *"Failed to find configured root that contains …"*. Además
 `MainActivity` copia el archivo al caché si llegara a quedar fuera de las
 rutas declaradas, así que la instalación ya no puede fallar por eso.
+
+## Marca: el mismo icono en todas las apps
+
+El icono es **UNO**: `hs_icon.png` (raíz del repo). De ahí salen el `.ico` de
+Windows (app e instalador de Inno Setup), los `mipmap` de Android, el favicon y
+los iconos PWA del panel web, y el favicon del sitio y del portal del cliente
+(`Hardstreet/images/hs_icon.png`, `Hardstreet/me/favicon.png`).
+
+```bash
+cd Hardstreet_Admin
+node tool/generate_icons.mjs   # requiere sharp (usa el del backend hermano)
+```
+
+Al cambiar `hs_icon.png` hay que volver a correrlo: si no, el ejecutable, el
+APK y la web seguirían con el icono viejo (`build_installer.ps1` lo llama solo).
 
 ## Ejecutar
 

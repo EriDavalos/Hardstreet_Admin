@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart'
         PointerDownEvent,
         PointerEvent,
         computeHitSlop;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show HardwareKeyboard, HapticFeedback, KeyEvent, KeyDownEvent, LogicalKeyboardKey;
@@ -642,26 +643,32 @@ class _DrivePageState extends State<DrivePage> {
       _snack('Tu rol no puede subir archivos al Drive', error: true);
       return;
     }
-    final paths = details.files
+    final files = details.files
         .where((f) => kImageExtensions.contains(
             f.name.contains('.')
                 ? f.name.substring(f.name.lastIndexOf('.')).toLowerCase()
                 : ''))
-        .map((f) => f.path)
         .toList();
-    if (paths.isEmpty) {
+    if (files.isEmpty) {
       _snack('Solo se pueden subir imágenes (jpg, png, gif, webp, bmp)',
           error: true);
       return;
     }
-    await _startUpload(paths);
+    // En el navegador lo soltado son BLOBS (sin ruta en el disco): se suben sus
+    // bytes, igual que con el selector.
+    await _startUpload(
+      [for (final f in files) f.path],
+      files: kIsWeb ? files : null,
+    );
   }
 
   /// Flujo completo de subida: detecta duplicados → pregunta qué hacer →
   /// sube (renombrando o sobrescribiendo) o cancela.
-  Future<void> _startUpload(List<String> paths) async {
-    // Nombres de los archivos a subir (acepta / o \ mezclados).
+  Future<void> _startUpload(List<String> paths, {List<XFile>? files}) async {
+    // Nombres de los archivos a subir (acepta / o \ mezclados). En el
+    // navegador la "ruta" es un Blob, así que el nombre lo trae el XFile.
     String nameOf(String p) => p.split(RegExp(r'[\\/]')).last;
+    String nameOfFile(XFile f) => nameOf(f.name.isNotEmpty ? f.name : f.path);
     // Lo que YA está en la carpeta: lo que suene igual no podrá asociarse a
     // una miniatura local (podría ser otro archivo).
     for (final it in widget.drive.items) {
@@ -669,8 +676,12 @@ class _DrivePageState extends State<DrivePage> {
     }
     List<String> dups;
     try {
-      dups = await widget.drive
-          .filterExisting(paths.map(nameOf).toList());
+      dups = await widget.drive.filterExisting([
+        if (files != null)
+          for (final f in files) nameOfFile(f)
+        else
+          for (final p in paths) nameOf(p),
+      ]);
     } catch (_) {
       dups = const [];
     }
@@ -683,8 +694,9 @@ class _DrivePageState extends State<DrivePage> {
       }
       overwrite = action;
     }
-    final saved = await _guarded(
-        () => widget.drive.uploadFromPaths(paths, overwrite: overwrite));
+    final saved = await _guarded(() => files != null
+        ? widget.drive.uploadFromFiles(files, overwrite: overwrite)
+        : widget.drive.uploadFromPaths(paths, overwrite: overwrite));
     if (saved == null) return; // el error ya se mostró
     // Que las fotos recién subidas se vean YA con su copia local.
     _registerLocalPreviews();
@@ -828,12 +840,16 @@ class _DrivePageState extends State<DrivePage> {
         extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
       );
       final files = await openFiles(acceptedTypeGroups: [typeGroup]);
-      final paths = files.map((f) => f.path).toList();
-      if (paths.isEmpty) {
+      if (files.isEmpty) {
         _snack('No se seleccionaron imágenes');
         return;
       }
-      await _startUpload(paths);
+      // Se pasan los XFile (no solo su ruta): en el navegador la ruta es un
+      // Blob y la subida tiene que ir por bytes.
+      await _startUpload(
+        files.map((f) => f.path).toList(),
+        files: files,
+      );
     } catch (e) {
       _snack('No se pudo subir: $e', error: true);
     }
