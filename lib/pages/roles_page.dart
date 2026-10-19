@@ -122,7 +122,7 @@ class _RolesPageState extends State<RolesPage> {
             label: 'Con permisos',
             count: con,
             icon: Icons.verified_user_outlined,
-            color: const Color(0xFF16A34A),
+            color: const Color(0xFF2F6BFF),
           ),
           HsFilterOption(
             value: 'sin',

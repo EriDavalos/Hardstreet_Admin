@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 
 /// Tipo de aviso: define el color y el icono de la notificación.
-///   success → verde  (la operación salió bien)
-///   error   → rojo   (la operación falló)
-///   info    → azul   (aviso neutro de la propia app)
+///   success → azul de la app (la operación salió bien)
+///   error   → rojo            (la operación falló)
+///   info    → azul claro      (aviso neutro de la propia app)
 enum HsToastKind { success, error, info }
 
 /// Un aviso ya emitido, listo para pintarse.
@@ -201,7 +201,7 @@ class _HsToastCardState extends State<_HsToastCard> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final (color, icon) = switch (widget.event.kind) {
-      HsToastKind.success => (const Color(0xFF10B981), Icons.check_circle_rounded),
+      HsToastKind.success => (const Color(0xFF2F6BFF), Icons.check_circle_rounded),
       HsToastKind.error => (const Color(0xFFEF4444), Icons.error_rounded),
       HsToastKind.info => (AppColors.brand, Icons.info_rounded),
     };

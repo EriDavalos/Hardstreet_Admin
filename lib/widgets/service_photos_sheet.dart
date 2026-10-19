@@ -129,7 +129,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
       maxSelection: widget.max > 0 ? widget.max : null,
       minSelection: 0,
       allowDownload: false,
-      confirmLabel: 'Agregar a mi selección',
+      confirmLabel: 'Agregar',
     );
     if (picked == null) return;
     setState(() => _paths = picked);
@@ -411,7 +411,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
         spacing: 8,
         runSpacing: 6,
         children: [
-          TextButton.icon(
+          // Mismo diseño que el resto de acciones principales del panel
+          // ("Entrar a mi Drive"): botón sólido con el azul de la app.
+          FilledButton.icon(
             key: const ValueKey('service-photos-add'),
             onPressed:
                 widget.max > 0 && _paths.length >= widget.max ? null : _add,

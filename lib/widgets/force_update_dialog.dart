@@ -190,7 +190,7 @@ class _ForceUpdateDialogState extends State<ForceUpdateDialog> {
       _Phase.idle => (Icons.system_update_alt_rounded, scheme.primary),
       _Phase.downloading => (Icons.downloading_rounded, scheme.primary),
       _Phase.installing => (Icons.install_desktop_rounded, scheme.primary),
-      _Phase.installed => (Icons.check_circle_outline_rounded, Colors.green),
+      _Phase.installed => (Icons.check_circle_outline_rounded, Color(0xFF2F6BFF)),
       _Phase.error => (Icons.error_outline_rounded, scheme.error),
     };
     return Container(

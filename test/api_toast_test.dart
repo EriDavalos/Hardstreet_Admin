@@ -53,7 +53,7 @@ void main() {
 
     expect(find.text('Cliente creado exitosamente'), findsOneWidget);
     final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
-    expect(icon.color, const Color(0xFF10B981));
+    expect(icon.color, const Color(0xFF2F6BFF));
   });
 
   testWidgets('editar y eliminar también avisan', (tester) async {

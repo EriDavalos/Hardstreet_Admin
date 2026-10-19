@@ -209,7 +209,7 @@ class _ServicesPageState extends State<ServicesPage> {
           label: 'Con carpeta asignada',
           count: _countWith,
           icon: Icons.folder_open_outlined,
-          color: const Color(0xFF16A34A),
+          color: const Color(0xFF2F6BFF),
         ),
         HsFilterOption(
           value: 'sin',

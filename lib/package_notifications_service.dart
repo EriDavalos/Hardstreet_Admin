@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart'
     show WidgetsBinding, WidgetsBindingObserver, AppLifecycleState;
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'hs_api.dart';
 import 'reminder_notifications_native.dart';
@@ -39,11 +40,20 @@ class PackageNotificationsService extends ChangeNotifier
   int _unread = 0;
   int get unread => _unread;
 
-  /// Ids ya notificados en esta sesión (no repetir la notificación nativa).
+  /// Ids ya notificados (no repetir la notificación nativa).
+  ///
+  /// Se PERSISTEN: si el aviso seguía sin leer, al reabrir la app ya no se
+  /// vuelve a notificar el mismo. Así «Avisar al cliente» se ve UNA vez, no
+  /// otra vez en cada arranque.
   final Set<int> _notified = <int>{};
+  static const _kNotifiedIds = 'app.notified.package';
 
   /// Backend de notificaciones nativas (sustituible en pruebas).
-  NativeReminderPlugin notifier = NativeReminderPlugin.instance;
+  PackageNotifier notifier = NativeReminderPlugin.instance;
+
+  /// De dónde se leen los avisos (sustituible en pruebas).
+  Future<({List<Map<String, dynamic>> items, int unread})> Function() fetch =
+      HsApi.myNotifications;
 
   void start() {
     if (_started) return;
@@ -73,7 +83,57 @@ class PackageNotificationsService extends ChangeNotifier
     _items = const [];
     _unread = 0;
     _notified.clear();
+    // Al cerrar sesión también se olvida lo ya notificado: otro usuario en el
+    // mismo teléfono tiene que recibir SUS avisos aunque el id coincida.
+    unawaited(_clearNotified());
     notifyListeners();
+  }
+
+  /// Lee del disco los ids ya notificados.
+  ///
+  /// Se lee en CADA consulta (no una vez por sesión) porque el worker nativo
+  /// de Android escribe en la MISMA preferencia mientras la app está cerrada:
+  /// así, al volver, la app sabe lo que el teléfono ya avisó y no lo repite.
+  Future<void> _loadNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_kNotifiedIds) ?? '';
+      for (final part in raw.split(',')) {
+        final id = int.tryParse(part.trim());
+        if (id != null) _notified.add(id);
+      }
+    } catch (_) {
+      // Sin storage: la protección vale solo para esta ejecución.
+    }
+  }
+
+  /// Guarda los ids ya notificados (los últimos 200 bastan: son avisos leídos
+  /// o ya mostrados; no hace falta crecer sin límite).
+  Future<void> _saveNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final ids = _notified.toList()..sort();
+      final keep = ids.length > 200 ? ids.sublist(ids.length - 200) : ids;
+      await sp.setString(_kNotifiedIds, keep.join(','));
+    } catch (_) {
+      // Sin storage: se sigue sin persistir.
+    }
+  }
+
+  /// SOLO PRUEBAS: olvida el set de la sesión SIN borrar el disco, para
+  /// simular «se cerró y se volvió a abrir la app».
+  @visibleForTesting
+  void forgetNotifiedSession() {
+    _notified.clear();
+  }
+
+  Future<void> _clearNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove(_kNotifiedIds);
+    } catch (_) {
+      // idem
+    }
   }
 
   @override
@@ -84,8 +144,9 @@ class PackageNotificationsService extends ChangeNotifier
   /// Consulta los avisos. No lanza: sin red se conserva lo último.
   Future<void> refresh() async {
     if (!_started) return;
+    await _loadNotified();
     try {
-      final data = await HsApi.myNotifications();
+      final data = await fetch();
       _items = data.items;
       _unread = data.unread;
       notifyListeners();
@@ -110,6 +171,7 @@ class PackageNotificationsService extends ChangeNotifier
     } catch (_) {
       // Mejor esfuerzo: «Mi paquete» sigue mostrando el aviso.
     }
+    await _saveNotified();
   }
 
   /// Marca UN aviso como leído (optimista + confirmación del servidor).

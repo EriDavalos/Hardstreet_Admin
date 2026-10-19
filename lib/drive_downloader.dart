@@ -265,7 +265,9 @@ List<int> _buildZip(_ZipJob job) {
       final name = e.path.split(Platform.pathSeparator).last;
       if (name.startsWith('.')) continue;
       final arcName = '$arcPrefix/$name';
-      if (e is File && kImageExtensions.contains(_extOf(name))) {
+      // Cualquier archivo entra en el ZIP: una carpeta del Drive ya no tiene
+      // solo fotos (antes los vídeos y documentos se quedaban fuera).
+      if (e is File) {
         addFile(e.path, arcName);
       } else if (e is Directory) {
         archive.add(ArchiveFile.string('$arcName/', ''));
@@ -289,11 +291,6 @@ List<int> _buildZip(_ZipJob job) {
   }
 
   return encoder.encode(archive);
-}
-
-String _extOf(String name) {
-  final i = name.lastIndexOf('.');
-  return i < 0 ? '' : name.substring(i).toLowerCase();
 }
 
 // ===================== Nombre sugerido =====================

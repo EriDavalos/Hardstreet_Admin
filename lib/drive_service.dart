@@ -7,7 +7,22 @@ import 'package:path_provider/path_provider.dart';
 import 'drive_base.dart';
 
 export 'drive_base.dart'
-    show DriveItem, kImageExtensions, DriveConn, DriveBusy, DriveUploadJob;
+    show
+        DriveItem,
+        // Tipos de archivo (foto, vídeo, audio, PDF, texto…): el Drive ya no
+        // guarda solo imágenes y la vista los distingue con esto.
+        DriveItemKind,
+        driveItemKindOf,
+        driveKindLabel,
+        driveExtensionLabel,
+        kImageExtensions,
+        kVideoExtensions,
+        kAudioExtensions,
+        kPdfExtensions,
+        kTextExtensions,
+        DriveConn,
+        DriveBusy,
+        DriveUploadJob;
 
 /// "Drive" local: almacena las imágenes del admin en carpetas reales del
 /// sistema (Documents/HardStreetDrive), estilo Google Drive.
@@ -95,7 +110,9 @@ class DriveService extends DriveBase {
             modified: e.statSync().modified,
             childCount: _countChildren(e),
           ));
-        } else if (e is File && hasImageExt(name)) {
+        } else if (e is File) {
+          // Cualquier archivo: el Drive ya no guarda solo fotos (vídeos, PDF,
+          // documentos). Antes no aparecían y era imposible verlos.
           final st = e.statSync();
           files.add(DriveItem(
             name: name,
@@ -144,8 +161,7 @@ class DriveService extends DriveBase {
           .listSync()
           .where((e) =>
               !(e.path.split(Platform.pathSeparator).last.startsWith('.')) &&
-              (e is Directory ||
-                  (e is File && hasImageExt(e.path))))
+              (e is Directory || e is File))
           .length;
     } catch (_) {
       return 0;
@@ -297,12 +313,15 @@ class DriveService extends DriveBase {
     await refresh();
   }
 
-  /// Renombra carpeta o imagen.
+  /// Renombra carpeta o archivo.
+  ///
+  /// Un ARCHIVO conserva su extensión: renombrar `foto.jpg` a `foto` la dejaba
+  /// invisible, y a un `video.mp4` se le pegaba la extensión dos veces.
   @override
   Future<void> rename(DriveItem item, String newName) async {
     var safe = _sanitize(newName);
     if (safe.isEmpty) throw 'El nombre no es válido';
-    if (!item.isFolder && !hasImageExt(safe)) {
+    if (!item.isFolder && extOf(safe).isEmpty) {
       safe = '$safe${extOf(item.name)}';
     }
     final oldPath = _absolute([...path, item.name]);
@@ -452,7 +471,7 @@ class DriveService extends DriveBase {
       final newPath = [dst.path, name].join(Platform.pathSeparator);
       if (entity is Directory) {
         await _copyDirectory(entity, Directory(newPath));
-      } else if (entity is File && hasImageExt(name)) {
+      } else if (entity is File) {
         await entity.copy(newPath);
       }
     }

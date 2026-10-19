@@ -358,7 +358,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
             label: 'En la computadora',
             count: local,
             icon: Icons.computer_rounded,
-            color: const Color(0xFF0D9488),
+            color: const Color(0xFF2F6BFF),
           ),
           HsFilterOption(
             value: 'server',
@@ -1098,8 +1098,18 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       );
     }
     // ===== No se pudo abrir: el motivo, en pantalla =====
+    // ATRÁS vuelve al listado (no cierra el módulo): es una "ventana" más.
     final problem = _openProblem;
-    if (problem != null) return _openProblemView(scheme, isCompact, problem);
+    if (problem != null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _closeOpen();
+        },
+        child: _openProblemView(scheme, isCompact, problem),
+      );
+    }
 
     final received = _receivedFolders;
     final mine = _myFolders;
@@ -1682,20 +1692,24 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           );
           return GridView.builder(
             controller: _scrollController,
+            // Mismo ritmo que la cuadrícula del Drive: mismos márgenes, mismo
+            // espacio entre tarjetas y mismo alto relativo al ancho.
             padding: EdgeInsets.fromLTRB(
               isCompact ? 14 : 24,
               4,
               isCompact ? 14 : 24,
-              24,
+              isCompact ? 150 : 110,
             ),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossCount,
               mainAxisSpacing: 12,
               crossAxisSpacing: 12,
-              // Alto FIJO (y no proporcional al ancho): la tarjeta lleva la
-              // ficha del compartido, quién lo comparte y su estado, y en una
-              // tarjeta angosta el texto ocupa más renglones.
-              mainAxisExtent: isCompact ? 236 : 240,
+              // Alto FIJO: la tarjeta lleva la ficha del compartido, quién lo
+              // comparte y su estado; en una tarjeta angosta el texto ocupa
+              // más renglones y con altura proporcional se recortaba. Ahora
+              // que permisos y estado van en una fila, las tarjetas quedan
+              // parecidas a las del Drive.
+              mainAxisExtent: isCompact ? 226 : 232,
             ),
             itemCount: rows.length,
             itemBuilder: (context, i) => Listener(
@@ -2173,7 +2187,7 @@ class _FolderCard extends StatelessWidget {
                         ],
                       ),
                       if (people.isNotEmpty) ...[
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 4),
                         Text(
                           shared
                               ? 'Compartida por ${people.join(', ')}'
@@ -2187,13 +2201,21 @@ class _FolderCard extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 6),
-                      // Lo que se concedió (o lo que YO puedo hacer): se ve en
-                      // el listado, sin abrir el diálogo de permisos.
-                      _PermIcons(perms: _entryPermissions(entry, shared)),
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: _ShareStatusPill(status: status),
+                      // Permisos y estado en UNA fila compacta: la tarjeta se
+                      // lee como la del Drive (nombre + ficha corta) y no se
+                      // alarga con tres renglones sueltos.
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          // Lo que se concedió (o lo que YO puedo hacer): se ve
+                          // en el listado sin abrir el diálogo de permisos.
+                          _PermIcons(
+                            perms: _entryPermissions(entry, shared),
+                          ),
+                          _ShareStatusPill(status: status),
+                        ],
                       ),
                     ],
                   ),

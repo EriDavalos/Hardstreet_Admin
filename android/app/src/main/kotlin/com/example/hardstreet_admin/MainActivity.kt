@@ -41,6 +41,20 @@ class MainActivity : FlutterActivity() {
         // Arranque en frío lanzado desde el widget: la acción queda pendiente
         // hasta que Dart pregunte (en ese momento el engine aún no existe).
         pendingWidgetTap = widgetTapFrom(intent)
+        // Avisos del paquete con la app CERRADA: se (re)agenda la consulta
+        // periódica en cada arranque (el sistema borra las alarmas al
+        // reiniciar el teléfono; el receptor las repone en BOOT_COMPLETED).
+        PackageNotificationsReceiver.schedule(this)
+    }
+
+    /**
+     * Al dejar la app (segundo plano o cerrarla) se re-agenda el aviso del
+     * paquete con la PRIMERA consulta casi inmediata: si el estudio manda el
+     * aviso justo después, el cliente se entera aunque ya no esté en la app.
+     */
+    override fun onStop() {
+        super.onStop()
+        PackageNotificationsReceiver.schedule(this)
     }
 
     override fun onNewIntent(intent: Intent) {

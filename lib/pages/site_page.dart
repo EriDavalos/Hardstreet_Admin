@@ -18,6 +18,7 @@ import '../widgets/drive_photo_picker.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/site_html_editor.dart';
+import '../widgets/site_html_preview.dart';
 import '../widgets/site_section_preview.dart';
 
 // ==================================================================
@@ -1294,6 +1295,68 @@ class _SitePageState extends State<SitePage> {
     SiteSectionTemplate t,
     String instance,
   ) async {
+    // En la app de escritorio la vista en grande es EL SITIO REAL: el mismo
+    // WebView del editor de HTML, mostrando ESTA sección con su CSS y su
+    // estructura exactas (no la maqueta de Flutter). En pruebas y en las
+    // plataformas sin WebView se mantiene la maqueta, que no necesita nativo.
+    if (isWindowsPlatform && !isTestEnvironment) {
+      await showHsModal<void>(
+        context: context,
+        builder: (ctx) => Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: SiteHtmlPreview(
+                  sectionId: instance,
+                  html: _html[instance] ?? '',
+                ),
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  bottom: false,
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                    color: Colors.black.withValues(alpha: .55),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.web_asset_rounded,
+                            size: 18, color: Colors.white),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            '${t.label} · vista real del sitio',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          label: const Text('Cerrar'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
     final screen = MediaQuery.sizeOf(context);
     final w = (screen.width * .84).clamp(320.0, 1040.0);
     final h = (screen.height * .58).clamp(200.0, 520.0);

@@ -137,7 +137,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
     final (color, icon, label) = checking
         ? (Colors.amber, Icons.sync, 'Verificando…')
         : online
-        ? (const Color(0xFF22A55B), Icons.cloud_done_outlined, 'Conectado')
+        ? (const Color(0xFF2F6BFF), Icons.cloud_done_outlined, 'Conectado')
         : (scheme.error, Icons.cloud_off_outlined, 'Sin conexión');
 
     return ListView(

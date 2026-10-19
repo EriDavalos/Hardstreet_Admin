@@ -237,7 +237,7 @@ class _ClientsPageState extends State<ClientsPage> {
           label: 'Con paquetes',
           count: _countWith,
           icon: Icons.inventory_2_outlined,
-          color: const Color(0xFF16A34A),
+          color: const Color(0xFF2F6BFF),
         ),
         HsFilterOption(
           value: 'sin',
@@ -454,19 +454,19 @@ class _ClientTile extends StatelessWidget {
                 padding: const EdgeInsets.all(2.5),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF0D9488).withValues(alpha: .10),
+                  color: const Color(0xFF2F6BFF).withValues(alpha: .10),
                   border: Border.all(
-                    color: const Color(0xFF0D9488).withValues(alpha: .28),
+                    color: const Color(0xFF2F6BFF).withValues(alpha: .28),
                   ),
                 ),
                 child: CircleAvatar(
                   radius: 19,
-                  backgroundColor: const Color(0xFF0D9488)
+                  backgroundColor: const Color(0xFF2F6BFF)
                       .withValues(alpha: .16),
                   child: Text(
                     initial,
                     style: const TextStyle(
-                      color: Color(0xFF0D9488),
+                      color: Color(0xFF2F6BFF),
                       fontWeight: FontWeight.w800,
                       fontSize: 15,
                     ),
@@ -513,7 +513,7 @@ class _ClientTile extends StatelessWidget {
                           label: pkgCount == 1
                               ? '1 paquete'
                               : '$pkgCount paquetes',
-                          tint: const Color(0xFF0D9488),
+                          tint: const Color(0xFF2F6BFF),
                         ),
                         // Ya no hay pastilla "Abrir": la tarjeta entera abre el
                         // administrador (y el menú "⋮" tiene la acción).
@@ -747,7 +747,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    const accent = Color(0xFF0D9488);
+    const accent = Color(0xFF2F6BFF);
 
     final nameField = TextField(
       controller: _name,
@@ -836,7 +836,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
                 height: 52,
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [Color(0xFF0D9488), Color(0xFF115E59)],
+                    colors: [Color(0xFF2F6BFF), Color(0xFF1D4ED8)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -1034,7 +1034,7 @@ class _AbonarDialogState extends State<_AbonarDialog> {
                 child: _MiniStat(
                   'Pagado',
                   hsMoney(paid, currency),
-                  const Color(0xFF10B981),
+                  const Color(0xFF2F6BFF),
                 ),
               ),
               Expanded(
@@ -1399,11 +1399,11 @@ class _PickerField extends StatelessWidget {
 // ==================================================================
 
 /// Colores de los movimientos y estados (se usan en todo el modal).
-const Color _kGreen = Color(0xFF10B981);
+const Color _kGreen = Color(0xFF2F6BFF);
 const Color _kAmber = Color(0xFFF59E0B);
 const Color _kBlue = Color(0xFF3B82F6);
 const Color _kRed = Color(0xFFEF4444);
-const Color _kTeal = Color(0xFF14B8A6);
+const Color _kTeal = Color(0xFF2F6BFF);
 
 /// Etiqueta / icono / color de cada tipo de movimiento.
 String _moveLabel(String kind) => switch (kind) {
@@ -1479,6 +1479,16 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   bool _loadingProgress = false;
 
   bool _busy = false;
+
+  /// Envío de «Avisar al cliente» en curso. Con dos toques seguidos solo sale
+  /// UN aviso: el segundo se ignora mientras el primero viaja al servidor.
+  bool _notifying = false;
+
+  /// Último servicio avisado y cuándo: pulsar dos veces el mismo botón en
+  /// pocos segundos tampoco manda el aviso otra vez.
+  int _lastNotifiedServiceId = 0;
+  DateTime? _lastNotifiedAt;
+  static const Duration _notifyCooldown = Duration(seconds: 5);
 
   /// Pestaña activa del detalle. `null` = aún sin elegir: en ventana
   /// angosta se abre con la ficha (presentación) y en escritorio con
@@ -2001,22 +2011,36 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       ),
     );
     if (ok != true) return;
+    final serviceId = (svc['id'] as num?)?.toInt() ?? 0;
+    // UN solo envío: si el primero sigue en curso, o se acaba de mandar el
+    // mismo aviso hace segundos, no se repite.
+    if (_notifying) return;
+    final last = _lastNotifiedAt;
+    if (serviceId != 0 &&
+        serviceId == _lastNotifiedServiceId &&
+        last != null &&
+        DateTime.now().difference(last) < _notifyCooldown) {
+      return;
+    }
+    _notifying = true;
     try {
-      final sent = await HsApi.notifyClient(
+      // El mensaje de éxito/aviso lo pone la capa de API con el texto del
+      // backend ("Aviso enviado al cliente" o "El paquete no tiene clientes
+      // activos"): antes se mostraba ADEMÁS un `_snack` y salían dos avisos.
+      await HsApi.notifyClient(
         purchasedPackageId: pkgId,
-        serviceId: (svc['id'] as num?)?.toInt(),
+        serviceId: serviceId,
         kind: 'fotos-disponibles',
         title: 'Ya puedes elegir tus fotos',
         body:
             'La selección de fotos de «$name» ya está disponible en Mi paquete.',
       );
-      _snack(
-        sent > 0
-            ? 'Aviso enviado al cliente'
-            : 'El paquete no tiene clientes activos',
-      );
+      _lastNotifiedServiceId = serviceId;
+      _lastNotifiedAt = DateTime.now();
     } catch (_) {
       // La capa de API ya avisó.
+    } finally {
+      _notifying = false;
     }
   }
 

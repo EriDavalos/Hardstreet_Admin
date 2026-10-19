@@ -446,13 +446,18 @@ class LocalShareAgent {
               'modified': await _modifiedMs(e),
               'childCount': await _childCount(e),
             });
-          } else if (e is File && _isImage(name)) {
+          } else if (e is File) {
+            // TODO lo que hay en la carpeta, no solo fotos: antes un vídeo o
+            // un PDF que estuviera ahí no aparecía en el panel (y por tanto
+            // era imposible verlo). `kind` es el mismo valor que usa el
+            // servidor del drive y que `DriveItemKind` en la app.
             final st = await e.stat();
             folders.add({
               'name': name,
               'isFolder': false,
               'modified': st.modified.millisecondsSinceEpoch,
               'size': st.size,
+              'kind': _kindOf(name),
             });
           }
         }
@@ -474,9 +479,13 @@ class LocalShareAgent {
         }
         final st = await file.stat();
         if (st.size > maxFileBytes) {
-          return const AgentReply(
+          return AgentReply(
             status: 413,
-            error: 'El archivo es demasiado grande para compartirlo',
+            error:
+                'El archivo pesa ${(st.size / (1024 * 1024)).round()} MB y el '
+                'compartido entrega hasta '
+                '${maxFileBytes ~/ (1024 * 1024)} MB. Cópialo al Drive para '
+                'poder verlo desde cualquier parte',
           );
         }
         final name = target.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).last;
@@ -728,7 +737,8 @@ class LocalShareAgent {
     return candidate;
   }
 
-  /// Copia recursiva (solo imágenes y carpetas, igual que el Drive).
+  /// Copia recursiva (carpetas y archivos de CUALQUIER tipo, igual que el
+  /// Drive: si solo se copiaran fotos, un vídeo se perdería al copiar).
   static Future<void> _copyDir(Directory src, Directory dst) async {
     await dst.create(recursive: true);
     await for (final e in src.list(followLinks: false)) {
@@ -737,7 +747,7 @@ class LocalShareAgent {
       final d = '${dst.path}/$name';
       if (e is Directory) {
         await _copyDir(e, Directory(d));
-      } else if (e is File && _isImage(name)) {
+      } else if (e is File) {
         await e.copy(d);
       }
     }
@@ -762,6 +772,37 @@ class LocalShareAgent {
   static bool _isImage(String name) =>
       RegExp(r'\.(jpe?g|png|gif|webp|bmp)$', caseSensitive: false).hasMatch(name);
 
+  /// Tipo del archivo por su extensión: `image`, `video`, `audio`, `pdf`,
+  /// `text` u `other` (los mismos valores que manda el servidor del drive).
+  static String _kindOf(String name) {
+    if (_isImage(name)) return 'image';
+    final ext = name.contains('.')
+        ? name.split('.').last.toLowerCase()
+        : '';
+    const video = {
+      'mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', '3gp', 'wmv', 'mpeg',
+      'mpg', 'ogv',
+    };
+    const audio = {
+      'mp3', 'm4a', 'wav', 'ogg', 'oga', 'aac', 'flac', 'opus',
+    };
+    const text = {
+      'txt', 'csv', 'json', 'md', 'log', 'xml', 'yml', 'yaml', 'ini', 'srt',
+      'vtt',
+    };
+    if (video.contains(ext)) return 'video';
+    if (audio.contains(ext)) return 'audio';
+    if (ext == 'pdf') return 'pdf';
+    if (text.contains(ext)) return 'text';
+    return 'other';
+  }
+
+  /// Tipo MIME del archivo.
+  ///
+  /// Importa de verdad para los VÍDEOS: el navegador integrado (el reproductor
+  /// del panel) se niega a reproducir un `<video>` servido como
+  /// `application/octet-stream`. Si el archivo no es de un tipo conocido, se
+  /// manda el genérico y se ofrece descargarlo.
   static String _mimeOf(String name) {
     final ext = name.contains('.')
         ? name.split('.').last.toLowerCase()
@@ -778,6 +819,58 @@ class LocalShareAgent {
         return 'image/webp';
       case 'bmp':
         return 'image/bmp';
+      case 'mp4':
+      case 'm4v':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'webm':
+        return 'video/webm';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'avi':
+        return 'video/x-msvideo';
+      case '3gp':
+        return 'video/3gpp';
+      case 'wmv':
+        return 'video/x-ms-wmv';
+      case 'mpeg':
+      case 'mpg':
+        return 'video/mpeg';
+      case 'ogv':
+        return 'video/ogg';
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'm4a':
+        return 'audio/mp4';
+      case 'wav':
+        return 'audio/wav';
+      case 'ogg':
+      case 'oga':
+        return 'audio/ogg';
+      case 'aac':
+        return 'audio/aac';
+      case 'flac':
+        return 'audio/flac';
+      case 'opus':
+        return 'audio/opus';
+      case 'pdf':
+        return 'application/pdf';
+      case 'txt':
+      case 'log':
+      case 'srt':
+      case 'vtt':
+        return 'text/plain';
+      case 'csv':
+        return 'text/csv';
+      case 'json':
+        return 'application/json';
+      case 'md':
+        return 'text/markdown';
+      case 'xml':
+        return 'application/xml';
+      case 'zip':
+        return 'application/zip';
       default:
         return 'application/octet-stream';
     }
@@ -791,14 +884,15 @@ class LocalShareAgent {
     }
   }
 
-  /// ¿Cuántos hijos "válidos" tiene la carpeta? (los mismos que se listarían).
+  /// ¿Cuántos hijos "válidos" tiene la carpeta? (los mismos que se listarían:
+  /// carpetas y archivos de cualquier tipo).
   static Future<int> _childCount(Directory dir) async {
     try {
       var n = 0;
       await for (final e in dir.list(followLinks: false)) {
         final name = e.uri.pathSegments.where((s) => s.isNotEmpty).last;
         if (name.startsWith('.')) continue;
-        if (e is Directory || (e is File && _isImage(name))) n++;
+        if (e is Directory || e is File) n++;
       }
       return n;
     } catch (_) {

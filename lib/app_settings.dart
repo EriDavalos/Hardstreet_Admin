@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_constants.dart';
 import 'drive_host.dart';
 import 'hs_api.dart';
 
@@ -27,6 +28,13 @@ class AppSettings extends ChangeNotifier {
   static const _kShareServing = 'app.share.serving';
   static const _kShareServingSet = 'app.share.serving.set';
   static const _kDriveHost = 'app.drive.host';
+
+  /// Copia del token y de la base del CRUD para el AVISO EN SEGUNDO PLANO
+  /// (Android): el worker nativo consulta los avisos del paquete aunque la app
+  /// esté cerrada. Es una copia aparte de "Recordarme": los avisos llegan
+  /// aunque el usuario no haya pedido recordar la sesión.
+  static const _kNotifyToken = 'app.notify.token';
+  static const _kNotifyBase = 'app.notify.base';
 
   bool _loaded = false;
   bool _dark = false;
@@ -92,6 +100,12 @@ class AppSettings extends ChangeNotifier {
     try {
       final sp = await SharedPreferences.getInstance();
       await sp.setBool(_kRemember, _remember);
+      // El worker nativo del teléfono necesita el token y la base del CRUD
+      // para avisar con la app cerrada, haya "Recordarme" o no.
+      if (token != null && token.isNotEmpty) {
+        await sp.setString(_kNotifyToken, token);
+        await sp.setString(_kNotifyBase, AppConstants.crudApiBase);
+      }
       if (_remember && _savedToken != null) {
         await sp.setString(_kToken, _savedToken!);
         await sp.setString(
@@ -118,6 +132,9 @@ class AppSettings extends ChangeNotifier {
       await sp.setBool(_kRemember, false);
       await sp.remove(_kToken);
       await sp.remove(_kUser);
+      // Sin sesión no hay avisos que llevar al teléfono (el worker nativo
+      // para solo al ver que ya no hay token).
+      await sp.remove(_kNotifyToken);
     } catch (_) {/* noop */}
     notifyListeners();
   }
@@ -128,6 +145,9 @@ class AppSettings extends ChangeNotifier {
     try {
       final sp = await SharedPreferences.getInstance();
       _dark = sp.getBool(_kDark) ?? false;
+      // La base del CRUD la lee el worker nativo de avisos (Android): se
+      // actualiza en cada arranque por si cambió la compilación.
+      await sp.setString(_kNotifyBase, AppConstants.crudApiBase);
       _shareServing = sp.getBool(_kShareServing) ?? false;
       // Las instalaciones viejas no tienen esta marca: si el switch estaba
       // apagado se sigue pudiendo encender solo al haber carpetas; si estaba
@@ -140,6 +160,12 @@ class AppSettings extends ChangeNotifier {
       DriveHost.set(sp.getString(_kDriveHost));
       _remember = sp.getBool(_kRemember) ?? false;
       _savedToken = sp.getString(_kToken);
+      // Instalaciones anteriores a los avisos en segundo plano: el worker
+      // nativo necesita el token y todavía no lo tiene. Se copia en cada
+      // arranque con sesión guardada, sin esperar a un login nuevo.
+      if (_savedToken != null && _savedToken!.isNotEmpty) {
+        await sp.setString(_kNotifyToken, _savedToken!);
+      }
       final userJson = sp.getString(_kUser);
       if (userJson != null) {
         try {

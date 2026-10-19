@@ -296,7 +296,7 @@ void main() {
 
     expect(find.text('2 elegidas'), findsOneWidget);
 
-    await _tap(tester, find.text('Agregar a mi selección'));
+    await _tap(tester, find.text('Agregar'));
     expect(find.text('Mis fotos · Álbum de fotos'), findsOneWidget);
     expect(find.text('2 elegidas'), findsOneWidget);
 
@@ -355,7 +355,7 @@ void main() {
     // El selector de fotos también se ve completo en el celular.
     await _tap(tester, find.byKey(const ValueKey('service-photos-add')));
     expect(find.text('Elegir fotos · Álbum de fotos'), findsOneWidget);
-    expect(find.text('Agregar a mi selección'), findsOneWidget);
+    expect(find.text('Agregar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

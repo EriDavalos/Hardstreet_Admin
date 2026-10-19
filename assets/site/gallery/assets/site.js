@@ -110,6 +110,8 @@ const SITE_SECTIONS_DEFAULT = {
   services: { servicesPerSlide: 4 },
   packages: { groupByCategory: true },
   testimonials: { items: [] },
+  // Secciones LIBRES (las agrega el panel clonando su plantilla oculta).
+  custom: {},
   contact: { whatsapp: '' },
   footer: {},
   brand: {},

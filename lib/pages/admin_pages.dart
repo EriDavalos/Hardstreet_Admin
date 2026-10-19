@@ -518,13 +518,13 @@ class _DashboardPageState extends State<DashboardPage> {
         'Clientes',
         '${_clients.length}',
         Icons.badge_rounded,
-        const Color(0xFF0D9488),
+        const Color(0xFF2F6BFF),
       ),
       _Metric(
         'En catálogo',
         '${_packages.length}',
         Icons.card_giftcard_rounded,
-        const Color(0xFF10B981),
+        const Color(0xFF2F6BFF),
       ),
       _Metric(
         'Valor del catálogo',
@@ -675,13 +675,13 @@ class _DashboardPageState extends State<DashboardPage> {
         'Clientes',
         '${_clients.length}',
         Icons.badge_rounded,
-        const Color(0xFF0D9488),
+        const Color(0xFF2F6BFF),
       ),
       _Metric(
         'Paquetes en catálogo',
         '${_packages.length}',
         Icons.card_giftcard_rounded,
-        const Color(0xFF10B981),
+        const Color(0xFF2F6BFF),
       ),
       _Metric(
         'Valor del catálogo',
@@ -745,14 +745,14 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Ganancias',
               amount: t.ganancias,
               icon: Icons.payments_outlined,
-              tint: FinanceColors.green,
+              tint: FinanceColors.positive,
               note: 'Abonos cobrados',
             ),
             FinanceKpi(
               label: 'Disponible',
               amount: t.disponible,
               icon: Icons.savings_outlined,
-              tint: FinanceColors.green,
+              tint: FinanceColors.positive,
             ),
             FinanceKpi(
               label: 'Ahorro',
@@ -855,7 +855,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final pct = (total != null && total > 0)
         ? (used / total).clamp(0.0, 1.0)
         : null;
-    const green = Color(0xFF10B981);
+    const green = Color(0xFF2F6BFF);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -920,7 +920,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final pct = (total != null && total > 0)
         ? (used / total).clamp(0.0, 1.0)
         : null;
-    const green = Color(0xFF10B981);
+    const green = Color(0xFF2F6BFF);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1370,12 +1370,12 @@ class _UpcomingRow extends StatelessWidget {
   final Map<String, dynamic> agenda;
 
   static const _palette = [
-    Color(0xFF0D9488),
-    Color(0xFF10B981),
+    Color(0xFF2F6BFF),
+    Color(0xFF2F6BFF),
     Color(0xFFF59E0B),
     Color(0xFF3B82F6),
     Color(0xFFEF4444),
-    Color(0xFF14B8A6),
+    Color(0xFF2F6BFF),
   ];
 
   @override
@@ -1596,10 +1596,10 @@ class _TierDonut extends StatelessWidget {
   final List<Map<String, dynamic>> packages;
 
   static const _palette = <Color>[
-    Color(0xFF0D9488), // turquesa
+    Color(0xFF2F6BFF), // turquesa
     Color(0xFF3B82F6), // azul
     Color(0xFFF59E0B), // ámbar
-    Color(0xFF10B981), // verde
+    Color(0xFF2F6BFF), // verde
     Color(0xFFEC4899), // rosa
   ];
 
@@ -1710,7 +1710,7 @@ class _DonutPainter extends CustomPainter {
     canvas.drawCircle(
       center,
       radius * 0.83,
-      Paint()..color = const Color(0xFF0D9488).withValues(alpha: .10),
+      Paint()..color = const Color(0xFF2F6BFF).withValues(alpha: .10),
     );
     var start = -math.pi / 2;
     for (var i = 0; i < values.length; i++) {

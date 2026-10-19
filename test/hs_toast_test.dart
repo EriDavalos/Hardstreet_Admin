@@ -20,15 +20,15 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('el éxito sale VERDE con el mensaje del backend', (tester) async {
+  testWidgets('el éxito sale con el azul de la app', (tester) async {
     await _pumpHost(tester);
     HsToast.success('Cliente creado exitosamente');
     await _settle(tester);
 
     expect(find.text('Cliente creado exitosamente'), findsOneWidget);
     final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
-    expect(icon.color, const Color(0xFF10B981),
-        reason: 'verde = operación exitosa');
+    expect(icon.color, const Color(0xFF2F6BFF),
+        reason: 'azul de la app = operación exitosa');
   });
 
   testWidgets('el error sale ROJO y muestra el detalle del backend',

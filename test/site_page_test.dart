@@ -94,8 +94,11 @@ void main() {
       expect(hooksOf(html, 'data-hs-img'),
           kSiteImages.map((f) => f.key).toSet(),
           reason: 'Las imágenes del panel y los ganchos del HTML deben ser los mismos');
-      expect(hooksOf(html, 'data-hs-section'),
-          kSiteSections.map((f) => f.key).toSet(),
+      // La portada tiene una sección OCULTA (`custom`) que es la plantilla
+      // interna de la que se clonan las "Secciones libres" del panel: no es
+      // una sección del catálogo (sus copias viajan en `extraSections`).
+      final sections = hooksOf(html, 'data-hs-section')..remove('custom');
+      expect(sections, kSiteSections.map((f) => f.key).toSet(),
           reason: 'Las secciones del panel y los ganchos del HTML deben ser los mismos');
     });
 

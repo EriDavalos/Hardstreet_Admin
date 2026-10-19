@@ -120,7 +120,10 @@ void main() {
       for (final t in kSiteSectionTemplates) {
         final hasTexts = kSiteTexts.any((f) => f.sectionKey == t.key);
         final hasImages = kSiteImages.any((f) => f.sectionKey == t.key);
-        expect(hasTexts || hasImages || t.props.isNotEmpty, isTrue,
+        // La "Sección libre" se edita con su HTML propio (el editor que toda
+        // tarjeta trae encima); no tiene campos de texto ni de imagen.
+        final htmlOnly = t.key == 'custom';
+        expect(hasTexts || hasImages || t.props.isNotEmpty || htmlOnly, isTrue,
             reason: 'La sección "${t.key}" no tiene ningún campo editable');
       }
     });

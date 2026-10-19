@@ -7,6 +7,10 @@
     <!-- Avisos de eventos (falta 1 semana / falta 1 día). Android 13+ exige
          que el usuario conceda este permiso: la app lo pide al iniciar. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Avisos del paquete con la app CERRADA: una alarma despierta al
+         receptor cada 15 min. Al reiniciar el teléfono hay que volver a
+         pedirla, de ahí este permiso. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <!-- Descargas del Drive (Android 9 y anteriores): escribir en la carpeta
          pública de Descargas. En Android 10+ se usa MediaStore y este permiso
          NO se declara (maxSdkVersion lo limita a los sistemas que lo exigen). -->
@@ -58,6 +62,17 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/event_widget_info" />
+        </receiver>
+        <!-- Avisos del paquete con la app cerrada: consulta los avisos
+             pendientes y publica una notificación (canal `paquete`). -->
+        <receiver
+            android:name=".PackageNotificationsReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <!-- Al actualizar la app se borran las alarmas: se reponen. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
         </receiver>
         <!-- Lista del widget: RemoteViewsService que llena el listado de
              eventos (así se ven TODOS y el widget se puede desplazar). Solo el

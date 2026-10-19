@@ -1088,7 +1088,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   label: 'Puedo elegir fotos',
                   count: services.where(_photoService).length,
                   icon: Icons.photo_library_outlined,
-                  color: const Color(0xFF0D9488),
+                  color: const Color(0xFF2F6BFF),
                 ),
                 HsFilterOption(
                   value: 'pendientes',
@@ -1102,7 +1102,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   label: 'Completados',
                   count: doneCount,
                   icon: Icons.task_alt_rounded,
-                  color: const Color(0xFF16A34A),
+                  color: const Color(0xFF2F6BFF),
                 ),
               ],
             ),
@@ -1135,7 +1135,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               title: 'Elige tus fotos',
               subtitle: 'Marca tus favoritas de la carpeta compartida.',
               icon: Icons.photo_library_outlined,
-              accent: const Color(0xFF0D9488),
+              accent: const Color(0xFF2F6BFF),
               services: photos,
             ),
             const SizedBox(height: 14),
@@ -1157,7 +1157,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               title: 'Completados',
               subtitle: 'Servicios que ya entregamos.',
               icon: Icons.task_alt_rounded,
-              accent: const Color(0xFF16A34A),
+              accent: const Color(0xFF2F6BFF),
               services: completed,
             ),
         ],
@@ -1234,7 +1234,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final done = _isDone(s);
     final progress = _isInProgress(s);
     final color = done
-        ? const Color(0xFF16A34A)
+        ? const Color(0xFF2F6BFF)
         : progress
         ? const Color(0xFF3B82F6)
         : const Color(0xFFD97706);
@@ -1248,14 +1248,14 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
         color: done
-            ? const Color(0xFF16A34A).withValues(alpha: .05)
+            ? const Color(0xFF2F6BFF).withValues(alpha: .05)
             : scheme.surface,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: done
-              ? const Color(0xFF16A34A).withValues(alpha: .28)
+              ? const Color(0xFF2F6BFF).withValues(alpha: .28)
               : canPick
-              ? const Color(0xFF0D9488).withValues(alpha: .32)
+              ? const Color(0xFF2F6BFF).withValues(alpha: .32)
               : scheme.outlineVariant.withValues(alpha: .50),
         ),
       ),
@@ -1338,46 +1338,69 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                       ],
                       if (canPick) ...[
                         const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.photo_library_outlined,
-                              size: 13,
-                              color: const Color(0xFF0D9488),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                items == 0
-                                    ? (photosMax > 0
-                                          ? 'Puedes elegir hasta $photosMax fotos'
-                                          : 'Puedes elegir tus fotos')
-                                    : photosMax > 0
-                                    ? '$items de $photosMax fotos elegidas'
-                                    : '$items '
-                                          '${items == 1 ? 'foto elegida' : 'fotos elegidas'}',
-                                style: const TextStyle(
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF0D9488),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (photosMax > 0) ...[
-                          const SizedBox(height: 5),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(99),
-                            child: LinearProgressIndicator(
-                              value: (items / photosMax).clamp(0.0, 1.0),
-                              minHeight: 4,
-                              color: const Color(0xFF0D9488),
-                              backgroundColor: const Color(0xFF0D9488)
-                                  .withValues(alpha: .14),
+                        // Panel de la selección de fotos: el avance se lee de
+                        // un vistazo (cuántas llevas y su barra), en el mismo
+                        // azul de la app que el resto de las acciones.
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2F6BFF)
+                                .withValues(alpha: .07),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF2F6BFF)
+                                  .withValues(alpha: .24),
                             ),
                           ),
-                        ],
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.photo_library_outlined,
+                                    size: 14,
+                                    color: Color(0xFF2F6BFF),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      items == 0
+                                          ? (photosMax > 0
+                                                ? 'Puedes elegir hasta '
+                                                      '$photosMax fotos'
+                                                : 'Puedes elegir tus fotos')
+                                          : photosMax > 0
+                                          ? '$items de $photosMax fotos '
+                                                'elegidas'
+                                          : "$items "
+                                                '${items == 1 ? 'foto elegida' : 'fotos elegidas'}',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFF2F6BFF),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (photosMax > 0) ...[
+                                const SizedBox(height: 6),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(99),
+                                  child: LinearProgressIndicator(
+                                    value: (items / photosMax)
+                                        .clamp(0.0, 1.0),
+                                    minHeight: 5,
+                                    color: const Color(0xFF2F6BFF),
+                                    backgroundColor: const Color(0xFF2F6BFF)
+                                        .withValues(alpha: .16),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -1397,23 +1420,27 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   if (pickOn)
-                    FilledButton.tonalIcon(
+                    // Mismo diseño que "Entrar a mi Drive": botón sólido con el
+                    // azul de la app y texto claro.
+                    FilledButton.icon(
                       onPressed: () => _pickServiceItems(s, name),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 11,
+                          horizontal: 12,
                           vertical: 8,
                         ),
-                        backgroundColor: const Color(0xFF0D9488)
-                            .withValues(alpha: .13),
-                        foregroundColor: const Color(0xFF0F766E),
                         textStyle: const TextStyle(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-                      icon: const Icon(Icons.photo_library_outlined, size: 16),
+                      icon: Icon(
+                        items > 0
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.photo_library_outlined,
+                        size: 16,
+                      ),
                       label: Text(
                         items > 0 ? 'Mis fotos ($items)' : 'Elegir fotos',
                       ),

@@ -122,7 +122,12 @@ void main() {
         throwsA(isA<StateError>()));
   });
 
-  test('el listado trae carpetas e imágenes (y salta lo oculto)', () async {
+  test('el listado trae TODO lo que hay: carpetas, fotos, vídeos y texto',
+      () async {
+    // Un vídeo en la carpeta del dueño: antes NO aparecía (el listado solo
+    // servía imágenes) y por eso era imposible verlo desde el panel.
+    File('${tmp.path}/clip.mp4').writeAsBytesSync(List<int>.filled(16, 1));
+
     final reply = await LocalShareAgent.instance.describeRequest(
       op: 'list',
       root: tmp.path,
@@ -136,8 +141,8 @@ void main() {
 
     expect(names, contains('Bodas'));
     expect(names, contains('Foto.JPG'));
-    expect(names, isNot(contains('nota.txt')),
-        reason: 'solo imágenes, igual que el drive');
+    expect(names, contains('nota.txt'), reason: 'el Drive ya no es solo fotos');
+    expect(names, contains('clip.mp4'));
     expect(names, isNot(contains('.oculto.jpg')));
 
     final folder = items.firstWhere((e) => e['name'] == 'Bodas');
@@ -147,6 +152,11 @@ void main() {
     expect(image['isFolder'], isFalse);
     expect(image['size'], 8);
     expect(image['modified'], isA<int>());
+    expect(image['kind'], 'image');
+    // El TIPO viaja con cada archivo: con él el panel pinta el icono y elige
+    // el visor (reproductor para el vídeo, lectura para el texto).
+    expect(items.firstWhere((e) => e['name'] == 'clip.mp4')['kind'], 'video');
+    expect(items.firstWhere((e) => e['name'] == 'nota.txt')['kind'], 'text');
   });
 
   test('un archivo se sirve con sus bytes y su tipo', () async {
@@ -159,6 +169,22 @@ void main() {
     expect(reply.name, 'Foto.JPG');
     expect(reply.mime, 'image/jpeg');
     expect(reply.bytes.length, 8);
+  });
+
+  test('un vídeo se sirve con el tipo que el reproductor necesita', () async {
+    // `video/mp4` (y no el genérico) es lo que hace que el reproductor del
+    // panel arranque en vez de quedarse en negro.
+    File('${tmp.path}/clip.mp4').writeAsBytesSync(const [0, 1, 2, 3]);
+
+    final reply = await LocalShareAgent.instance.describeRequest(
+      op: 'file',
+      root: tmp.path,
+      path: 'clip.mp4',
+    );
+
+    expect(reply.status, 200);
+    expect(reply.mime, 'video/mp4');
+    expect(reply.bytes.length, 4);
   });
 
   test('la MINIATURA se reduce ANTES de mandarla (no sube el original)', () async {

@@ -10,12 +10,19 @@ abstract class ReminderNotifier {
   Future<void> showAll(List<Map<String, dynamic>> fresh);
 }
 
+/// Lo mínimo para avisar de los avisos del PAQUETE (canal aparte). Es una
+/// interfaz propia para poder sustituirla en pruebas sin arrastrar los avisos
+/// de eventos.
+abstract class PackageNotifier {
+  Future<void> showPackageAll(List<Map<String, dynamic>> fresh);
+}
+
 /// Muestra los avisos de eventos como notificaciones NATIVAS (Android).
 ///
 /// `flutter_local_notifications` soporta Android/iOS/macOS/Linux, pero NO
 /// Windows. En Windows el aviso visible es la campanita con badge de la top
 /// bar, así que aquí solo se actúa cuando la plataforma tiene soporte real.
-class NativeReminderPlugin implements ReminderNotifier {
+class NativeReminderPlugin implements ReminderNotifier, PackageNotifier {
   NativeReminderPlugin._();
   static final NativeReminderPlugin instance = NativeReminderPlugin._();
 
@@ -74,6 +81,7 @@ class NativeReminderPlugin implements ReminderNotifier {
 
   /// Notifica los avisos nuevos del PAQUETE. Los ids se desplazan para no
   /// chocar con los de los recordatorios en la bandeja del teléfono.
+  @override
   Future<void> showPackageAll(List<Map<String, dynamic>> fresh) =>
       _showAll(fresh, _packageDetails, 500000, 'Aviso de tu paquete');
 

@@ -270,11 +270,11 @@ class SharedDrive extends DriveBase {
 
   @override
   Future<void> rename(DriveItem item, String newName) async {
-    // Una IMAGEN conserva su extensión: el Drive lista solo imágenes, así que
-    // renombrar "foto.jpg" a "foto" sin más la volvía invisible (parecía que
-    // el renombrado borraba el archivo). Igual que en el Drive local.
+    // Un ARCHIVO conserva su extensión: renombrar "foto.jpg" a "foto" sin más
+    // la volvía invisible (parecía que el renombrado borraba el archivo) y a
+    // un "video.mp4" le pegaba la extensión dos veces. Igual que en el Drive.
     var name = newName.trim();
-    if (!item.isFolder && !hasImageExt(name)) {
+    if (!item.isFolder && extOf(name).isEmpty) {
       name = '$name${extOf(item.name)}';
     }
     if (name.isEmpty || name == item.name) return;

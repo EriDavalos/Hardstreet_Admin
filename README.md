@@ -456,6 +456,16 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   información del archivo y su posición ("3 de 12") encima de la foto,
   botones de zoom, **Descargar** sin salir del visor, navegación con las
   flechas del teclado (← →) y cierre con Esc.
+- **El Drive (y cada carpeta compartida) no es solo fotos**: la carpeta lista
+  también vídeos, audio, PDF, texto y cualquier otro archivo, cada uno con su
+  icono y su extensión. Al tocarlo se abre el visor que le toca: **vídeo/audio**
+  se reproducen ahí mismo (se sirven por HTTP y se pueden adelantar) y con
+  “Siguiente” se pasa al siguiente de la carpeta; los **texto** (txt, csv, json,
+  log…) se leen dentro del panel; el **PDF** se ve en el navegador integrado (en
+  Android no, allí se ofrece descargarlo); y lo que no tiene visor propio (zip,
+  docx, psd…) lo dice y ofrece **Descargar** o **Abrir con el sistema** (el
+  programa por defecto de la computadora). La subida desde el panel sigue
+  aceptando solo imágenes: los demás archivos se ven si están en la carpeta.
 - **Descargas**: en escritorio se elige el destino con el diálogo del sistema;
   en **Android** no existe ese diálogo (`file_selector` no implementa
   `getSavePath()`, de ahí el `UnimplementedError`), así que el archivo (o el

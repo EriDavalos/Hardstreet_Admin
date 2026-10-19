@@ -44,7 +44,7 @@ void main() {
       expect(drive.items.map((i) => i.name), contains('src (1).jpg'));
     });
 
-    test('solo lista imágenes con extensiones conocidas', () async {
+    test('lista los archivos de cualquier tipo (no solo imágenes)', () async {
       await drive.uploadFromPaths([srcFile('foto.png', [9]).path]);
       final txt = File([srcBase, 'notas.txt'].join('/'))
         ..writeAsStringSync('hola');
@@ -53,7 +53,17 @@ void main() {
       await drive.refresh();
       final names = drive.items.map((i) => i.name).toList();
       expect(names, contains('foto.png'));
-      expect(names, isNot(contains('notas.txt')));
+      // Un archivo que no es una foto TAMBIÉN se lista: antes se quedaba
+      // invisible en la carpeta y era imposible verlo (ni un vídeo ni un PDF).
+      expect(names, contains('notas.txt'));
+      expect(
+        drive.items.firstWhere((i) => i.name == 'notas.txt').kind,
+        DriveItemKind.text,
+      );
+      expect(
+        drive.items.firstWhere((i) => i.name == 'foto.png').kind,
+        DriveItemKind.image,
+      );
     });
 
     test('rename y delete funcionan', () async {

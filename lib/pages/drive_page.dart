@@ -27,6 +27,8 @@ import '../../theme.dart';
 import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
 import '../../widgets/confirm_dialog.dart';
+import '../../widgets/drive_file_visuals.dart';
+import '../../widgets/drive_media_viewer.dart';
 import '../../widgets/drive_thumb.dart';
 import '../../widgets/hs_modal.dart';
 
@@ -1098,20 +1100,52 @@ class _DrivePageState extends State<DrivePage> {
     }
   }
 
+  /// Abre el archivo tocado con EL VISOR QUE LE CORRESPONDE.
+  ///
+  /// Antes se pasaba cualquiera a `showDriveImageViewer` y, al tocar un vídeo
+  /// o un PDF, quedaba una pantalla negra: el visor solo entiende de fotos.
+  /// Ahora la carpeta decide:
+  ///
+  ///   * FOTO   → visor de imágenes (zoom, flechas, descarga).
+  ///   * VÍDEO/AUDIO → reproductor, pudiendo pasar al siguiente de la carpeta.
+  ///   * PDF/TEXTO/OTROS → su ficha del visor de archivos (texto, PDF o
+  ///     descargar/abrir con el sistema).
   void _openViewer(DriveItem item) {
-    final images = widget.drive.visibleItems
+    final files = widget.drive.visibleItems
         .where((i) => !i.isFolder)
         .toList(growable: false);
-    final index = images.indexWhere((i) => i.name == item.name);
-    showDriveImageViewer(
+    // Descargar SIN salir del visor. Sin permiso de descarga, el visor ni
+    // siquiera muestra el botón.
+    final onDownload = _driveCan(widget.drive, 'download')
+        ? (DriveItem it) => _downloadItems([it])
+        : null;
+    if (item.kind == DriveItemKind.image) {
+      final photos = files
+          .where((i) => i.kind == DriveItemKind.image)
+          .toList(growable: false);
+      final index = photos.indexWhere((i) => i.name == item.name);
+      showDriveImageViewer(
+        context,
+        drive: widget.drive,
+        images: photos,
+        initialIndex: index < 0 ? 0 : index,
+        onDownload: onDownload,
+      );
+      return;
+    }
+    // Un vídeo o una canción se abren con la LISTA de los que hay en la
+    // carpeta: así se pasa al siguiente sin cerrar el reproductor.
+    final list = item.isPlayable
+        ? files.where((i) => i.isPlayable).toList(growable: false)
+        : <DriveItem>[item];
+    final index = list.indexWhere((i) => i.name == item.name);
+    showDriveFileViewer(
       context,
       drive: widget.drive,
-      images: images,
+      item: item,
+      playlist: list.isEmpty ? [item] : list,
       initialIndex: index < 0 ? 0 : index,
-      // Descargar SIN salir del visor.
-      // Sin permiso de descarga el visor ni siquiera muestra el botón.
-      onDownload:
-          _driveCan(widget.drive, 'download') ? (item) => _downloadItems([item]) : null,
+      onDownload: onDownload,
     );
   }
 
@@ -1315,12 +1349,18 @@ class _DrivePageState extends State<DrivePage> {
 
     // Botón "atrás" del SISTEMA (Android): mientras no estemos en la raíz del
     // drive, NO cierra la app — vuelve a la carpeta padre. En la raíz el
-    // sistema procede con normalidad (minimiza la app).
+    // sistema procede con normalidad (minimiza la app), salvo cuando la página
+    // es parte de otra (una carpeta compartida abierta dentro del módulo
+    // Archivos compartidos): ahí [onBack] vuelve al listado.
     return PopScope(
-      canPop: drive.path.isEmpty,
+      canPop: drive.path.isEmpty && widget.onBack == null,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        widget.drive.goUp();
+        if (drive.path.isNotEmpty) {
+          widget.drive.goUp();
+        } else {
+          widget.onBack?.call();
+        }
       },
       child: DropTarget(
       onDragEntered: (_) {
@@ -2582,7 +2622,7 @@ class _GridItem extends StatelessWidget {
                             onContextMenu: onContextMenu,
                             onDownload: onDownload,
                           )
-                        : _ImageCard(
+                        : _FileCard(
                             item: item,
                             drive: drive,
                             onOpen: onOpen,
@@ -2829,8 +2869,14 @@ class _FolderCard extends StatelessWidget {
   }
 }
 
-class _ImageCard extends StatelessWidget {
-  const _ImageCard({
+/// Tarjeta de un ARCHIVO del Drive: la foto se ve (miniatura) y todo lo demás
+/// muestra su tipo con un icono y su extensión (un vídeo, un PDF, un ZIP).
+///
+/// Antes esta tarjeta pedía una MINIATURA para cualquier archivo: al abrir una
+/// carpeta con vídeos, cada uno pedía su "miniatura" al servidor (que solo sabe
+/// de imágenes) y quedaban recuadros rotos.
+class _FileCard extends StatelessWidget {
+  const _FileCard({
     required this.item,
     required this.drive,
     required this.onOpen,
@@ -2855,7 +2901,9 @@ class _ImageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final src = drive.thumbSource(item, width: 480);
+    // Solo las FOTOS tienen miniatura: el servidor no sabe generarla de un
+    // vídeo ni de un PDF (y pedirla era pintar un recuadro roto).
+    final src = item.isImage ? drive.thumbSource(item, width: 480) : '';
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
@@ -2875,15 +2923,27 @@ class _ImageCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    DriveThumb(
-                      source: src,
-                      // El drive dice si sirve por RED (una carpeta compartida
-                      // también, aunque no sea el drive del servidor).
-                      isRemote: drive.isRemote,
-                      localPreview: localPreview,
-                      size: double.infinity,
-                      big: true,
-                    ),
+                    if (item.isImage)
+                      DriveThumb(
+                        source: src,
+                        // El drive dice si sirve por RED (una carpeta
+                        // compartida también, aunque no sea el del servidor).
+                        isRemote: drive.isRemote,
+                        localPreview: localPreview,
+                        size: double.infinity,
+                        big: true,
+                      )
+                    else
+                      _FileTile(item: item),
+                    // Un vídeo o una canción se anuncian como tales: con el
+                    // icono del tipo no se sabe si hay que tocar para que
+                    // suene.
+                    if (item.isPlayable)
+                      const Positioned(
+                        left: 8,
+                        bottom: 8,
+                        child: _PlayBadge(),
+                      ),
                     Positioned(
                       top: 6,
                       right: 6,
@@ -2927,6 +2987,83 @@ class _ImageCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Recuadro de un archivo que NO es una foto: el icono de su tipo sobre un
+/// tinte suave, más su extensión (MP4, PDF, ZIP…).
+class _FileTile extends StatelessWidget {
+  const _FileTile({required this.item, this.big = true});
+
+  final DriveItem item;
+
+  /// Tarjeta grande (cuadrícula) o mini icono (fila del listado).
+  final bool big;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = driveKindColor(item.kind, scheme);
+    final ext = driveExtensionLabel(item.name);
+    return Container(
+      color: color.withValues(alpha: big ? .12 : .10),
+      alignment: Alignment.center,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: Icon(
+              driveKindIcon(item.kind),
+              size: big ? 46 : 22,
+              color: color,
+            ),
+          ),
+          if (big && ext.isNotEmpty)
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: .22),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  ext,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .4,
+                    color: color,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Señal de "esto se reproduce": vídeo o audio.
+class _PlayBadge extends StatelessWidget {
+  const _PlayBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 30,
+      height: 30,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .55),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.play_arrow_rounded,
+        size: 20,
+        color: Colors.white,
       ),
     );
   }
@@ -3249,7 +3386,8 @@ class _ListRow extends StatelessWidget {
 
   Widget _row(ColorScheme scheme, BuildContext context,
       {bool hovering = false}) {
-    final src = drive.thumbSource(item, width: 120);
+    // La miniatura solo tiene sentido en una FOTO.
+    final src = item.isImage ? drive.thumbSource(item, width: 120) : '';
     return InkWell(
       onTap: onTapSelect,
       onLongPress: onLongPress,
@@ -3286,7 +3424,8 @@ class _ListRow extends StatelessWidget {
                         color: scheme.primary,
                         size: 26,
                       )
-                    : ClipRRect(
+                    : item.isImage
+                    ? ClipRRect(
                         borderRadius: BorderRadius.circular(6),
                         child: DriveThumb(
                           source: src,
@@ -3294,6 +3433,12 @@ class _ListRow extends StatelessWidget {
                           localPreview: localPreview,
                           size: 40,
                         ),
+                      )
+                    // Un vídeo, un PDF o un ZIP no tienen miniatura: su icono
+                    // dice de un vistazo qué es.
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: _FileTile(item: item, big: false),
                       ),
               ),
             const SizedBox(width: 12),
@@ -3314,7 +3459,7 @@ class _ListRow extends StatelessWidget {
               SizedBox(
                 width: 76,
                 child: Text(
-                  item.isFolder ? 'Carpeta' : 'Imagen',
+                  driveKindLabel(item.kind),
                   style: TextStyle(
                     fontSize: 12.5,
                     color: scheme.onSurfaceVariant,
@@ -3520,6 +3665,9 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
 
   // ---- Original por chunks detrás del preview ----
   File? _fullFile;
+
+  /// Original por RED (carpetas compartidas): entra encima del preview.
+  String _fullUrl = '';
   double _fullProgress = 0;
   bool _fullLoading = false;
   String _fullKey = '';
@@ -3529,15 +3677,36 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
 
   Future<void> _loadFull() async {
     final item = widget.images[_index];
-    // El original por chunks usa File/caché de disco: solo en nativo.
-    if (kWeb || item.isFolder || widget.drive is! DriveApiService) return;
-    final api = widget.drive as DriveApiService;
-    final key = api.absolutePathOf(item);
-    if (_fullKey == key && _fullFile != null) return; // ya está
+    if (item.isFolder) return;
+    final drive = widget.drive;
+    final key = drive.fullSource(item);
+    if (_fullKey == key && (_fullFile != null || _fullUrl.isNotEmpty)) {
+      return; // ya está
+    }
     _fullKey = key;
+    // El original por chunks (File + caché de disco) es del servidor del
+    // Drive. Una CARPETA COMPARTIDA se sirve por red (su dueño o el servidor
+    // del compartido): ahí se muestra la original como URL y, cuando carga,
+    // entra nítida sobre la miniatura. En el Drive LOCAL el archivo está en
+    // disco: se abre directo.
+    if (kWeb) return;
+    if (drive is! DriveApiService) {
+      // Carpeta compartida (por red): la original es su URL. Un Drive LOCAL
+      // no necesita nada más: el preview ya lee el archivo del disco y abrir
+      // otro Image.file dejaría el archivo bloqueado.
+      if (drive.isRemote) {
+        setState(() {
+          _fullUrl = key;
+          _fullFile = null;
+        });
+      }
+      return;
+    }
+    final api = drive;
     _fullLoading = true;
     _fullProgress = 0;
     _fullFile = null;
+    _fullUrl = '';
     if (mounted) setState(() {});
     try {
       final f = await api.fetchOriginalChunked(item, onProgress: (p) {
@@ -3551,9 +3720,13 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
         _fullLoading = false;
       });
     } catch (_) {
-      // El preview sigue siendo visible; el original es opcional.
+      // El preview sigue siendo visible; el original es opcional. Se intenta
+      // por red (la URL lleva el token en la query) antes de rendirse.
       if (mounted && key == _fullKey) {
-        setState(() => _fullLoading = false);
+        setState(() {
+          _fullLoading = false;
+          _fullUrl = key;
+        });
       }
     }
   }
@@ -3631,12 +3804,13 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                           child: child,
                         ),
                       )
-                    // 2b) Respaldo directo: si la descarga por chunks falla (o
-                    //     es web), la ORIGINAL se pide por red en cuanto el
-                    //     preview ya se ve. Si también falla, queda el preview.
-                    else if (_previewReady && isRemote)
+                    // 2b) Original por RED: en una carpeta COMPARTIDA (su dueño
+                    //     o el servidor del compartido) y, como respaldo, si la
+                    //     descarga por chunks falla. Si también falla, queda el
+                    //     preview.
+                    else if (_fullUrl.isNotEmpty)
                       Image.network(
-                        widget.drive.absolutePathOf(item),
+                        _fullUrl,
                         fit: BoxFit.contain,
                         frameBuilder: (c, child, frame, sync) {
                           if (sync) return child;
@@ -4064,7 +4238,7 @@ class _ActivityPanel extends StatelessWidget {
                     width: 10,
                     height: 10,
                     decoration: BoxDecoration(
-                      color: Colors.green,
+                      color: Color(0xFF2F6BFF),
                       shape: BoxShape.circle,
                       border: Border.all(color: scheme.surface, width: 1.6),
                     ),
@@ -4092,7 +4266,7 @@ class _ActivityPanel extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 10.5,
                           fontWeight: FontWeight.w700,
-                          color: Colors.green.withValues(alpha: .95),
+                          color: Color(0xFF2F6BFF).withValues(alpha: .95),
                         ),
                       ),
                     ],
@@ -4163,7 +4337,7 @@ class _NoticeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final color = notice.error ? scheme.error : Colors.green;
+    final color = notice.error ? scheme.error : Color(0xFF2F6BFF);
     return Container(
       padding: EdgeInsets.fromLTRB(10, 8, onDismiss == null ? 10 : 2, 8),
       decoration: BoxDecoration(

@@ -44,6 +44,29 @@ class DriveItem {
   /// queda en false y la tarjeta no miente con un "0 elementos".
   final bool countKnown;
 
+  /// Qué es este elemento, por la extensión de su nombre.
+  ///
+  /// El Drive ya no guarda solo fotos: una carpeta puede traer vídeos, PDF,
+  /// documentos o cualquier otro archivo. La vista usa esto para pintar el
+  /// icono correcto y para decidir CÓMO se abre (visor de fotos, reproductor,
+  /// vista de texto o descarga).
+  DriveItemKind get kind =>
+      isFolder ? DriveItemKind.folder : driveItemKindOf(name);
+
+  /// ¿Es una FOTO? (lo que el visor abre con zoom y flechas).
+  bool get isImage => kind == DriveItemKind.image;
+
+  /// ¿Se reproduce dentro de la app? (vídeo o audio).
+  bool get isPlayable =>
+      kind == DriveItemKind.video || kind == DriveItemKind.audio;
+
+  /// ¿Se puede VER aquí mismo, sin abrir otra aplicación?
+  bool get isViewable =>
+      kind == DriveItemKind.image ||
+      kind == DriveItemKind.video ||
+      kind == DriveItemKind.audio ||
+      kind == DriveItemKind.text;
+
   DriveItem copyWith({int? childCount, bool? countKnown}) => DriveItem(
         name: name,
         isFolder: isFolder,
@@ -57,6 +80,64 @@ class DriveItem {
 const List<String> kImageExtensions = [
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
 ];
+
+/// Extensión de VÍDEO: el Drive lo lista y lo reproduce en su visor.
+const List<String> kVideoExtensions = [
+  '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.3gp', '.wmv',
+  '.mpeg', '.mpg', '.ogv',
+];
+
+/// Extensión de AUDIO: se escucha en el mismo visor.
+const List<String> kAudioExtensions = [
+  '.mp3', '.m4a', '.wav', '.ogg', '.oga', '.aac', '.flac', '.opus',
+];
+
+/// Documentos PDF.
+const List<String> kPdfExtensions = ['.pdf'];
+
+/// Archivos de TEXTO: se pueden LEER dentro de la app, sin abrir nada más.
+const List<String> kTextExtensions = [
+  '.txt', '.csv', '.json', '.md', '.log', '.xml', '.yml', '.yaml',
+  '.ini', '.srt', '.vtt',
+];
+
+/// Qué es un archivo del Drive.
+///
+/// Antes TODO era "imagen": el Drive listaba y mostraba solo fotos. Ahora una
+/// carpeta puede traer vídeos, música, PDF y documentos, y cada uno se abre de
+/// una manera: el tipo decide el icono de la tarjeta y el visor que lo atiende.
+enum DriveItemKind { folder, image, video, audio, pdf, text, other }
+
+/// Tipo de un archivo por su extensión (`'boda.mp4'` → vídeo).
+DriveItemKind driveItemKindOf(String name) {
+  final i = name.lastIndexOf('.');
+  final ext = i <= 0 ? '' : name.substring(i).toLowerCase();
+  if (kImageExtensions.contains(ext)) return DriveItemKind.image;
+  if (kVideoExtensions.contains(ext)) return DriveItemKind.video;
+  if (kAudioExtensions.contains(ext)) return DriveItemKind.audio;
+  if (kPdfExtensions.contains(ext)) return DriveItemKind.pdf;
+  if (kTextExtensions.contains(ext)) return DriveItemKind.text;
+  return DriveItemKind.other;
+}
+
+/// Cómo se llama el tipo en pantalla ("Vídeo", "PDF", "Archivo"…).
+String driveKindLabel(DriveItemKind kind) => switch (kind) {
+  DriveItemKind.folder => 'Carpeta',
+  DriveItemKind.image => 'Imagen',
+  DriveItemKind.video => 'Vídeo',
+  DriveItemKind.audio => 'Audio',
+  DriveItemKind.pdf => 'PDF',
+  DriveItemKind.text => 'Texto',
+  DriveItemKind.other => 'Archivo',
+};
+
+/// Extensión de [name] en MAYÚSCULAS y sin el punto (`boda.MP4` → `MP4`), para
+/// la ficha de los archivos que no tienen vista previa. Vacío si no tiene.
+String driveExtensionLabel(String name) {
+  final i = name.lastIndexOf('.');
+  if (i <= 0 || i == name.length - 1) return '';
+  return name.substring(i + 1).toUpperCase();
+}
 
 /// Normaliza una ruta del Drive: separador siempre `/`, sin barras al
 /// principio ni al final y sin `.` ni `..` (los usuarios escriben de todo).
@@ -1230,4 +1311,7 @@ abstract class DriveBase extends ChangeNotifier {
   }
 
   bool hasImageExt(String name) => kImageExtensions.contains(extOf(name));
+
+  /// Tipo de un archivo de ESTE drive, por su nombre.
+  DriveItemKind kindOf(String name) => driveItemKindOf(name);
 }

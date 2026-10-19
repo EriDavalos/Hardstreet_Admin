@@ -12,9 +12,11 @@ const bool kWeb = kIsWeb;
 Map<String, String> get platformEnvironment =>
     kWeb ? const {} : Platform.environment;
 
+/// ¿Corremos dentro de `flutter test`? (el WebView nativo no existe ahí).
+bool get isTestEnvironment => platformEnvironment.containsKey('FLUTTER_TEST');
+
 /// ¿Hay que desactivar el chequeo de versión (tests / web sin backend)?
-bool get skipVersionCheck =>
-    kWeb || platformEnvironment.containsKey('FLUTTER_TEST');
+bool get skipVersionCheck => kWeb || isTestEnvironment;
 
 /// ¿Esta build corre en Android? (false en web)
 bool get isAndroidPlatform => !kWeb && Platform.isAndroid;

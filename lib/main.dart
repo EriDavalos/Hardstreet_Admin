@@ -31,6 +31,7 @@ import 'pages/site_page.dart';
 import 'pages/storage_page.dart';
 import 'pages/users_page.dart';
 import 'package_notifications_service.dart';
+import 'reminder_notifications_native.dart';
 import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
@@ -160,6 +161,12 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // ¿El widget lanzó la app en frío con una acción? (arranque en frío)
       await UpcomingEventsWidget.consumePending();
+      // Permiso de notificaciones (Android 13+) al arrancar, no en el primer
+      // aviso: sin él, el teléfono DESCARTA los avisos del paquete y el
+      // cliente no se entera ni con la app abierta ni cerrada.
+      if (isAndroidPlatform) {
+        unawaited(NativeReminderPlugin.instance.init());
+      }
     });
     AppSettings.instance.load().then((_) {
       if (!mounted) return;

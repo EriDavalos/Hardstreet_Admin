@@ -214,13 +214,13 @@ class _StoragePageState extends State<StoragePage> {
               icon: Icons.folder_copy_outlined,
               label: 'Carpetas',
               value: '$folders',
-              tint: const Color(0xFF0D9488),
+              tint: const Color(0xFF2F6BFF),
             ),
             _DataBox(
               icon: Icons.save_outlined,
               label: 'Cuota',
               value: hsBytes(limit),
-              tint: const Color(0xFF10B981),
+              tint: const Color(0xFF2F6BFF),
             ),
             if (diskTotal != null)
               _DataBox(
@@ -236,7 +236,7 @@ class _StoragePageState extends State<StoragePage> {
                 value: hsBytes(diskFree),
                 tint: diskFree < limitFree
                     ? const Color(0xFFF59E0B)
-                    : const Color(0xFF10B981),
+                    : const Color(0xFF2F6BFF),
               ),
           ];
           // En teléfono 2 por fila; en escritorio 3.
@@ -369,7 +369,7 @@ class _StoragePageState extends State<StoragePage> {
                 _MiniTag(
                   icon: Icons.pie_chart_outline,
                   label: 'Libre de la cuota ${hsBytes(limitFree)}',
-                  tint: const Color(0xFF10B981),
+                  tint: const Color(0xFF2F6BFF),
                 ),
                 if (limitGb != null)
                   _MiniTag(
@@ -383,7 +383,7 @@ class _StoragePageState extends State<StoragePage> {
                     label: 'Libre en el disco ${hsBytes(diskFree)}',
                     tint: diskFree < limitFree
                         ? const Color(0xFFF59E0B)
-                        : const Color(0xFF10B981),
+                        : const Color(0xFF2F6BFF),
                   ),
               ],
             ),
@@ -426,7 +426,7 @@ class _StoragePageState extends State<StoragePage> {
         label: 'Cuota libre',
         detail: 'Quedan ${hsBytes(limitFree)} de ${hsBytes(limit)}',
         value: freePct,
-        color: const Color(0xFF10B981),
+        color: const Color(0xFF2F6BFF),
       ),
       if (diskUsedPct != null)
         _PercentBar(
@@ -434,7 +434,7 @@ class _StoragePageState extends State<StoragePage> {
           label: 'Disco usado',
           detail: '${hsBytes(diskTotal! - diskFree!)} de ${hsBytes(diskTotal)}',
           value: diskUsedPct,
-          color: const Color(0xFF0D9488),
+          color: const Color(0xFF2F6BFF),
         ),
       if (diskFree != null && diskTotal != null && diskTotal > 0)
         _PercentBar(
@@ -442,7 +442,7 @@ class _StoragePageState extends State<StoragePage> {
           label: 'Disco libre',
           detail: 'Quedan ${hsBytes(diskFree)} en el disco',
           value: (diskFree / diskTotal).clamp(0.0, 1.0),
-          color: const Color(0xFF14B8A6),
+          color: const Color(0xFF2F6BFF),
         ),
     ];
     final phone = MediaQuery.sizeOf(context).width < 620;
@@ -609,14 +609,14 @@ class _SplitBar extends StatelessWidget {
                   Expanded(
                     flex: 100 - pct,
                     child: ColoredBox(
-                      color: const Color(0xFF10B981).withValues(alpha: .18),
+                      color: const Color(0xFF2F6BFF).withValues(alpha: .18),
                       child: Center(
                         child: Text(
                           '${100 - pct} % libre',
                           style: const TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.w800,
-                            color: Color(0xFF10B981),
+                            color: Color(0xFF2F6BFF),
                           ),
                         ),
                       ),

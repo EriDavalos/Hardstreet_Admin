@@ -264,6 +264,9 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
       isRemote: _remote,
       picked: _picked.contains(abs),
       onToggle: () => _toggle(item),
+      drive: _drive,
+      item: item,
+      rel: List<String>.of(_path),
     );
   }
 
@@ -287,17 +290,24 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
         if (!i.isFolder && _drive.hasImageExt(i.name)) i,
     ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final count = _picked.length;
-    return AlertDialog(
-      // En celular casi toda la pantalla para el selector; en escritorio deja
-      // ver el panel detrás.
-      insetPadding: phone
-          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 10)
-          : const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+    // ATRÁS (botón del sistema o gesto) NO cierra el selector si se está
+    // dentro de una carpeta: sube un nivel, como en el Drive. En la raíz deja
+    // que el sistema cierre el modal.
+    return PopScope(
+      canPop: !_canGoUp,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _up();
+      },
+      child: AlertDialog(
+      // En celular ocupa TODA la pantalla (sin márgenes ni esquinas); en
+      // escritorio deja ver el panel detrás.
+      insetPadding: phone ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(phone ? 16 : 22)),
-      titlePadding: const EdgeInsets.fromLTRB(18, 16, 14, 0),
-      contentPadding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(12, 6, 14, 14),
+          borderRadius: BorderRadius.circular(phone ? 0 : 22)),
+      titlePadding: EdgeInsets.fromLTRB(14, phone ? 10 : 16, 12, 0),
+      contentPadding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(8, 4, 10, 10),
       title: _header(scheme, count),
       content: SizedBox(
         // En escritorio el selector aprovecha casi toda la ventana (antes se
@@ -345,6 +355,7 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
           label: Text(widget.confirmLabel),
         ),
       ],
+      ),
     );
   }
 

@@ -7,7 +7,6 @@ import '../hs_format.dart';
 import '../widgets/common.dart';
 import '../widgets/finance_chart.dart';
 import '../widgets/form_dialog.dart';
-import '../widgets/hs_pager.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 
@@ -51,7 +50,7 @@ IconData _kindIcon(String kind) => switch (kind) {
 };
 
 Color _kindColor(String kind) => switch (kind) {
-  'abono' => FinanceColors.green,
+  'abono' => FinanceColors.positive,
   'abono_externo' => FinanceColors.blue,
   'inversion' => FinanceColors.investment,
   'ahorro' => FinanceColors.teal,
@@ -105,10 +104,6 @@ class _FinancePageState extends State<FinancePage> {
   /// Móvil: los cuadros de totales se pueden MINIMIZAR para dejarle la
   /// pantalla a la tabla de "Dinero por paquete y movimiento".
   bool _kpisOpen = true;
-
-  // Paginación de la tabla de paquetes (30 de fábrica; 50/100/200 abajo).
-  int _page = 1;
-  int _pageSize = kHsDefaultPageSize;
 
   /// Búsqueda y filtro de la tabla ("Ver": todo, paquetes o movimientos).
   String _query = '';
@@ -298,17 +293,6 @@ class _FinancePageState extends State<FinancePage> {
       onRefresh: _reload,
       // Sin scroll de página: la tabla scrollea por dentro.
       expand: true,
-      // La paginación de la tabla va en el PIE FIJO (no se va con las filas).
-      footer: HsPager(
-        total: _visiblePackages.length,
-        page: _page,
-        pageSize: _pageSize,
-        onPage: (p) => setState(() => _page = p),
-        onPageSize: (n) => setState(() {
-          _pageSize = n;
-          _page = 1;
-        }),
-      ),
       // En el teléfono los dos botones van en UNA fila (se desliza si no
       // caben): apilados se comían el alto de la tabla.
       actionsInline: true,
@@ -511,7 +495,7 @@ class _FinancePageState extends State<FinancePage> {
               style: TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w700,
-                color: FinanceColors.green,
+                color: FinanceColors.positive,
               ),
             ),
           const SizedBox(width: 4),
@@ -679,16 +663,12 @@ class _FinancePageState extends State<FinancePage> {
               child: HsSearchFilterBar(
                 hint: 'Buscar paquete, cliente o movimiento…',
                 initial: _query,
-                onChanged: (v) => setState(() {
-                  _query = v;
-                  _page = 1;
-                }),
+                onChanged: (v) => setState(() => _query = v),
                 groups: _filterGroups,
                 selected: {'view': _viewFilter},
-                onApply: (filters) => setState(() {
-                  _viewFilter = filters['view'] ?? '';
-                  _page = 1;
-                }),
+                onApply: (filters) => setState(
+                  () => _viewFilter = filters['view'] ?? '',
+                ),
               ),
             ),
             Padding(
@@ -756,14 +736,9 @@ class _FinancePageState extends State<FinancePage> {
   }
 
   List<Widget> _tableRows(ColorScheme scheme, bool wide, String currency) {
-    // Paginado: la tabla muestra la página actual (30 de fábrica). Los totales
-    // de arriba siguen siendo de TODO el catálogo: los calcula el backend.
+    // Sin paginado: la tabla muestra TODO lo que pasa la búsqueda y el filtro
+    // (los totales de arriba los calcula el backend sobre el catálogo entero).
     final visible = _visiblePackages;
-    final pagedRows = HsPages(
-      total: visible.length,
-      page: _page,
-      pageSize: _pageSize,
-    ).slice(visible);
     final kinds = _visibleKinds;
     return [
       if (_showPackages) ...[
@@ -779,7 +754,7 @@ class _FinancePageState extends State<FinancePage> {
             ),
           )
         else ...[
-          for (final p in pagedRows) _packageRow(scheme, p, wide, currency),
+          for (final p in visible) _packageRow(scheme, p, wide, currency),
         ],
         const SizedBox(height: 6),
       ],
@@ -813,7 +788,7 @@ class _FinancePageState extends State<FinancePage> {
     final g = _data.general;
     final moves = _data.generalMovements;
     final neto = g.neto;
-    final color = neto < 0 ? FinanceColors.red : FinanceColors.green;
+    final color = neto < 0 ? FinanceColors.red : FinanceColors.positive;
     return Column(
       children: [
         InkWell(
@@ -1088,7 +1063,7 @@ class _FinancePageState extends State<FinancePage> {
                 // GANADO = el disponible del paquete.
                 _amountCell(
                   hsMoney(p.disponible, currency),
-                  FinanceColors.green,
+                  FinanceColors.positive,
                 ),
                 if (wide)
                   _amountCell(hsMoney(p.ahorro, currency), FinanceColors.teal),
@@ -1120,12 +1095,12 @@ class _FinancePageState extends State<FinancePage> {
         // Los detalles van en UNA fila que se desliza: en el teléfono ya no
         // roban media pantalla en tres renglones.
         _pillsRow([
-          _DetailPill('Cobrado', p.paid, FinanceColors.green, currency),
+          _DetailPill('Cobrado', p.paid, FinanceColors.positive, currency),
           _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
           _DetailPill(
             'Ganado (disponible)',
             p.disponible,
-            FinanceColors.green,
+            FinanceColors.positive,
             currency,
           ),
           _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
@@ -1875,20 +1850,20 @@ class _MoneySummary extends StatelessWidget {
     _MoneyGroup(
       'Lo que ganas',
       Icons.workspace_premium_outlined,
-      FinanceColors.green,
+      FinanceColors.positive,
       [
         FinanceKpi(
           label: 'Ganado',
           amount: totals.disponible,
           icon: Icons.savings_outlined,
-          tint: FinanceColors.green,
+          tint: FinanceColors.positive,
           note: '= Disponible',
         ),
         FinanceKpi(
           label: 'Ganancia real',
           amount: totals.gananciaReal,
           icon: Icons.verified_outlined,
-          tint: FinanceColors.green,
+          tint: FinanceColors.positive,
           note: 'Contando los gastos',
         ),
         FinanceKpi(
@@ -1900,12 +1875,12 @@ class _MoneySummary extends StatelessWidget {
         ),
       ],
     ),
-    _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.green, [
+    _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.positive, [
       FinanceKpi(
         label: 'Cobrado',
         amount: totals.ganancias,
         icon: Icons.payments_outlined,
-        tint: FinanceColors.green,
+        tint: FinanceColors.positive,
         note: 'Abonos recibidos',
       ),
       FinanceKpi(

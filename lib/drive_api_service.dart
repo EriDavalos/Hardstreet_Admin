@@ -17,9 +17,19 @@ export 'drive_base.dart'
     show
         DriveBase,
         DriveItem,
+        // Tipos de archivo del Drive (foto, vídeo, audio, PDF, texto…): con
+        // ellos la vista decide el icono y con qué visor se abre cada archivo.
+        DriveItemKind,
+        driveItemKindOf,
+        driveKindLabel,
+        driveExtensionLabel,
         driveImagePreview,
         driveRelPath,
         kImageExtensions,
+        kVideoExtensions,
+        kAudioExtensions,
+        kPdfExtensions,
+        kTextExtensions,
         DriveConn,
         DriveBusy,
         DriveUploadJob,
@@ -751,10 +761,11 @@ class DriveApiService extends DriveBase {
 
   @override
   Future<void> rename(DriveItem item, String newName) async {
-    // Una imagen conserva su extensión (el Drive lista solo imágenes): sin
-    // esto, renombrar "foto.jpg" a "foto" la dejaba invisible.
+    // Un archivo conserva su extensión: sin esto, renombrar "foto.jpg" a
+    // "foto" la dejaba invisible y a un "video.mp4" le pegaba la extensión
+    // dos veces ("video.mp4.mp4").
     var name = newName.trim();
-    if (!item.isFolder && !hasImageExt(name)) {
+    if (!item.isFolder && extOf(name).isEmpty) {
       name = '$name${extOf(item.name)}';
     }
     if (name.isEmpty || name == item.name) return;
@@ -972,9 +983,15 @@ class DriveApiService extends DriveBase {
     DriveItem item, {
     void Function(double progress)? onProgress,
     int chunks = 4,
+    /// Carpeta donde vive [item] (null = la que el drive muestra ahora). La
+    /// usan las pantallas que navegan por su cuenta, como el selector de fotos.
+    List<String>? rel,
   }) async {
-    final url = absolutePathOf(item);
-    final rel = [...path, item.name].join('/');
+    final folder = rel ?? path;
+    final joined = [...folder, item.name].join('/');
+    final url = '$base/files/$joined'
+        '${_apikeyQuery.isEmpty ? '' : '?$_apikeyQuery'}';
+    final relPath = joined;
 
     // ---- Caché de disco ----
     final cacheDir = Directory(
@@ -995,7 +1012,7 @@ class DriveApiService extends DriveBase {
     // HEAD: tamaño y soporte de rangos (con token: el servidor valida leer)
     final head = await http
         .head(
-          _u('/files/$rel', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}),
+          _u('/files/$relPath', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}),
         )
         .timeout(const Duration(seconds: 10));
     final total = int.tryParse(head.headers['content-length'] ?? '') ?? 0;

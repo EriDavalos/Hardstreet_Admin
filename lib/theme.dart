@@ -13,7 +13,7 @@ class AppColors {
   /// Estados: algo que YA funciona (verde) y algo que necesita atención
   /// (ámbar). Los usa, por ejemplo, la píldora de estado de las carpetas
   /// compartidas ("Disponible" / "Apagada ahora").
-  static const ok = Color(0xFF16A34A);
+  static const ok = Color(0xFF2F6BFF);
   static const warn = Color(0xFFD97706);
 }
 

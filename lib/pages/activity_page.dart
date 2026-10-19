@@ -38,7 +38,7 @@ const List<(String, String, IconData)> _kActivityFilters = [
 ({Color color, IconData icon, String label}) _actionStyle(String action) =>
     switch (action.toLowerCase()) {
       'create' => (
-        color: const Color(0xFF10B981),
+        color: const Color(0xFF2F6BFF),
         icon: Icons.add_circle_outline,
         label: 'Creación',
       ),

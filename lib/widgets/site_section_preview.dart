@@ -112,6 +112,8 @@ class SiteSectionPreview extends StatelessWidget {
         return _footer(scheme);
       case 'brand':
         return _brand(scheme);
+      case 'custom':
+        return _free(scheme);
       default:
         return Center(
           child: Text(
@@ -121,6 +123,32 @@ class SiteSectionPreview extends StatelessWidget {
         );
     }
   }
+
+  /// Sección LIBRE (HTML propio): se dibuja como un bloque listo para llenar.
+  Widget _free(ColorScheme scheme) => Container(
+        margin: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: .28),
+            width: 1.2,
+          ),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.code_rounded, size: 22, color: Colors.white70),
+              SizedBox(height: 6),
+              Text(
+                'Sección libre · tu HTML con el diseño del sitio',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 11.5),
+              ),
+            ],
+          ),
+        ),
+      );
 
   // ---------------- piezas comunes ----------------
 

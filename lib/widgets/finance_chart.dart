@@ -21,16 +21,16 @@ class FinanceColors {
   FinanceColors._();
 
   /// Dinero cobrado (abonos).
-  static const green = Color(0xFF10B981);
+  static const positive = Color(0xFF2F6BFF);
 
   /// Gastos.
   static const red = Color(0xFFEF4444);
 
   /// Inversión (también es una salida, pero se pinta distinto).
-  static const investment = Color(0xFF0D9488);
+  static const investment = Color(0xFF1D4ED8);
 
   /// Apartado en el ahorro.
-  static const teal = Color(0xFF14B8A6);
+  static const teal = Color(0xFF0EA5E9);
 
   /// Pago recibido fuera del paquete.
   static const blue = Color(0xFF3B82F6);
@@ -426,7 +426,7 @@ class FinanceMonthBars extends StatelessWidget {
                         // ENTRÓ: abonos cobrados (+ abono externo).
                         Expanded(
                           child: _bar([
-                            (m.ganancias, FinanceColors.green),
+                            (m.ganancias, FinanceColors.positive),
                             (m.abonoExterno, FinanceColors.blue),
                           ]),
                         ),
@@ -476,7 +476,7 @@ class FinanceLegend extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const items = <(String, Color)>[
-      ('Ganancias', FinanceColors.green),
+      ('Ganancias', FinanceColors.positive),
       ('Gastos', FinanceColors.red),
       ('Inversión', FinanceColors.investment),
       ('Ahorro', FinanceColors.teal),

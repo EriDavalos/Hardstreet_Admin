@@ -205,6 +205,19 @@ const List<SiteSectionTemplate> kSiteSectionTemplates = [
     ],
   ),
   SiteSectionTemplate(
+    key: 'custom',
+    label: 'Sección libre',
+    description: 'Un bloque NUEVO para la página: escribe su HTML y se muestra '
+        'con el diseño del sitio (títulos, botones, rejillas…). Se puede '
+        'agregar varias veces.',
+    icon: Icons.code_rounded,
+    // No existe en el HTML de fábrica: es una plantilla oculta que se clona
+    // al agregarla (por eso no se puede ocultar ni reordenar por sí sola).
+    orderable: false,
+    defaultVisible: false,
+    repeatable: true,
+  ),
+  SiteSectionTemplate(
     key: 'contact',
     label: 'Contacto',
     description: 'Los datos de contacto de la página (correo, teléfono, '
@@ -261,6 +274,7 @@ const Map<String, Map<String, dynamic>> kSiteSectionDefaults = {
   // Vacío = los testimonios que ya trae el HTML (así el sitio nunca se queda
   // sin la sección por no haber escrito nada todavía).
   'testimonials': <String, dynamic>{'items': <Map<String, dynamic>>[]},
+  'custom': <String, dynamic>{},
   'contact': <String, dynamic>{'whatsapp': ''},
   'footer': <String, dynamic>{},
   'brand': <String, dynamic>{},

@@ -596,7 +596,7 @@ class _PackagesPageState extends State<PackagesPage> {
             label: 'Con paquetes',
             count: withPkgs,
             icon: Icons.inventory_2_outlined,
-            color: const Color(0xFF16A34A),
+            color: const Color(0xFF2F6BFF),
           ),
           HsFilterOption(
             value: 'sin',
@@ -686,7 +686,7 @@ class _PackagesPageState extends State<PackagesPage> {
             label: 'Con precio',
             count: conPrecio,
             icon: Icons.attach_money_rounded,
-            color: const Color(0xFF16A34A),
+            color: const Color(0xFF2F6BFF),
           ),
           HsFilterOption(
             value: 'sin',
