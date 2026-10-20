@@ -35,7 +35,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(0, 0);
   Win32Window::Size size(work_area.right - work_area.left,
                          work_area.bottom - work_area.top);
-  if (!window.Create(L"Hardstreet Admin", origin, size)) {
+  if (!window.Create(L"Hardstreet Platform", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

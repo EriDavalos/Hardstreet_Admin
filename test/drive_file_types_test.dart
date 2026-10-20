@@ -15,7 +15,7 @@ import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
 // la carpeta ni aparecían. Ahora se listan todos, cada uno con su tipo, y al
 // tocar uno se abre EL VISOR QUE LE CORRESPONDE:
 //
-//   foto        → visor de imágenes (zoom y flechas)
+//   foto/RAW    → visor de imágenes (zoom y flechas)
 //   vídeo/audio → reproductor (el de este archivo se prueba en
 //                 `drive_media_viewer_test.dart`)
 //   PDF/texto/otro → su ficha (o el reproductor, en el caso del PDF)
@@ -165,6 +165,14 @@ void main() {
     expect(inDialog(find.byTooltip('Acercar')), findsOneWidget);
     await closeViewer(tester);
 
+    // --- Un RAW: también el visor de fotos, con su VISTA PREVIA (no el
+    //     original de la cámara, que la app no puede pintar) ---
+    await open(tester, 'crudo.cr2');
+    expect(played, isNull, reason: 'un RAW no pasa por el reproductor');
+    expect(inDialog(find.byTooltip('Acercar')), findsOneWidget);
+    expect(inDialog(find.text('crudo.cr2')), findsOneWidget);
+    await closeViewer(tester);
+
     // --- Un VÍDEO: el REPRODUCTOR, y con la fuente de ESE archivo ---
     await open(tester, 'album-a.mp4');
     expect(played, isNotNull);
@@ -204,5 +212,22 @@ void main() {
     expect(driveItemKindOf('retrato.avif'), DriveItemKind.image);
     expect(kVideoExtensions, contains('.mts'));
     expect(kImageExtensions, contains('.heic'));
+    // TIFF, HEIC y RAW se ven con la vista previa del servidor.
+    expect(
+      const DriveItem(name: 'escaneo.tif', isFolder: false).needsServerPreview,
+      isTrue,
+    );
+    expect(
+      const DriveItem(name: 'foto.HEIC', isFolder: false).needsServerPreview,
+      isTrue,
+    );
+    expect(
+      const DriveItem(name: 'boda.cr3', isFolder: false).needsServerPreview,
+      isTrue,
+    );
+    expect(
+      const DriveItem(name: 'boda.jpg', isFolder: false).needsServerPreview,
+      isFalse,
+    );
   });
 }

@@ -145,6 +145,7 @@ void main() {
       // Un vídeo en la carpeta del dueño: antes NO aparecía (el listado solo
       // servía imágenes) y por eso era imposible verlo desde el panel.
       File('${tmp.path}/clip.mp4').writeAsBytesSync(List<int>.filled(16, 1));
+      File('${tmp.path}/escaneo.tif').writeAsBytesSync(List<int>.filled(12, 2));
 
       final reply = await LocalShareAgent.instance.describeRequest(
         op: 'list',
@@ -183,6 +184,11 @@ void main() {
       // el visor (reproductor para el vídeo, lectura para el texto).
       expect(items.firstWhere((e) => e['name'] == 'clip.mp4')['kind'], 'video');
       expect(items.firstWhere((e) => e['name'] == 'nota.txt')['kind'], 'text');
+      // Escaneos y fotos de cámara también son fotos para el visor.
+      expect(
+        items.firstWhere((e) => e['name'] == 'escaneo.tif')['kind'],
+        'image',
+      );
     },
   );
 

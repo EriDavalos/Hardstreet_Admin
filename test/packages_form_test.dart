@@ -262,6 +262,9 @@ void main() {
     await _pick(tester, dropdowns.first, 'Gold');
     await _pick(tester, dropdowns.at(1), 'Bodas');
 
+    // Visibilidad en la web: se apaga desde "Público".
+    await _tap(tester, find.text('Público (visible en la web)'));
+
     // Servicios: los dos incluidos.
     await _tap(tester, find.text('Servicios'));
     await _tap(tester, find.text('Cobertura'));
@@ -273,6 +276,11 @@ void main() {
     expect(create.first['id_tier'], 2);
     expect(create.first['id_package_category'], 7);
     expect((create.first['serviceIds'] as List).toList(), [1, 2]);
+    expect(
+      create.first['is_public'],
+      isFalse,
+      reason: 'apagado = no se muestra en la web',
+    );
   });
 
   testWidgets('en pantalla angosta los campos y la vista previa van en '
@@ -307,6 +315,18 @@ void main() {
 
     // El botón del campo de la imagen abre el MISMO selector de fotos del Drive
     // que usan los demás módulos (rejilla con miniatura, vista previa…).
+    // El formulario es una lista perezosa: primero se baja hasta la foto.
+    await tester.dragUntilVisible(
+      find.text('Elegir una foto del Drive'),
+      find
+          .descendant(
+            of: find.byType(Dialog),
+            matching: find.byType(ListView),
+          )
+          .first,
+      const Offset(0, -240),
+    );
+    await tester.pump();
     await _tap(tester, find.text('Elegir una foto del Drive'));
     expect(find.text('Foto del paquete'), findsOneWidget);
 

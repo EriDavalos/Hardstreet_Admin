@@ -15,9 +15,14 @@ import 'reminder_notifications_native.dart';
 ///   * Cualquier aviso escrito por el estudio.
 ///
 /// Los trae de `GET /api/my/notifications` cada [pollInterval] mientras hay
-/// sesión. Cuando aparece uno NUEVO dispara una notificación nativa (Android;
-/// en Windows/web el aviso vive en «Mi paquete»). La campanita de eventos no
+/// sesión. Cuando aparece uno NUEVO dispara una notificación nativa (Android,
+/// iOS y Windows: en la computadora sale como toast aunque estés en otra
+/// ventana). En web el aviso vive en «Mi paquete». La campanita de eventos no
 /// se mezcla: estos avisos son del paquete, no de la agenda.
+///
+/// Con la app cerrada el teléfono Android lo consulta solo (ver
+/// `PackageNotificationsReceiver`); en Windows el panel tiene que seguir
+/// abierto o minimizado para poder avisar.
 ///
 /// Sin la migración de notificaciones el endpoint devuelve una lista vacía y
 /// todo sigue funcionando.

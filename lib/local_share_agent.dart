@@ -861,8 +861,11 @@ class LocalShareAgent {
     return s;
   }
 
+  /// Fotos que el agente lista como imagen. Incluye los formatos de cámara y
+  /// teléfono (HEIC/HEIF/AVIF/TIFF): antes se veían como "Archivo" y una foto
+  /// escaneada en TIFF no se podía abrir como foto.
   static bool _isImage(String name) => RegExp(
-    r'\.(jpe?g|png|gif|webp|bmp)$',
+    r'\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|tiff?)$',
     caseSensitive: false,
   ).hasMatch(name);
 
@@ -920,6 +923,14 @@ class LocalShareAgent {
         return 'image/jpeg';
       case 'png':
         return 'image/png';
+      case 'tif':
+      case 'tiff':
+        return 'image/tiff';
+      case 'heic':
+      case 'heif':
+        return 'image/heic';
+      case 'avif':
+        return 'image/avif';
       case 'gif':
         return 'image/gif';
       case 'webp':

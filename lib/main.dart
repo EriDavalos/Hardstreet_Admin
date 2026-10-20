@@ -163,10 +163,11 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // ¿El widget lanzó la app en frío con una acción? (arranque en frío)
       await UpcomingEventsWidget.consumePending();
-      // Permiso de notificaciones (Android 13+) al arrancar, no en el primer
-      // aviso: sin él, el teléfono DESCARTA los avisos del paquete y el
-      // cliente no se entera ni con la app abierta ni cerrada.
-      if (isAndroidPlatform) {
+      // Permiso de notificaciones (Android 13+ / iOS) al arrancar, no en el
+      // primer aviso: sin él, el teléfono DESCARTA los avisos del paquete.
+      // En WINDOWS prepara el toast nativo para que el aviso salga aunque
+      // estés en otra ventana (no solo dentro de la campanita).
+      if (!kIsWeb) {
         unawaited(NativeReminderPlugin.instance.init());
       }
     });
@@ -890,9 +891,7 @@ class _AdminHomeState extends State<AdminHome> {
   /// tiene "Ver" de verdad, para no ofrecer una pantalla que el backend va a
   /// rechazar.
   bool _visibleModule(String module) =>
-      (module == 'activity' ||
-          module == 'shared_files' ||
-          module == 'print')
+      (module == 'activity' || module == 'shared_files' || module == 'print')
       ? _canSee(module)
       : _showModule(module);
 

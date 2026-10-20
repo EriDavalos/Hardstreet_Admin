@@ -249,7 +249,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     var current = const <String>[];
     // Enviado a impresión = solo lectura (las fotos NO se pueden cambiar
     // hasta que el estudio reabra el envío).
-    var readOnly = s['sentToPrint'] == true || (s['printStatus'] ?? '') == 'sent' || (s['printStatus'] ?? '') == 'finished';
+    var readOnly =
+        s['sentToPrint'] == true ||
+        (s['printStatus'] ?? '') == 'sent' ||
+        (s['printStatus'] ?? '') == 'finished';
     try {
       final info = await HsApi.myServiceItemsInfo(serviceId);
       current = info.items;
@@ -1491,140 +1494,193 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               (showFolder && shareFolder.isNotEmpty) ||
               shareLink.isNotEmpty) ...[
             const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  if (pickOn)
-                    // Mismo diseño que "Entrar a mi Drive": botón sólido con el
-                    // azul de la app y texto claro.
-                    FilledButton.icon(
-                      onPressed: () => _pickServiceItems(s, name),
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      icon: Icon(
-                        sentToPrint
-                            ? Icons.lock_outline_rounded
-                            : items > 0
-                            ? Icons.check_circle_outline_rounded
-                            : Icons.photo_library_outlined,
-                        size: 16,
-                      ),
-                      label: Text(
-                        sentToPrint
-                            ? 'Ver fotos ($items)'
-                            : items > 0
-                            ? 'Mis fotos ($items)'
-                            : 'Elegir fotos',
-                      ),
-                    ),
-                  if (pickOn && items > 0 && !sentToPrint)
-                    OutlinedButton.icon(
-                      onPressed: () => _sendToPrint(s, name),
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      icon: const Icon(Icons.send_rounded, size: 16),
-                      label: const Text('Enviar a impresión'),
-                    ),
-                  if (sentToPrint)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.warn.withValues(alpha: .12),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: AppColors.warn.withValues(alpha: .38),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            printStatus == 'finished'
-                                ? Icons.task_alt_rounded
-                                : Icons.print_outlined,
-                            size: 14,
-                            color: AppColors.warn,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            printStatus == 'finished'
-                                ? 'Impresión terminada'
-                                : 'Enviadas a impresión',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.warn,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (showFolder && shareFolder.isNotEmpty)
-                    OutlinedButton.icon(
-                      onPressed: () => _openShared(shareFolder),
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        side: BorderSide(
-                          color: scheme.outlineVariant.withValues(alpha: .8),
-                        ),
-                      ),
-                      icon: const Icon(Icons.folder_open_outlined, size: 16),
-                      label: const Text('Abrir carpeta'),
-                    ),
-                  if (shareLink.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: () => _openLink(shareLink),
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 32),
-                        textStyle: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      icon: const Icon(Icons.link, size: 15),
-                      label: const Text('Ver liga'),
-                    ),
-                ],
-              ),
+            _serviceActions(
+              scheme: scheme,
+              service: s,
+              name: name,
+              pickOn: pickOn,
+              sentToPrint: sentToPrint,
+              items: items,
+              printStatus: printStatus,
+              showFolder: showFolder,
+              shareFolder: shareFolder,
+              shareLink: shareLink,
             ),
           ],
         ],
       ),
+    );
+  }
+
+  /// Acciones de un servicio («Ver/Elegir fotos», «Enviar», «Abrir carpeta»).
+  ///
+  /// En el CELULAR van una debajo de otra: antes el Wrap las partía donde
+  /// cabía y quedaban desordenadas (una angosta al lado de otra ancha). Ahora
+  /// «Elegir/Ver fotos» y «Abrir carpeta» comparten fila, «Enviar» va debajo
+  /// a lo ancho y el aviso dice solo «Enviadas». En escritorio se conserva el
+  /// Wrap de siempre.
+  Widget _serviceActions({
+    required ColorScheme scheme,
+    required Map<String, dynamic> service,
+    required String name,
+    required bool pickOn,
+    required bool sentToPrint,
+    required int items,
+    required String printStatus,
+    required bool showFolder,
+    required String shareFolder,
+    required String shareLink,
+  }) {
+    final compact = MediaQuery.sizeOf(context).width < 620;
+    final pick = pickOn
+        ? FilledButton.icon(
+            onPressed: () => _pickServiceItems(service, name),
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            icon: Icon(
+              sentToPrint
+                  ? Icons.lock_outline_rounded
+                  : items > 0
+                  ? Icons.check_circle_outline_rounded
+                  : Icons.photo_library_outlined,
+              size: 16,
+            ),
+            label: Text(
+              sentToPrint
+                  ? 'Ver fotos ($items)'
+                  : items > 0
+                  ? 'Mis fotos ($items)'
+                  : 'Elegir fotos',
+            ),
+          )
+        : null;
+    final send = pickOn && items > 0 && !sentToPrint
+        ? OutlinedButton.icon(
+            onPressed: () => _sendToPrint(service, name),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              textStyle: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            icon: const Icon(Icons.send_rounded, size: 16),
+            label: const Text('Enviar a impresión'),
+          )
+        : null;
+    final chip = sentToPrint
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.warn.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: AppColors.warn.withValues(alpha: .38)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  printStatus == 'finished'
+                      ? Icons.task_alt_rounded
+                      : Icons.print_outlined,
+                  size: 14,
+                  color: AppColors.warn,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  printStatus == 'finished'
+                      ? (compact ? 'Terminada' : 'Impresión terminada')
+                      : (compact ? 'Enviadas' : 'Enviadas a impresión'),
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.warn,
+                  ),
+                ),
+              ],
+            ),
+          )
+        : null;
+    final folder = showFolder && shareFolder.isNotEmpty
+        ? OutlinedButton.icon(
+            onPressed: () => _openShared(shareFolder),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              textStyle: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: .8),
+              ),
+            ),
+            icon: const Icon(Icons.folder_open_outlined, size: 16),
+            label: const Text('Abrir carpeta'),
+          )
+        : null;
+    final link = shareLink.isNotEmpty
+        ? TextButton.icon(
+            onPressed: () => _openLink(shareLink),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              textStyle: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            icon: const Icon(Icons.link, size: 15),
+            label: const Text('Ver liga'),
+          )
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      child: compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (pick != null && folder != null)
+                  Row(
+                    children: [
+                      Expanded(child: pick),
+                      const SizedBox(width: 8),
+                      Expanded(child: folder),
+                    ],
+                  )
+                else if (pick != null)
+                  SizedBox(width: double.infinity, child: pick)
+                else if (folder != null)
+                  SizedBox(width: double.infinity, child: folder),
+                if (send != null) ...[const SizedBox(height: 8), send],
+                if (chip != null) ...[
+                  const SizedBox(height: 8),
+                  Align(alignment: Alignment.centerLeft, child: chip),
+                ],
+                if (link != null) ...[
+                  const SizedBox(height: 2),
+                  Align(alignment: Alignment.centerLeft, child: link),
+                ],
+              ],
+            )
+          : Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [?pick, ?send, ?chip, ?folder, ?link],
+            ),
     );
   }
 

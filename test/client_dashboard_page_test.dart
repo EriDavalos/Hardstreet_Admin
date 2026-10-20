@@ -301,6 +301,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'en celular las acciones del servicio van juntas y el aviso dice Enviadas',
+    (tester) async {
+      final pkgs = _defaultPackages();
+      final services = (pkgs.first['services'] as List);
+      (services[1] as Map<String, dynamic>)
+        ..['pickPhotos'] = true
+        ..['shareFolder'] = 'ReynaCoot'
+        ..['showFolder'] = true
+        ..['items'] = 2
+        ..['sentToPrint'] = true
+        ..['printStatus'] = 'sent';
+      _installMock(packages: pkgs);
+      await _pumpPage(tester, size: const Size(390, 844));
+
+      final view = find.text('Ver fotos (2)');
+      final folder = find.text('Abrir carpeta');
+      expect(view, findsOneWidget);
+      expect(folder, findsWidgets);
+
+      // «Ver fotos» y «Abrir carpeta» comparten fila (centro vertical).
+      final dy = tester.getCenter(view).dy;
+      final folderDy = tester.getCenter(folder.first).dy;
+      expect((dy - folderDy).abs(), lessThan(1.5));
+
+      // El aviso es corto y no queda el botón de enviar.
+      expect(find.text('Enviadas'), findsOneWidget);
+      expect(find.text('Enviadas a impresión'), findsNothing);
+      expect(find.text('Enviar a impresión'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('el cliente ENVÍA sus fotos a impresión y luego solo las ve', (
     tester,
   ) async {
@@ -358,7 +391,10 @@ void main() {
     await _tap(tester, send);
 
     // El modal explica que después ya no se puede modificar.
-    expect(find.textContaining('ya no podrás cambiar la selección'), findsOneWidget);
+    expect(
+      find.textContaining('ya no podrás cambiar la selección'),
+      findsOneWidget,
+    );
     await _tap(tester, find.widgetWithText(FilledButton, 'Enviar'));
     await tester.pump(const Duration(milliseconds: 500));
 

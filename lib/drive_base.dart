@@ -56,6 +56,22 @@ class DriveItem {
   /// ¿Es una FOTO? (lo que el visor abre con zoom y flechas).
   bool get isImage => kind == DriveItemKind.image;
 
+  /// ¿Es una foto, aunque sea RAW? En el visor de fotos entran las dos:
+  /// un CR3/DNG se VE con su vista previa (el JPEG que la cámara guarda
+  /// dentro), sin necesidad de revelarlo.
+  bool get isPhoto => kind == DriveItemKind.image || kind == DriveItemKind.raw;
+
+  /// ¿La app NO puede pintar el ORIGINAL y hay que usar la vista previa del
+  /// servidor? Pasa con los RAW y con formatos que Flutter no decodifica
+  /// (TIFF, HEIC/HEIF, AVIF): el servidor los convierte a JPEG en `/thumb`.
+  /// Abrir el original dejaría el visor en negro.
+  bool get needsServerPreview {
+    if (kind == DriveItemKind.raw) return true;
+    final i = name.lastIndexOf('.');
+    final ext = i <= 0 ? '' : name.substring(i).toLowerCase();
+    return const {'.tif', '.tiff', '.heic', '.heif', '.avif'}.contains(ext);
+  }
+
   /// ¿Se reproduce dentro de la app? (vídeo o audio).
   bool get isPlayable =>
       kind == DriveItemKind.video || kind == DriveItemKind.audio;
@@ -63,6 +79,7 @@ class DriveItem {
   /// ¿Se puede VER aquí mismo, sin abrir otra aplicación?
   bool get isViewable =>
       kind == DriveItemKind.image ||
+      kind == DriveItemKind.raw ||
       kind == DriveItemKind.video ||
       kind == DriveItemKind.audio ||
       kind == DriveItemKind.text;
@@ -194,9 +211,38 @@ enum DriveItemKind { folder, image, raw, video, audio, pdf, text, other }
 /// del dueño no da tiempo a empezar, y el reproductor se queda cargando.
 const int kLightPlaybackBytes = 50 * 1024 * 1024;
 
+/// Contenedores que el navegador integrado (Windows/Android/iOS) NO reproduce
+/// de forma fiable aunque pesen poco: MOV/HEVC del iPhone, MKV, AVI, WMV…
+/// Para esos se pide SIEMPRE la versión ligera (MP4 H.264 720p) — si no, el
+/// visor se queda en negro y parece que el vídeo "no carga".
+const Set<String> kNeedsLightPlaybackExt = {
+  '.mov',
+  '.m4v',
+  '.mkv',
+  '.avi',
+  '.wmv',
+  '.flv',
+  '.3gp',
+  '.mpg',
+  '.mpeg',
+  '.ts',
+  '.mts',
+  '.m2ts',
+  '.webm',
+};
+
 /// ¿Este archivo conviene pedirlo en CALIDAD LIGERA al reproducirlo?
-bool wantsLightPlayback(DriveItem item) =>
-    item.kind == DriveItemKind.video && (item.size ?? 0) >= kLightPlaybackBytes;
+///
+/// No es solo cuestión de peso: un .MOV de 15 MB grabado con un iPhone puede
+/// venir en HEVC y el WebView no lo decodifica. El servidor reencoda esos
+/// formatos a MP4/H.264 al vuelo cuando el visor lo pide.
+bool wantsLightPlayback(DriveItem item) {
+  if (item.kind != DriveItemKind.video) return false;
+  if ((item.size ?? 0) >= kLightPlaybackBytes) return true;
+  final i = item.name.lastIndexOf('.');
+  final ext = i <= 0 ? '' : item.name.substring(i).toLowerCase();
+  return kNeedsLightPlaybackExt.contains(ext);
+}
 
 /// Tipo de un archivo por su extensión (`'boda.mp4'` → vídeo).
 DriveItemKind driveItemKindOf(String name) {

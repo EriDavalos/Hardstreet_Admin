@@ -410,15 +410,15 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
                 ),
               ),
               Text(
+                // Texto CORTO, como en «Mis fotos»: el máximo y nada más.
+                // Antes añadía "de tu Drive. Nada se mueve de carpeta." y en
+                // el celular ocupaba dos líneas de más.
                 widget.subtitle ??
                     (widget.maxSelection == 1
-                        ? 'Elige UNA foto de tu Drive. Nada se mueve de '
-                              'carpeta.'
+                        ? 'Elige 1 foto.'
                         : widget.maxSelection != null
-                        ? 'Elige hasta ${widget.maxSelection} fotos de tu '
-                              'Drive. Nada se mueve de carpeta.'
-                        : 'Elige las fotos de tu Drive. Nada se mueve de '
-                              'carpeta.'),
+                        ? 'Elige hasta ${widget.maxSelection} fotos.'
+                        : 'Elige las fotos.'),
                 maxLines: 2,
                 style: TextStyle(
                   fontSize: 12,

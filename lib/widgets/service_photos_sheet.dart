@@ -242,10 +242,8 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                             'que reabra el envío.'
                       : widget.max > 0
                       ? 'Elige hasta ${widget.max} '
-                            '${widget.max == 1 ? 'foto' : 'fotos'} de la carpeta '
-                            'compartida. Nada se mueve de lugar.'
-                      : 'Elige las fotos que quieras de la carpeta compartida. '
-                            'Nada se mueve de lugar.',
+                            '${widget.max == 1 ? 'foto' : 'fotos'}.'
+                      : 'Elige las fotos que quieras.',
                   maxLines: 2,
                   style: TextStyle(
                     fontSize: 11.5,
@@ -382,24 +380,24 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                         big: true,
                       ),
                       if (!widget.readOnly)
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: IconButton(
-                          tooltip: 'Quitar de mi selección',
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () => _remove(path),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.black.withValues(
-                              alpha: .42,
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: IconButton(
+                            tooltip: 'Quitar de mi selección',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => _remove(path),
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.black.withValues(
+                                alpha: .42,
+                              ),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.all(4),
+                              minimumSize: const Size(30, 30),
                             ),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.all(4),
-                            minimumSize: const Size(30, 30),
+                            icon: const Icon(Icons.close_rounded, size: 17),
                           ),
-                          icon: const Icon(Icons.close_rounded, size: 17),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -429,9 +427,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(
-              color: scheme.outlineVariant.withValues(alpha: .5),
-            ),
+            top: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
           ),
         ),
         child: Row(
@@ -440,7 +436,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Enviadas a impresión · ${_paths.length} '
+                'Enviadas · ${_paths.length} '
                 '${_paths.length == 1 ? 'foto' : 'fotos'}',
                 style: TextStyle(
                   fontSize: 11.5,
@@ -457,6 +453,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
         ),
       );
     }
+    final compact = MediaQuery.sizeOf(context).width < 620;
+    final addEnabled = !(widget.max > 0 && _paths.length >= widget.max);
+    final add = addEnabled ? () => _add() : null;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
@@ -464,46 +463,87 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
           top: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
         ),
       ),
-      // Wrap (no Row): en celular los botones bajan en vez de desbordar.
-      child: Wrap(
-        alignment: WrapAlignment.end,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 6,
-        children: [
-          // Mismo diseño que el resto de acciones principales del panel
-          // ("Entrar a mi Drive"): botón sólido con el azul de la app.
-          FilledButton.icon(
-            key: const ValueKey('service-photos-add'),
-            onPressed: widget.max > 0 && _paths.length >= widget.max
-                ? null
-                : _add,
-            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-            label: Text(_paths.isEmpty ? 'Elegir fotos' : 'Agregar fotos'),
-          ),
-          if (widget.max > 0 && _paths.length >= widget.max)
-            Text(
-              'Llegaste al máximo',
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+      // En CELULAR los tres botones van en UNA fila (el Wrap los partía en
+      // varias líneas y quedaban desalineados). En escritorio se conserva el
+      // Wrap con los textos completos.
+      child: compact
+          ? Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const ValueKey('service-photos-add'),
+                    onPressed: add,
+                    // «Añadir» (no «Agregar») para no confundirse con el
+                    // botón «Agregar» del selector de fotos que abre encima.
+                    child: Text(_paths.isEmpty ? 'Elegir' : 'Añadir'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    key: const ValueKey('service-photos-save'),
+                    onPressed: _saving || !_changed ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Guardar'),
+                  ),
+                ),
+              ],
+            )
+          : Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('service-photos-add'),
+                  onPressed: add,
+                  icon: const Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                    _paths.isEmpty ? 'Elegir fotos' : 'Agregar fotos',
+                  ),
+                ),
+                if (widget.max > 0 && _paths.length >= widget.max)
+                  Text(
+                    'Llegaste al máximo',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey('service-photos-save'),
+                  onPressed: _saving || !_changed ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('Guardar selección'),
+                ),
+              ],
             ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton.icon(
-            key: const ValueKey('service-photos-save'),
-            onPressed: _saving || !_changed ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.check_rounded, size: 18),
-            label: const Text('Guardar selección'),
-          ),
-        ],
-      ),
     );
   }
 }

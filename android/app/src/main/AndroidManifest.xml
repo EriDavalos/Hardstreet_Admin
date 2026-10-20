@@ -20,7 +20,7 @@
     <!-- HTTP plano: el servidor usa http:// (sin TLS). Quitar al pasar a HTTPS. -->
     <application
         android:usesCleartextTraffic="true"
-        android:label="Hardstreet Admin"
+        android:label="Hardstreet Platform"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

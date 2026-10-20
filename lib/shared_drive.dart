@@ -152,10 +152,12 @@ class SharedDrive extends DriveBase {
   /// REPRODUCCIÓN: los vídeos grandes se ven en CALIDAD LIGERA (el servidor
   /// los reencoda a 720p al vuelo, sin bajar el original completo).
   @override
-  String playSource(DriveItem item) => service.fileUrl(shareId, [
-    ...path,
-    item.name,
-  ], light: wantsLightPlayback(item));
+  String playSource(DriveItem item) => service.fileUrl(
+    shareId,
+    [...path, item.name],
+    light: wantsLightPlayback(item),
+    view: true,
+  );
 
   @override
   List<String> listFolders(List<String> rel) => _folders[_key(rel)] ?? const [];

@@ -76,8 +76,13 @@ class PackageNotificationsReceiver : BroadcastReceiver() {
         /** Alarma propia (intent explícito al receptor: ver el manifiesto). */
         const val ACTION_POLL = "com.example.hardstreet_admin.PACKAGE_NOTIFICATIONS_POLL"
 
-        /** Cada cuánto se vuelve a consultar. En Doze el sistema lo espacia. */
-        const val POLL_MS = 10L * 60L * 1000L
+        /**
+         * Cada cuánto se vuelve a consultar. Cinco minutos: un aviso del
+         * estudio llega pronto aunque el cliente no tenga la app abierta. En
+         * Doze el sistema lo espacia (no gasta batería de más); fuera de Doze
+         * se respeta este intervalo.
+         */
+        const val POLL_MS = 5L * 60L * 1000L
 
         /** Primera consulta tras abrir (o dejar) la app: casi inmediata. */
         private const val FIRST_DELAY_MS = 45L * 1000L

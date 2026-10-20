@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hardstreet Admin</string>
+    <string name="app_name">Hardstreet Platform</string>
 
     <!-- Widget de inicio: "Próximos eventos". -->
     <string name="event_widget_header">Próximos eventos</string>

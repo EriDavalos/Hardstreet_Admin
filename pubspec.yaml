@@ -1,5 +1,5 @@
 name: hardstreet_admin
-description: "HardStreet Admin - panel de administración con Drive de archivos."
+description: "Hardstreet Platform - panel de administración con Drive de archivos."
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -19,7 +19,9 @@ dependencies:
   archive: ^4.3.0
   http: ^1.6.0
   http_parser: ^4.1.2
-  flutter_local_notifications: ^18.0.1
+  # 19+ incluye WINDOWS: los avisos del paquete tambien salen como toast
+  # nativo en la computadora, no solo en el telefono.
+  flutter_local_notifications: ^19.5.0
   flutter_inappwebview: ^6.1.5
   flutter_map: ^8.3.2
   latlong2: ^0.10.1

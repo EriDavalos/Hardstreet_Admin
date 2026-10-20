@@ -1,4 +1,4 @@
-; Instalador profesional de Hardstreet Admin (Inno Setup 6).
+; Instalador profesional de Hardstreet Platform (Inno Setup 6).
 ; Se compila con:  ISCC /DHS_VERSION=1.2.0 hardstreet_admin.iss
 ; (build_installer.ps1 lo hace automatico; HS_VERSION es la version.)
 
@@ -8,7 +8,7 @@
   #define MyAppVersion "1.0.0"
 #endif
 
-#define MyAppName "Hardstreet Admin"
+#define MyAppName "Hardstreet Platform"
 #define MyAppExeName "HardstreetAdmin.exe"
 
 [Setup]

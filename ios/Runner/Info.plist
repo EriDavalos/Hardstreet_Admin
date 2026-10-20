@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Hardstreet Admin</string>
+	<string>Hardstreet Platform</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>hardstreet_admin</string>
+	<string>Hardstreet</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -49,6 +49,27 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Permisos de iOS: el panel importa fotos del carrete y abre la cámara
+	     para los módulos de Sitio/Paquetes. Sin estos textos iOS cierra la
+	     app en cuanto se pide el permiso. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Hardstreet Platform necesita tu carrete para elegir las fotos de los paquetes y del sitio web.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Hardstreet Platform guarda en tu carrete las fotos que descargues.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hardstreet Platform usa la cámara para tomar fotos desde el panel.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hardstreet Platform usa el micrófono cuando grabas un vídeo desde el panel.</string>
+	<!-- El Drive se puede configurar con una IP local (http://192.168…): iOS
+	     bloquea HTTP por defecto y el vídeo/imagen no cargaría. Se permite
+	     tráfico HTTP solo para que esa configuración funcione. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Hardstreet Platform se conecta a tu servidor del Drive en la red local.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

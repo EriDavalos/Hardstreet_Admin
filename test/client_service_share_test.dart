@@ -45,19 +45,20 @@ class _FakeDrive extends DriveBase {
           .toList(growable: false);
 
   @override
-  List<String> listFolders(List<String> rel) => (tree[rel.join('/')] ??
-          const <DriveItem>[])
-      .where((i) => i.isFolder)
-      .map((i) => i.name)
-      .toList(growable: false);
+  List<String> listFolders(List<String> rel) =>
+      (tree[rel.join('/')] ?? const <DriveItem>[])
+          .where((i) => i.isFolder)
+          .map((i) => i.name)
+          .toList(growable: false);
 
   @override
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
 
   @override
-  Future<int> uploadFromPaths(List<String> sources,
-          {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
 
   @override
   Future<void> createFolder(String name) async {}
@@ -70,18 +71,20 @@ class _FakeDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
 
   @override
   Future<void> retryUpload(String jobId) async {}
@@ -95,39 +98,38 @@ class _FakeDrive extends DriveBase {
 List<Map<String, dynamic>> _packages({
   bool pickPhotos = true,
   bool showFolder = true,
-}) =>
-    [
+}) => [
+  {
+    'id': 11,
+    'name': 'Boda Ana & Luis',
+    'subtitle': 'Paquete Gold',
+    'description': '',
+    'price': 12000,
+    'paid': 6000,
+    'currency': 'MXN',
+    'status': {'id': 2, 'name': 'En proceso'},
+    'package': {
+      'id': 1,
+      'name': 'Boda',
+      'tier': {'id': 1, 'name': 'Gold', 'tier': 1},
+      'packageCategory': {'id': 1, 'name': 'Bodas', 'icon': ''},
+      'services': <dynamic>[],
+    },
+    'services': [
       {
-        'id': 11,
-        'name': 'Boda Ana & Luis',
-        'subtitle': 'Paquete Gold',
+        'id': 101,
         'description': '',
-        'price': 12000,
-        'paid': 6000,
-        'currency': 'MXN',
         'status': {'id': 2, 'name': 'En proceso'},
-        'package': {
-          'id': 1,
-          'name': 'Boda',
-          'tier': {'id': 1, 'name': 'Gold', 'tier': 1},
-          'packageCategory': {'id': 1, 'name': 'Bodas', 'icon': ''},
-          'services': <dynamic>[],
-        },
-        'services': [
-          {
-            'id': 101,
-            'description': '',
-            'status': {'id': 2, 'name': 'En proceso'},
-            'shareFolder': 'ReynaCoot',
-            'shareLink': 'https://ejemplo.mx/album',
-            'pickPhotos': pickPhotos,
-            'showFolder': showFolder,
-            'items': 1,
-            'service': {'id': 2, 'name': 'Álbum de fotos', 'icon': '', 'url': ''},
-          },
-        ],
+        'shareFolder': 'ReynaCoot',
+        'shareLink': 'https://ejemplo.mx/album',
+        'pickPhotos': pickPhotos,
+        'showFolder': showFolder,
+        'items': 1,
+        'service': {'id': 2, 'name': 'Álbum de fotos', 'icon': '', 'url': ''},
       },
-    ];
+    ],
+  },
+];
 
 /// Mock: paquetes, carpetas compartidas y la SELECCIÓN de elementos.
 /// `saved` acumula los cuerpos de los PUT a /api/my/service-items.
@@ -135,6 +137,7 @@ void _installMock({
   required List<Map<String, dynamic>> puts,
   bool pickPhotos = true,
   bool showFolder = true,
+  int max = 0,
 }) {
   var items = <String>['ReynaCoot/portada.jpg'];
   HsApi.client = MockClient((request) async {
@@ -142,11 +145,16 @@ void _installMock({
     final p = request.url.path;
 
     if (p.endsWith('/api/my/packages')) {
-      final packages =
-          _packages(pickPhotos: pickPhotos, showFolder: showFolder);
+      final packages = _packages(
+        pickPhotos: pickPhotos,
+        showFolder: showFolder,
+      );
       (packages.first['services'] as List).first['items'] = items.length;
-      return http.Response(jsonEncode({'purchasedPackages': packages}), 200,
-          headers: headers);
+      return http.Response(
+        jsonEncode({'purchasedPackages': packages}),
+        200,
+        headers: headers,
+      );
     }
     if (p.endsWith('/api/my/drive')) {
       return http.Response(
@@ -174,7 +182,7 @@ void _installMock({
         );
       }
       return http.Response(
-        jsonEncode({'serviceId': 101, 'items': items}),
+        jsonEncode({'serviceId': 101, 'items': items, 'max': max}),
         200,
         headers: headers,
       );
@@ -183,9 +191,11 @@ void _installMock({
   });
 }
 
-Future<void> _pump(WidgetTester tester,
-    {void Function(List<String>)? onOpenDrive,
-    Size size = const Size(1100, 900)}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  void Function(List<String>)? onOpenDrive,
+  Size size = const Size(1100, 900),
+}) async {
   // El tamaño de la VISTA (no solo la superficie): así MediaQuery también ve
   // el ancho del celular y los modales/atajos compactos se activan.
   tester.view.devicePixelRatio = 1.0;
@@ -199,9 +209,7 @@ Future<void> _pump(WidgetTester tester,
       child: MaterialApp(
         builder: (context, child) =>
             HsToastHost(child: child ?? const SizedBox.shrink()),
-        home: Scaffold(
-          body: ClientDashboardPage(onOpenDrive: onOpenDrive),
-        ),
+        home: Scaffold(body: ClientDashboardPage(onOpenDrive: onOpenDrive)),
       ),
     ),
   );
@@ -218,8 +226,9 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('cada servicio ofrece carpeta, liga y elegir fotos',
-      (tester) async {
+  testWidgets('cada servicio ofrece carpeta, liga y elegir fotos', (
+    tester,
+  ) async {
     _installMock(puts: []);
     await _pump(tester);
 
@@ -231,8 +240,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('elegir fotos sale SOLO si el servicio lo tiene encendido',
-      (tester) async {
+  testWidgets('elegir fotos sale SOLO si el servicio lo tiene encendido', (
+    tester,
+  ) async {
     // El estudio apagó «Elegir fotos» para este servicio: el botón no sale
     // (antes salía en TODOS), y lo demás sigue igual.
     _installMock(puts: [], pickPhotos: false);
@@ -246,8 +256,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('«Abrir carpeta» sale SOLO si el servicio lo tiene encendido',
-      (tester) async {
+  testWidgets('«Abrir carpeta» sale SOLO si el servicio lo tiene encendido', (
+    tester,
+  ) async {
     _installMock(puts: [], showFolder: false);
     await _pump(tester);
 
@@ -260,8 +271,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('"Abrir carpeta" entra a la carpeta compartida del servicio',
-      (tester) async {
+  testWidgets('"Abrir carpeta" entra a la carpeta compartida del servicio', (
+    tester,
+  ) async {
     _installMock(puts: []);
     final opened = <List<String>>[];
     await _pump(tester, onOpenDrive: opened.add);
@@ -272,8 +284,9 @@ void main() {
     expect(opened.single, ['ReynaCoot']);
   });
 
-  testWidgets('el cliente elige fotos de SU drive y se guarda la lista',
-      (tester) async {
+  testWidgets('el cliente elige fotos de SU drive y se guarda la lista', (
+    tester,
+  ) async {
     final puts = <Map<String, dynamic>>[];
     _installMock(puts: puts);
     await _pump(tester);
@@ -304,14 +317,18 @@ void main() {
 
     expect(puts, hasLength(1));
     expect(puts.single['serviceId'], 101);
-    expect(puts.single['paths'], ['ReynaCoot/fiesta.jpg', 'ReynaCoot/portada.jpg']);
+    expect(puts.single['paths'], [
+      'ReynaCoot/fiesta.jpg',
+      'ReynaCoot/portada.jpg',
+    ]);
     expect(find.text('Selección guardada'), findsOneWidget);
 
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('desde el módulo se quitan fotos y se guarda la nueva lista',
-      (tester) async {
+  testWidgets('desde el módulo se quitan fotos y se guarda la nueva lista', (
+    tester,
+  ) async {
     final puts = <Map<String, dynamic>>[];
     _installMock(puts: puts);
     await _pump(tester);
@@ -331,23 +348,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('en celular el módulo, el selector y el visor caben completos',
-      (tester) async {
+  testWidgets('en celular el módulo, el selector y el visor caben completos', (
+    tester,
+  ) async {
     _installMock(puts: []);
     await _pump(tester, size: const Size(390, 844));
-    expect(tester.takeException(), isNull,
-        reason: 'la página Mi paquete no desborda en celular');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'la página Mi paquete no desborda en celular',
+    );
 
     // El módulo de fotos ocupa la pantalla y no desborda.
     await _tap(tester, find.text('Mis fotos (1)'));
     expect(find.text('Mis fotos · Álbum de fotos'), findsOneWidget);
-    expect(find.text('Guardar selección'), findsOneWidget);
+    // En celular los botones van en UNA fila y el texto es corto.
+    expect(find.text('Guardar'), findsOneWidget);
+    expect(find.text('Añadir'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // El visor de una foto abre a pantalla completa (zoom + encajar).
     await _tap(tester, find.text('portada.jpg'));
-    expect(find.byKey(const ValueKey('drive-photo-preview-image')),
-        findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('drive-photo-preview-image')),
+      findsOneWidget,
+    );
     expect(find.text('Encajar'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await _tap(tester, find.byKey(const ValueKey('drive-photo-preview-close')));
@@ -358,4 +383,31 @@ void main() {
     expect(find.text('Agregar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'en celular el módulo dice el máximo y los botones van en una fila',
+    (tester) async {
+      _installMock(puts: [], max: 50);
+      await _pump(tester, size: const Size(390, 844));
+      await _tap(tester, find.text('Mis fotos (1)'));
+
+      // La descripción es SOLO el máximo (antes añadía una frase larga).
+      expect(find.text('Elige hasta 50 fotos.'), findsOneWidget);
+
+      final add = find.widgetWithText(OutlinedButton, 'Añadir');
+      final cancel = find.widgetWithText(TextButton, 'Cancelar');
+      final save = find.widgetWithText(FilledButton, 'Guardar');
+      expect(add, findsOneWidget);
+      expect(cancel, findsOneWidget);
+      expect(save, findsOneWidget);
+
+      // Los tres comparten la MISMA línea (centro vertical).
+      final y1 = tester.getCenter(add).dy;
+      final y2 = tester.getCenter(cancel).dy;
+      final y3 = tester.getCenter(save).dy;
+      expect((y1 - y2).abs(), lessThan(1.5));
+      expect((y2 - y3).abs(), lessThan(1.5));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

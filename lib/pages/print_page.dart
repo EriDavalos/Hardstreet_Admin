@@ -5,6 +5,7 @@ import '../print_export.dart';
 import '../print_models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/hs_pager.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/print_editor.dart';
 
@@ -110,6 +111,12 @@ class _PrintPageState extends State<PrintPage> {
   /// 0 = todos, 1 = pendientes, 2 = terminados.
   int _filter = 0;
 
+  // Paginado: los envíos se muestran de 30 en 30 (50/100/200 en el pie).
+  // Se pagina en pantalla porque el backend devuelve la lista completa con
+  // sus fotos y posiciones; el total ya está cargado.
+  int _page = 1;
+  int _pageSize = kHsDefaultPageSize;
+
   @override
   void initState() {
     super.initState();
@@ -121,6 +128,13 @@ class _PrintPageState extends State<PrintPage> {
     if (_filter == 2) return _requests.where((r) => r.finished).toList();
     return _requests;
   }
+
+  /// Envíos de la PÁGINA actual (después del filtro).
+  List<PrintRequestData> get _paged => HsPages(
+    total: _visible.length,
+    page: _page,
+    pageSize: _pageSize,
+  ).slice(_visible);
 
   int get _photoTotal => _requests.fold(0, (n, r) => n + r.photos.length);
 
@@ -162,6 +176,14 @@ class _PrintPageState extends State<PrintPage> {
           ..clear()
           ..addAll(valid);
         _expanded.removeWhere((id) => !requests.any((r) => r.id == id));
+        // Si la página se quedó fuera de rango (menos envíos), vuelve a la
+        // última que sí tiene datos.
+        final pages = HsPages(
+          total: _visible.length,
+          page: _page,
+          pageSize: _pageSize,
+        ).pages;
+        if (_page > pages) _page = pages;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -372,6 +394,18 @@ class _PrintPageState extends State<PrintPage> {
           'servicio, se recortan al formato elegido y se descargan.',
       icon: Icons.print_outlined,
       onRefresh: _load,
+      // Barra de páginas como PIE FIJO (fuera del scroll).
+      footer: HsPager(
+        total: _visible.length,
+        page: _page,
+        pageSize: _pageSize,
+        enabled: !_loading && _error == null,
+        onPage: (p) => setState(() => _page = p),
+        onPageSize: (n) => setState(() {
+          _pageSize = n;
+          _page = 1;
+        }),
+      ),
       stats: [
         StatPill(
           icon: Icons.inbox_outlined,
@@ -418,7 +452,7 @@ class _PrintPageState extends State<PrintPage> {
             '«Enviar a impresión», aparecerán aquí agrupadas por servicio.',
       );
     }
-    final visible = _visible;
+    final visible = _paged;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -456,7 +490,10 @@ class _PrintPageState extends State<PrintPage> {
               ],
               selected: {_filter},
               showSelectedIcon: false,
-              onSelectionChanged: (s) => setState(() => _filter = s.first),
+              onSelectionChanged: (s) => setState(() {
+                _filter = s.first;
+                _page = 1;
+              }),
               style: const ButtonStyle(
                 visualDensity: VisualDensity.compact,
                 textStyle: WidgetStatePropertyAll(
@@ -615,9 +652,7 @@ class _PrintPageState extends State<PrintPage> {
                         ? null
                         : () => _toggleRequest(r, on: !all),
                     icon: Icon(
-                      all
-                          ? Icons.deselect_rounded
-                          : Icons.select_all_rounded,
+                      all ? Icons.deselect_rounded : Icons.select_all_rounded,
                       size: 16,
                     ),
                     label: Text(

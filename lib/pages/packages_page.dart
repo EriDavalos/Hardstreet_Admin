@@ -1905,6 +1905,41 @@ class _PackageRowState extends State<_PackageRow> {
                                 ),
                               ),
                             ),
+                            // Paquete apagado en la web: se ve de un vistazo
+                            // en el listado, sin abrir el formulario.
+                            if (pkg['isPublic'] == false) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: pal.muted.withValues(alpha: .16),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.visibility_off_rounded,
+                                      size: 10,
+                                      color: pal.muted,
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'OCULTO',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        letterSpacing: 1.2,
+                                        fontWeight: FontWeight.w800,
+                                        color: pal.muted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 2),
@@ -2134,6 +2169,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
   int? _tierId;
   int? _categoryId;
   bool _isExtern = false;
+
+  /// ¿El paquete sale en la WEB? (switch "Público")
+  bool _isPublic = true;
   final Set<int> _serviceIds = {};
   bool _saving = false;
   String? _error;
@@ -2175,6 +2213,9 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
         ? p['categoryId'] as int
         : (widget.pkg == null ? widget.initialCategory : null);
     _isExtern = p['isExtern'] == true;
+    // Un paquete NUEVO nace público; uno viejo sin el campo también (el
+    // catálogo ya se veía en la web antes de existir este switch).
+    _isPublic = p['isPublic'] != false;
     for (final id in ((p['serviceIds'] as List?) ?? const [])) {
       final v = (id as num?)?.toInt();
       if (v != null) _serviceIds.add(v);
@@ -2281,6 +2322,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
       'id_tier': _tierId,
       'id_package_category': _categoryId,
       'is_extern': _isExtern,
+      'is_public': _isPublic,
       'url_image': _urlImage.text.trim(),
       'serviceIds': _serviceIds.toList(growable: false),
     };
@@ -2624,6 +2666,24 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                         ),
                         subtitle: const Text(
                           'Los externos aparecen en el carrusel "Nuestros servicios".',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                      ),
+                      // VISIBILIDAD EN LA WEB: encendido, el paquete sale en
+                      // el catálogo público; apagado, se queda solo en el
+                      // panel (y en los clientes que ya lo tengan asignado).
+                      SwitchListTile(
+                        value: _isPublic,
+                        onChanged: (v) => setState(() => _isPublic = v),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Público (visible en la web)',
+                          style: TextStyle(fontSize: 13.5),
+                        ),
+                        subtitle: const Text(
+                          'Apagado, el paquete no aparece en el sitio ni en '
+                          '"Nuestros servicios".',
                           style: TextStyle(fontSize: 11.5),
                         ),
                       ),

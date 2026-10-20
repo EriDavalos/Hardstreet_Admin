@@ -1162,10 +1162,10 @@ class _DrivePageState extends State<DrivePage> {
     final onDownload = _driveCan(widget.drive, 'download')
         ? (DriveItem it) => _downloadItems([it])
         : null;
-    if (item.kind == DriveItemKind.image) {
-      final photos = files
-          .where((i) => i.kind == DriveItemKind.image)
-          .toList(growable: false);
+    // FOTOS (también RAW): el visor de imágenes. Un TIFF/CR3 se ve con la
+    // vista previa que genera el servidor, no con el original.
+    if (item.isPhoto) {
+      final photos = files.where((i) => i.isPhoto).toList(growable: false);
       final index = photos.indexWhere((i) => i.name == item.name);
       showDriveImageViewer(
         context,
@@ -3780,6 +3780,15 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
       return; // ya está
     }
     _fullKey = key;
+    // RAW/TIFF/HEIC: el original NO se puede pintar en la app. La vista
+    // previa del servidor (`/thumb`, ya en JPEG) se queda como imagen buena;
+    // bajar 40 MB de CR3 solo dejaría el visor en negro.
+    if (item.needsServerPreview) {
+      _fullLoading = false;
+      _fullFile = null;
+      _fullUrl = '';
+      return;
+    }
     // El original por chunks (File + caché de disco) es del servidor del
     // Drive. Una CARPETA COMPARTIDA se sirve por red (su dueño o el servidor
     // del compartido): ahí se muestra la original como URL y, cuando carga,
@@ -3848,7 +3857,12 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
       // optimización perdida (la foto de verdad tiene su propio reintento en
       // la tarjeta), así que no debe ensuciar el registro ni la pantalla.
       precacheImage(
-        NetworkImage(drive.fullSource(item, previewWidth: 1600)),
+        NetworkImage(
+          drive.fullSource(
+            item,
+            previewWidth: item.needsServerPreview ? 2048 : 1600,
+          ),
+        ),
         context,
         onError: (_, _) {},
       );
@@ -3859,8 +3873,13 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   Widget build(BuildContext context) {
     final item = widget.images[_index];
     final isRemote = widget.drive.isRemote;
-    // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original.
-    final src = widget.drive.fullSource(item, previewWidth: 1600);
+    // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original. Los RAW
+    // y formatos que la app no decodifica se piden un poco más grandes (siguen
+    // siendo una vista previa, no el archivo de la cámara).
+    final src = widget.drive.fullSource(
+      item,
+      previewWidth: item.needsServerPreview ? 2048 : 1600,
+    );
     final total = widget.images.length;
     // Pantalla COMPLETA y sin bordes curvos: el visor es una superficie
     // limpia sobre negro, con la info y las acciones encima de la foto.
@@ -4462,7 +4481,9 @@ class _NoticeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final color = notice.error ? scheme.error : Color(0xFF2F6BFF);
+    // VERDE = salió bien, ROJO = falló. Antes el éxito también era azul y en
+    // el panel de actividad no se distinguía de un aviso neutro.
+    final color = notice.error ? scheme.error : const Color(0xFF16A34A);
     return Container(
       padding: EdgeInsets.fromLTRB(10, 8, onDismiss == null ? 10 : 2, 8),
       decoration: BoxDecoration(

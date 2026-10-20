@@ -295,11 +295,19 @@ class LocalShareService {
   /// [light] pide la versión RECODIFICADA (calidad ligera) de un vídeo grande:
   /// el servidor lo trae por el túnel y lo reencoda a 720p al vuelo, así el
   /// reproductor empieza antes. La DESCARGA no la usa: baja el original.
-  String fileUrl(int shareId, List<String> path, {bool light = false}) {
+  String fileUrl(
+    int shareId,
+    List<String> path, {
+    bool light = false,
+    bool view = false,
+  }) {
     final q = {
       'share': '$shareId',
       'path': path.join('/'),
       if (light) 'play': 'low',
+      // Reproducir en el visor solo necesita "ver"; descargar pide el permiso
+      // de descarga. El servidor distingue ambos con este parámetro.
+      if (view) 'view': '1',
       if (_token.isNotEmpty) 'apikey': _token,
     };
     return _u('/api/local/file', q).toString();
@@ -623,6 +631,7 @@ class LocalShareDrive extends DriveBase {
     shareId,
     _segments(item),
     light: wantsLightPlayback(item),
+    view: true,
   );
 
   @override

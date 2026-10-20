@@ -12,19 +12,23 @@ import 'package:hardstreet_admin/widgets/hs_toast.dart';
 void _mockResponse(int status, Map<String, dynamic> body) {
   final previous = HsApi.client;
   addTearDown(() => HsApi.client = previous);
-  HsApi.client = MockClient((_) async => http.Response(
-        jsonEncode(body),
-        status,
-        headers: {'content-type': 'application/json'},
-      ));
+  HsApi.client = MockClient(
+    (_) async => http.Response(
+      jsonEncode(body),
+      status,
+      headers: {'content-type': 'application/json'},
+    ),
+  );
 }
 
 Future<void> _pumpHost(WidgetTester tester) async {
-  await tester.pumpWidget(MaterialApp(
-    builder: (context, child) =>
-        HsToastHost(child: child ?? const SizedBox.shrink()),
-    home: const Scaffold(body: SizedBox.expand()),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      builder: (context, child) =>
+          HsToastHost(child: child ?? const SizedBox.shrink()),
+      home: const Scaffold(body: SizedBox.expand()),
+    ),
+  );
   await tester.pump();
 }
 
@@ -34,8 +38,9 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('crear avisa en verde con el message del backend',
-      (tester) async {
+  testWidgets('crear avisa en verde con el message del backend', (
+    tester,
+  ) async {
     _mockResponse(201, {
       'code': 201,
       'ok': true,
@@ -53,7 +58,7 @@ void main() {
 
     expect(find.text('Cliente creado exitosamente'), findsOneWidget);
     final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle_rounded));
-    expect(icon.color, const Color(0xFF2F6BFF));
+    expect(icon.color, const Color(0xFF16A34A));
   });
 
   testWidgets('editar y eliminar también avisan', (tester) async {
@@ -70,39 +75,52 @@ void main() {
     expect(find.text('Rol actualizado exitosamente'), findsOneWidget);
   });
 
-  testWidgets('un error del backend avisa en rojo con message y details',
-      (tester) async {
+  testWidgets('un error del backend avisa en rojo con message y details', (
+    tester,
+  ) async {
     _mockResponse(403, {
       'code': 403,
       'ok': false,
       'message': 'No tienes permiso para realizar esta acción',
-      'details': 'A tu rol le falta el permiso "delete" en el módulo "clientes"',
+      'details':
+          'A tu rol le falta el permiso "delete" en el módulo "clientes"',
     });
     await _pumpHost(tester);
 
     await expectLater(
       HsApi.deleteClient(1),
-      throwsA(isA<ApiException>()
-          .having((e) => e.message, 'message',
-              'No tienes permiso para realizar esta acción')
-          .having((e) => e.details, 'details',
-              'A tu rol le falta el permiso "delete" en el módulo "clientes"')
-          .having((e) => e.statusCode, 'statusCode', 403)),
+      throwsA(
+        isA<ApiException>()
+            .having(
+              (e) => e.message,
+              'message',
+              'No tienes permiso para realizar esta acción',
+            )
+            .having(
+              (e) => e.details,
+              'details',
+              'A tu rol le falta el permiso "delete" en el módulo "clientes"',
+            )
+            .having((e) => e.statusCode, 'statusCode', 403),
+      ),
     );
     await _settle(tester);
 
-    expect(find.text('No tienes permiso para realizar esta acción'),
-        findsOneWidget);
     expect(
-      find.text('A tu rol le falta el permiso "delete" en el módulo "clientes"'),
+      find.text('No tienes permiso para realizar esta acción'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'A tu rol le falta el permiso "delete" en el módulo "clientes"',
+      ),
       findsOneWidget,
     );
     final icon = tester.widget<Icon>(find.byIcon(Icons.error_rounded));
     expect(icon.color, const Color(0xFFEF4444));
   });
 
-  testWidgets('un backend viejo (solo `error`) sigue avisando',
-      (tester) async {
+  testWidgets('un backend viejo (solo `error`) sigue avisando', (tester) async {
     _mockResponse(400, {'error': 'El nombre del paquete es obligatorio'});
     await _pumpHost(tester);
 

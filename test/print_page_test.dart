@@ -327,4 +327,39 @@ void main() {
     await pump(tester);
     expect(find.text('Todavía no hay envíos a impresión'), findsOneWidget);
   });
+
+  testWidgets('pagina los envíos de 30 en 30', (tester) async {
+    HsApi.client = MockClient((request) async {
+      if (request.url.path.contains('/api/admin/print-requests')) {
+        return http.Response(
+          jsonEncode({
+            'requests': [
+              for (var i = 1; i <= 35; i++)
+                _request(id: i, service: 'Servicio $i', client: 'Cliente $i'),
+            ],
+            'formats': const [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    await pump(tester);
+
+    // Solo la primera página; el pie dice cuántos hay en total.
+    expect(find.text('Servicio 30'), findsOneWidget);
+    expect(find.text('Servicio 31'), findsNothing);
+    expect(find.text('1–30 de 35'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('hs-pager-next')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Servicio 1'), findsNothing);
+    expect(find.text('Servicio 31'), findsOneWidget);
+    expect(find.text('Servicio 35'), findsOneWidget);
+    expect(find.text('31–35 de 35'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

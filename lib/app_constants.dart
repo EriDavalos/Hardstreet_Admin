@@ -1,12 +1,12 @@
 import 'drive_host.dart';
 
-/// Constantes globales de la app Hardstreet Admin.
+/// Constantes globales de la app Hardstreet Platform.
 /// Cambia aquí el nombre, la dirección del API y la versión — un solo lugar.
 class AppConstants {
   AppConstants._();
 
   /// Nombre visible de la aplicación (título de ventana, web y Android).
-  static const String appName = 'Hardstreet Plataform';
+  static const String appName = 'Hardstreet Platform';
 
   /// Base del API del drive.
   ///
@@ -30,7 +30,7 @@ class AppConstants {
   /// pubspec.yaml o pásala con --dart-define=SP_VERSION=x.y.z al compilar.
   static const String buildVersion = String.fromEnvironment(
     'SP_VERSION',
-    defaultValue: '1.1.2',
+    defaultValue: '1.1.4',
   );
 
   /// Override opcional (útil en desarrollo): --dart-define=APP_VERSION=x.y.z
