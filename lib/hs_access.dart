@@ -4,11 +4,19 @@ import 'hs_api.dart';
 /// va SUELTO, como Dashboard). Se usa para agrupar y ordenar el sidebar.
 class HsModuleMeta {
   const HsModuleMeta({
+    this.name = '',
+    this.description = '',
     this.order,
     this.categoryKey,
     this.categoryName,
     this.categoryOrder,
   });
+
+  /// Nombre visible definido en `modules.name`.
+  final String name;
+
+  /// Descripción definida en `modules.description`.
+  final String description;
 
   final int? order;
   final String? categoryKey;
@@ -87,6 +95,8 @@ class HsAccess {
         // que existen y puede OCULTARLOS cuando falta "Ver" (read).
         final actions = m.actions;
         final meta = HsModuleMeta(
+          name: m.name,
+          description: m.description,
           order: m.order,
           categoryKey: m.categoryKey,
           categoryName: m.categoryName,
@@ -184,7 +194,7 @@ class HsAccess {
   /// ELEGIR FOTOS DEL DRIVE no se dibujan en ningún formulario (quien no puede
   /// ver el Drive tampoco puede elegir archivos de ahí). En modo degradado se
   /// deja todo visible, como el resto del panel.
-  bool get canUseDrive => degraded || canSee('Archivos') || canSee('drive');
+  bool get canUseDrive => degraded || canSee('drive');
 
   /// ¿Tiene la acción [action] sobre [module]? (admin incluido).
   bool can(String module, String action) =>
@@ -194,4 +204,17 @@ class HsAccess {
   /// nombre. null cuando el backend no lo reporta (modo degradado/backend
   /// viejo): el sidebar conserva entonces su orden por defecto.
   HsModuleMeta? metaOf(String module) => catalog[_norm(module)];
+
+  /// Nombre visible del módulo según la BD (o [fallback] si el backend aún
+  /// no lo reporta: modo degradado, pruebas o backend viejo).
+  String nameOf(String module, {required String fallback}) {
+    final name = metaOf(module)?.name.trim() ?? '';
+    return name.isEmpty ? fallback : name;
+  }
+
+  /// Descripción del módulo según `modules.description` (o [fallback]).
+  String descriptionOf(String module, {required String fallback}) {
+    final text = metaOf(module)?.description.trim() ?? '';
+    return text.isEmpty ? fallback : text;
+  }
 }

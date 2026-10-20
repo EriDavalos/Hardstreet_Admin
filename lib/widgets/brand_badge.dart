@@ -35,7 +35,7 @@ class BrandBadge extends StatelessWidget {
         // El PNG del icono llena su cuadro (no trae esquinas transparentes),
         // así que el degradado de marca queda por detrás como respaldo: se ve
         // si el archivo faltara (y entonces aparece el icono de abajo).
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           colors: [AppColors.brand, AppColors.brandDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,

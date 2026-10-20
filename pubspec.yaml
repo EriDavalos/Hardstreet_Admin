@@ -21,6 +21,8 @@ dependencies:
   http_parser: ^4.1.2
   flutter_local_notifications: ^18.0.1
   flutter_inappwebview: ^6.1.5
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

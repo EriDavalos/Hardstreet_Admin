@@ -33,6 +33,7 @@ Future<List<String>?> showServicePhotosSheet(
   required String folder,
   required int max,
   required List<String> initial,
+  bool readOnly = false,
 }) {
   return showHsModal<List<String>>(
     context: context,
@@ -43,6 +44,7 @@ Future<List<String>?> showServicePhotosSheet(
       folder: folder,
       max: max,
       initial: initial,
+      readOnly: readOnly,
     ),
   );
 }
@@ -56,6 +58,7 @@ class ServicePhotosSheet extends StatefulWidget {
     required this.folder,
     required this.max,
     required this.initial,
+    this.readOnly = false,
   });
 
   final DriveBase drive;
@@ -64,6 +67,9 @@ class ServicePhotosSheet extends StatefulWidget {
   final String folder;
   final int max;
   final List<String> initial;
+
+  /// Enviado a impresión: se pueden VER las fotos pero no cambiarlas.
+  final bool readOnly;
 
   @override
   State<ServicePhotosSheet> createState() => _ServicePhotosSheetState();
@@ -120,8 +126,8 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
       title: 'Elegir fotos · ${widget.serviceName}',
       subtitle: widget.max > 0
           ? 'Solo verás la carpeta compartida de este servicio. Puedes '
-              'elegir hasta ${widget.max} '
-              '${widget.max == 1 ? 'foto' : 'fotos'}.'
+                'elegir hasta ${widget.max} '
+                '${widget.max == 1 ? 'foto' : 'fotos'}.'
           : 'Solo verás la carpeta compartida de este servicio.',
       initialPicked: _paths,
       // La selección se hace DENTRO de la carpeta compartida del servicio.
@@ -150,9 +156,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
             ? null
             : widget.max > 0
             ? '${_paths.length} de ${widget.max} '
-                '${_paths.length == 1 ? 'foto' : 'fotos'}'
+                  '${_paths.length == 1 ? 'foto' : 'fotos'}'
             : '${_paths.length} '
-                '${_paths.length == 1 ? 'foto elegida' : 'fotos elegidas'}',
+                  '${_paths.length == 1 ? 'foto elegida' : 'fotos elegidas'}',
       );
       Navigator.of(context).pop(saved);
     } catch (_) {
@@ -183,9 +189,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
           children: [
             _header(scheme),
             const Divider(height: 1),
-            Expanded(
-              child: _paths.isEmpty ? _empty(scheme) : _grid(scheme),
-            ),
+            Expanded(child: _paths.isEmpty ? _empty(scheme) : _grid(scheme)),
             _footer(scheme),
           ],
         ),
@@ -203,15 +207,18 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 colors: [AppColors.brand, AppColors.brandDark],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: const Icon(Icons.photo_library_outlined,
-                color: Colors.white, size: 21),
+            child: const Icon(
+              Icons.photo_library_outlined,
+              color: Colors.white,
+              size: 21,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -223,16 +230,22 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 15.5, fontWeight: FontWeight.w800),
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  widget.max > 0
+                  widget.readOnly
+                      ? 'Estas fotos ya se enviaron a impresión. Solo puedes '
+                            'verlas; si necesitas cambiarlas, pídele al estudio '
+                            'que reabra el envío.'
+                      : widget.max > 0
                       ? 'Elige hasta ${widget.max} '
-                          '${widget.max == 1 ? 'foto' : 'fotos'} de la carpeta '
-                          'compartida. Nada se mueve de lugar.'
+                            '${widget.max == 1 ? 'foto' : 'fotos'} de la carpeta '
+                            'compartida. Nada se mueve de lugar.'
                       : 'Elige las fotos que quieras de la carpeta compartida. '
-                          'Nada se mueve de lugar.',
+                            'Nada se mueve de lugar.',
                   maxLines: 2,
                   style: TextStyle(
                     fontSize: 11.5,
@@ -288,8 +301,11 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                 color: AppColors.brand.withValues(alpha: .10),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.add_photo_alternate_outlined,
-                  size: 34, color: AppColors.brand),
+              child: Icon(
+                Icons.add_photo_alternate_outlined,
+                size: 34,
+                color: AppColors.brand,
+              ),
             ),
             const SizedBox(height: 14),
             const Text(
@@ -302,15 +318,20 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
               'compartida de este servicio.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  fontSize: 12, height: 1.35, color: scheme.onSurfaceVariant),
+                fontSize: 12,
+                height: 1.35,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              key: const ValueKey('service-photos-add-empty'),
-              onPressed: _add,
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: const Text('Elegir fotos'),
-            ),
+            if (!widget.readOnly) ...[
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                key: const ValueKey('service-photos-add-empty'),
+                onPressed: _add,
+                icon: const Icon(Icons.photo_library_outlined, size: 18),
+                label: const Text('Elegir fotos'),
+              ),
+            ],
           ],
         ),
       ),
@@ -335,8 +356,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
           clipBehavior: Clip.antiAlias,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
-            side:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
+            side: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
           ),
           child: InkWell(
             onTap: () => showDrivePhotoViewer(
@@ -359,6 +381,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                         isRemote: src.startsWith('http'),
                         big: true,
                       ),
+                      if (!widget.readOnly)
                       Positioned(
                         top: 4,
                         right: 4,
@@ -367,7 +390,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                           visualDensity: VisualDensity.compact,
                           onPressed: () => _remove(path),
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.black.withValues(alpha: .42),
+                            backgroundColor: Colors.black.withValues(
+                              alpha: .42,
+                            ),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.all(4),
                             minimumSize: const Size(30, 30),
@@ -385,7 +410,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        fontSize: 11.5, fontWeight: FontWeight.w700),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
@@ -397,6 +424,39 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
   }
 
   Widget _footer(ColorScheme scheme) {
+    if (widget.readOnly) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.lock_outline_rounded, size: 16, color: AppColors.warn),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Enviadas a impresión · ${_paths.length} '
+                '${_paths.length == 1 ? 'foto' : 'fotos'}',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
@@ -415,8 +475,9 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
           // ("Entrar a mi Drive"): botón sólido con el azul de la app.
           FilledButton.icon(
             key: const ValueKey('service-photos-add'),
-            onPressed:
-                widget.max > 0 && _paths.length >= widget.max ? null : _add,
+            onPressed: widget.max > 0 && _paths.length >= widget.max
+                ? null
+                : _add,
             icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
             label: Text(_paths.isEmpty ? 'Elegir fotos' : 'Agregar fotos'),
           ),

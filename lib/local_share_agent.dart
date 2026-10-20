@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'app_constants.dart';
 import 'app_platform.dart';
 import 'app_settings.dart';
+import 'embedded_jpeg.dart';
 import 'hs_api.dart';
 
 // ==================================================================
@@ -98,8 +99,14 @@ class LocalShareAgent {
   @visibleForTesting
   Duration retryDelay = const Duration(seconds: 4);
 
-  /// Tope de un archivo servido (una foto enorme no se manda entera).
-  static const int maxFileBytes = 64 * 1024 * 1024;
+  /// Tope de un archivo servido ENTERO en una sola petición (una foto enorme
+  /// no se manda entera).
+  ///
+  /// El servidor del drive pide los archivos POR TROZOS (y así baja un vídeo
+  /// de varios GB sin tocar este tope); esto solo protege el caso viejo de
+  /// "mándame el archivo completo". Antes eran 64 MB y un vídeo de 66 MB no se
+  /// podía ni ver ni descargar desde una carpeta compartida.
+  static const int maxFileBytes = 512 * 1024 * 1024;
 
   /// Tope de UNA respuesta del agente (lo que el proxy deja pasar sin cortarla).
   /// Una miniatura reducida nunca se acerca: 320 px son ~0,5 MB.
@@ -121,7 +128,6 @@ class LocalShareAgent {
   /// Trozo mínimo al partir de nuevo una respuesta rechazada (413): por debajo
   /// de esto, partir no arregla nada (el problema no es el tamaño).
   static const int minReplyChunkBytes = 2 * 1024;
-
 
   bool _running = false;
   bool get running => _running;
@@ -160,8 +166,9 @@ class LocalShareAgent {
   ///
   /// Lo pinta la tarjeta del switch: encender y que no pase nada visible era
   /// justo lo que hacía pensar que el switch estaba roto.
-  final ValueNotifier<ShareProblem?> problem =
-      ValueNotifier<ShareProblem?>(null);
+  final ValueNotifier<ShareProblem?> problem = ValueNotifier<ShareProblem?>(
+    null,
+  );
 
   /// Arranca el agente (idempotente). No lanza: si falla, reintenta.
   void start() {
@@ -270,8 +277,11 @@ class LocalShareAgent {
     // una carpeta local compartida.
     loadManualPreference();
     if (manualPreferenceKnown) {
-      if (_manual) { start(); }
-      else { stop(); }
+      if (_manual) {
+        start();
+      } else {
+        stop();
+      }
       return;
     }
     try {
@@ -288,12 +298,11 @@ class LocalShareAgent {
   }
 
   Uri _u(String path, [Map<String, String>? query]) =>
-      Uri.parse('${AppConstants.apiBase}$path')
-          .replace(queryParameters: query);
+      Uri.parse('${AppConstants.apiBase}$path').replace(queryParameters: query);
 
   Map<String, String> get _headers => {
-        if ((HsSession.token ?? '').isNotEmpty) 'Apikey': HsSession.token!,
-      };
+    if ((HsSession.token ?? '').isNotEmpty) 'Apikey': HsSession.token!,
+  };
 
   /// Bucle del agente: pregunta por trabajo, contesta y vuelve a preguntar.
   ///
@@ -377,6 +386,9 @@ class LocalShareAgent {
         root: '${request['root'] ?? ''}',
         path: '${request['path'] ?? ''}',
         width: int.tryParse('${request['w'] ?? ''}') ?? 0,
+        // Lectura por trozos (el servidor los pide para un vídeo grande).
+        offset: int.tryParse('${request['offset'] ?? ''}') ?? 0,
+        length: int.tryParse('${request['length'] ?? ''}') ?? 0,
         // Escritura: nombre nuevo, destino, lista y archivo temporal.
         name: '${request['name'] ?? ''}',
         to: '${request['to'] ?? ''}',
@@ -404,6 +416,7 @@ class LocalShareAgent {
   /// lento necesita más, pero nunca minutos.
   static Duration _readTimeout(String op) => switch (op) {
     'list' => const Duration(seconds: 20),
+    'stat' => const Duration(seconds: 20),
     'thumb' => const Duration(seconds: 45),
     // Escribir (sobre todo una subida, que baja el archivo del servidor)
     // puede tardar más que leer: una foto grande por un disco/enlace lento.
@@ -424,6 +437,10 @@ class LocalShareAgent {
     List<String> names = const [],
     bool overwrite = false,
     String url = '',
+    // Lectura por TROZOS de un archivo (un vídeo grande se ve así, sin tener
+    // que mandarlo entero antes de empezar a reproducirlo).
+    int offset = 0,
+    int length = 0,
   }) async {
     try {
       final target = resolveInside(root, path);
@@ -461,12 +478,42 @@ class LocalShareAgent {
             });
           }
         }
-        folders.sort((a, b) => '${a['name']}'
-            .toLowerCase()
-            .compareTo('${b['name']}'.toLowerCase()));
+        folders.sort(
+          (a, b) => '${a['name']}'.toLowerCase().compareTo(
+            '${b['name']}'.toLowerCase(),
+          ),
+        );
         return AgentReply(
           bytes: utf8.encode(jsonEncode({'folders': folders})),
           mime: 'application/json',
+        );
+      }
+      if (op == 'stat') {
+        // Cuánto pesa y qué es. El servidor lo necesita para contestar
+        // `Content-Range` (Video, adelantar) y para pedir el trozo correcto.
+        final file = File(target);
+        if (!await file.exists()) {
+          return const AgentReply(
+            status: 404,
+            error: 'El archivo ya no existe en esta computadora',
+          );
+        }
+        final st = await file.stat();
+        final name = target
+            .split(RegExp(r'[/\\]'))
+            .where((s) => s.isNotEmpty)
+            .last;
+        return AgentReply(
+          bytes: utf8.encode(
+            jsonEncode({
+              'size': st.size,
+              'mime': _mimeOf(name),
+              'kind': _kindOf(name),
+              'name': name,
+            }),
+          ),
+          mime: 'application/json',
+          name: name,
         );
       }
       if (op == 'file' || op == 'thumb') {
@@ -478,22 +525,60 @@ class LocalShareAgent {
           );
         }
         final st = await file.stat();
+        // TROZO: se lee solo la parte pedida. Es lo que hace que un vídeo de
+        // varios GB se vea (y se pueda adelantar) sin que la app lo cargue
+        // entero en memoria ni lo mande completo antes de empezar.
+        if (offset > 0 || length > 0) {
+          final start = offset < 0 ? 0 : (offset > st.size ? st.size : offset);
+          final available = st.size - start;
+          final want = length > 0 ? length : available;
+          final take = want > available ? available : want;
+          final name = target
+              .split(RegExp(r'[/\\]'))
+              .where((s) => s.isNotEmpty)
+              .last;
+          final raf = await file.open();
+          try {
+            await raf.setPosition(start);
+            final bytes = take <= 0 ? const <int>[] : await raf.read(take);
+            return AgentReply(bytes: bytes, mime: _mimeOf(name), name: name);
+          } finally {
+            await raf.close();
+          }
+        }
         if (st.size > maxFileBytes) {
           return AgentReply(
             status: 413,
             error:
-                'El archivo pesa ${(st.size / (1024 * 1024)).round()} MB y el '
-                'compartido entrega hasta '
-                '${maxFileBytes ~/ (1024 * 1024)} MB. Cópialo al Drive para '
-                'poder verlo desde cualquier parte',
+                'El archivo pesa ${(st.size / (1024 * 1024)).round()} MB y no '
+                'se pudo leer por partes (el servidor del Drive está viejo). '
+                'Actualiza el servidor o cópialo al Drive para verlo desde '
+                'cualquier parte',
           );
         }
-        final name = target.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).last;
+        final name = target
+            .split(RegExp(r'[/\\]'))
+            .where((s) => s.isNotEmpty)
+            .last;
         // MINIATURA: la foto se reduce AQUÍ, antes de mandarla. Subir el
         // original de varios MB solo para pintar 480 px es lo que hacía que
         // las fotos "tardaran demasiado" en las carpetas compartidas.
         if (op == 'thumb' && width > 0) {
           final original = await file.readAsBytes();
+          // RAW: se manda la vista previa JPEG que trae dentro (Flutter no
+          // sabe decodificar CR2/CR3/DNG). Si no tiene, se dice y el panel
+          // enseña el icono del archivo, nunca un recuadro roto.
+          var source = original;
+          if (isRawFileName(name)) {
+            final preview = embeddedJpeg(original);
+            if (preview == null) {
+              return AgentReply(
+                status: 404,
+                error: 'Este RAW no tiene vista previa',
+              );
+            }
+            source = preview;
+          }
           // El cuerpo de la respuesta NO puede pasarse del límite del proxy: si
           // al reducir todavía sale enorme (una vista previa de 1600 px son
           // varios MB de píxeles), se reduce a la mitad y se vuelve a probar.
@@ -501,7 +586,7 @@ class LocalShareAgent {
           // se quedaba esperando minutos: el usuario veía "tardó demasiado".
           var w = width;
           while (true) {
-            final small = await shrinkToRgba(original, w);
+            final small = await shrinkToRgba(source, w);
             if (small == null) break;
             if (small.bytes.length <= maxReplyBytes) {
               return AgentReply(
@@ -515,6 +600,14 @@ class LocalShareAgent {
             // Todavía no cabe: la mitad de ancho (hasta un mínimo legible).
             if (w <= 32) break;
             w = (w / 2).round();
+          }
+          // Un RAW sin vista previa legible no se manda entero: no es una
+          // imagen que el visor pueda pintar.
+          if (isRawFileName(name)) {
+            return const AgentReply(
+              status: 404,
+              error: 'Este RAW no tiene vista previa',
+            );
           }
           // No se pudo reducir y el original tampoco cabe: se explica en vez de
           // mandar un cuerpo que el proxy va a cortar en silencio.
@@ -551,15 +644,13 @@ class LocalShareAgent {
         // El archivo que otro usuario subió está en el servidor: se baja y se
         // escribe AQUÍ, en la computadora del dueño.
         final r = await client
-            .get(
-              Uri.parse('${AppConstants.apiBase}$url'),
-              headers: _headers,
-            )
+            .get(Uri.parse('${AppConstants.apiBase}$url'), headers: _headers)
             .timeout(const Duration(minutes: 4));
         if (r.statusCode != 200) {
           return AgentReply(
             status: r.statusCode == 404 ? 410 : 502,
-            error: 'No se pudo bajar el archivo para guardarlo (HTTP ${r.statusCode})',
+            error:
+                'No se pudo bajar el archivo para guardarlo (HTTP ${r.statusCode})',
           );
         }
         final dir = Directory(target);
@@ -575,8 +666,8 @@ class LocalShareAgent {
       }
       if (op == 'rename') {
         final clean = _safeName(name);
-        final from = FileSystemEntity.typeSync(target) ==
-                FileSystemEntityType.directory
+        final from =
+            FileSystemEntity.typeSync(target) == FileSystemEntityType.directory
             ? Directory(target) as FileSystemEntity
             : File(target) as FileSystemEntity;
         if (!await from.exists()) {
@@ -634,7 +725,8 @@ class LocalShareAgent {
           if (type == FileSystemEntityType.notFound) continue;
           final isDir = type == FileSystemEntityType.directory;
           // Una carpeta no puede meterse dentro de sí misma.
-          if (isDir && _normalize(destDir.path).startsWith('${_normalize(src)}/')) {
+          if (isDir &&
+              _normalize(destDir.path).startsWith('${_normalize(src)}/')) {
             errors.add('No puedes mover "$clean" dentro de sí misma');
             continue;
           }
@@ -769,25 +861,42 @@ class LocalShareAgent {
     return s;
   }
 
-  static bool _isImage(String name) =>
-      RegExp(r'\.(jpe?g|png|gif|webp|bmp)$', caseSensitive: false).hasMatch(name);
+  static bool _isImage(String name) => RegExp(
+    r'\.(jpe?g|png|gif|webp|bmp)$',
+    caseSensitive: false,
+  ).hasMatch(name);
 
   /// Tipo del archivo por su extensión: `image`, `video`, `audio`, `pdf`,
   /// `text` u `other` (los mismos valores que manda el servidor del drive).
   static String _kindOf(String name) {
     if (_isImage(name)) return 'image';
-    final ext = name.contains('.')
-        ? name.split('.').last.toLowerCase()
-        : '';
+    if (isRawFileName(name)) return 'raw';
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     const video = {
-      'mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', '3gp', 'wmv', 'mpeg',
-      'mpg', 'ogv',
+      'mp4',
+      'm4v',
+      'mov',
+      'webm',
+      'mkv',
+      'avi',
+      '3gp',
+      'wmv',
+      'mpeg',
+      'mpg',
+      'ogv',
     };
-    const audio = {
-      'mp3', 'm4a', 'wav', 'ogg', 'oga', 'aac', 'flac', 'opus',
-    };
+    const audio = {'mp3', 'm4a', 'wav', 'ogg', 'oga', 'aac', 'flac', 'opus'};
     const text = {
-      'txt', 'csv', 'json', 'md', 'log', 'xml', 'yml', 'yaml', 'ini', 'srt',
+      'txt',
+      'csv',
+      'json',
+      'md',
+      'log',
+      'xml',
+      'yml',
+      'yaml',
+      'ini',
+      'srt',
       'vtt',
     };
     if (video.contains(ext)) return 'video';
@@ -804,9 +913,7 @@ class LocalShareAgent {
   /// `application/octet-stream`. Si el archivo no es de un tipo conocido, se
   /// manda el genérico y se ofrece descargarlo.
   static String _mimeOf(String name) {
-    final ext = name.contains('.')
-        ? name.split('.').last.toLowerCase()
-        : '';
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     switch (ext) {
       case 'jpg':
       case 'jpeg':
@@ -928,10 +1035,7 @@ class LocalShareAgent {
       codec.dispose();
       if (data == null) return null;
       return (
-        bytes: data.buffer.asUint8List(
-          data.offsetInBytes,
-          data.lengthInBytes,
-        ),
+        bytes: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
         width: width,
         height: height,
       );

@@ -16,6 +16,7 @@ export 'drive_base.dart'
         driveKindLabel,
         driveExtensionLabel,
         kImageExtensions,
+        kRawExtensions,
         kVideoExtensions,
         kAudioExtensions,
         kPdfExtensions,
@@ -104,22 +105,26 @@ class DriveService extends DriveBase {
         final name = e.path.split(Platform.pathSeparator).last;
         if (name.startsWith('.')) continue;
         if (e is Directory) {
-          folders.add(DriveItem(
-            name: name,
-            isFolder: true,
-            modified: e.statSync().modified,
-            childCount: _countChildren(e),
-          ));
+          folders.add(
+            DriveItem(
+              name: name,
+              isFolder: true,
+              modified: e.statSync().modified,
+              childCount: _countChildren(e),
+            ),
+          );
         } else if (e is File) {
           // Cualquier archivo: el Drive ya no guarda solo fotos (vídeos, PDF,
           // documentos). Antes no aparecían y era imposible verlos.
           final st = e.statSync();
-          files.add(DriveItem(
-            name: name,
-            isFolder: false,
-            modified: st.modified,
-            size: st.size,
-          ));
+          files.add(
+            DriveItem(
+              name: name,
+              isFolder: false,
+              modified: st.modified,
+              size: st.size,
+            ),
+          );
         }
       }
       int byName(DriveItem a, DriveItem b) =>
@@ -129,7 +134,8 @@ class DriveService extends DriveBase {
       if (!applyRefresh(ticket, [...folders, ...files])) return;
       conn = DriveConn.online;
     } catch (e) {
-      if (isCurrentRefresh(ticket)) failRefresh('No se pudo leer la carpeta: $e');
+      if (isCurrentRefresh(ticket))
+        failRefresh('No se pudo leer la carpeta: $e');
     } finally {
       // El girador lo apaga el ÚLTIMO refresco pedido (un refresco viejo no
       // puede dejarlo encendido para siempre).
@@ -159,9 +165,11 @@ class DriveService extends DriveBase {
     try {
       return dir
           .listSync()
-          .where((e) =>
-              !(e.path.split(Platform.pathSeparator).last.startsWith('.')) &&
-              (e is Directory || e is File))
+          .where(
+            (e) =>
+                !(e.path.split(Platform.pathSeparator).last.startsWith('.')) &&
+                (e is Directory || e is File),
+          )
           .length;
     } catch (_) {
       return 0;
@@ -189,7 +197,10 @@ class DriveService extends DriveBase {
   /// Con [overwrite] reemplaza el existente en vez de renombrar (foto (1)).
   /// Los trabajos con `cancelled = true` se saltan.
   @override
-  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async {
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async {
     if (sources.isEmpty) return 0;
     // Un LOTE por subida: el panel cuenta "subidas / a subir" de este lote.
     final batch = newUploadBatch();
@@ -236,6 +247,7 @@ class DriveService extends DriveBase {
         if (ok) saved++;
       }
     }
+
     await Future.wait(List.generate(kUploadParallel, (_) => worker()));
     await refresh();
     return saved;
@@ -255,8 +267,9 @@ class DriveService extends DriveBase {
     final base = clean.contains('.')
         ? clean.substring(0, clean.lastIndexOf('.'))
         : clean;
-    final ext =
-        clean.contains('.') ? clean.substring(clean.lastIndexOf('.')) : '';
+    final ext = clean.contains('.')
+        ? clean.substring(clean.lastIndexOf('.'))
+        : '';
     var name = clean;
     if (!overwrite) {
       var k = 1;
@@ -361,7 +374,8 @@ class DriveService extends DriveBase {
       for (final name in names) {
         final srcPath = _absolute([...path, name]);
         final isFolder =
-            FileSystemEntity.typeSync(srcPath) == FileSystemEntityType.directory;
+            FileSystemEntity.typeSync(srcPath) ==
+            FileSystemEntityType.directory;
 
         // No mover una carpeta dentro de sí misma ni de sus subcarpetas.
         final srcNorm = '${srcPath.replaceAll('\\', '/')}/';
@@ -386,15 +400,17 @@ class DriveService extends DriveBase {
             ? name.substring(name.lastIndexOf('.'))
             : '';
         while (FileSystemEntity.typeSync(
-                [targetAbs, destName].join(Platform.pathSeparator)) !=
+              [targetAbs, destName].join(Platform.pathSeparator),
+            ) !=
             FileSystemEntityType.notFound) {
           destName = '$base ($i)$ext';
           i++;
         }
 
         try {
-          await (isFolder ? Directory(srcPath) : File(srcPath))
-              .rename([targetAbs, destName].join(Platform.pathSeparator));
+          await (isFolder ? Directory(srcPath) : File(srcPath)).rename(
+            [targetAbs, destName].join(Platform.pathSeparator),
+          );
           moved++;
         } catch (e) {
           errors.add('No se pudo mover "$name": $e');
@@ -440,7 +456,8 @@ class DriveService extends DriveBase {
             ? name.substring(name.lastIndexOf('.'))
             : '';
         while (FileSystemEntity.typeSync(
-                [targetAbs, destName].join(Platform.pathSeparator)) !=
+              [targetAbs, destName].join(Platform.pathSeparator),
+            ) !=
             FileSystemEntityType.notFound) {
           destName = '$base ($i)$ext';
           i++;
@@ -479,8 +496,7 @@ class DriveService extends DriveBase {
 
   /// Elimina en lote los elementos [names] de la carpeta actual.
   @override
-  Future<({int deleted, List<String> errors})> deleteItems(
-      List<String> names) {
+  Future<({int deleted, List<String> errors})> deleteItems(List<String> names) {
     return runBusy(DriveBusy.deleting, 'Eliminando elementos…', () async {
       var deleted = 0;
       final errors = <String>[];
@@ -511,7 +527,8 @@ class DriveService extends DriveBase {
   List<String> listFolders(List<String> rel) {
     final dir = Directory(_absolute(rel));
     if (!dir.existsSync()) return const [];
-    final names = dir.listSync()
+    final names = dir
+        .listSync()
         .whereType<Directory>()
         .map((d) => d.path.split(Platform.pathSeparator).last)
         .where((n) => !n.startsWith('.'))

@@ -8,6 +8,7 @@ import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
+import '../hs_place.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
@@ -16,6 +17,7 @@ import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_pager.dart';
+import '../widgets/hs_place_picker.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/service_items_gallery.dart';
@@ -266,6 +268,7 @@ class _ClientsPageState extends State<ClientsPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
+      module: 'clients',
       title: 'Clientes',
       description: 'Directorio de clientes (rol fijo "Client") y administración de sus paquetes.',
       icon: Icons.badge_rounded,
@@ -1100,6 +1103,7 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
   final TextEditingController _desc = TextEditingController();
   late DateTime _dateTime;
   int _serviceId = 0;
+  HsPlace? _place;
   bool _saving = false;
   String? _error;
 
@@ -1115,6 +1119,7 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
     _dateTime = parsed ?? DateTime(now.year, now.month, now.day, now.hour + 1);
     final sid = (a['serviceId'] as num?)?.toInt() ?? 0;
     _serviceId = sid;
+    _place = HsPlace.of(a);
   }
 
   @override
@@ -1165,6 +1170,9 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
       'serviceId': _serviceId == 0 ? null : _serviceId,
       'eventDate': hsDateTimeValue(_dateTime),
       'description': _desc.text.trim(),
+      // El lugar viaja SIEMPRE (vacío = se quitó): así editar una agenda
+      // puede borrar la ubicación, no solo cambiarla.
+      ...(_place?.toBody() ?? const {'location': '', 'lat': null, 'lng': null}),
     };
     try {
       if (_editing) {
@@ -1273,6 +1281,15 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
                 ),
             ],
             onChanged: (v) => setState(() => _serviceId = v ?? 0),
+          ),
+        ),
+        const SizedBox(height: 16),
+        FormSection(
+          label: 'Lugar (opcional)',
+          child: HsPlaceField(
+            place: _place,
+            enabled: !_saving,
+            onChanged: (place) => setState(() => _place = place),
           ),
         ),
         const SizedBox(height: 16),
@@ -2286,7 +2303,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 colors: [AppColors.brand, AppColors.brandDark],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -3569,7 +3586,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               color: AppColors.brand.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.folder_shared_outlined,
               color: AppColors.brand,
               size: 20,
@@ -3637,7 +3654,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.folder_rounded, color: AppColors.brand),
+          Icon(Icons.folder_rounded, color: AppColors.brand),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -4553,7 +4570,7 @@ class _ServiceTileState extends State<_ServiceTile> {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                   color: AppColors.brand,
@@ -4905,6 +4922,7 @@ class _AgendaEventCard extends StatelessWidget {
     final date = hsParseDate(agenda['eventDate']);
     final service = (agenda['serviceName'] ?? '').toString();
     final desc = (agenda['description'] ?? '').toString();
+    final place = HsPlace.of(agenda);
     final monthAbbr = date == null
         ? ''
         : kHsMonths[date.month - 1].substring(0, 3);
@@ -4985,6 +5003,34 @@ class _AgendaEventCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                // LUGAR: solo si la agenda lo tiene agregado. Tocar abre el
+                // mapa del equipo.
+                if (place != null)
+                  InkWell(
+                    onTap: () => hsOpenPlace(place),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Row(
+                        children: [
+                          Icon(Icons.place_outlined, size: 12, color: accent),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              place.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: accent,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 if (desc.isNotEmpty)
                   Text(
                     desc,
@@ -6594,7 +6640,7 @@ class _DriveFolderPickerState extends State<_DriveFolderPicker> {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               colors: [AppColors.brand, AppColors.brandDark],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -7189,7 +7235,7 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
                 color: AppColors.brand.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(11),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.create_new_folder_outlined,
                 size: 20,
                 color: AppColors.brand,
@@ -7247,11 +7293,7 @@ class _ServiceShareDialogState extends State<_ServiceShareDialog> {
               color: AppColors.brand.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(
-              Icons.folder_rounded,
-              color: AppColors.brand,
-              size: 20,
-            ),
+            child: Icon(Icons.folder_rounded, color: AppColors.brand, size: 20),
           ),
           const SizedBox(width: 10),
           Expanded(

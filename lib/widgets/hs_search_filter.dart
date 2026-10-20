@@ -418,11 +418,7 @@ class _HsFilterDialogState extends State<HsFilterDialog> {
               color: AppColors.brand.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(
-              Icons.tune_rounded,
-              size: 19,
-              color: AppColors.brand,
-            ),
+            child: Icon(Icons.tune_rounded, size: 19, color: AppColors.brand),
           ),
           const SizedBox(width: 10),
           const Expanded(

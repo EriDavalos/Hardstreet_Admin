@@ -52,12 +52,17 @@ Future<void> _pumpBell(WidgetTester tester, {int unread = 0}) async {
     ),
   );
   await tester.pump();
-}
-
-/// Iconos dentro de la fila de un aviso (la fila lleva una clave por ID).
-List<IconData?> _rowIcons(WidgetTester tester, int id) => tester
+}/// Iconos dentro de la fila de un aviso.
+///
+/// La fila lleva clave por ORIGEN + ID: los ids de la agenda y de los avisos
+/// del equipo (envíos a impresión) viven en tablas distintas y pueden coincidir.
+List<IconData?> _rowIcons(
+  WidgetTester tester,
+  int id, {
+  String source = 'event',
+}) => tester
     .widgetList<Icon>(find.descendant(
-      of: find.byKey(ValueKey('reminder-$id')),
+      of: find.byKey(ValueKey('reminder-$source-$id')),
       matching: find.byType(Icon),
     ))
     .map((i) => i.icon)
@@ -135,5 +140,59 @@ void main() {
     await tester.tap(find.byType(RemindersBell));
     await tester.pumpAndSettle();
     expect(find.text('Avisos de eventos'), findsNothing);
+  });
+
+  testWidgets('un aviso de impresión llega a la campanita y se marca leído',
+      (tester) async {
+    final service = RemindersService.instance;
+    // Lo que devuelve GET /api/reminders: los envíos a impresión viajan
+    // mezclados con la agenda, marcados con `source: 'print'`.
+    final bodies = <String>[];
+    final previousClient = HsApi.client;
+    HsApi.client = MockClient((request) async {
+      if (request.method == 'PUT') bodies.add(request.body);
+      return http.Response('{"ok":true,"unread":0}', 200,
+          headers: {'content-type': 'application/json'});
+    });
+    addTearDown(() => HsApi.client = previousClient);
+
+    service.seedForTest([
+      {
+        'id': 7,
+        'scheduleId': null,
+        'kind': 'print',
+        'source': 'print',
+        'title': 'Nuevo envío a impresión · Boda',
+        'body': 'Reyna envió 3 fotos a impresión',
+        'eventDate': '2026-10-19T10:00:00',
+        'isRead': 0,
+      },
+    ]);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topRight,
+            child: RemindersBell(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(RemindersBell));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nuevo envío a impresión · Boda'), findsOneWidget);
+    expect(find.text('Impresión'), findsOneWidget);
+
+    await tester.tap(find.text('Nuevo envío a impresión · Boda'));
+    await tester.pumpAndSettle();
+
+    // El servidor debe saber que el id es de los avisos del EQUIPO.
+    expect(bodies, hasLength(1));
+    expect(bodies.first, contains('"source":"print"'));
+    expect(service.unread, 0);
   });
 }

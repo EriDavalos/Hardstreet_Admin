@@ -47,59 +47,69 @@ void main() {
   /// mira sólo el encendido/apagado del servicio, sin hablar con nadie.
   void parkAgent() {
     LocalShareAgent.instance.client = MockClient(
-        (_) => Completer<http.Response>().future);
+      (_) => Completer<http.Response>().future,
+    );
     LocalShareAgent.instance.retryDelay = const Duration(seconds: 5);
   }
 
-  test('el switch enciende el servicio y lo deja encendido al reabrir la app',
-      () async {
-    final agent = LocalShareAgent.instance;
-    parkAgent();
+  test(
+    'el switch enciende el servicio y lo deja encendido al reabrir la app',
+    () async {
+      final agent = LocalShareAgent.instance;
+      parkAgent();
 
-    expect(agent.serving.value, isFalse);
-    expect(agent.manualOn, isFalse);
+      expect(agent.serving.value, isFalse);
+      expect(agent.manualOn, isFalse);
 
-    // Encendido a mano: queda sirviendo (no sólo mientras haya una carpeta a
-    // la vista) y se recuerda para la próxima vez.
-    await agent.setManual(true);
-    expect(agent.running, isTrue);
-    expect(agent.serving.value, isTrue);
-    expect(agent.manualOn, isTrue);
-    expect(AppSettings.instance.shareServing, isTrue);
+      // Encendido a mano: queda sirviendo (no sólo mientras haya una carpeta a
+      // la vista) y se recuerda para la próxima vez.
+      await agent.setManual(true);
+      expect(agent.running, isTrue);
+      expect(agent.serving.value, isTrue);
+      expect(agent.manualOn, isTrue);
+      expect(AppSettings.instance.shareServing, isTrue);
 
-    // Y en la siguiente apertura, con esa preferencia, arranca solo.
-    agent.stop();
-    expect(agent.serving.value, isFalse);
-    expect(agent.loadManualPreference(), isTrue);
-    expect(agent.running, isTrue);
-    expect(agent.serving.value, isTrue);
+      // Y en la siguiente apertura, con esa preferencia, arranca solo.
+      agent.stop();
+      expect(agent.serving.value, isFalse);
+      expect(agent.loadManualPreference(), isTrue);
+      expect(agent.running, isTrue);
+      expect(agent.serving.value, isTrue);
 
-    // Apagado a mano: deja de servir y se recuerda apagado.
-    await agent.setManual(false);
-    expect(agent.running, isFalse);
-    expect(agent.serving.value, isFalse);
-    expect(agent.manualOn, isFalse);
-    expect(AppSettings.instance.shareServing, isFalse);
-  });
+      // Apagado a mano: deja de servir y se recuerda apagado.
+      await agent.setManual(false);
+      expect(agent.running, isFalse);
+      expect(agent.serving.value, isFalse);
+      expect(agent.manualOn, isFalse);
+      expect(AppSettings.instance.shareServing, isFalse);
+    },
+  );
 
-  test('encendido a mano NO se apaga aunque no queden carpetas compartidas',
-      () async {
-    final agent = LocalShareAgent.instance;
-    parkAgent();
-    await agent.setManual(true);
+  test(
+    'encendido a mano NO se apaga aunque no queden carpetas compartidas',
+    () async {
+      final agent = LocalShareAgent.instance;
+      parkAgent();
+      await agent.setManual(true);
 
-    // El servidor dice que este usuario no comparte ninguna carpeta de su
-    // computadora: antes eso apagaba el agente; con el switch encendido, no.
-    HsApi.client = MockClient((request) async => http.Response(
-          jsonEncode({'ok': true, 'item': {'shared': [], 'received': []}}),
+      // El servidor dice que este usuario no comparte ninguna carpeta de su
+      // computadora: antes eso apagaba el agente; con el switch encendido, no.
+      HsApi.client = MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'ok': true,
+            'item': {'shared': [], 'received': []},
+          }),
           200,
           headers: {'content-type': 'application/json'},
-        ));
-    await agent.syncWithShares();
+        ),
+      );
+      await agent.syncWithShares();
 
-    expect(agent.running, isTrue, reason: 'el switch manda');
-    expect(agent.serving.value, isTrue);
-  });
+      expect(agent.running, isTrue, reason: 'el switch manda');
+      expect(agent.serving.value, isTrue);
+    },
+  );
 
   test('nunca se sale de la carpeta compartida', () {
     final agent = LocalShareAgent.instance;
@@ -110,54 +120,71 @@ void main() {
     expect(agent.resolveInside(root, ''), root);
 
     // Escapes: NADA de subir de nivel, cambiar de unidad ni rutas clavadas.
-    expect(() => agent.resolveInside(root, '../secreto'),
-        throwsA(isA<StateError>()));
-    expect(() => agent.resolveInside(root, 'Bodas/../../otro'),
-        throwsA(isA<StateError>()));
-    expect(() => agent.resolveInside(root, 'C:/Windows'),
-        throwsA(isA<StateError>()));
-    expect(() => agent.resolveInside(root, '/etc/passwd'),
-        throwsA(isA<StateError>()));
-    expect(() => agent.resolveInside('', 'algo'),
-        throwsA(isA<StateError>()));
-  });
-
-  test('el listado trae TODO lo que hay: carpetas, fotos, vídeos y texto',
-      () async {
-    // Un vídeo en la carpeta del dueño: antes NO aparecía (el listado solo
-    // servía imágenes) y por eso era imposible verlo desde el panel.
-    File('${tmp.path}/clip.mp4').writeAsBytesSync(List<int>.filled(16, 1));
-
-    final reply = await LocalShareAgent.instance.describeRequest(
-      op: 'list',
-      root: tmp.path,
-      path: '',
+    expect(
+      () => agent.resolveInside(root, '../secreto'),
+      throwsA(isA<StateError>()),
     );
-
-    expect(reply.status, 200);
-    final data = jsonDecode(utf8.decode(reply.bytes)) as Map<String, dynamic>;
-    final items = (data['folders'] as List).cast<Map<String, dynamic>>();
-    final names = items.map((e) => e['name']).toList();
-
-    expect(names, contains('Bodas'));
-    expect(names, contains('Foto.JPG'));
-    expect(names, contains('nota.txt'), reason: 'el Drive ya no es solo fotos');
-    expect(names, contains('clip.mp4'));
-    expect(names, isNot(contains('.oculto.jpg')));
-
-    final folder = items.firstWhere((e) => e['name'] == 'Bodas');
-    expect(folder['isFolder'], isTrue);
-    expect(folder['childCount'], 1, reason: 'el servidor lo usa en las tarjetas');
-    final image = items.firstWhere((e) => e['name'] == 'Foto.JPG');
-    expect(image['isFolder'], isFalse);
-    expect(image['size'], 8);
-    expect(image['modified'], isA<int>());
-    expect(image['kind'], 'image');
-    // El TIPO viaja con cada archivo: con él el panel pinta el icono y elige
-    // el visor (reproductor para el vídeo, lectura para el texto).
-    expect(items.firstWhere((e) => e['name'] == 'clip.mp4')['kind'], 'video');
-    expect(items.firstWhere((e) => e['name'] == 'nota.txt')['kind'], 'text');
+    expect(
+      () => agent.resolveInside(root, 'Bodas/../../otro'),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      () => agent.resolveInside(root, 'C:/Windows'),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      () => agent.resolveInside(root, '/etc/passwd'),
+      throwsA(isA<StateError>()),
+    );
+    expect(() => agent.resolveInside('', 'algo'), throwsA(isA<StateError>()));
   });
+
+  test(
+    'el listado trae TODO lo que hay: carpetas, fotos, vídeos y texto',
+    () async {
+      // Un vídeo en la carpeta del dueño: antes NO aparecía (el listado solo
+      // servía imágenes) y por eso era imposible verlo desde el panel.
+      File('${tmp.path}/clip.mp4').writeAsBytesSync(List<int>.filled(16, 1));
+
+      final reply = await LocalShareAgent.instance.describeRequest(
+        op: 'list',
+        root: tmp.path,
+        path: '',
+      );
+
+      expect(reply.status, 200);
+      final data = jsonDecode(utf8.decode(reply.bytes)) as Map<String, dynamic>;
+      final items = (data['folders'] as List).cast<Map<String, dynamic>>();
+      final names = items.map((e) => e['name']).toList();
+
+      expect(names, contains('Bodas'));
+      expect(names, contains('Foto.JPG'));
+      expect(
+        names,
+        contains('nota.txt'),
+        reason: 'el Drive ya no es solo fotos',
+      );
+      expect(names, contains('clip.mp4'));
+      expect(names, isNot(contains('.oculto.jpg')));
+
+      final folder = items.firstWhere((e) => e['name'] == 'Bodas');
+      expect(folder['isFolder'], isTrue);
+      expect(
+        folder['childCount'],
+        1,
+        reason: 'el servidor lo usa en las tarjetas',
+      );
+      final image = items.firstWhere((e) => e['name'] == 'Foto.JPG');
+      expect(image['isFolder'], isFalse);
+      expect(image['size'], 8);
+      expect(image['modified'], isA<int>());
+      expect(image['kind'], 'image');
+      // El TIPO viaja con cada archivo: con él el panel pinta el icono y elige
+      // el visor (reproductor para el vídeo, lectura para el texto).
+      expect(items.firstWhere((e) => e['name'] == 'clip.mp4')['kind'], 'video');
+      expect(items.firstWhere((e) => e['name'] == 'nota.txt')['kind'], 'text');
+    },
+  );
 
   test('un archivo se sirve con sus bytes y su tipo', () async {
     final reply = await LocalShareAgent.instance.describeRequest(
@@ -187,55 +214,64 @@ void main() {
     expect(reply.bytes.length, 4);
   });
 
-  test('la MINIATURA se reduce ANTES de mandarla (no sube el original)', () async {
-    // Una foto de verdad (PNG 8x8 de un color) para poder reducirla: el
-    // agente manda píxeles crudos y el servidor arma el JPEG.
-    final png = base64Decode(
-      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAA'
-      'EUlEQVR4nGM4oaGBFTEMLQkAgl1GAWqNFmsAAAAASUVORK5CYII=',
-    );
-    File('${tmp.path}/chica.png').writeAsBytesSync(png);
+  test(
+    'la MINIATURA se reduce ANTES de mandarla (no sube el original)',
+    () async {
+      // Una foto de verdad (PNG 8x8 de un color) para poder reducirla: el
+      // agente manda píxeles crudos y el servidor arma el JPEG.
+      final png = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAA'
+        'EUlEQVR4nGM4oaGBFTEMLQkAgl1GAWqNFmsAAAAASUVORK5CYII=',
+      );
+      File('${tmp.path}/chica.png').writeAsBytesSync(png);
 
-    final reply = await LocalShareAgent.instance.describeRequest(
-      op: 'thumb',
-      root: tmp.path,
-      path: 'chica.png',
-      width: 4,
-    );
+      final reply = await LocalShareAgent.instance.describeRequest(
+        op: 'thumb',
+        root: tmp.path,
+        path: 'chica.png',
+        width: 4,
+      );
 
-    expect(reply.status, 200);
-    expect(reply.mime, AgentReply.rawMime, reason: 'van píxeles, no el JPEG');
-    expect(reply.isRawRgba, isTrue);
-    expect(reply.rawWidth, 4, reason: 'se reduce al ancho pedido');
-    expect(reply.rawHeight, 4, reason: 'mantiene la proporción');
-    expect(
-      reply.bytes.length,
-      reply.rawWidth * reply.rawHeight * 4,
-      reason: 'RGBA: 4 bytes por píxel',
-    );
+      expect(reply.status, 200);
+      expect(reply.mime, AgentReply.rawMime, reason: 'van píxeles, no el JPEG');
+      expect(reply.isRawRgba, isTrue);
+      expect(reply.rawWidth, 4, reason: 'se reduce al ancho pedido');
+      expect(reply.rawHeight, 4, reason: 'mantiene la proporción');
+      expect(
+        reply.bytes.length,
+        reply.rawWidth * reply.rawHeight * 4,
+        reason: 'RGBA: 4 bytes por píxel',
+      );
 
-    // Si no se puede reducir (no es una imagen), se manda el original y el
-    // servidor se encarga: nunca se queda sin respuesta.
-    final txt = await LocalShareAgent.instance.describeRequest(
-      op: 'thumb',
-      root: tmp.path,
-      path: 'nota.txt',
-      width: 4,
-    );
-    expect(txt.status, 200);
-    expect(txt.isRawRgba, isFalse);
-    expect(txt.bytes, isNotEmpty);
-  });
+      // Si no se puede reducir (no es una imagen), se manda el original y el
+      // servidor se encarga: nunca se queda sin respuesta.
+      final txt = await LocalShareAgent.instance.describeRequest(
+        op: 'thumb',
+        root: tmp.path,
+        path: 'nota.txt',
+        width: 4,
+      );
+      expect(txt.status, 200);
+      expect(txt.isRawRgba, isFalse);
+      expect(txt.bytes, isNotEmpty);
+    },
+  );
 
   test('lo que ya no existe se explica y lo desconocido se rechaza', () async {
-    final gone = await LocalShareAgent.instance
-        .describeRequest(op: 'file', root: tmp.path, path: 'no-esta.jpg');
+    final gone = await LocalShareAgent.instance.describeRequest(
+      op: 'file',
+      root: tmp.path,
+      path: 'no-esta.jpg',
+    );
     expect(gone.status, 404);
     expect(gone.error, isNotEmpty);
     expect(gone.bytes, isEmpty);
 
-    final bad = await LocalShareAgent.instance
-        .describeRequest(op: 'borrar', root: tmp.path, path: 'Foto.JPG');
+    final bad = await LocalShareAgent.instance.describeRequest(
+      op: 'borrar',
+      root: tmp.path,
+      path: 'Foto.JPG',
+    );
     expect(bad.status, 400, reason: 'el agente es de SOLO LECTURA');
   });
 
@@ -259,17 +295,22 @@ void main() {
               'op': 'list',
               'root': tmp.path.replaceAll('\\', '/'),
               'path': '',
-            }
+            },
           }),
           200,
         );
       }
       replies.add(request);
-      expect(request.headers['Content-Type'], 'application/octet-stream',
-          reason: 'el cuerpo viaja crudo, sin base64');
+      expect(
+        request.headers['Content-Type'],
+        'application/octet-stream',
+        reason: 'el cuerpo viaja crudo, sin base64',
+      );
       final data = jsonDecode(utf8.decode(request.bodyBytes));
-      expect((data['folders'] as List).map((e) => e['name']),
-          contains('Foto.JPG'));
+      expect(
+        (data['folders'] as List).map((e) => e['name']),
+        contains('Foto.JPG'),
+      );
       return http.Response('{"ok":true}', 200);
     });
 
@@ -280,9 +321,11 @@ void main() {
     for (var i = 0; i < 200 && agent.served == 0; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    for (var i = 0;
-        i < 200 && agent.problem.value != ShareProblem.session;
-        i++) {
+    for (
+      var i = 0;
+      i < 200 && agent.problem.value != ShareProblem.session;
+      i++
+    ) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
@@ -302,8 +345,11 @@ void main() {
     // Y no es un bucle apretado: entre reintentos hay una espera.
     final before = waited.length;
     await Future<void>.delayed(const Duration(milliseconds: 60));
-    expect(waited.length - before, lessThan(20),
-        reason: 'espera entre reintentos (antes preguntaba sin parar)');
+    expect(
+      waited.length - before,
+      lessThan(20),
+      reason: 'espera entre reintentos (antes preguntaba sin parar)',
+    );
 
     agent.stop();
     expect(agent.running, isFalse);
@@ -311,47 +357,56 @@ void main() {
     expect(agent.problem.value, isNull, reason: 'apagado a propósito');
   });
 
-  test('un servidor del drive VIEJO se explica y no se golpea sin parar',
-      () async {
-    final waited = <String>[];
-    final agent = LocalShareAgent.instance;
-    agent.retryDelay = const Duration(milliseconds: 20);
-    // Servidor del drive sin los endpoints del agente.
-    agent.client = MockClient((request) async {
-      waited.add(request.url.path);
-      return http.Response('Not Found', 404);
-    });
+  test(
+    'un servidor del drive VIEJO se explica y no se golpea sin parar',
+    () async {
+      final waited = <String>[];
+      final agent = LocalShareAgent.instance;
+      agent.retryDelay = const Duration(milliseconds: 20);
+      // Servidor del drive sin los endpoints del agente.
+      agent.client = MockClient((request) async {
+        waited.add(request.url.path);
+        return http.Response('Not Found', 404);
+      });
 
-    agent.start();
-    for (var i = 0;
+      agent.start();
+      for (
+        var i = 0;
         i < 200 && agent.problem.value != ShareProblem.oldServer;
-        i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
-    expect(agent.problem.value, ShareProblem.oldServer);
-    expect(agent.running, isTrue, reason: 'sigue encendido y reintentando');
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(agent.problem.value, ShareProblem.oldServer);
+      expect(agent.running, isTrue, reason: 'sigue encendido y reintentando');
 
-    final before = waited.length;
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(waited.length - before, lessThan(20),
-        reason: 'con 404 se espera antes de volver a preguntar');
-    agent.stop();
-  });
+      final before = waited.length;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(
+        waited.length - before,
+        lessThan(20),
+        reason: 'con 404 se espera antes de volver a preguntar',
+      );
+      agent.stop();
+    },
+  );
 
-  test('en el navegador/celular el servicio lo DICE en vez de no hacer nada',
-      () async {
-    final agent = LocalShareAgent.instance;
-    agent.debugSupported = false;
-    addTearDown(() => agent.debugSupported = null);
+  test(
+    'en el navegador/celular el servicio lo DICE en vez de no hacer nada',
+    () async {
+      final agent = LocalShareAgent.instance;
+      agent.debugSupported = false;
+      addTearDown(() => agent.debugSupported = null);
 
-    final started = await agent.setManual(true);
+      final started = await agent.setManual(true);
 
-    expect(started, isFalse, reason: 'no puede servir carpetas del equipo');
-    expect(agent.running, isFalse);
-    expect(agent.serving.value, isFalse);
-    expect(agent.problem.value, ShareProblem.unsupported);
-    expect(agent.manualOn, isFalse);
-  });
+      expect(started, isFalse, reason: 'no puede servir carpetas del equipo');
+      expect(agent.running, isFalse);
+      expect(agent.serving.value, isFalse);
+      expect(agent.problem.value, ShareProblem.unsupported);
+      expect(agent.manualOn, isFalse);
+    },
+  );
 
   test('una respuesta grande viaja en trozos de 512 KB, en orden', () async {
     // El servidor detrás de un proxy corta los cuerpos de más de 1 MB (es el
@@ -395,7 +450,7 @@ void main() {
               'op': 'file',
               'root': tmp.path.replaceAll('\\', '/'),
               'path': 'grande.jpg',
-            }
+            },
           }),
           200,
         );
@@ -411,16 +466,16 @@ void main() {
     }
     expect(agent.served, before + 1);
     expect(sent, hasLength(3));
-    expect(
-      sent.map((r) => r.url.queryParameters['seq']).toList(),
-      ['0', '1', '2'],
-      reason: 'los trozos van en orden: el servidor los pega en ese orden',
-    );
-    expect(
-      sent.map((r) => r.url.queryParameters['last']).toList(),
-      ['0', '0', '1'],
-      reason: 'sólo el último cierra la respuesta',
-    );
+    expect(sent.map((r) => r.url.queryParameters['seq']).toList(), [
+      '0',
+      '1',
+      '2',
+    ], reason: 'los trozos van en orden: el servidor los pega en ese orden');
+    expect(sent.map((r) => r.url.queryParameters['last']).toList(), [
+      '0',
+      '0',
+      '1',
+    ], reason: 'sólo el último cierra la respuesta');
     expect(
       sent.every((r) => r.bodyBytes.length <= 512 * 1024),
       isTrue,
@@ -437,9 +492,7 @@ void main() {
   test('si el proxy rechaza un trozo (413), la app lo parte y sigue', () async {
     // Un proxy más estrecho de lo normal: deja pasar 2 KB por petición.
     const limit = 2048;
-    final bytes = Uint8List.fromList(
-      List<int>.generate(60000, (i) => i % 251),
-    );
+    final bytes = Uint8List.fromList(List<int>.generate(60000, (i) => i % 251));
     File('${tmp.path}/mediana.jpg').writeAsBytesSync(bytes);
 
     final accepted = <http.Request>[];
@@ -458,7 +511,7 @@ void main() {
               'op': 'file',
               'root': tmp.path.replaceAll('\\', '/'),
               'path': 'mediana.jpg',
-            }
+            },
           }),
           200,
         );
@@ -497,6 +550,70 @@ void main() {
       reason: 'el último trozo (y sólo él) cierra la respuesta',
     );
     agent.stop();
+  });
+
+  test(
+    'stat y lectura POR TROZOS: un vídeo grande no se carga entero',
+    () async {
+      // Lo que hace que un vídeo de varios GB se vea (y se pueda adelantar) sin
+      // que la app lo mande completo antes de empezar: el servidor pregunta
+      // cuánto pesa y pide el trozo que el reproductor necesita.
+      final big = Uint8List.fromList(
+        List<int>.generate(1024 * 1024, (i) => i % 253),
+      );
+      File('${tmp.path}/video.mp4').writeAsBytesSync(big);
+
+      final info = await LocalShareAgent.instance.describeRequest(
+        op: 'stat',
+        root: tmp.path,
+        path: 'video.mp4',
+      );
+      expect(info.status, 200);
+      final meta = jsonDecode(utf8.decode(info.bytes)) as Map<String, dynamic>;
+      expect(meta['size'], big.length, reason: 'el servidor sabe cuánto mide');
+      expect(meta['mime'], 'video/mp4');
+      expect(meta['kind'], 'video');
+
+      final part = await LocalShareAgent.instance.describeRequest(
+        op: 'file',
+        root: tmp.path,
+        path: 'video.mp4',
+        offset: 1000,
+        length: 10,
+      );
+      expect(part.status, 200);
+      expect(
+        part.bytes,
+        big.sublist(1000, 1010),
+        reason: 'manda EXACTAMENTE el trozo pedido',
+      );
+
+      final tail = await LocalShareAgent.instance.describeRequest(
+        op: 'file',
+        root: tmp.path,
+        path: 'video.mp4',
+        offset: big.length - 3,
+        length: 100,
+      );
+      expect(
+        tail.bytes,
+        big.sublist(big.length - 3),
+        reason: 'más allá del final no se inventan bytes',
+      );
+    },
+  );
+
+  test('el tope del «archivo completo» ya no corta un vídeo de 66 MB', () {
+    // El servidor del drive pide los archivos POR TROZOS (y así baja un vídeo
+    // de varios GB), pero el camino viejo —"mándame el archivo entero"— tiene
+    // su propio tope: con 64 MB, un vídeo de 66 MB no se podía ni ver ni
+    // descargar desde una carpeta compartida (el usuario solo leía "Cópialo al
+    // Drive para poder verlo").
+    expect(
+      LocalShareAgent.maxFileBytes,
+      greaterThan(64 * 1024 * 1024),
+      reason: 'el tope viejo dejaba fuera los vídeos de más de 64 MB',
+    );
   });
 
   test('el 204 sin trabajo no pregunta en bucle apretado', () async {

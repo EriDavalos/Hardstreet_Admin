@@ -22,13 +22,12 @@ import 'site_html_preview.dart';
 
 /// Cómo se construye la vista previa. Se puede sustituir en las pruebas (el
 /// WebView nativo no existe en el entorno de tests).
-typedef SiteHtmlPreviewBuilder =
-    Widget Function(
-      BuildContext context,
-      SiteHtmlPreviewController controller,
-      String sectionId,
-      String html,
-    );
+typedef SiteHtmlPreviewBuilder = Widget Function(
+  BuildContext context,
+  SiteHtmlPreviewController controller,
+  String sectionId,
+  String html,
+);
 
 Future<String?> showSiteHtmlEditor(
   BuildContext context, {
@@ -72,8 +71,9 @@ class SiteHtmlEditorDialog extends StatefulWidget {
 }
 
 class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
-  late final TextEditingController _code =
-      TextEditingController(text: widget.initialHtml);
+  late final TextEditingController _code = TextEditingController(
+    text: widget.initialHtml,
+  );
   final SiteHtmlPreviewController _preview = SiteHtmlPreviewController();
   late String _previewHtml = widget.initialHtml;
   Timer? _debounce;
@@ -118,8 +118,7 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
     setState(() {
       _capturing = false;
       if (html == null || html.trim().isEmpty) {
-        _status =
-            'No se pudo leer la sección del sitio. Revisa la conexión y reintenta.';
+        _status = 'No se pudo leer la sección del sitio. Revisa la conexión y reintenta.';
       } else {
         _code.text = html.trim();
         _status = 'HTML actual cargado. Edítalo y presiona "Usar este HTML".';
@@ -175,7 +174,10 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
         child: Column(
           children: [
             _header(scheme),
-            Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: .5)),
+            Divider(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
             if (!wide) _paneSwitch(scheme),
             Expanded(
               child: wide
@@ -195,7 +197,10 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
                       children: [_editorPane(scheme), _previewPane(scheme)],
                     ),
             ),
-            Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: .5)),
+            Divider(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
             _footer(),
           ],
         ),
@@ -212,14 +217,18 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 colors: [AppColors.brand, AppColors.brandDark],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.code_rounded, color: Colors.white, size: 21),
+            child: const Icon(
+              Icons.code_rounded,
+              color: Colors.white,
+              size: 21,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -328,42 +337,68 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              _tool('Título', 'h2', () => _insert(
-                    '<h2 class="section-title">Título de la sección</h2>',
-                    before: '<h2 class="section-title">',
-                    after: '</h2>',
-                  )),
-              _tool('Etiqueta', 'over', () => _insert(
-                    '<p class="section-label">Etiqueta</p>',
-                    before: '<p class="section-label">',
-                    after: '</p>',
-                  )),
-              _tool('Párrafo', 'P', () => _insert(
-                    '<p>Escribe aquí el texto.</p>',
-                    before: '<p>',
-                    after: '</p>',
-                  )),
-              _tool('Negrita', 'B', () => _insert(
-                    '<strong>texto</strong>',
-                    before: '<strong>',
-                    after: '</strong>',
-                  )),
-              _tool('Cursiva', 'I', () => _insert(
-                    '<em>texto</em>',
-                    before: '<em>',
-                    after: '</em>',
-                  )),
-              _tool('Botón', 'CTA', () => _insert(
-                    '<a href="#" class="hero-cta">Botón</a>',
-                    before: '<a href="#" class="hero-cta">',
-                    after: '</a>',
-                  )),
-              _tool('Imagen', 'IMG', () => _insert(
-                    '<img src="images/banner.jpg" alt="Foto" />',
-                  )),
-              _tool('Lista', 'UL', () => _insert(
-                    '<ul><li>Primer punto</li><li>Segundo punto</li></ul>',
-                  )),
+              _tool(
+                'Título',
+                'h2',
+                () => _insert(
+                  '<h2 class="section-title">Título de la sección</h2>',
+                  before: '<h2 class="section-title">',
+                  after: '</h2>',
+                ),
+              ),
+              _tool(
+                'Etiqueta',
+                'over',
+                () => _insert(
+                  '<p class="section-label">Etiqueta</p>',
+                  before: '<p class="section-label">',
+                  after: '</p>',
+                ),
+              ),
+              _tool(
+                'Párrafo',
+                'P',
+                () => _insert(
+                  '<p>Escribe aquí el texto.</p>',
+                  before: '<p>',
+                  after: '</p>',
+                ),
+              ),
+              _tool(
+                'Negrita',
+                'B',
+                () => _insert(
+                  '<strong>texto</strong>',
+                  before: '<strong>',
+                  after: '</strong>',
+                ),
+              ),
+              _tool(
+                'Cursiva',
+                'I',
+                () => _insert('<em>texto</em>', before: '<em>', after: '</em>'),
+              ),
+              _tool(
+                'Botón',
+                'CTA',
+                () => _insert(
+                  '<a href="#" class="hero-cta">Botón</a>',
+                  before: '<a href="#" class="hero-cta">',
+                  after: '</a>',
+                ),
+              ),
+              _tool(
+                'Imagen',
+                'IMG',
+                () => _insert('<img src="images/banner.jpg" alt="Foto" />'),
+              ),
+              _tool(
+                'Lista',
+                'UL',
+                () => _insert(
+                  '<ul><li>Primer punto</li><li>Segundo punto</li></ul>',
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -395,10 +430,7 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
                   hintText:
                       '<div class="about-grid">\n  <div class="about-text">…'
                       '</div>\n</div>',
-                  hintStyle: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                  ),
+                  hintStyle: TextStyle(fontFamily: 'monospace', fontSize: 12.5),
                 ),
               ),
             ),
@@ -411,9 +443,9 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
                   _status ??
                       (hasHtml
                           ? '${_code.text.length} caracteres · reemplaza el '
-                              'contenido de la sección'
+                                'contenido de la sección'
                           : 'Sin HTML propio: la sección se arma con sus '
-                              'campos, como siempre.'),
+                                'campos, como siempre.'),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -455,7 +487,10 @@ class _SiteHtmlEditorDialogState extends State<SiteHtmlEditorDialog> {
           visualDensity: VisualDensity.compact,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           minimumSize: const Size(0, 30),
-          textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+          textStyle: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
           foregroundColor: scheme.onSurface,
           side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .7)),
         ),

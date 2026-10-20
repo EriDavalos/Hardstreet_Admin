@@ -321,6 +321,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
             _Row('Uptime del servidor', _uptimeLabel()),
             _Row('Servicio', _health?['service'] as String? ?? '—'),
             _Row('Carpeta de datos', _health?['root'] as String? ?? '—'),
+            // Los vídeos sacan su miniatura (y su versión ligera) con ffmpeg
+            // EN EL SERVIDOR. Si falta, las tarjetas de vídeo solo pueden
+            // enseñar el icono: aquí se ve el motivo en vez de parecer un
+            // fallo de la app.
+            _Row('Miniaturas de vídeo', _videoSupport('posters')),
+            _Row('Calidad ligera de vídeo', _videoSupport('lightQuality')),
             if (_lastError != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -332,6 +338,31 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ],
         ),
         const SizedBox(height: 16),
+
+        // ===== Falta ffmpeg en el servidor =====
+        if (online && _health?['video'] is Map &&
+            (_health!['video'] as Map)['posters'] != true)
+          _SectionCard(
+            title: 'Los vídeos no muestran miniatura',
+            children: [
+              _Bullet(
+                'El servidor no tiene ffmpeg: sin él no puede sacar el primer '
+                'fotograma de un vídeo (ni su versión ligera). Las tarjetas de '
+                'vídeo se quedan con su icono.',
+              ),
+              _Bullet(
+                'Instálalo en el servidor (la primera opción no necesita root) '
+                'y reinicia el servicio:',
+              ),
+              _Mono('cd hardstreet-drive && npm install'),
+              _Mono('sudo apt install -y ffmpeg   (alternativa del sistema)'),
+              _Mono('sudo systemctl restart hardstreet-drive'),
+              _Bullet('Luego toca «Probar conexión»: debe decir «Sí».'),
+            ],
+          ),
+        if (online && _health?['video'] is Map &&
+            (_health!['video'] as Map)['posters'] != true)
+          const SizedBox(height: 16),
 
         // ===== Cómo solucionarlo =====
         if (!online)
@@ -359,6 +390,13 @@ class _ConnectionPageState extends State<ConnectionPage> {
           ),
       ],
     );
+  }
+
+  /// "Sí" / "No: instala ffmpeg" según lo que diga el servidor.
+  String _videoSupport(String key) {
+    final video = _health?['video'];
+    if (video is! Map) return '—';
+    return video[key] == true ? 'Sí' : 'No: instala ffmpeg en el servidor';
   }
 
   String _uptimeLabel() {

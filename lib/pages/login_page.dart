@@ -59,7 +59,10 @@ class _LoginPageState extends State<LoginPage> {
       final user = await HsApi.login(email, password);
       if (!mounted) return;
       final role = (user['role'] ?? '').toString().toLowerCase();
-      if (role != 'admin' && role != 'colaborador' && role != 'cliente' && role != 'empleado') {
+      if (role != 'admin' &&
+          role != 'colaborador' &&
+          role != 'cliente' &&
+          role != 'empleado') {
         await HsApi.logout();
         if (!mounted) return;
         _snack('Esta cuenta no tiene acceso al panel de administración');
@@ -98,33 +101,26 @@ class _LoginPageState extends State<LoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (!wide) ...[
-                const Align(
-                  child: BrandBadge(size: 56, radius: 16),
-                ),
+                const Align(child: BrandBadge(size: 56, radius: 16)),
                 const SizedBox(height: 16),
                 Text(
                   'HardStreet',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
+                  style: Theme.of(context).textTheme.headlineSmall
                       ?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 24),
               ],
               Text(
                 'Bienvenido',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
+                style: Theme.of(context).textTheme.headlineSmall
                     ?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 6),
               Text(
                 'Inicia sesión para entrar al panel de administración.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
               TextField(
@@ -177,10 +173,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Text(
-                        'Recordarme',
-                        style: TextStyle(fontSize: 13),
-                      ),
+                      const Text('Recordarme', style: TextStyle(fontSize: 13)),
                     ],
                   ),
                   TextButton(
@@ -215,8 +208,10 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 14),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: scheme.primary.withValues(alpha: .08),
                   borderRadius: BorderRadius.circular(10),
@@ -226,8 +221,11 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.verified_user_outlined,
-                        size: 18, color: scheme.primary),
+                    Icon(
+                      Icons.verified_user_outlined,
+                      size: 18,
+                      color: scheme.primary,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -259,10 +257,7 @@ class _LoginPageState extends State<LoginPage> {
                   begin: Alignment.topRight,
                   end: Alignment.bottomLeft,
                   colors: isDark
-                      ? [
-                          const Color(0xFF0C111C),
-                          AppColors.surfaceDark,
-                        ]
+                      ? [const Color(0xFF0C111C), AppColors.surfaceDark]
                       : [
                           const Color(0xFFF7F9FC),
                           scheme.primary.withValues(alpha: .06),
@@ -272,11 +267,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
           SafeArea(
-            child: Center(
-              child: wide
-                  ? _WideLayout(form: form)
-                  : form,
-            ),
+            child: Center(child: wide ? _WideLayout(form: form) : form),
           ),
           // Botón de modo claro/oscuro: solo un icono en la esquina
           // superior derecha. El cambio es GLOBAL (escuchado por la app).
@@ -325,7 +316,7 @@ class _WideLayout extends StatelessWidget {
               Expanded(
                 flex: 5,
                 child: Container(
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [AppColors.brand, AppColors.brandDark],
                       begin: Alignment.topLeft,
@@ -341,12 +332,18 @@ class _WideLayout extends StatelessWidget {
                       Positioned(
                         right: -60,
                         top: -60,
-                        child: _circle(200, Colors.white.withValues(alpha: .08)),
+                        child: _circle(
+                          200,
+                          Colors.white.withValues(alpha: .08),
+                        ),
                       ),
                       Positioned(
                         left: -40,
                         bottom: -80,
-                        child: _circle(240, Colors.white.withValues(alpha: .06)),
+                        child: _circle(
+                          240,
+                          Colors.white.withValues(alpha: .06),
+                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.all(36),
@@ -370,9 +367,7 @@ class _WideLayout extends StatelessWidget {
                             const Spacer(),
                             Text(
                               'Administra todo\ndesde un solo lugar',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .headlineMedium
+                              style: Theme.of(context).textTheme.headlineMedium
                                   ?.copyWith(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800,
@@ -389,12 +384,18 @@ class _WideLayout extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 28),
-                            _feature(Icons.folder_copy_outlined,
-                                'Drive de archivos con carpetas e imágenes'),
-                            _feature(Icons.people_alt_outlined,
-                                'Gestión de usuarios y clientes'),
-                            _feature(Icons.admin_panel_settings_outlined,
-                                'Roles y permisos por módulo'),
+                            _feature(
+                              Icons.folder_copy_outlined,
+                              'Drive de archivos con carpetas e imágenes',
+                            ),
+                            _feature(
+                              Icons.people_alt_outlined,
+                              'Gestión de usuarios y clientes',
+                            ),
+                            _feature(
+                              Icons.admin_panel_settings_outlined,
+                              'Roles y permisos por módulo',
+                            ),
                           ],
                         ),
                       ),
@@ -403,10 +404,7 @@ class _WideLayout extends StatelessWidget {
                 ),
               ),
               // Formulario
-              Expanded(
-                flex: 5,
-                child: Center(child: form),
-              ),
+              Expanded(flex: 5, child: Center(child: form)),
             ],
           ),
         ),
@@ -415,10 +413,10 @@ class _WideLayout extends StatelessWidget {
   }
 
   Widget _circle(double size, Color color) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      );
+    width: size,
+    height: size,
+    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+  );
 
   Widget _feature(IconData icon, String text) {
     return Padding(
@@ -441,4 +439,3 @@ class _WideLayout extends StatelessWidget {
     );
   }
 }
-

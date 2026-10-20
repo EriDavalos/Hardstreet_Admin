@@ -283,6 +283,7 @@ class _ActivityPageState extends State<ActivityPage> {
           ).slice(_visible);
 
     return PageContainer(
+      module: 'activity',
       title: 'Actividad',
       description:
           'Bitácora de quién creó, editó o eliminó cada cosa del panel.',

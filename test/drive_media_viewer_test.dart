@@ -4,8 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hardstreet_admin/app_platform.dart';
+import 'package:hardstreet_admin/drive_base.dart';
 import 'package:hardstreet_admin/drive_service.dart';
+import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/local_share_service.dart';
 import 'package:hardstreet_admin/open_file.dart';
+import 'package:hardstreet_admin/share_permissions.dart';
+import 'package:hardstreet_admin/shared_drive.dart';
 import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
 
 // ==================================================================
@@ -59,6 +64,7 @@ void main() {
     DriveItem target, {
     List<DriveItem> playlist = const [],
     Future<void> Function(DriveItem)? onDownload,
+    DriveBase? source,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     tester.view.devicePixelRatio = 1.0;
@@ -73,7 +79,7 @@ void main() {
               child: TextButton(
                 onPressed: () => showDriveFileViewer(
                   context,
-                  drive: drive,
+                  drive: source ?? drive,
                   item: target,
                   playlist: playlist,
                   onDownload: onDownload,
@@ -133,7 +139,9 @@ void main() {
     if (isAndroidPlatform) {
       expect(played, isNull);
       expect(
-          inDialog(find.textContaining('no tiene vista previa')), findsOneWidget);
+        inDialog(find.textContaining('no tiene vista previa')),
+        findsOneWidget,
+      );
     } else {
       expect(played, isNotNull);
       expect(played!.kind, DriveItemKind.pdf);
@@ -144,8 +152,34 @@ void main() {
     await close(tester);
   });
 
-  testWidgets('un TEXTO se lee dentro del panel, en solo lectura',
-      (tester) async {
+  testWidgets('pantalla completa: oculta la barra y se sale con su botón', (
+    tester,
+  ) async {
+    await open(tester, item('boda.mp4'));
+
+    // La barra del visor trae su propio botón: funciona aun cuando el
+    // reproductor del sistema no pueda ponerse en pantalla completa.
+    await tester.tap(find.byTooltip('Pantalla completa'));
+    await tester.pump();
+
+    expect(
+      find.byTooltip('Cerrar'),
+      findsNothing,
+      reason: 'la barra superior se oculta para que el vídeo ocupe todo',
+    );
+    expect(find.byTooltip('Descargar'), findsNothing);
+
+    // Siempre hay una salida visible.
+    await tester.tap(find.byTooltip('Salir de pantalla completa'));
+    await tester.pump();
+    expect(find.byTooltip('Cerrar'), findsOneWidget);
+    expect(find.byTooltip('Pantalla completa'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('un TEXTO se lee dentro del panel, en solo lectura', (
+    tester,
+  ) async {
     DriveViewTarget? read;
     debugTextLoader = (target) async {
       read = target;
@@ -158,15 +192,61 @@ void main() {
     expect(read!.item.name, 'notas.txt');
     expect(read!.kind, DriveItemKind.text);
     expect(inDialog(find.textContaining('Texto · TXT')), findsOneWidget);
-    expect(inDialog(find.textContaining('hola desde el drive')), findsOneWidget);
+    expect(
+      inDialog(find.textContaining('hola desde el drive')),
+      findsOneWidget,
+    );
     // Se puede seleccionar para copiar un dato, pero es de SOLO LECTURA.
     expect(inDialog(find.byType(SelectableText)), findsOneWidget);
     expect(inDialog(find.byType(TextField)), findsNothing);
-    expect(inDialog(find.byTooltip('Siguiente')), findsNothing,
-        reason: 'un texto no tiene lista de reproducción');
+    expect(
+      inDialog(find.byTooltip('Siguiente')),
+      findsNothing,
+      reason: 'un texto no tiene lista de reproducción',
+    );
 
     expect(tester.takeException(), isNull);
     await close(tester);
+  });
+
+  testWidgets('un vídeo GRANDE se pide en CALIDAD LIGERA (empieza antes)', (
+    tester,
+  ) async {
+    // Una carpeta compartida (los vídeos que se ven desde el Drive) es la que
+    // puede pedir la versión reencodada: el servidor la baja por el túnel y la
+    // reduce al vuelo, porque el original puede ser un 4K de 1 GB que tarde
+    // minutos en empezar.
+    HsSession.token = 'token-de-prueba';
+    addTearDown(HsSession.clear);
+    final shared = SharedDrive(
+      service: LocalShareService(baseUrl: 'http://drive.test'),
+      shareId: 7,
+      label: 'Boda',
+      rights: SharePermissions.owner,
+    );
+
+    await open(
+      tester,
+      item('ceremonia.mp4', size: 120 * 1024 * 1024),
+      source: shared,
+    );
+    expect(played!.kind, DriveItemKind.video);
+    expect(played!.source, contains('/api/local/file'));
+    expect(
+      played!.source,
+      contains('play=low'),
+      reason: 'un vídeo de 120 MB se reencoda para que empiece antes',
+    );
+    await close(tester);
+
+    // Uno pequeño se manda tal cual: reencodar no aportaría nada.
+    await open(
+      tester,
+      item('saludo.mp4', size: 8 * 1024 * 1024),
+      source: shared,
+    );
+    expect(played!.source, isNot(contains('play=low')));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('un archivo sin vista previa se puede DESCARGAR (y abrir con el '
@@ -180,9 +260,15 @@ void main() {
 
     expect(played, isNull, reason: 'un ZIP no se reproduce');
     expect(inDialog(find.textContaining('Archivo · ZIP')), findsNWidgets(2));
-    expect(inDialog(find.textContaining('no tiene vista previa')), findsOneWidget);
-    expect(inDialog(find.textContaining('512.0 KB')), findsOneWidget,
-        reason: 'la ficha dice cuánto pesa');
+    expect(
+      inDialog(find.textContaining('no tiene vista previa')),
+      findsOneWidget,
+    );
+    expect(
+      inDialog(find.textContaining('512.0 KB')),
+      findsOneWidget,
+      reason: 'la ficha dice cuánto pesa',
+    );
 
     // Descargar avisa a quien abrió el visor (el módulo Archivos).
     await tester.tap(find.widgetWithText(FilledButton, 'Descargar'));

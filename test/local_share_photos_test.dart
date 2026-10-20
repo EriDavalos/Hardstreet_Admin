@@ -7,6 +7,8 @@ import 'package:hardstreet_admin/drive_service.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/local_share_service.dart';
 import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/share_permissions.dart';
+import 'package:hardstreet_admin/shared_drive.dart';
 import 'package:hardstreet_admin/widgets/drive_thumb.dart';
 
 // ==================================================================
@@ -76,8 +78,60 @@ void main() {
     expect(drive.thumbSource(item, width: 480), contains('w=480'));
   });
 
-  testWidgets('el VISOR de una carpeta compartida sí pinta la foto (por red)',
-      (tester) async {
+  test(
+    'un vídeo GRANDE se reproduce en CALIDAD LIGERA (y se descarga entero)',
+    () {
+      final drive = sharedDrive(rel: ['Boda']);
+      final big = DriveItem(
+        name: 'ceremonia.mp4',
+        isFolder: false,
+        size: 120 * 1024 * 1024,
+      );
+      // Verlo: el servidor lo reencoda al vuelo y el reproductor empieza antes.
+      expect(drive.playSource(big), contains('/api/local/file'));
+      expect(drive.playSource(big), contains('play=low'));
+      // Descargarlo: SIEMPRE el original.
+      expect(drive.fullSource(big), isNot(contains('play=low')));
+      expect(drive.absolutePathOf(big), isNot(contains('play=low')));
+
+      // Un vídeo pequeño no se reencoda (no aportaría nada).
+      final small = DriveItem(
+        name: 'saludo.mp4',
+        isFolder: false,
+        size: 8 * 1024 * 1024,
+      );
+      expect(drive.playSource(small), isNot(contains('play=low')));
+
+      // Una foto tampoco, por grande que sea.
+      final photo = DriveItem(
+        name: 'portada.jpg',
+        isFolder: false,
+        size: 90 * 1024 * 1024,
+      );
+      expect(drive.playSource(photo), isNot(contains('play=low')));
+    },
+  );
+
+  test('una carpeta COMPARTIDA (subida al servicio) también pide calidad '
+      'ligera', () {
+    final shared = SharedDrive(
+      service: LocalShareService(baseUrl: 'http://drive.test'),
+      shareId: 7,
+      label: 'Boda',
+      rights: SharePermissions.owner,
+    );
+    final big = DriveItem(
+      name: 'fiesta.mp4',
+      isFolder: false,
+      size: 200 * 1024 * 1024,
+    );
+    expect(shared.playSource(big), contains('play=low'));
+    expect(shared.fullSource(big), isNot(contains('play=low')));
+  });
+
+  testWidgets('el VISOR de una carpeta compartida sí pinta la foto (por red)', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1280, 800);
@@ -106,7 +160,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     final thumb = tester.widget<DriveThumb>(
-      find.descendant(of: find.byType(Dialog), matching: find.byType(DriveThumb)),
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(DriveThumb),
+      ),
     );
     expect(
       thumb.isRemote,

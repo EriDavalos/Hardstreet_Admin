@@ -83,8 +83,11 @@ class ServiceItemsGallery extends StatelessWidget {
                       color: AppColors.brand.withValues(alpha: .12),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.photo_library_outlined,
-                        color: AppColors.brand, size: 21),
+                    child: Icon(
+                      Icons.photo_library_outlined,
+                      color: AppColors.brand,
+                      size: 21,
+                    ),
                   ),
                   const SizedBox(width: 11),
                   Expanded(
@@ -96,13 +99,15 @@ class ServiceItemsGallery extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w800),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                         Text(
                           paths.isEmpty
                               ? 'El cliente todavía no ha elegido fotos.'
                               : '${paths.length} ${paths.length == 1 ? 'foto elegida' : 'fotos elegidas'}'
-                                  '${folder.isEmpty ? '' : ' · $folder'}',
+                                    '${folder.isEmpty ? '' : ' · $folder'}',
                           maxLines: 2,
                           style: TextStyle(
                             fontSize: 11.5,
@@ -134,8 +139,9 @@ class ServiceItemsGallery extends StatelessWidget {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 12.5,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -149,11 +155,8 @@ class ServiceItemsGallery extends StatelessWidget {
                         mainAxisSpacing: 10,
                       ),
                       itemCount: paths.length,
-                      itemBuilder: (context, i) => _tile(
-                        context,
-                        drive,
-                        paths[i],
-                      ),
+                      itemBuilder: (context, i) =>
+                          _tile(context, drive, paths[i]),
                     ),
             ),
           ],
@@ -185,26 +188,24 @@ class ServiceItemsGallery extends StatelessWidget {
         onTap: src.isEmpty
             ? null
             : () => showDrivePhotoViewer(
-                  context,
-                  name: name,
-                  meta: path,
-                  src: drive!.thumbSourceIn(parent, item, width: 2200),
-                  isRemote: remote,
-                ),
+                context,
+                name: name,
+                meta: path,
+                src: drive!.thumbSourceIn(parent, item, width: 2200),
+                isRemote: remote,
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
               child: src.isEmpty
                   ? Center(
-                      child: Icon(Icons.image_outlined,
-                          color: scheme.onSurfaceVariant),
+                      child: Icon(
+                        Icons.image_outlined,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     )
-                  : DriveThumb(
-                      source: src,
-                      isRemote: remote,
-                      big: true,
-                    ),
+                  : DriveThumb(source: src, isRemote: remote, big: true),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
@@ -213,7 +214,9 @@ class ServiceItemsGallery extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                    fontSize: 11.5, fontWeight: FontWeight.w700),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],

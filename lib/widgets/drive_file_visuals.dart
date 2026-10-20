@@ -15,6 +15,7 @@ import '../drive_base.dart';
 IconData driveKindIcon(DriveItemKind kind) => switch (kind) {
   DriveItemKind.folder => Icons.folder_rounded,
   DriveItemKind.image => Icons.image_outlined,
+  DriveItemKind.raw => Icons.raw_on,
   DriveItemKind.video => Icons.movie_creation_outlined,
   DriveItemKind.audio => Icons.music_note_rounded,
   DriveItemKind.pdf => Icons.picture_as_pdf_outlined,
@@ -27,6 +28,7 @@ IconData driveKindIcon(DriveItemKind kind) => switch (kind) {
 Color driveKindColor(DriveItemKind kind, ColorScheme scheme) => switch (kind) {
   DriveItemKind.folder => scheme.primary,
   DriveItemKind.image => scheme.tertiary,
+  DriveItemKind.raw => const Color(0xFFB45309),
   DriveItemKind.video => const Color(0xFF7C4DFF),
   DriveItemKind.audio => const Color(0xFF00897B),
   DriveItemKind.pdf => const Color(0xFFE53935),

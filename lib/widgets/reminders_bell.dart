@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../reminders_service.dart';
+import '../theme.dart' show AppColors;
 
 /// Campanita de la top bar: muestra el conteo de avisos SIN LEER como badge.
 /// Al tocarla abre (y al tocar de nuevo cierra) un PANEL FIJO anclado
@@ -239,14 +240,14 @@ class _RemindersPanel extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             const Text(
-              'No hay avisos de eventos próximos',
+              'No hay avisos por ahora',
               textAlign: TextAlign.center,
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
             ),
             const SizedBox(height: 3),
             Text(
-              'Aquí llegarán los eventos que se acerquen (una semana y un día '
-              'antes).',
+              'Aquí llegan los eventos que se acercan (una semana y un día '
+              'antes) y los envíos a impresión de los clientes.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 11.5,
@@ -389,7 +390,14 @@ class _ReminderTile extends StatelessWidget {
     // Cuándo: el aviso trae `kind` ('7d' = falta una semana, '1d' = mañana)
     // y la fecha del evento.
     final kind = (reminder['kind'] ?? '').toString();
-    final kindLabel = kind == '1d'
+    // `source` = 'event' (agenda) o 'print' (un cliente envió fotos a
+    // impresión). Los dos llegan en la misma lista, pero se leen en tablas
+    // distintas, así que el origen viaja con el aviso.
+    final source = (reminder['source'] ?? 'event').toString();
+    final isPrint = source == 'print';
+    final kindLabel = isPrint
+        ? 'Impresión'
+        : kind == '1d'
         ? 'Mañana'
         : kind == '7d'
         ? 'Falta 1 semana'
@@ -399,7 +407,7 @@ class _ReminderTile extends StatelessWidget {
     );
 
     return Material(
-      key: ValueKey('reminder-${reminder['id']}'),
+      key: ValueKey('reminder-$source-${reminder['id']}'),
       color: _unread
           ? scheme.primary.withValues(alpha: .07)
           : scheme.surfaceContainerHighest.withValues(alpha: .28),
@@ -408,7 +416,7 @@ class _ReminderTile extends StatelessWidget {
       child: InkWell(
         onTap: () {
           final id = _id;
-          if (id != null) service.markRead(id);
+          if (id != null) service.markRead(id, source: source);
         },
         child: Container(
           padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
@@ -438,7 +446,9 @@ class _ReminderTile extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
-                      kind == '1d'
+                      isPrint
+                          ? Icons.print_outlined
+                          : kind == '1d'
                           ? Icons.event_available_rounded
                           : Icons.event_note_rounded,
                       size: 17,
@@ -491,7 +501,9 @@ class _ReminderTile extends StatelessWidget {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: kind == '1d'
+                            color: isPrint
+                                ? AppColors.brand.withValues(alpha: .14)
+                                : kind == '1d'
                                 ? const Color(0xFFF59E0B).withValues(alpha: .15)
                                 : scheme.primary.withValues(alpha: .10),
                             borderRadius: BorderRadius.circular(999),
@@ -501,7 +513,9 @@ class _ReminderTile extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 9.5,
                               fontWeight: FontWeight.w800,
-                              color: kind == '1d'
+                              color: isPrint
+                                  ? AppColors.brand
+                                  : kind == '1d'
                                   ? const Color(0xFFB45309)
                                   : scheme.primary,
                             ),

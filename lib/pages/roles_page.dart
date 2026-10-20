@@ -190,6 +190,7 @@ class _RolesPageState extends State<RolesPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
+      module: 'rols',
       title: 'Roles',
       description: 'Define a qué módulos puede entrar cada rol y qué acciones puede realizar.',
       icon: Icons.admin_panel_settings_rounded,

@@ -8,7 +8,6 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
-import '../widgets/hs_folder.dart';
 import '../widgets/hs_pager.dart';
 import '../widgets/hs_search_filter.dart';
 
@@ -263,6 +262,7 @@ class _UsersPageState extends State<UsersPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
+      module: 'users',
       title: 'Usuarios',
       description:
           'Crea, actualiza y elimina cuentas del equipo, y asígnales su rol.',
@@ -537,7 +537,9 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   late final TextEditingController _number;
   late final TextEditingController _email;
   late final TextEditingController _password;
-  late final bool _showPassword;
+  // NO `late final`: alternar la visibilidad reasigna el valor; con `final`
+  // el botón del ojo lanzaba LateInitializationError y no hacía nada.
+  bool _showPassword = false;
   int? _roleId;
   bool _saving = false;
   String? _error;
@@ -553,7 +555,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _number = TextEditingController(text: (u['number'] ?? '').toString());
     _email = TextEditingController(text: (u['email'] ?? '').toString());
     _password = TextEditingController();
-    _showPassword = false;
     _roleId = u['roleId'] is int
         ? u['roleId'] as int
         : (u['roleId'] is num ? (u['roleId'] as num).toInt() : null);
@@ -610,6 +611,11 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       'email': email,
       'id_role': _roleId,
     };
+    // Al EDITAR, la contraseña solo viaja si se escribió una nueva. Antes se
+    // quedaba en pantalla sin enviarse y parecía que no cambiaba.
+    if (_editing && _password.text.isNotEmpty) {
+      body['password'] = _password.text;
+    }
     try {
       if (_editing) {
         await HsApi.updateUser({
@@ -677,10 +683,15 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       ),
     );
     final passwordField = TextField(
+      key: const ValueKey('user-password'),
       controller: _password,
       obscureText: !_showPassword,
+      autofillHints: const [AutofillHints.newPassword],
       decoration: InputDecoration(
         labelText: _editing ? 'Nueva contraseña (opcional)' : 'Contraseña',
+        helperText: _editing
+            ? 'Déjala vacía para conservar la actual.'
+            : null,
         prefixIcon: const Icon(Icons.lock_outline, size: 20),
         suffixIcon: IconButton(
           tooltip: _showPassword ? 'Ocultar' : 'Mostrar',
@@ -694,38 +705,114 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ),
       ),
     );
-    // ROL como CARPETITAS: elegir el rol es abrir una carpeta, no desplegar
-    // una lista gris. Se marca la elegida con el color de la marca.
+    // ROL en COMBO BOX moderno: una sola elección, con el icono del rol, su
+    // nombre y cuántos permisos trae. Debajo, un resumen en vivo de lo que
+    // podrá hacer la cuenta.
+    final selectedRole = _selectedRole;
     final roleField = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Elige la carpeta del rol',
-          style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 10,
-          children: [
-            HsFolderTile(
-              label: 'Sin rol',
-              subtitle: 'Solo cuenta',
-              icon: Icons.person_outline_rounded,
-              selected: _roleId == null,
-              onTap: () => setState(() => _roleId = null),
+        DropdownButtonFormField<int?>(
+          key: const ValueKey('user-role-select'),
+          initialValue: _roleId,
+          isExpanded: true,
+          // Cada opción lleva dos líneas: con `isDense` (48 px fijos) el texto
+          // se salía 11 px por abajo. Altura intrínseca y sin comprimir.
+          isDense: false,
+          itemHeight: null,
+          borderRadius: BorderRadius.circular(14),
+          dropdownColor: scheme.surfaceContainerHigh,
+          icon: const Icon(Icons.expand_more_rounded),
+          decoration: const InputDecoration(
+            labelText: 'Rol de la cuenta',
+            prefixIcon: Icon(Icons.admin_panel_settings_outlined, size: 20),
+            helperText: 'Define a qué módulos puede entrar la cuenta.',
+            helperMaxLines: 2,
+          ),
+          items: [
+            const DropdownMenuItem<int?>(
+              value: null,
+              child: _RoleOption(
+                icon: Icons.person_outline_rounded,
+                label: 'Sin rol',
+                subtitle: 'Solo cuenta, sin módulos',
+              ),
             ),
             for (final r in _assignableRoles)
-              HsFolderTile(
+              DropdownMenuItem<int?>(
                 key: ValueKey('user-role-${r['id']}'),
-                label: (r['name'] ?? '').toString(),
-                subtitle: _roleSubtitle(r),
-                icon: _roleIcon(r),
-                badge: _rolePermCount(r) > 0 ? '${_rolePermCount(r)}' : '',
-                selected: _roleId == (r['id'] as num?)?.toInt(),
-                onTap: () => setState(() => _roleId = (r['id'] as num).toInt()),
+                value: (r['id'] as num).toInt(),
+                child: _RoleOption(
+                  icon: _roleIcon(r),
+                  label: (r['name'] ?? '').toString(),
+                  subtitle: _roleSubtitle(r),
+                  badge: _rolePermCount(r) > 0 ? '${_rolePermCount(r)}' : '',
+                ),
               ),
           ],
+          onChanged: _saving
+              ? null
+              : (value) => setState(() => _roleId = value),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: scheme.primary.withValues(alpha: .18),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  selectedRole == null
+                      ? Icons.person_outline_rounded
+                      : _roleIcon(selectedRole),
+                  size: 18,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _roleName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      selectedRole == null
+                          ? 'La cuenta podrá entrar, pero sin acceso a módulos.'
+                          : '${_roleSubtitle(selectedRole)} · este es el acceso '
+                                'que tendrá la cuenta.',
+                      maxLines: 2,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.3,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -859,6 +946,14 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   bool get _wide => MediaQuery.sizeOf(context).width > 560;
 
+  /// Rol actualmente elegido (null = sin rol).
+  Map<String, dynamic>? get _selectedRole {
+    for (final r in _assignableRoles) {
+      if ((r['id'] as num?)?.toInt() == _roleId) return r;
+    }
+    return null;
+  }
+
   /// Roles que se pueden asignar desde aquí.
   ///
   /// El rol Admin es el más alto: solo un Admin puede darlo (el backend
@@ -894,5 +989,84 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       return Icons.photo_camera_rounded;
     }
     return Icons.folder_rounded;
+  }
+}
+
+/// Opción del combo de roles: icono + nombre + permisos que trae.
+class _RoleOption extends StatelessWidget {
+  const _RoleOption({
+    required this.icon,
+    required this.label,
+    this.subtitle = '',
+    this.badge = '',
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final String badge;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(icon, size: 16, color: scheme.primary),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (subtitle.isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (badge.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              badge,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                color: scheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }

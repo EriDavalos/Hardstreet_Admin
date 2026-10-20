@@ -3,13 +3,16 @@ import 'dart:convert';
 import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_platform.dart';
 import '../drive_base.dart';
 import '../open_file.dart';
+import '../theme.dart';
 import 'drive_file_visuals.dart';
+import 'drive_web_player.dart';
 import 'hs_modal.dart';
 
 // ==================================================================
@@ -42,6 +45,7 @@ class DriveViewTarget {
     required this.source,
     required this.isRemote,
     this.localPath = '',
+    this.poster = '',
   });
 
   final DriveItem item;
@@ -55,6 +59,10 @@ class DriveViewTarget {
   /// true = se sirve por RED (drive del servidor o carpeta compartida).
   final bool isRemote;
 
+  /// Miniatura que el reproductor enseña MIENTRAS carga el vídeo (el primer
+  /// fotograma que ya genera el servidor). Vacío = no hay póster.
+  final String poster;
+
   DriveItemKind get kind => item.kind;
 }
 
@@ -62,7 +70,7 @@ class DriveViewTarget {
 /// en el entorno de pruebas y, sin esto, abrir un vídeo en un test reventaría.
 @visibleForTesting
 Widget Function(BuildContext context, DriveViewTarget target)?
-    debugFilePlayerBuilder;
+debugFilePlayerBuilder;
 
 /// Lectura de mentira para las pruebas: leer un archivo de verdad dentro de un
 /// `testWidgets` no termina nunca (el reloj del test está simulado).
@@ -127,14 +135,40 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   /// Se está abriendo con el sistema (descarga + lanzar el programa).
   bool _opening = false;
 
+  /// Pantalla completa del VISOR: se ocultan la barra superior y las flechas
+  /// para que el vídeo ocupe todo. El botón de pantalla completa del
+  /// reproductor HTML llama aquí (en la app la API del navegador no siempre
+  /// existe; en Windows el WebView no la atiende).
+  bool _immersive = false;
+
   DriveItem get _item => widget.items[_index];
 
   bool get _canMove => widget.items.length > 1;
+
+  void _toggleFullscreen() {
+    if (!mounted) return;
+    setState(() => _immersive = !_immersive);
+    // En Android también se esconden las barras del sistema; en escritorio y
+    // web esta llamada no hace nada.
+    SystemChrome.setEnabledSystemUIMode(
+      _immersive ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _prepare();
+  }
+
+  @override
+  void dispose() {
+    // El visor se cierra (o cambia de archivo) sin salir de pantalla completa:
+    // las barras del sistema vuelven a su sitio.
+    if (_immersive) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    super.dispose();
   }
 
   void _prepare() {
@@ -155,9 +189,22 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
 
   /// Fuente del archivo para el navegador integrado.
   DriveViewTarget _target(DriveItem item) {
-    final raw = widget.drive.fullSource(item);
+    // Los vídeos GRANDES se piden en CALIDAD LIGERA: el servidor los reencoda
+    // al vuelo (720p) y el reproductor empieza en segundos, en vez de esperar a
+    // que cruce el archivo entero por la conexión de quien comparte.
+    final raw = widget.drive.playSource(item);
+    // Póster: la misma miniatura del listado, a más resolución. Hace que el
+    // reproductor no quede en negro mientras llega el primer fotograma.
+    final poster = widget.drive.isRemote && widget.drive.canThumb(item)
+        ? widget.drive.thumbSource(item, width: 1280)
+        : '';
     if (widget.drive.isRemote || kWeb) {
-      return DriveViewTarget(item: item, source: raw, isRemote: true);
+      return DriveViewTarget(
+        item: item,
+        source: raw,
+        isRemote: true,
+        poster: poster,
+      );
     }
     // Drive del DISCO (una carpeta real del equipo): el navegador necesita un
     // `file://`, no una ruta de Windows.
@@ -166,6 +213,7 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
       source: Uri.file(raw).toString(),
       localPath: raw,
       isRemote: false,
+      poster: poster,
     );
   }
 
@@ -254,37 +302,63 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   @override
   Widget build(BuildContext context) {
     final item = _item;
-    return Dialog.fullscreen(
-      backgroundColor: const Color(0xFF101014),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned.fill(child: _body(item)),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 8, 8, 12),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.black87, Colors.transparent],
+    return PopScope(
+      // ATRÁS sale primero de pantalla completa; el visor se cierra después.
+      canPop: !_immersive,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !_immersive) return;
+        _toggleFullscreen();
+      },
+      child: Dialog.fullscreen(
+        backgroundColor: const Color(0xFF101014),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(child: _body(item)),
+            if (!_immersive) ...[
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 8, 12),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.black87, Colors.transparent],
+                    ),
+                  ),
+                  child: SafeArea(bottom: false, child: _bar(item)),
                 ),
               ),
-              child: SafeArea(bottom: false, child: _bar(item)),
-            ),
-          ),
-          if (_canMove) ..._arrows(),
-          if (_playerError != null)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: SafeArea(top: false, child: _errorBar(item)),
-            ),
-        ],
+              if (_canMove) ..._arrows(),
+            ] else
+              // Salida visible: con la barra oculta no habría forma de volver
+              // (ESC y ATRÁS también salen).
+              Positioned(
+                top: 0,
+                right: 0,
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: _RoundAction(
+                      icon: Icons.fullscreen_exit_rounded,
+                      tooltip: 'Salir de pantalla completa',
+                      onTap: _toggleFullscreen,
+                    ),
+                  ),
+                ),
+              ),
+            if (_playerError != null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: SafeArea(top: false, child: _errorBar(item)),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -340,12 +414,36 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   Widget _player(DriveViewTarget target) {
     final build = debugFilePlayerBuilder;
     if (build != null) return build(context, target);
+    final html = _playerHtml(target, nativeShell: !kWeb);
+    // En la WEB no existe el WebView nativo: se incrusta el mismo HTML en un
+    // iframe. Antes el visor intentaba abrir InAppWebView y el vídeo no
+    // cargaba (solo funcionaba en escritorio).
+    if (kWeb) {
+      return driveWebPlayer(
+        context,
+        html: html,
+        cacheKey:
+            '${target.item.name.hashCode}-${target.source.hashCode}-${target.poster.hashCode}',
+      );
+    }
     return InAppWebView(
       key: ValueKey('drive-file-player-${target.item.name}'),
       initialData: InAppWebViewInitialData(
-        data: _playerHtml(target),
+        data: html,
         baseUrl: WebUri('about:blank'),
       ),
+      // El botón de pantalla completa del reproductor pide al PANEL que oculte
+      // sus barras (la API de pantalla completa del navegador no funciona en
+      // el WebView de Windows).
+      onWebViewCreated: (controller) {
+        controller.addJavaScriptHandler(
+          handlerName: 'hsPlayerFullscreen',
+          callback: (_) {
+            if (mounted) _toggleFullscreen();
+            return null;
+          },
+        );
+      },
       initialSettings: InAppWebViewSettings(
         // Sin un toque previo: el vídeo empieza al abrirlo (es lo que el
         // usuario acaba de pedir) y suena con los controles del navegador.
@@ -365,19 +463,317 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
     );
   }
 
-  /// HTML del reproductor: los controles, el volumen y la pantalla completa
-  /// los pone el navegador (y él mismo sigue cargando el archivo por partes).
-  static String _playerHtml(DriveViewTarget target) {
+  /// HTML del reproductor.
+  ///
+  /// Los controles, el volumen y la pantalla completa los pone el navegador,
+  /// pero el ESTADO (cargando / listo / no se pudo) lo pinta esta capa: antes
+  /// la pantalla quedaba negra hasta que el vídeo arrancaba. El póster es la
+  /// miniatura que el servidor ya generó, así se ve de qué vídeo se trata
+  /// mientras carga.
+  static String _playerHtml(
+    DriveViewTarget target, {
+    bool nativeShell = false,
+  }) {
     final src = _htmlEscape(target.source);
-    final media = target.kind == DriveItemKind.audio
-        ? '<audio src="$src" controls autoplay></audio>'
-        : '<video src="$src" controls autoplay playsinline></video>';
+    // PDF: el visor del navegador integrado (iframe), no un <video>.
+    if (target.kind == DriveItemKind.pdf) {
+      return '<!doctype html><html><head><meta charset="utf-8">'
+          '<meta name="viewport" content="width=device-width, initial-scale=1">'
+          '<meta name="color-scheme" content="dark">'
+          '<style>html,body{margin:0;height:100%;background:#0a0a0f}'
+          'iframe{width:100%;height:100%;border:0;background:#0a0a0f}'
+          '</style></head><body><iframe src="$src"></iframe></body></html>';
+    }
+    final isAudio = target.kind == DriveItemKind.audio;
+    final posterUrl = target.poster.isEmpty ? '' : _htmlEscape(target.poster);
+    final posterAttr = posterUrl.isEmpty ? '' : ' poster="$posterUrl"';
+    final accent = _hexColor(AppColors.brand);
+    // En el navegador la pantalla completa la da la propia API del navegador.
+    // Dentro de la app (WebView), sobre todo en Windows, esa API no la atiende
+    // el anfitrión: allí se le pide al visor de Flutter que oculte sus barras.
+    final nativeFs = nativeShell ? 'true' : 'false';
+    if (isAudio) {
+      return '<!doctype html><html><head><meta charset="utf-8">'
+          '<meta name="viewport" content="width=device-width, initial-scale=1">'
+          '<meta name="color-scheme" content="dark">'
+          '<style>'
+          'html,body{margin:0;height:100%;overflow:hidden;background:#08080d;'
+          'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}'
+          '.stage{position:relative;width:100%;height:100%;display:flex;'
+          'align-items:center;justify-content:center;background:radial-gradient('
+          '760px 420px at 50% 38%,#191d2b,#08080d 72%)}'
+          '.audio-card{display:flex;flex-direction:column;align-items:center;'
+          'gap:18px;padding:30px 34px;border-radius:26px;'
+          'background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);'
+          'box-shadow:0 24px 70px rgba(0,0,0,.45)}'
+          '.disc{width:104px;height:104px;border-radius:50%;display:flex;'
+          'align-items:center;justify-content:center;font-size:44px;color:#e8efff;'
+          'background:radial-gradient(circle at 34% 28%,#44557a,#121722 70%);'
+          'box-shadow:0 14px 36px rgba(0,0,0,.45),'
+          'inset 0 0 0 11px rgba(255,255,255,.045)}'
+          '.label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;'
+          'color:#8f9bb3;font-weight:700}'
+          'audio{width:min(540px,82vw);outline:none;accent-color:$accent}'
+          '#status{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);'
+          'padding:7px 13px;border-radius:999px;background:rgba(8,10,16,.72);'
+          'border:1px solid rgba(255,255,255,.12);color:#e8edff;font-size:12.5px;'
+          'transition:opacity .2s;pointer-events:none}'
+          '#error{display:none;position:absolute;inset:0;align-items:center;'
+          'justify-content:center;flex-direction:column;gap:8px;text-align:center;'
+          'color:#ffd9a8;background:rgba(6,7,11,.78);padding:24px}'
+          '#error b{color:#fff;font-size:15px}'
+          '#error span{font-size:12.5px;color:#c9c9d4;max-width:430px}'
+          '</style></head><body><div class="stage">'
+          '<div class="audio-card"><div class="disc">♪</div>'
+          '<div class="label">Audio</div>'
+          '<audio id="media" src="$src" controls autoplay preload="metadata">'
+          '</audio></div>'
+          '<div id="status">Cargando audio…</div>'
+          '<div id="error"><b>No se pudo reproducir este archivo</b>'
+          '<span>Puede que el formato no sea compatible. Descárgalo o ábrelo con '
+          'el programa de tu computadora.</span></div></div><script>'
+          'var m=document.getElementById("media"),'
+          's=document.getElementById("status"),'
+          'e=document.getElementById("error");'
+          'function hide(){s.style.opacity="0"}'
+          'm.addEventListener("canplay",hide);m.addEventListener("playing",hide);'
+          'm.addEventListener("error",function(){hide();e.style.display="flex"});'
+          // Un audio en caché puede haber cargado ANTES de estos manejadores.
+          'if(m.readyState>=2)hide();'
+          'try{var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}'
+          '</script></body></html>';
+    }
     return '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<style>html,body{margin:0;height:100%;background:#101014;'
-        'display:flex;align-items:center;justify-content:center}'
-        'video{width:100%;height:100%;object-fit:contain;background:#000}'
-        'audio{width:min(520px,92%)}</style></head><body>$media</body></html>';
+        '<meta name="color-scheme" content="dark">'
+        '<meta name="theme-color" content="#08080d">'
+        '<style>'
+        ':root{--accent:$accent}'
+        'html,body{margin:0;height:100%;overflow:hidden;background:#08080d;'
+        'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+        '-webkit-user-select:none;user-select:none}'
+        '.stage{position:relative;width:100%;height:100%;display:flex;'
+        'align-items:center;justify-content:center;background:radial-gradient('
+        '1000px 560px at 50% 36%,#181b28 0%,#08080d 72%)}'
+        '.stage:after{content:"";position:absolute;inset:0;pointer-events:none;'
+        'background:radial-gradient(circle at 22% 12%,rgba(255,255,255,.05),'
+        'transparent 45%)}'
+        'video{position:relative;z-index:1;width:100%;height:100%;'
+        'object-fit:contain;background:#000;display:block;outline:none}'
+        '.big-play{position:absolute;z-index:3;width:82px;height:82px;'
+        'border-radius:50%;border:1px solid rgba(255,255,255,.34);'
+        'background:rgba(10,12,20,.55);backdrop-filter:blur(10px);color:#fff;'
+        'font-size:25px;display:flex;align-items:center;justify-content:center;'
+        'cursor:pointer;transition:opacity .2s,transform .2s,background .2s;'
+        'box-shadow:0 18px 50px rgba(0,0,0,.5)}'
+        '.big-play:hover{transform:scale(1.05);background:rgba(22,26,42,.76)}'
+        // El aviso de carga va SIEMPRE por encima del vídeo (z-index): si no,
+        // el <video> tapa el giro y parecía que no estaba cargando.
+        '.spinner{display:none;position:absolute;z-index:4;left:50%;top:50%;'
+        'width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;'
+        'border:3px solid rgba(255,255,255,.16);border-top-color:var(--accent);'
+        'animation:spin .8s linear infinite;'
+        'filter:drop-shadow(0 4px 14px rgba(0,0,0,.6))}'
+        '@keyframes spin{to{transform:rotate(360deg)}}'
+        '.status{position:absolute;z-index:5;left:50%;bottom:96px;'
+        'transform:translateX(-50%);display:flex;align-items:center;gap:8px;'
+        'padding:7px 13px;border-radius:999px;background:rgba(8,10,16,.68);'
+        'border:1px solid rgba(255,255,255,.12);color:#eef2ff;font-size:12.5px;'
+        'letter-spacing:.2px;opacity:1;transition:opacity .22s;'
+        'pointer-events:none;white-space:nowrap}'
+        '.status .dot{width:7px;height:7px;border-radius:50%;'
+        'background:var(--accent);box-shadow:0 0 10px var(--accent)}'
+        '.controls{position:absolute;z-index:4;left:0;right:0;bottom:0;'
+        'display:flex;align-items:center;gap:9px;'
+        'padding:26px 16px calc(12px + env(safe-area-inset-bottom));'
+        'background:linear-gradient(to top,rgba(0,0,0,.86),'
+        'rgba(0,0,0,.42) 55%,transparent);opacity:0;transform:translateY(6px);'
+        'transition:opacity .2s,transform .2s;pointer-events:none}'
+        '.controls.show{opacity:1;transform:none;pointer-events:auto}'
+        '.cbtn{width:34px;height:34px;flex:0 0 auto;border:0;border-radius:999px;'
+        'background:transparent;color:#eef2ff;font-size:14px;display:flex;'
+        'align-items:center;justify-content:center;cursor:pointer;'
+        'transition:background .15s,transform .15s;padding:0}'
+        '.cbtn:hover{background:rgba(255,255,255,.13);transform:scale(1.04)}'
+        '.time{font-size:11.5px;color:#dfe6f6;font-variant-numeric:tabular-nums;'
+        'min-width:42px;text-align:center;letter-spacing:.2px}'
+        'input[type=range]{-webkit-appearance:none;appearance:none;height:4px;'
+        'border-radius:999px;background:rgba(255,255,255,.22);outline:none;'
+        'cursor:pointer}'
+        'input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;'
+        'width:13px;height:13px;border-radius:50%;background:var(--accent);'
+        'box-shadow:0 0 0 4px rgba(125,160,255,.18);border:0}'
+        'input[type=range]::-moz-range-thumb{width:13px;height:13px;'
+        'border-radius:50%;background:var(--accent);border:0}'
+        '#seek{flex:1 1 auto;min-width:70px}'
+        '#vol{width:72px;flex:0 0 auto}'
+        '#error{display:none;position:absolute;z-index:5;left:50%;top:50%;'
+        'transform:translate(-50%,-50%);width:min(420px,86vw);'
+        'flex-direction:column;align-items:center;gap:8px;padding:26px 24px;'
+        'border-radius:20px;text-align:center;color:#ffd9a8;'
+        'background:rgba(12,14,22,.92);border:1px solid rgba(255,255,255,.10);'
+        'box-shadow:0 24px 70px rgba(0,0,0,.55)}'
+        '#error b{color:#fff;font-size:15px}'
+        '#error span{font-size:12.5px;color:#c9c9d4;line-height:1.4}'
+        '@media (max-width:520px){#vol{display:none}.status{bottom:84px;'
+        'font-size:11.5px}.cbtn{width:32px}}'
+        '</style></head><body><div class="stage" id="stage">'
+        '<video id="media" src="$src"$posterAttr playsinline '
+        'preload="auto"></video>'
+        '<div id="spinner" class="spinner" style="display:block"></div>'
+        '<div id="status" class="status"><span class="dot"></span>'
+        '<span id="statusText">Cargando vídeo…</span></div>'
+        '<button id="big" class="big-play" type="button" '
+        'aria-label="Reproducir" style="opacity:0;pointer-events:none">'
+        '&#9654;</button>'
+        '<div id="error"><b>No se pudo reproducir este archivo</b>'
+        '<span>Puede que el formato no sea compatible. Descárgalo o ábrelo con '
+        'el programa de tu computadora.</span></div>'
+        '<div id="controls" class="controls show">'
+        '<button id="play" class="cbtn" type="button" aria-label="Reproducir">'
+        '&#9654;</button>'
+        '<span id="cur" class="time">0:00</span>'
+        '<input id="seek" type="range" min="0" max="1000" value="0" '
+        'aria-label="Posición del vídeo">'
+        '<span id="dur" class="time">--:--</span>'
+        '<button id="mute" class="cbtn" type="button" aria-label="Silenciar">'
+        '&#128266;</button>'
+        '<input id="vol" type="range" min="0" max="1" step="0.05" value="1" '
+        'aria-label="Volumen">'
+        '<button id="full" class="cbtn" type="button" '
+        'aria-label="Pantalla completa">&#9974;</button>'
+        '</div></div><script>'
+        'var m=document.getElementById("media"),'
+        'stage=document.getElementById("stage"),'
+        'big=document.getElementById("big"),'
+        // OJO: NO llamarla `status`. En el navegador `window.status` es una
+        // propiedad especial del window: `var status = elemento` guarda el
+        // TEXTO del elemento, no el elemento, y `status.style.opacity`
+        // revienta. Ese error detenía el manejador de `playing` y por eso el
+        // botón de play y "Cargando vídeo…" se quedaban encima del vídeo.
+        'statusEl=document.getElementById("status"),'
+        'statusText=document.getElementById("statusText"),'
+        'spinner=document.getElementById("spinner"),'
+        'err=document.getElementById("error"),'
+        'controls=document.getElementById("controls"),'
+        'play=document.getElementById("play"),'
+        'seek=document.getElementById("seek"),cur=document.getElementById("cur"),'
+        'dur=document.getElementById("dur"),mute=document.getElementById("mute"),'
+        'vol=document.getElementById("vol"),full=document.getElementById("full");'
+        'var nativeShell=$nativeFs;'
+        'var seeking=false,timer=null,bufferingNow=false;'
+        'function fmt(n){if(!isFinite(n)||n<0)return "--:--";'
+        'var s=Math.floor(n%60),h=Math.floor(n/3600),mm=Math.floor(n/60)%60;'
+        'return (h?h+":"+String(mm).padStart(2,"0"):mm)+":"+'
+        'String(s).padStart(2,"0")}'
+        'function icon(){play.innerHTML=m.paused?"&#9654;":"&#10074;&#10074;";'
+        'big.style.opacity=m.paused?"1":"0";'
+        'big.style.pointerEvents=m.paused?"auto":"none";'
+        'mute.innerHTML=(m.muted||m.volume===0)?"&#128263;":"&#128266;"}'
+        'function show(t){statusText.textContent=t;statusEl.style.opacity="1"}'
+        'function hide(){statusEl.style.opacity="0"}'
+        // Cuánto del vídeo ya está en el búfer (0..99 %), para que el aviso de
+        // carga también DIGA algo mientras se reproduce con red lenta.
+        'function bufferedPct(){try{if(m.duration>0){var b=m.buffered;'
+        'for(var i=0;i<b.length;i++){'
+        'if(b.start(i)<=m.currentTime+.5&&b.end(i)>=m.currentTime){'
+        // Cuatro llaves: cierra el if del rango, el for, el if de duration y
+        // el try. Con tres, el `catch` quedaba DENTRO del try y el script
+        // entero no compilaba (el vídeo se quedaba "Cargando…" para siempre y
+        // ningún control respondía).
+        'return Math.min(99,Math.round(b.end(i)/m.duration*100))}}}}catch(_){}'
+        'return 0}'
+        'function loadLabel(){var p=bufferedPct();'
+        'return "Cargando vídeo…"+(p?" "+p+" %":"")}'
+        'function buffering(){bufferingNow=true;spinner.style.display="block";'
+        'show(loadLabel())}'
+        'function ready(){bufferingNow=false;spinner.style.display="none";hide()}'
+        // El estado se deduce del vídeo MISMO: si ya hay imagen (o está en
+        // pausa) no hay nada que "cargar", aunque un evento `stalled` tardío
+        // hubiera encendido el aviso. Mientras se reproduce, si el búfer se
+        // agota (readyState < 3), el giro se queda hasta que vuelve a fluir.
+        'function syncStatus(){if(m.error)return;'
+        'if(m.seeking||(!m.paused&&(bufferingNow||m.readyState<3))){'
+        'bufferingNow=true;spinner.style.display="block";show(loadLabel())}'
+        'else if(m.readyState>=2){bufferingNow=false;'
+        'spinner.style.display="none";hide()}}'
+        'function poke(){controls.classList.add("show");clearTimeout(timer);'
+        'timer=setTimeout(function(){if(!m.paused)'
+        'controls.classList.remove("show")},2800)}'
+        'function toggle(){if(m.paused){'
+        'try{var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}'
+        '}else{m.pause()}}'
+        'm.addEventListener("loadedmetadata",function(){'
+        'dur.textContent=fmt(m.duration)});'
+        'm.addEventListener("loadeddata",ready);'
+        'm.addEventListener("canplay",ready);'
+        'm.addEventListener("playing",function(){ready();icon();poke()});'
+        'm.addEventListener("pause",function(){icon();'
+        'controls.classList.add("show");clearTimeout(timer)});'
+        'm.addEventListener("waiting",buffering);'
+        'm.addEventListener("stalled",buffering);'
+        // Al buscar, al volver a cargar y al reponerse el búfer el aviso se
+        // sincroniza al instante (no hay que esperar al sondeo de 600 ms).
+        'm.addEventListener("seeking",buffering);'
+        'm.addEventListener("seeked",syncStatus);'
+        'm.addEventListener("progress",function(){if(bufferingNow)syncStatus()});'
+        'm.addEventListener("play",poke);'
+        'm.addEventListener("ended",function(){icon();syncStatus()});'
+        'm.addEventListener("timeupdate",function(){if(seeking)return;'
+        'cur.textContent=fmt(m.currentTime);'
+        'if(m.duration>0)seek.value=String(m.currentTime/m.duration*1000)});'
+        'm.addEventListener("error",function(){ready();'
+        'spinner.style.display="none";err.style.display="flex"});'
+        'seek.addEventListener("input",function(){seeking=true;'
+        'if(m.duration>0)cur.textContent=fmt(m.duration*seek.value/1000)});'
+        'seek.addEventListener("change",function(){if(m.duration>0)'
+        'm.currentTime=m.duration*seek.value/1000;seeking=false});'
+        'play.addEventListener("click",toggle);'
+        'big.addEventListener("click",toggle);'
+        'm.addEventListener("click",toggle);'
+        'mute.addEventListener("click",function(){m.muted=!m.muted;icon()});'
+        'vol.addEventListener("input",function(){m.volume=Number(vol.value);'
+        'm.muted=m.volume===0;icon()});'
+        'full.addEventListener("click",function(){'
+        // App de escritorio/celular: el visor de Flutter oculta sus barras
+        // (en Windows la API de pantalla completa del WebView no hace nada).
+        'if(nativeShell){'
+        'if(window.flutter_inappwebview&&window.flutter_inappwebview.callHandler)'
+        'window.flutter_inappwebview.callHandler("hsPlayerFullscreen");'
+        'return}'
+        'if(document.fullscreenElement||document.webkitFullscreenElement){'
+        'if(document.exitFullscreen)document.exitFullscreen();'
+        'else if(document.webkitExitFullscreen)document.webkitExitFullscreen();'
+        'return}'
+        'var el=stage,req=el.requestFullscreen||el.webkitRequestFullscreen;'
+        'if(req){try{var p=req.call(el);if(p&&p.catch)p.catch(function(){})}'
+        'catch(_){}}else if(m.webkitEnterFullscreen){m.webkitEnterFullscreen()}});'
+        'stage.addEventListener("mousemove",poke);'
+        'stage.addEventListener("touchstart",poke);'
+        'document.addEventListener("keydown",function(ev){'
+        'if(ev.key===" "||ev.key==="k"){ev.preventDefault();toggle()}'
+        'else if(ev.key==="ArrowRight"){'
+        'm.currentTime=Math.min(m.duration||0,m.currentTime+5)}'
+        'else if(ev.key==="ArrowLeft"){'
+        'm.currentTime=Math.max(0,m.currentTime-5)}'
+        'else if(ev.key==="f"){full.click()}});'
+        'seek.value="0";vol.value=String(m.volume);icon();poke();'
+        'if(m.readyState>=2)ready();'
+        // Descarga completa en caché: `loadeddata`/`canplay` pueden haber
+        // ocurrido ANTES de estos manejadores. Este sondeo deja el estado
+        // (play grande, "Cargando…") igual a lo que hace el vídeo de verdad.
+        'setInterval(function(){icon();syncStatus()},600);'
+        'try{var pr=m.play();if(pr&&pr.then)pr.then(function(){ready()})'
+        '.catch(function(){big.style.opacity="1";'
+        'big.style.pointerEvents="auto";hide()});}catch(_){'
+        'big.style.opacity="1";big.style.pointerEvents="auto";hide()}'
+        '</script></body></html>';
+  }
+
+  /// Color del acento en hexadecimal (#RRGGBB) para el CSS del reproductor.
+  static String _hexColor(Color color) {
+    final argb = color.toARGB32();
+    return '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
   }
 
   static String _htmlEscape(String value) => value
@@ -529,6 +925,13 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
             ],
           ),
         ),
+        if (_canPreview)
+          _RoundAction(
+            icon: Icons.fullscreen_rounded,
+            tooltip: 'Pantalla completa',
+            onTap: _toggleFullscreen,
+          ),
+        if (_canPreview && widget.onDownload != null) const SizedBox(width: 6),
         if (widget.onDownload != null)
           _RoundAction(
             icon: Icons.download_rounded,
@@ -560,7 +963,10 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
             child: Text(
               'No se pudo abrir: ${_playerError ?? ''}',
               maxLines: 2,
-              style: const TextStyle(color: Colors.orangeAccent, fontSize: 11.5),
+              style: const TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 11.5,
+              ),
             ),
           ),
           if (hsCanOpenWithSystem)
@@ -582,6 +988,13 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
     );
   }
 }
+
+/// HTML del reproductor, para poder verificarlo en pruebas sin un WebView.
+@visibleForTesting
+String debugDrivePlayerHtml(
+  DriveViewTarget target, {
+  bool nativeShell = false,
+}) => _DriveFileViewerState._playerHtml(target, nativeShell: nativeShell);
 
 /// Botón redondo semitransparente del visor (el mismo lenguaje del visor de
 /// imágenes).

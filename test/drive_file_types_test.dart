@@ -44,6 +44,7 @@ void main() {
     'notas.txt',
     'entrega.zip',
     'foto.png',
+    'crudo.cr2',
   ];
 
   setUp(() async {
@@ -55,6 +56,7 @@ void main() {
     File('${src.path}/notas.txt').writeAsStringSync('hola desde el drive');
     File('${src.path}/entrega.zip').writeAsBytesSync(List<int>.filled(8, 4));
     File('${src.path}/foto.png').writeAsBytesSync(_png);
+    File('${src.path}/crudo.cr2').writeAsBytesSync(List<int>.filled(64, 5));
     // El sembrado va en setUp: dentro de un testWidgets el I/O real se queda
     // colgado en la zona de tiempo simulado.
     for (final name in files) {
@@ -87,7 +89,8 @@ void main() {
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      () => Future<void>.delayed(const Duration(milliseconds: 60)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 
@@ -98,7 +101,9 @@ void main() {
     addTearDown(tester.view.reset);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(body: DrivePage(drive: drive)),
+      ),
     );
     await settle(tester);
   }
@@ -120,8 +125,9 @@ void main() {
   Finder inDialog(Finder matching) =>
       find.descendant(of: find.byType(Dialog), matching: matching);
 
-  testWidgets('la carpeta lista TODOS los archivos, cada uno con su tipo',
-      (tester) async {
+  testWidgets('la carpeta lista TODOS los archivos, cada uno con su tipo', (
+    tester,
+  ) async {
     await pumpDrive(tester);
 
     // Todos están (antes solo aparecía la foto).
@@ -133,11 +139,13 @@ void main() {
     expect(find.text('PDF'), findsOneWidget);
     expect(find.text('TXT'), findsOneWidget);
     expect(find.text('ZIP'), findsOneWidget);
+    expect(find.text('CR2'), findsOneWidget);
     // …y el icono que le toca.
     expect(find.byIcon(Icons.movie_creation_outlined), findsOneWidget);
     expect(find.byIcon(Icons.picture_as_pdf_outlined), findsOneWidget);
     expect(find.byIcon(Icons.description_outlined), findsOneWidget);
     expect(find.byIcon(Icons.insert_drive_file_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.raw_on), findsOneWidget);
     // El vídeo lleva la señal de "esto se reproduce".
     expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     // Y las fotos NO piden miniatura a los archivos que no son fotos: si se
@@ -146,8 +154,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('cada archivo se abre con el visor que le corresponde',
-      (tester) async {
+  testWidgets('cada archivo se abre con el visor que le corresponde', (
+    tester,
+  ) async {
     await pumpDrive(tester);
 
     // --- Una FOTO: el visor de imágenes (con zoom y flechas) ---
@@ -172,11 +181,28 @@ void main() {
     // El tipo aparece DOS veces: en la barra de arriba y en la ficha central.
     expect(inDialog(find.textContaining('Archivo · ZIP')), findsNWidgets(2));
     expect(
-        inDialog(find.textContaining('no tiene vista previa')), findsOneWidget);
-    expect(inDialog(find.widgetWithText(FilledButton, 'Descargar')),
-        findsOneWidget);
+      inDialog(find.textContaining('no tiene vista previa')),
+      findsOneWidget,
+    );
+    expect(
+      inDialog(find.widgetWithText(FilledButton, 'Descargar')),
+      findsOneWidget,
+    );
     await closeViewer(tester);
 
     expect(tester.takeException(), isNull);
+  });
+
+  test('los formatos de cámara/teléfono también se reconocen', () {
+    // Un MTS de videocámara o un HEIC de iPhone se rechazaban al subir
+    // (HTTP 415) porque no estaban en ninguna lista.
+    expect(driveItemKindOf('clip.mts'), DriveItemKind.video);
+    expect(driveItemKindOf('CLIP.M2TS'), DriveItemKind.video);
+    expect(driveItemKindOf('insta.insv'), DriveItemKind.video);
+    expect(driveItemKindOf('foto.heic'), DriveItemKind.image);
+    expect(driveItemKindOf('IMG.HEIF'), DriveItemKind.image);
+    expect(driveItemKindOf('retrato.avif'), DriveItemKind.image);
+    expect(kVideoExtensions, contains('.mts'));
+    expect(kImageExtensions, contains('.heic'));
   });
 }

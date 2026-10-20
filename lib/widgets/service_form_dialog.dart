@@ -46,7 +46,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
     super.initState();
     final s = widget.service ?? const {};
     _name = TextEditingController(text: (s['name'] ?? '').toString());
-    _description = TextEditingController(text: (s['description'] ?? '').toString());
+    _description = TextEditingController(
+      text: (s['description'] ?? '').toString(),
+    );
     _icon = (s['icon'] ?? '').toString();
     final max = (s['photosMax'] as num?)?.toInt() ?? 0;
     _photosOn = max > 0;
@@ -75,8 +77,10 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
       return;
     }
     if (_photosOn && !_allowFolder) {
-      setState(() => _error =
-          '«Elegir fotos» necesita que el servicio use carpeta del Drive');
+      setState(
+        () => _error =
+            '«Elegir fotos» necesita que el servicio use carpeta del Drive',
+      );
       return;
     }
     setState(() {
@@ -92,8 +96,10 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
     };
     try {
       if (_editing) {
-        await HsApi.updateService(
-            {'id': (widget.service!['id'] as num).toInt(), ...body});
+        await HsApi.updateService({
+          'id': (widget.service!['id'] as num).toInt(),
+          ...body,
+        });
       } else {
         await HsApi.createService(body);
       }
@@ -123,7 +129,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
           ? Icons.tune_rounded
           : Icons.miscellaneous_services_outlined,
       title: _editing ? 'Personalizar servicio' : 'Nuevo servicio',
-      subtitle: 'Se usa en el catálogo y en todos los paquetes que lo '
+      subtitle:
+          'Se usa en el catálogo y en todos los paquetes que lo '
           'incluyen.',
       maxWidth: 520,
       saving: _saving,
@@ -156,8 +163,7 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Nombre del servicio',
-              prefixIcon: Icon(Icons.miscellaneous_services_outlined,
-                  size: 20),
+              prefixIcon: Icon(Icons.miscellaneous_services_outlined, size: 20),
             ),
           ),
         ),
@@ -185,7 +191,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
               _switch(
                 icon: Icons.photo_library_outlined,
                 title: 'Elegir fotos',
-                subtitle: 'El cliente podrá marcar fotos de la carpeta '
+                subtitle:
+                    'El cliente podrá marcar fotos de la carpeta '
                     'compartida en «Mi paquete».',
                 value: _photosOn,
                 onChanged: (v) => setState(() {
@@ -213,7 +220,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
                           decoration: const InputDecoration(
                             labelText: '¿Cuántas fotos puede elegir?',
                             hintText: 'Ej. 25',
-                            helperText: 'Máximo de fotos por cliente para este '
+                            helperText:
+                                'Máximo de fotos por cliente para este '
                                 'servicio.',
                             prefixIcon: Icon(Icons.tag, size: 20),
                           ),
@@ -226,9 +234,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
                 title: 'Abrir carpeta',
                 subtitle: _allowFolder
                     ? 'El estudio podrá compartirle una carpeta del Drive y '
-                        'el cliente verá «Abrir carpeta».'
+                          'el cliente verá «Abrir carpeta».'
                     : 'Este servicio no usa carpeta del Drive. Sus servicios '
-                        'en los paquetes no podrán compartir una.',
+                          'en los paquetes no podrán compartir una.',
                 value: _allowFolder,
                 onChanged: (v) => setState(() {
                   _allowFolder = v;
@@ -259,8 +267,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: (value ? AppColors.brand : scheme.onSurfaceVariant)
-              .withValues(alpha: .12),
+          color: (value ? AppColors.brand : scheme.onSurfaceVariant).withValues(
+            alpha: .12,
+          ),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(

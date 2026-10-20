@@ -300,4 +300,74 @@ void main() {
     expect(find.text('Cobertura en evento'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('el cliente ENVÍA sus fotos a impresión y luego solo las ve', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    final services = (pkgs.first['services'] as List);
+    (services[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot'
+      ..['showFolder'] = true
+      ..['items'] = 2;
+
+    // Mock con estado: al enviar, el siguiente listado ya trae el envío.
+    var sent = false;
+    final posted = <String>[];
+    HsApi.client = MockClient((request) async {
+      final headers = {'content-type': 'application/json'};
+      if (request.url.path.endsWith('/api/my/print-requests') &&
+          request.method == 'POST') {
+        posted.add(request.body);
+        sent = true;
+        return http.Response(
+          jsonEncode({'ok': true, 'status': 'sent'}),
+          200,
+          headers: headers,
+        );
+      }
+      if (request.url.path.endsWith('/api/my/packages')) {
+        if (sent) {
+          for (final s in services) {
+            if ((s as Map)['id'] == 102) {
+              s['sentToPrint'] = true;
+              s['printStatus'] = 'sent';
+            }
+          }
+        }
+        return http.Response(
+          jsonEncode({'purchasedPackages': pkgs}),
+          200,
+          headers: headers,
+        );
+      }
+      if (request.url.path.endsWith('/api/my/notifications')) {
+        return http.Response(
+          jsonEncode({'notifications': const [], 'unread': 0}),
+          200,
+          headers: headers,
+        );
+      }
+      return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+    });
+    await _pumpPage(tester);
+
+    final send = find.widgetWithText(OutlinedButton, 'Enviar a impresión');
+    expect(send, findsOneWidget);
+    await _tap(tester, send);
+
+    // El modal explica que después ya no se puede modificar.
+    expect(find.textContaining('ya no podrás cambiar la selección'), findsOneWidget);
+    await _tap(tester, find.widgetWithText(FilledButton, 'Enviar'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(posted, hasLength(1));
+    expect(jsonDecode(posted.single), {'serviceId': 102});
+    // El cliente ya solo puede VERLAS.
+    expect(find.text('Ver fotos (2)'), findsOneWidget);
+    expect(find.text('Enviadas a impresión'), findsOneWidget);
+    expect(find.text('Enviar a impresión'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

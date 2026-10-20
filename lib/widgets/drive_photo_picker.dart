@@ -36,32 +36,34 @@ Future<List<String>?> showDrivePhotoPicker(
   String confirmLabel = 'Usar estas fotos',
   String? note,
   bool allowDownload = true,
+
   /// Máximo de fotos que se pueden marcar. `null` = sin límite; `1` = una
   /// sola (la tarjeta de un paquete, la portada de una sección…).
   int? maxSelection,
+
   /// Mínimo para poder confirmar (por defecto, 1).
   int minSelection = 1,
+
   /// Carpeta RAÍZ que no se puede abandonar (p. ej. la carpeta compartida de
   /// UN servicio). Vacío = todo el Drive. El selector abre dentro de ella y
   /// no deja subir más arriba.
   List<String> rootPath = const <String>[],
-}) =>
-    showHsModal<List<String>>(
-      context: context,
-      builder: (_) => DrivePhotoPicker(
-        drive: drive,
-        title: title,
-        subtitle: subtitle,
-        initialPath: initialPath,
-        initialPicked: initialPicked,
-        confirmLabel: confirmLabel,
-        note: note,
-        allowDownload: allowDownload,
-        maxSelection: maxSelection,
-        minSelection: minSelection,
-        rootPath: rootPath,
-      ),
-    );
+}) => showHsModal<List<String>>(
+  context: context,
+  builder: (_) => DrivePhotoPicker(
+    drive: drive,
+    title: title,
+    subtitle: subtitle,
+    initialPath: initialPath,
+    initialPicked: initialPicked,
+    confirmLabel: confirmLabel,
+    note: note,
+    allowDownload: allowDownload,
+    maxSelection: maxSelection,
+    minSelection: minSelection,
+    rootPath: rootPath,
+  ),
+);
 
 class DrivePhotoPicker extends StatefulWidget {
   const DrivePhotoPicker({
@@ -246,7 +248,9 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
       );
     }
     if (total > 0) {
-      HsToast.info(total == 1 ? 'Descargando 1 foto…' : 'Descargando $total fotos…');
+      HsToast.info(
+        total == 1 ? 'Descargando 1 foto…' : 'Descargando $total fotos…',
+      );
     }
   }
 
@@ -272,9 +276,9 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
 
   /// `1.2 MB · 26/09/2026` (lo que se ve bajo el nombre).
   String _metaLabel(DriveItem item) => [
-        if (item.size != null && (item.size ?? 0) > 0) hsBytes(item.size!),
-        if (item.modified != null) hsShortDate(item.modified!),
-      ].join(' · ');
+    if (item.size != null && (item.size ?? 0) > 0) hsBytes(item.size!),
+    if (item.modified != null) hsShortDate(item.modified!),
+  ].join(' · ');
 
   @override
   Widget build(BuildContext context) {
@@ -300,61 +304,64 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
         _up();
       },
       child: AlertDialog(
-      // En celular ocupa TODA la pantalla (sin márgenes ni esquinas); en
-      // escritorio deja ver el panel detrás.
-      insetPadding: phone ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(phone ? 0 : 22)),
-      titlePadding: EdgeInsets.fromLTRB(14, phone ? 10 : 16, 12, 0),
-      contentPadding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(8, 4, 10, 10),
-      title: _header(scheme, count),
-      content: SizedBox(
-        // En escritorio el selector aprovecha casi toda la ventana (antes se
-        // quedaba en 820×540 y sobraba espacio).
-        width: phone
-            ? double.infinity
-            : (size.width * .88).clamp(560.0, 1120.0),
-        height: phone
-            ? double.infinity
-            : (size.height * .72).clamp(420.0, 780.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _crumbBar(scheme),
-            if (widget.note != null) ...[
-              const SizedBox(height: 8),
-              _note(scheme, widget.note!),
+        // En celular ocupa TODA la pantalla (sin márgenes ni esquinas); en
+        // escritorio deja ver el panel detrás.
+        insetPadding: phone
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(phone ? 0 : 22),
+        ),
+        titlePadding: EdgeInsets.fromLTRB(14, phone ? 10 : 16, 12, 0),
+        contentPadding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(8, 4, 10, 10),
+        title: _header(scheme, count),
+        content: SizedBox(
+          // En escritorio el selector aprovecha casi toda la ventana (antes se
+          // quedaba en 820×540 y sobraba espacio).
+          width: phone
+              ? double.infinity
+              : (size.width * .88).clamp(560.0, 1120.0),
+          height: phone
+              ? double.infinity
+              : (size.height * .72).clamp(420.0, 780.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _crumbBar(scheme),
+              if (widget.note != null) ...[
+                const SizedBox(height: 8),
+                _note(scheme, widget.note!),
+              ],
+              const SizedBox(height: 10),
+              Expanded(child: _body(scheme, folders, photos)),
             ],
-            const SizedBox(height: 10),
-            Expanded(child: _body(scheme, folders, photos)),
-          ],
+          ),
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
-        ),
-        if (count > 0)
+        actions: [
           TextButton(
-            onPressed: () => setState(_picked.clear),
-            child: const Text('Limpiar'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
           ),
-        if (widget.allowDownload && _downloadable.isNotEmpty)
-          TextButton.icon(
-            onPressed: _download,
-            icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('Descargar'),
+          if (count > 0)
+            TextButton(
+              onPressed: () => setState(_picked.clear),
+              child: const Text('Limpiar'),
+            ),
+          if (widget.allowDownload && _downloadable.isNotEmpty)
+            TextButton.icon(
+              onPressed: _download,
+              icon: const Icon(Icons.download_rounded, size: 18),
+              label: const Text('Descargar'),
+            ),
+          FilledButton.icon(
+            onPressed: count < widget.minSelection
+                ? null
+                : () => Navigator.of(context).pop(_picked.toList()..sort()),
+            icon: const Icon(Icons.check_rounded, size: 18),
+            label: Text(widget.confirmLabel),
           ),
-        FilledButton.icon(
-          onPressed: count < widget.minSelection
-              ? null
-              : () => Navigator.of(context).pop(_picked.toList()..sort()),
-          icon: const Icon(Icons.check_rounded, size: 18),
-          label: Text(widget.confirmLabel),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -367,7 +374,7 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               colors: [AppColors.brand, AppColors.brandDark],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -381,8 +388,11 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
               ),
             ],
           ),
-          child: const Icon(Icons.photo_library_outlined,
-              color: Colors.white, size: 22),
+          child: const Icon(
+            Icons.photo_library_outlined,
+            color: Colors.white,
+            size: 22,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -394,7 +404,10 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
                 widget.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               Text(
                 widget.subtitle ??
@@ -495,8 +508,11 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
                     ),
                   ],
                   for (var i = _root.length; i < _path.length; i++) ...[
-                    Icon(Icons.chevron_right_rounded,
-                        size: 15, color: scheme.onSurfaceVariant),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 15,
+                      color: scheme.onSurfaceVariant,
+                    ),
                     Text(
                       _path[i],
                       style: TextStyle(
@@ -520,24 +536,28 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
   }
 
   Widget _note(ColorScheme scheme, String text) => Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline_rounded, size: 15, color: scheme.primary),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.3,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(Icons.info_outline_rounded, size: 15, color: scheme.primary),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.3,
+            color: scheme.onSurfaceVariant,
           ),
-        ],
-      );
+        ),
+      ),
+    ],
+  );
 
-  Widget _body(ColorScheme scheme, List<DriveItem> folders, List<DriveItem> photos) {
+  Widget _body(
+    ColorScheme scheme,
+    List<DriveItem> folders,
+    List<DriveItem> photos,
+  ) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(
@@ -584,40 +604,49 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
 
   /// Carpeta: la tarjeta lleva dentro el icono, el nombre y sus datos.
   Widget _folderTile(ColorScheme scheme, DriveItem item) => _Tile(
-        onTap: () => _enter(item.name),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                alignment: Alignment.center,
-                width: double.infinity,
-                color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-                child: Icon(Icons.folder_rounded,
-                    size: 44, color: AppColors.brand.withValues(alpha: .9)),
-              ),
+    onTap: () => _enter(item.name),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Container(
+            alignment: Alignment.center,
+            width: double.infinity,
+            color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+            child: Icon(
+              Icons.folder_rounded,
+              size: 44,
+              color: AppColors.brand.withValues(alpha: .9),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(9, 6, 9, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      item.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w700, height: 1.2),
-                    ),
-                  ),
-                  Icon(Icons.chevron_right_rounded,
-                      size: 17, color: scheme.onSurfaceVariant),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
-      );
+        Padding(
+          padding: const EdgeInsets.fromLTRB(9, 6, 9, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  item.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 17,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 
   /// Foto: la miniatura manda y el nombre va ENCIMA, sobre un degradado.
   Widget _photoTile(ColorScheme scheme, DriveItem item) {
@@ -738,8 +767,11 @@ class _Tile extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.check_rounded,
-                      size: 15, color: Colors.white),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    size: 15,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             if (onPreview != null)
@@ -767,4 +799,3 @@ class _Tile extends StatelessWidget {
     );
   }
 }
-

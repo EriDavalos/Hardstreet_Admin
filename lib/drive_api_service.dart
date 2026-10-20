@@ -26,6 +26,7 @@ export 'drive_base.dart'
         driveImagePreview,
         driveRelPath,
         kImageExtensions,
+        kRawExtensions,
         kVideoExtensions,
         kAudioExtensions,
         kPdfExtensions,
@@ -115,11 +116,30 @@ class DriveApiService extends DriveBase {
         '?w=$previewWidth&q=80';
   }
 
+  /// REPRODUCCIÓN en el visor: un vídeo de más de 50 MB se pide en CALIDAD
+  /// LIGERA (`?play=low`). El servidor lo reencoda a 720p al vuelo y lo manda
+  /// fragmentado, así empieza en segundos aunque el original sea 4K.
+  @override
+  String playSource(DriveItem item) {
+    final url = absolutePathOf(item);
+    if (!wantsLightPlayback(item)) return url;
+    return '$url${url.contains('?') ? '&' : '?'}play=low';
+  }
+
   /// Miniatura liviana generada por el servidor (JPEG pequeño, con caché).
   @override
   String thumbSource(DriveItem item, {int width = 320}) {
     return '$base/thumb/${[...path, item.name].join('/')}?w=$width';
   }
+
+  /// El servidor del drive saca el PRIMER FOTOGRAMA de un vídeo (`/thumb` con
+  /// ffmpeg) y la vista previa embebida de un RAW: ambas tarjetas enseñan
+  /// miniatura, no un icono.
+  @override
+  bool canThumb(DriveItem item) =>
+      item.kind == DriveItemKind.image ||
+      item.kind == DriveItemKind.raw ||
+      item.kind == DriveItemKind.video;
 
   /// Espacio total y ocupado del drive → GET /api/space.
   /// { usedBytes, totalBytes, freeBytes, files, folders } (total/free pueden
@@ -318,7 +338,7 @@ class DriveApiService extends DriveBase {
     // URL de Blob y `File` revienta ("Unsupported operation: _Namespace").
     // Ahí se contesta con un error claro en vez de tumbar la subida.
     if (kIsWeb) {
-      throw 'En el navegador elige las fotos con el botón Subir imágenes';
+      throw 'En el navegador elige los archivos con el botón Subir archivos';
     }
     // 1. Registrar TODOS los trabajos primero: el panel muestra la lista
     //    completa al 0% desde el primer frame. Todos van en el MISMO lote, que
@@ -466,10 +486,10 @@ class DriveApiService extends DriveBase {
     DriveUploadJob job,
     _UploadSource src,
   ) async {
-    // El Drive es SOLO de imágenes (el servidor lista y sirve nada más que
-    // estos formatos): un archivo con otra extensión se rechaza al instante con
-    // un motivo claro, en vez de gastar los tres intentos de subida para
-    // recibir un error opaco del servidor.
+    // El Drive acepta fotos, RAW y VÍDEOS (el servidor lista y sirve esos
+    // formatos): cualquier otro se rechaza al instante con un motivo claro, en
+    // vez de gastar los tres intentos de subida para recibir un error opaco
+    // del servidor.
     final format = uploadFormatError(job.name);
     if (format != null) throw format;
     if (job.total > chunkThreshold) {
@@ -492,13 +512,15 @@ class DriveApiService extends DriveBase {
 
   /// Motivo por el que una foto NO se puede subir, o `null` si su formato vale.
   ///
-  /// El Drive guarda y lista solo imágenes: con otra extensión la foto se
-  /// quedaría guardada pero invisible (o rechazada con un error genérico).
+  /// El Drive guarda FOTOS y VÍDEOS (el servidor lista y sirve los dos); con
+  /// otra extensión el archivo se quedaría guardado pero invisible (o
+  /// rechazado con un error genérico).
   String? uploadFormatError(String name) {
-    if (hasImageExt(name)) return null;
+    if (hasPhotoExt(name) || hasVideoExt(name)) return null;
     final ext = extOf(name);
     return 'Formato no admitido (${ext.isEmpty ? 'sin extensión' : ext}): '
-        'solo JPG, PNG, GIF, WEBP o BMP';
+        'se aceptan JPG, PNG, GIF, WEBP, BMP, HEIC, AVIF, TIFF, RAW '
+        '(DNG, CR2, CR3…) y vídeo (MP4, MOV, MTS, M2TS, WEBM, MKV, AVI…)';
   }
 
   /// Tamaño real de la fuente (cuando el trabajo no lo había podido leer).
@@ -530,13 +552,13 @@ class DriveApiService extends DriveBase {
                 'files',
                 await src.file!.readAsBytes(),
                 filename: job.name,
-                contentType: MediaType('image', _mimeSub(extOf(job.name))),
+                contentType: _mediaType(extOf(job.name)),
               )
             : await http.MultipartFile.fromPath(
                 'files',
                 src.path!,
                 filename: job.name,
-                contentType: MediaType('image', _mimeSub(extOf(job.name))),
+                contentType: _mediaType(extOf(job.name)),
               ),
       );
 
@@ -745,12 +767,21 @@ class DriveApiService extends DriveBase {
     }
   }
 
-  String _mimeSub(String ext) => switch (ext) {
-    '.png' => 'png',
-    '.gif' => 'gif',
-    '.webp' => 'webp',
-    '.bmp' => 'bmp',
-    _ => 'jpeg',
+  /// Tipo MIME que viaja en la parte multipart. El servidor guarda por
+  /// extensión, pero un vídeo declarado como `image/jpeg` es incorrecto y
+  /// algunos proxies lo tratan distinto.
+  MediaType _mediaType(String ext) => switch (ext) {
+    '.png' => MediaType('image', 'png'),
+    '.gif' => MediaType('image', 'gif'),
+    '.webp' => MediaType('image', 'webp'),
+    '.bmp' => MediaType('image', 'bmp'),
+    '.mp4' || '.m4v' => MediaType('video', 'mp4'),
+    '.mov' => MediaType('video', 'quicktime'),
+    '.webm' => MediaType('video', 'webm'),
+    '.mkv' => MediaType('video', 'x-matroska'),
+    '.avi' => MediaType('video', 'x-msvideo'),
+    '.3gp' => MediaType('video', '3gpp'),
+    _ => MediaType('image', 'jpeg'),
   };
 
   @override
@@ -983,13 +1014,15 @@ class DriveApiService extends DriveBase {
     DriveItem item, {
     void Function(double progress)? onProgress,
     int chunks = 4,
+
     /// Carpeta donde vive [item] (null = la que el drive muestra ahora). La
     /// usan las pantallas que navegan por su cuenta, como el selector de fotos.
     List<String>? rel,
   }) async {
     final folder = rel ?? path;
     final joined = [...folder, item.name].join('/');
-    final url = '$base/files/$joined'
+    final url =
+        '$base/files/$joined'
         '${_apikeyQuery.isEmpty ? '' : '?$_apikeyQuery'}';
     final relPath = joined;
 
@@ -1012,7 +1045,10 @@ class DriveApiService extends DriveBase {
     // HEAD: tamaño y soporte de rangos (con token: el servidor valida leer)
     final head = await http
         .head(
-          _u('/files/$relPath', _apikeyQuery.isEmpty ? null : {'apikey': _apikey}),
+          _u(
+            '/files/$relPath',
+            _apikeyQuery.isEmpty ? null : {'apikey': _apikey},
+          ),
         )
         .timeout(const Duration(seconds: 10));
     final total = int.tryParse(head.headers['content-length'] ?? '') ?? 0;

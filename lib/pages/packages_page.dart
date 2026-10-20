@@ -749,6 +749,7 @@ class _PackagesPageState extends State<PackagesPage> {
     final canCreate = gallery ? _canCreateCategories : _canCreatePackages;
 
     return PageContainer(
+      module: 'packages',
       title: 'Paquetes',
       description: gallery
           ? 'Las categorías del catálogo: abre una y ves (y editas) sus '
@@ -3063,7 +3064,7 @@ class _FormTabButton extends StatelessWidget {
                     ),
                     child: Text(
                       badge!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w800,
                         color: AppColors.brand,
@@ -3091,7 +3092,7 @@ class _CategoryFormDialog extends StatefulWidget {
     this.category,
     this.count = 0,
     this.minPrice = 0,
-    this.gold = AppColors.brand,
+    this.gold,
   });
 
   /// Categoría a editar (null = crear una nueva).
@@ -3103,8 +3104,9 @@ class _CategoryFormDialog extends StatefulWidget {
   /// Precio más bajo de sus paquetes (0 = sin precio).
   final num minPrice;
 
-  /// Acento del diseño (el mismo oro de la galería).
-  final Color gold;
+  /// Acento del diseño (el mismo oro de la galería). Null = el color de la
+  /// marca, que puede cambiar desde Configuraciones.
+  final Color? gold;
 
   @override
   State<_CategoryFormDialog> createState() => _CategoryFormDialogState();
@@ -3317,7 +3319,7 @@ class _CategoryFormDialogState extends State<_CategoryFormDialog> {
                     photo: src.isEmpty ? null : src,
                     price: widget.minPrice,
                     count: widget.count,
-                    gold: widget.gold,
+                    gold: widget.gold ?? AppColors.brand,
                     onTap: () {},
                   ),
                 ),

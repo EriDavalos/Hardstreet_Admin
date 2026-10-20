@@ -9,6 +9,7 @@ import 'package:hardstreet_admin/event_widget.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/agendas_page.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
+import 'package:hardstreet_admin/widgets/hs_place_picker.dart';
 
 /// Instala un cliente HTTP falso con TRES agendas:
 /// - el LUNES de la semana actual a las 14:30, "Cliente Test"
@@ -19,8 +20,7 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
   final now = DateTime.now();
   String two(int n) => n.toString().padLeft(2, '0');
   String dayOf(DateTime d) => '${d.year}-${two(d.month)}-${two(d.day)}';
-  final monday =
-      DateTime(now.year, now.month, now.day - (now.weekday - 1));
+  final monday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
 
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
@@ -29,8 +29,11 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
     if (path.endsWith('/api/admin/agendas')) {
       if (request.method == 'POST') {
         posts?.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
-        return http.Response(jsonEncode({'ok': true, 'id': 9}), 201,
-            headers: headers);
+        return http.Response(
+          jsonEncode({'ok': true, 'id': 9}),
+          201,
+          headers: headers,
+        );
       }
       return http.Response(
         jsonEncode({
@@ -45,6 +48,12 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
               'serviceName': 'Cobertura en evento',
               'eventDate': '${dayOf(monday)}T14:30:00',
               'description': 'Ceremonia en el jardín',
+              // Lugar CON coordenadas: el detalle pinta el mini mapa (aquí se
+              // comprobaba el crash de los intrínsecos con FlutterMap dentro
+              // del AlertDialog).
+              'location': 'Hacienda San José',
+              'lat': 4.711,
+              'lng': -74.0721,
             },
             {
               'id': 2,
@@ -68,7 +77,7 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
               'eventDate': '${now.year}-${two(now.month)}-22T00:00:00',
               'description': 'Sin hora fija',
             },
-          ]
+          ],
         }),
         200,
         headers: headers,
@@ -81,8 +90,13 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
         jsonEncode({
           'clients': [
             {'id': 2, 'name': 'Ana', 'lastname': 'Ruiz', 'email': 'ana@hs.mx'},
-            {'id': 3, 'name': 'Luis', 'lastname': 'Gómez', 'email': 'luis@hs.mx'},
-          ]
+            {
+              'id': 3,
+              'name': 'Luis',
+              'lastname': 'Gómez',
+              'email': 'luis@hs.mx',
+            },
+          ],
         }),
         200,
         headers: headers,
@@ -150,8 +164,11 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
   });
 }
 
-Future<void> _pumpAgendas(WidgetTester tester, Size size,
-    {List<Map<String, dynamic>>? posts}) async {
+Future<void> _pumpAgendas(
+  WidgetTester tester,
+  Size size, {
+  List<Map<String, dynamic>>? posts,
+}) async {
   await tester.binding.setSurfaceSize(size);
   // En pruebas, MediaQuery NO sigue al tamaño de la superficie: hay que
   // declarar la vista para que la página vea la MISMA ventana que dibuja
@@ -180,74 +197,94 @@ Future<void> _tapPump(WidgetTester tester, Finder finder) async {
 
 /// Bloque del evento en la REJILLA del calendario (excluye el panel lateral).
 Finder _weekBlock() => find.descendant(
-      of: find.byKey(const ValueKey('agenda-calendar')),
-      matching: find.text('Cliente Test'),
-    );
+  of: find.byKey(const ValueKey('agenda-calendar')),
+  matching: find.text('Cliente Test'),
+);
 
 void main() {
   testWidgets(
-      'Agendas (escritorio): semana estilo Google Calendar con panel lateral',
-      (tester) async {
-    await _pumpAgendas(tester, const Size(1200, 900));
+    'Agendas (escritorio): semana estilo Google Calendar con panel lateral',
+    (tester) async {
+      await _pumpAgendas(tester, const Size(1200, 900));
 
-    // Barra superior: Hoy + flechas + conmutador Semana/Mes.
-    expect(find.text('Hoy'), findsOneWidget);
-    expect(find.byTooltip('Semana siguiente'), findsOneWidget);
-    expect(find.byIcon(Icons.view_week_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
+      // Barra superior: Hoy + flechas + conmutador Semana/Mes.
+      expect(find.byKey(const ValueKey('agenda-today')), findsOneWidget);
+      expect(find.byTooltip('Semana siguiente'), findsOneWidget);
+      expect(find.byIcon(Icons.view_week_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
 
-    // Panel lateral (como el de Google Calendar): buscador, mini-calendario,
-    // "Mis servicios" y próximos eventos.
-    expect(find.text('Mis servicios'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.text('Próximos eventos'), findsOneWidget);
+      // Panel lateral (como el de Google Calendar): buscador, mini-calendario,
+      // "Mis servicios" y próximos eventos.
+      expect(find.text('Mis servicios'), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text('Próximos eventos'), findsOneWidget);
 
-    // Rejilla de semana: encabezados de día.
-    expect(find.text('LUN'), findsOneWidget);
+      // Rejilla de semana: encabezados de día.
+      expect(find.text('LUN'), findsOneWidget);
 
-    // El evento del lunes está en la REJILLA de la semana actual (sin navegar).
-    expect(_weekBlock(), findsOneWidget);
+      // El evento del lunes está en la REJILLA de la semana actual (sin navegar).
+      expect(_weekBlock(), findsOneWidget);
 
-    // ‹ › navega la semana de verdad: el título cambia Y el bloque sale de la
-    // rejilla; "Hoy" lo trae de vuelta.
-    final titleFinder = find.byKey(const ValueKey('agenda-title'));
-    final before = tester.widget<Text>(titleFinder).data!;
-    await _tapPump(tester, find.byTooltip('Semana siguiente'));
-    final after = tester.widget<Text>(titleFinder).data!;
-    expect(after, isNot(before));
-    expect(_weekBlock(), findsNothing,
-        reason: 'La semana siguiente ya no contiene el lunes');
+      // ‹ › navega la semana de verdad: el título cambia Y el bloque sale de la
+      // rejilla; "Hoy" lo trae de vuelta.
+      final titleFinder = find.byKey(const ValueKey('agenda-title'));
+      final before = tester.widget<Text>(titleFinder).data!;
+      await _tapPump(tester, find.byTooltip('Semana siguiente'));
+      final after = tester.widget<Text>(titleFinder).data!;
+      expect(after, isNot(before));
+      expect(
+        _weekBlock(),
+        findsNothing,
+        reason: 'La semana siguiente ya no contiene el lunes',
+      );
 
-    await _tapPump(tester, find.text('Hoy'));
-    expect(tester.widget<Text>(titleFinder).data, before);
-    expect(_weekBlock(), findsOneWidget);
+      await _tapPump(tester, find.byKey(const ValueKey('agenda-today')));
+      expect(tester.widget<Text>(titleFinder).data, before);
+      expect(_weekBlock(), findsOneWidget);
 
-    // Clic en el bloque -> modal ESTÁNDAR del panel (cerrar arriba a la
-    // derecha, sin "Cerrar" abajo).
-    await tester.ensureVisible(_weekBlock());
-    await tester.pump(const Duration(milliseconds: 300));
-    await _tapPump(tester, _weekBlock());
-    expect(find.text('Detalle de la agenda'), findsOneWidget);
-    expect(find.textContaining('Boda Premium'), findsWidgets);
-    expect(find.textContaining('Cobertura en evento'), findsWidgets);
+      // Clic en el bloque -> modal ESTÁNDAR del panel (cerrar arriba a la
+      // derecha, sin "Cerrar" abajo).
+      await tester.ensureVisible(_weekBlock());
+      await tester.pump(const Duration(milliseconds: 300));
+      await _tapPump(tester, _weekBlock());
+      expect(find.text('Detalle de la agenda'), findsOneWidget);
+      expect(find.textContaining('Boda Premium'), findsWidgets);
+      expect(find.textContaining('Cobertura en evento'), findsWidgets);
+      expect(find.text('Lugar '), findsOneWidget);
+      expect(find.text('Hacienda San José'), findsWidgets);
+      // El mapa se dibuja dentro del modal (antes el diálogo reventaba al
+      // pedir medidas intrínsecas a un FlutterMap).
+      expect(find.byType(HsPlaceMapPreview), findsOneWidget);
+      expect(tester.takeException(), isNull);
 
-    final close = find.byTooltip('Cerrar');
-    expect(close, findsOneWidget);
-    final dialog = tester.getRect(find.byType(AlertDialog));
-    final closeRect = tester.getRect(close);
-    expect(closeRect.center.dx, greaterThan(dialog.center.dx),
-        reason: 'El cierre va a la DERECHA del modal');
-    expect(closeRect.top, lessThan(dialog.center.dy),
-        reason: 'El cierre va ARRIBA del modal');
-    expect(find.text('Cerrar'), findsNothing,
-        reason: 'El cierre es el botón de la cabecera, no un texto abajo');
-    await _tapPump(tester, close);
+      final close = find.byTooltip('Cerrar');
+      expect(close, findsOneWidget);
+      final dialog = tester.getRect(find.byType(AlertDialog));
+      final closeRect = tester.getRect(close);
+      expect(
+        closeRect.center.dx,
+        greaterThan(dialog.center.dx),
+        reason: 'El cierre va a la DERECHA del modal',
+      );
+      expect(
+        closeRect.top,
+        lessThan(dialog.center.dy),
+        reason: 'El cierre va ARRIBA del modal',
+      );
+      expect(
+        find.text('Cerrar'),
+        findsNothing,
+        reason: 'El cierre es el botón de la cabecera, no un texto abajo',
+      );
+      await _tapPump(tester, close);
 
-    expect(tester.takeException(), isNull);
-  });
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('Agendas: vista de mes con badges y detalle del día',
-      (tester) async {
+  testWidgets('Agendas: vista de mes con badges y detalle del día', (
+    tester,
+  ) async {
     await _pumpAgendas(tester, const Size(1200, 900));
 
     // Cambiar a vista de mes.
@@ -270,141 +307,158 @@ void main() {
   });
 
   testWidgets(
-      'Agendas (móvil): calendario a pantalla completa y panel en hoja',
-      (tester) async {
-    await _pumpAgendas(tester, const Size(390, 844));
+    'Agendas (móvil): calendario a pantalla completa y panel en hoja',
+    (tester) async {
+      await _pumpAgendas(tester, const Size(390, 844));
 
-    // Por defecto en móvil: vista de mes a pantalla completa; el panel vive
-    // en una hoja inferior.
-    expect(find.byKey(const ValueKey('agenda-calendar')), findsOneWidget);
-    expect(find.text('Mis servicios'), findsNothing);
+      // Por defecto en móvil: vista de mes a pantalla completa; el panel vive
+      // en una hoja inferior.
+      expect(find.byKey(const ValueKey('agenda-calendar')), findsOneWidget);
+      expect(find.text('Mis servicios'), findsNothing);
 
-    // La franja DESTACADA de próximos eventos también se ve en móvil.
-    expect(find.text('Próximos eventos'), findsOneWidget);
+      // La franja DESTACADA de próximos eventos también se ve en móvil.
+      expect(find.text('Próximos eventos'), findsOneWidget);
 
-    // El calendario sigue ocupando la altura RESTANTE (la franja de próximos
-    // eventos consume la parte superior, así que el umbral baja).
-    final cal = tester.getRect(find.byKey(const ValueKey('agenda-calendar')));
-    expect(cal.bottom, lessThanOrEqualTo(844));
-    expect(cal.height, greaterThan(200),
-        reason: 'El calendario ocupa la altura restante');
-    expect(tester.takeException(), isNull);
+      // El calendario sigue ocupando la altura RESTANTE (la franja de próximos
+      // eventos consume la parte superior, así que el umbral baja).
+      final cal = tester.getRect(find.byKey(const ValueKey('agenda-calendar')));
+      expect(cal.bottom, lessThanOrEqualTo(844));
+      expect(
+        cal.height,
+        greaterThan(200),
+        reason: 'El calendario ocupa la altura restante',
+      );
+      expect(tester.takeException(), isNull);
 
-    // El alta de evento vive en la barra del calendario (ícono +): el héroe
-    // no se estira y el calendario conserva su espacio.
-    expect(find.byTooltip('Nuevo evento'), findsOneWidget);
-    await _tapPump(tester, find.byTooltip('Nuevo evento'));
-    expect(find.text('Crear evento'), findsOneWidget);
-    await _tapPump(tester, find.text('Cancelar'));
-    expect(find.text('Crear evento'), findsNothing);
+      // El alta de evento vive en la barra del calendario (ícono +): el héroe
+      // no se estira y el calendario conserva su espacio.
+      expect(find.byTooltip('Nuevo evento'), findsOneWidget);
+      await _tapPump(tester, find.byTooltip('Nuevo evento'));
+      expect(find.text('Crear evento'), findsOneWidget);
+      await _tapPump(tester, find.text('Cancelar'));
+      expect(find.text('Crear evento'), findsNothing);
 
-    // Abrir la hoja de filtros (buscador + mini-calendario + servicios).
-    await _tapPump(tester, find.byTooltip('Filtros y calendario'));
-    expect(find.text('Mis servicios'), findsOneWidget);
-    expect(find.text('Próximos eventos'), findsOneWidget);
-    await tester.tapAt(const Offset(20, 30)); // toca el fondo y cierra
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('Mis servicios'), findsNothing);
+      // Abrir la hoja de filtros (buscador + mini-calendario + servicios).
+      await _tapPump(tester, find.byTooltip('Filtros y calendario'));
+      expect(find.text('Mis servicios'), findsOneWidget);
+      expect(find.text('Próximos eventos'), findsOneWidget);
+      await tester.tapAt(const Offset(20, 30)); // toca el fondo y cierra
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Mis servicios'), findsNothing);
 
-    // Vista de semana en móvil: sigue ocupando la altura restante y la
-    // semana visible responde a la navegación (el evento del lunes está).
-    await _tapPump(tester, find.byIcon(Icons.view_week_outlined));
-    expect(find.text('LUN'), findsWidgets);
+      // Vista de semana en móvil: sigue ocupando la altura restante y la
+      // semana visible responde a la navegación (el evento del lunes está).
+      await _tapPump(tester, find.byIcon(Icons.view_week_outlined));
+      expect(find.text('LUN'), findsWidgets);
 
-    final weekCal = tester.getRect(find.byKey(const ValueKey('agenda-calendar')));
-    expect(weekCal.bottom, lessThanOrEqualTo(844));
-    expect(weekCal.height, greaterThan(200));
-    expect(tester.takeException(), isNull);
+      final weekCal = tester.getRect(
+        find.byKey(const ValueKey('agenda-calendar')),
+      );
+      expect(weekCal.bottom, lessThanOrEqualTo(844));
+      expect(weekCal.height, greaterThan(200));
+      expect(tester.takeException(), isNull);
 
-    // ‹ › navega la semana de verdad también en móvil.
-    final titleFinder = find.byKey(const ValueKey('agenda-title'));
-    final before = tester.widget<Text>(titleFinder).data!;
-    await _tapPump(tester, find.byTooltip('Semana siguiente'));
-    expect(tester.widget<Text>(titleFinder).data, isNot(before));
-    expect(_weekBlock(), findsNothing);
-    await _tapPump(tester, find.byTooltip('Semana anterior'));
-    expect(_weekBlock(), findsOneWidget);
+      // ‹ › navega la semana de verdad también en móvil.
+      final titleFinder = find.byKey(const ValueKey('agenda-title'));
+      final before = tester.widget<Text>(titleFinder).data!;
+      await _tapPump(tester, find.byTooltip('Semana siguiente'));
+      expect(tester.widget<Text>(titleFinder).data, isNot(before));
+      expect(_weekBlock(), findsNothing);
+      await _tapPump(tester, find.byTooltip('Semana anterior'));
+      expect(_weekBlock(), findsOneWidget);
 
-    // Tocar el bloque del evento abre el modal estándar (cerrar arriba-derecha).
-    await tester.ensureVisible(_weekBlock());
-    await tester.pump(const Duration(milliseconds: 300));
-    await _tapPump(tester, _weekBlock());
-    expect(find.text('Detalle de la agenda'), findsOneWidget);
-    final close = find.byTooltip('Cerrar');
-    expect(close, findsOneWidget);
-    // En móvil el modal es de PANTALLA COMPLETA: ya no hay cuadro flotante, la
-    // superficie ocupa todo (390x844) y el cierre sigue arriba a la derecha.
-    expect(find.byType(AlertDialog), findsNothing,
-        reason: 'el detalle en móvil no es un diálogo flotante');
-    expect(tester.getRect(find.byType(FormDialog)).size, const Size(390, 844));
-    expect(tester.getRect(close).center.dx, greaterThan(390 / 2));
-    expect(tester.getRect(close).top, lessThan(844 / 2));
-  });
-
-  testWidgets(
-      'nuevo evento: se elige el cliente, su paquete y el servicio del paquete',
-      (tester) async {
-    final posts = <Map<String, dynamic>>[];
-    await _pumpAgendas(tester, const Size(1200, 900), posts: posts);
-
-    await _tapPump(tester, find.text('Nuevo evento'));
-    expect(find.text('Elige el cliente, su paquete y el servicio a agendar'),
-        findsOneWidget);
-
-    // 1) CLIENTE: sin él no hay paquetes que elegir.
-    expect(find.text('Elige el paquete'), findsNothing);
-    await _tapPump(tester, find.byKey(const ValueKey('agenda-client')));
-    await _tapPump(tester, find.text('Ana Ruiz').last);
-
-    // 2) PAQUETE del cliente (se cargan los suyos).
-    await _tapPump(tester, find.byKey(const ValueKey('agenda-package')));
-    await _tapPump(tester, find.text('Paquete Aniversario').last);
-
-    // 3) SERVICIO del paquete.
-    await _tapPump(tester, find.byKey(const ValueKey('agenda-service')));
-    await _tapPump(tester, find.text('Cobertura de estudio').last);
-
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Descripción'),
-      'Prueba de evento',
-    );
-    await _tapPump(tester, find.text('Crear evento'));
-
-    expect(posts, hasLength(1));
-    expect(posts.first['purchasedPackageId'], 10);
-    expect(posts.first['serviceId'], 5);
-    expect(posts.first['description'], 'Prueba de evento');
-    expect(
-      posts.first['eventDate'],
-      matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
-    );
-  });
+      // Tocar el bloque del evento abre el modal estándar (cerrar arriba-derecha).
+      await tester.ensureVisible(_weekBlock());
+      await tester.pump(const Duration(milliseconds: 300));
+      await _tapPump(tester, _weekBlock());
+      expect(find.text('Detalle de la agenda'), findsOneWidget);
+      final close = find.byTooltip('Cerrar');
+      expect(close, findsOneWidget);
+      // En móvil el modal es de PANTALLA COMPLETA: ya no hay cuadro flotante, la
+      // superficie ocupa todo (390x844) y el cierre sigue arriba a la derecha.
+      expect(
+        find.byType(AlertDialog),
+        findsNothing,
+        reason: 'el detalle en móvil no es un diálogo flotante',
+      );
+      expect(
+        tester.getRect(find.byType(FormDialog)).size,
+        const Size(390, 844),
+      );
+      expect(tester.getRect(close).center.dx, greaterThan(390 / 2));
+      expect(tester.getRect(close).top, lessThan(844 / 2));
+    },
+  );
 
   testWidgets(
-      'widget nativo (Android/Windows): tocar un evento abre SU detalle',
-      (tester) async {
-    await _pumpAgendas(tester, const Size(1200, 900));
+    'nuevo evento: se elige el cliente, su paquete y el servicio del paquete',
+    (tester) async {
+      final posts = <Map<String, dynamic>>[];
+      await _pumpAgendas(tester, const Size(1200, 900), posts: posts);
 
-    // El widget no navega: AVISA qué se tocó y la app decide. id 2 = la agenda
-    // de "Otra Clienta" ("Sesión de fotos").
-    UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 2);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+      await _tapPump(tester, find.text('Nuevo evento'));
+      expect(
+        find.text('Elige el cliente, su paquete y el servicio a agendar'),
+        findsOneWidget,
+      );
 
-    expect(find.text('Detalle de la agenda'), findsOneWidget);
-    expect(find.textContaining('Otra Clienta'), findsWidgets);
-    expect(find.textContaining('Sesión de fotos'), findsWidgets);
-    // La petición queda CONSUMIDA: no se vuelve a abrir sola.
-    expect(UpcomingEventsWidget.requested.value, isNull);
+      // 1) CLIENTE: sin él no hay paquetes que elegir.
+      expect(find.text('Elige el paquete'), findsNothing);
+      await _tapPump(tester, find.byKey(const ValueKey('agenda-client')));
+      await _tapPump(tester, find.text('Ana Ruiz').last);
 
-    await _tapPump(tester, find.byTooltip('Cerrar'));
-    expect(find.text('Detalle de la agenda'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+      // 2) PAQUETE del cliente (se cargan los suyos).
+      await _tapPump(tester, find.byKey(const ValueKey('agenda-package')));
+      await _tapPump(tester, find.text('Paquete Aniversario').last);
 
-  testWidgets('widget nativo: el botón "Agregar agenda" abre el ALTA',
-      (tester) async {
+      // 3) SERVICIO del paquete.
+      await _tapPump(tester, find.byKey(const ValueKey('agenda-service')));
+      await _tapPump(tester, find.text('Cobertura de estudio').last);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Descripción'),
+        'Prueba de evento',
+      );
+      await _tapPump(tester, find.text('Crear evento'));
+
+      expect(posts, hasLength(1));
+      expect(posts.first['purchasedPackageId'], 10);
+      expect(posts.first['serviceId'], 5);
+      expect(posts.first['description'], 'Prueba de evento');
+      expect(
+        posts.first['eventDate'],
+        matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
+      );
+    },
+  );
+
+  testWidgets(
+    'widget nativo (Android/Windows): tocar un evento abre SU detalle',
+    (tester) async {
+      await _pumpAgendas(tester, const Size(1200, 900));
+
+      // El widget no navega: AVISA qué se tocó y la app decide. id 2 = la agenda
+      // de "Otra Clienta" ("Sesión de fotos").
+      UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 2);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Detalle de la agenda'), findsOneWidget);
+      expect(find.textContaining('Otra Clienta'), findsWidgets);
+      expect(find.textContaining('Sesión de fotos'), findsWidgets);
+      // La petición queda CONSUMIDA: no se vuelve a abrir sola.
+      expect(UpcomingEventsWidget.requested.value, isNull);
+
+      await _tapPump(tester, find.byTooltip('Cerrar'));
+      expect(find.text('Detalle de la agenda'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('widget nativo: el botón "Agregar agenda" abre el ALTA', (
+    tester,
+  ) async {
     await _pumpAgendas(tester, const Size(1200, 900));
 
     UpcomingEventsWidget.requested.value = const WidgetTap(create: true);
@@ -412,8 +466,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Crear evento'), findsOneWidget);
-    expect(find.text('Elige el cliente, su paquete y el servicio a agendar'),
-        findsOneWidget);
+    expect(
+      find.text('Elige el cliente, su paquete y el servicio a agendar'),
+      findsOneWidget,
+    );
     expect(UpcomingEventsWidget.requested.value, isNull);
 
     await _tapPump(tester, find.text('Cancelar'));
@@ -421,15 +477,16 @@ void main() {
   });
 
   testWidgets(
-      'widget nativo: una agenda que ya no existe avisa y no rompe nada',
-      (tester) async {
-    await _pumpAgendas(tester, const Size(1200, 900));
+    'widget nativo: una agenda que ya no existe avisa y no rompe nada',
+    (tester) async {
+      await _pumpAgendas(tester, const Size(1200, 900));
 
-    UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 999);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+      UpcomingEventsWidget.requested.value = const WidgetTap(agendaId: 999);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('Detalle de la agenda'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.text('Detalle de la agenda'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

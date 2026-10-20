@@ -1,18 +1,19 @@
 import 'dart:async';
 import 'dart:io' if (dart.library.io) 'dart:io';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'app_platform.dart';
 import 'drive_api_service.dart';
 import 'drive_service.dart';
-import 'download_stub.dart'
-    if (dart.library.html) 'download_web.dart';
+import 'download_stub.dart' if (dart.library.html) 'download_web.dart';
 
 /// Canal nativo (Android) que deja el archivo en la carpeta de DESCARGAS del
 /// dispositivo. En Android no hay diálogo "Guardar como": file_selector no lo
@@ -40,8 +41,9 @@ Future<void> downloadDriveSelection(
   if (items.isEmpty) return;
   final messenger = ScaffoldMessenger.of(context);
   final single = items.length == 1 && !items.first.isFolder;
-  final suggested =
-      single ? items.first.name : zipSuggestedName(drive.locationLabel);
+  final suggested = single
+      ? items.first.name
+      : zipSuggestedName(drive.locationLabel);
 
   // 1. Destino (solo escritorio; en web decide el navegador y en Android la
   //    carpeta de Descargas del sistema).
@@ -80,16 +82,64 @@ Future<void> _runDownloadJob(
   ScaffoldMessengerState messenger,
 ) async {
   try {
+    void progress(int received, int total) {
+      if (job.cancelled) throw 'Cancelado';
+      job.received = received;
+      job.total = total;
+      drive.notifyDownloadProgress();
+    }
+
+    // UN archivo de una carpeta COMPARTIDA (o de cualquier drive remoto que no
+    // sea el del módulo Archivos): se baja DIRECTO al destino, por trozos.
+    // Antes se pedía a `fetchDriveBytes`, que lo trataba como si estuviera en
+    // ESTE disco (`File(ruta)`): toda descarga de una carpeta compartida
+    // fallaba —"El archivo ya no existe"—, vídeos incluidos. Y hacerlo por
+    // trozos evita cargar un vídeo de cientos de MB en memoria.
+    final single = job.items.length == 1 && !job.items.first.isFolder;
+    if (single &&
+        drive.isRemote &&
+        drive is! DriveApiService &&
+        !kIsWeb &&
+        (job.targetPath != null || isAndroidPlatform)) {
+      final item = job.items.first;
+      final folder = job.from == null
+          ? drive.path
+          : job.from!.where((s) => s.isNotEmpty).toList(growable: false);
+      final uri = Uri.parse(drive.absolutePathIn(folder, item));
+      final temp =
+          job.targetPath ??
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
+              'hs-${DateTime.now().microsecondsSinceEpoch}-${job.name}';
+      await downloadRemoteToFile(uri, temp, onProgress: progress);
+      String? savedTo;
+      if (job.targetPath == null) {
+        savedTo = await saveFileToAndroidDownloads(temp, job.name);
+        try {
+          await File(temp).delete();
+        } catch (_) {
+          // El temporal se queda: no es motivo para reportar un fallo.
+        }
+        if (savedTo == null) throw 'No se pudo guardar en Descargas';
+      }
+      drive.finishDownloadJob(job);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            savedTo == null
+                ? 'Descargado: ${job.name} '
+                      '(${(job.received / 1024).toStringAsFixed(0)} KB)'
+                : 'Descargado en $savedTo',
+          ),
+        ),
+      );
+      return;
+    }
+
     final bytes = await fetchDriveBytes(
       drive,
       job.items,
       from: job.from,
-      onProgress: (received, total) {
-        if (job.cancelled) throw 'Cancelado';
-        job.received = received;
-        job.total = total;
-        drive.notifyDownloadProgress();
-      },
+      onProgress: progress,
     );
     if (job.cancelled) throw 'Cancelado';
     if (bytes.isEmpty) throw 'No hay nada que descargar';
@@ -113,7 +163,7 @@ Future<void> _runDownloadJob(
           content: Text(
             savedTo == null
                 ? 'Descargado: ${job.name} '
-                    '(${(bytes.length / 1024).toStringAsFixed(0)} KB)'
+                      '(${(bytes.length / 1024).toStringAsFixed(0)} KB)'
                 : 'Descargado en $savedTo',
           ),
         ),
@@ -158,6 +208,16 @@ Future<String?> saveToAndroidDownloads(
   }
 }
 
+/// Deja en la carpeta pública de DESCARGAS (Android) el archivo que YA está
+/// escrito en [path] (una descarga grande se baja por trozos a un temporal en
+/// vez de tenerla entera en memoria).
+Future<String?> saveFileToAndroidDownloads(String path, String name) {
+  return _downloadsChannel.invokeMethod<String>('save', {
+    'path': path,
+    'name': name,
+  });
+}
+
 /// Obtiene los bytes de la selección desde el backend o del disco local.
 /// PÚBLICO para poder verificar en test/ que una descarga individual NO se
 /// guarda como ZIP (que es lo que la corrompía).
@@ -174,11 +234,24 @@ Future<List<int>> fetchDriveBytes(
   if (single) {
     final item = items.first;
     if (drive is DriveApiService) {
-      final raw = await drive.downloadZip([item.name],
-          from: folder, onProgress: onProgress);
+      final raw = await drive.downloadZip(
+        [item.name],
+        from: folder,
+        onProgress: onProgress,
+      );
       // El backend responde con un ZIP incluso para UN archivo: si se guardara
       // tal cual con la extensión de la foto, el archivo queda corrupto.
       return extractSingleFile(raw, item.name) ?? raw;
+    }
+    // Carpeta COMPARTIDA (u otro drive que no es el del módulo Archivos): el
+    // archivo vive en el servidor del drive, no en este disco. Se pide por su
+    // URL; tratarlo como un `File` local era lo que hacía fallar la descarga
+    // de CUALQUIER archivo compartido (y de un vídeo, en cuanto se tocaba).
+    if (drive.isRemote) {
+      return remoteBytes(
+        Uri.parse(drive.absolutePathIn(folder, item)),
+        onProgress: onProgress,
+      );
     }
     final src = File(drive.absolutePathIn(folder, item));
     if (!await src.exists()) throw 'El archivo ya no existe';
@@ -191,7 +264,144 @@ Future<List<int>> fetchDriveBytes(
       onProgress: onProgress,
     );
   }
+  if (drive.isRemote) {
+    return remoteZipBytes(drive, items, folder, onProgress: onProgress);
+  }
   return buildLocalZipBytes(drive as DriveService, items, rel: folder);
+}
+
+/// Bytes de un archivo REMOTO (carpeta compartida), con progreso.
+Future<List<int>> remoteBytes(
+  Uri uri, {
+  required void Function(int received, int total) onProgress,
+}) async {
+  final client = http.Client();
+  try {
+    final res = await client.send(http.Request('GET', uri));
+    if (res.statusCode != 200) {
+      throw 'El servidor contestó ${res.statusCode}';
+    }
+    final total = res.contentLength ?? 0;
+    final out = BytesBuilder(copy: false);
+    var received = 0;
+    await for (final chunk in res.stream) {
+      out.add(chunk);
+      received += chunk.length;
+      onProgress(received, total);
+    }
+    return out.takeBytes();
+  } finally {
+    client.close();
+  }
+}
+
+/// Baja un archivo REMOTO directo a [path], sin pasar por memoria.
+Future<void> downloadRemoteToFile(
+  Uri uri,
+  String path, {
+  required void Function(int received, int total) onProgress,
+}) async {
+  final client = http.Client();
+  IOSink? sink;
+  try {
+    final res = await client.send(http.Request('GET', uri));
+    if (res.statusCode != 200) {
+      throw 'El servidor contestó ${res.statusCode}';
+    }
+    final total = res.contentLength ?? 0;
+    sink = File(path).openWrite();
+    var received = 0;
+    await for (final chunk in res.stream) {
+      sink.add(chunk);
+      received += chunk.length;
+      onProgress(received, total);
+    }
+    await sink.flush();
+    await sink.close();
+    sink = null;
+  } catch (e) {
+    // A medias no se deja un archivo cortado con el nombre del original (el
+    // usuario creería que se descargó bien).
+    await sink?.close();
+    sink = null;
+    try {
+      final out = File(path);
+      if (await out.exists()) await out.delete();
+    } catch (_) {
+      // Si no se puede borrar, el error que importa es el de la descarga.
+    }
+    rethrow;
+  } finally {
+    client.close();
+  }
+}
+
+/// Una entrada del ZIP de una carpeta COMPARTIDA (`bytes` null = carpeta).
+class RemoteZipEntry {
+  const RemoteZipEntry(this.name, this.bytes);
+
+  final String name;
+  final List<int>? bytes;
+}
+
+/// Arma el ZIP de una selección de una carpeta compartida: el servidor sirve
+/// los archivos uno a uno, así que el ZIP se arma aquí (en un isolate).
+Future<List<int>> remoteZipBytes(
+  DriveBase drive,
+  List<DriveItem> items,
+  List<String> folder, {
+  required void Function(int received, int total) onProgress,
+}) async {
+  final entries = <RemoteZipEntry>[];
+  var received = 0;
+
+  Future<void> addFile(List<String> rel, DriveItem item, String arc) async {
+    final bytes = await remoteBytes(
+      Uri.parse(drive.absolutePathIn(rel, item)),
+      onProgress: (partial, _) => onProgress(received + partial, 0),
+    );
+    received += bytes.length;
+    entries.add(RemoteZipEntry(arc, bytes));
+  }
+
+  Future<void> walk(List<String> rel, String prefix) async {
+    final children = await drive.listFolderItems(rel);
+    for (final child in children) {
+      final arc = prefix.isEmpty ? child.name : '$prefix/${child.name}';
+      if (child.isFolder) {
+        entries.add(RemoteZipEntry('$arc/', null));
+        await walk([...rel, child.name], arc);
+      } else {
+        await addFile(rel, child, arc);
+      }
+    }
+  }
+
+  for (final item in items) {
+    if (item.isFolder) {
+      entries.add(RemoteZipEntry('${item.name}/', null));
+      await walk([...folder, item.name], item.name);
+    } else {
+      await addFile(folder, item, item.name);
+    }
+  }
+  if (entries.isEmpty) throw 'La carpeta no tiene archivos para descargar';
+  return compute(zipRemoteEntries, entries);
+}
+
+/// Comprime las entradas de [remoteZipBytes] (corre en un isolate).
+List<int> zipRemoteEntries(List<RemoteZipEntry> entries) {
+  final archive = Archive();
+  for (final e in entries) {
+    final name = e.name.replaceAll('\\', '/');
+    final bytes = e.bytes;
+    if (bytes == null) {
+      archive.add(ArchiveFile.string(name, ''));
+    } else {
+      archive.add(ArchiveFile.bytes(name, bytes));
+    }
+  }
+  return ZipEncoder().encode(archive);
 }
 
 /// Si [bytes] es un ZIP con UNA sola entrada de archivo, devuelve su
@@ -255,9 +465,7 @@ List<int> _buildZip(_ZipJob job) {
     final f = File(absPath);
     if (!f.existsSync()) return;
     final bytes = f.readAsBytesSync();
-    archive.add(
-      ArchiveFile.bytes(arcName.replaceAll('\\', '/'), bytes),
-    );
+    archive.add(ArchiveFile.bytes(arcName.replaceAll('\\', '/'), bytes));
   }
 
   void addDir(Directory dir, String arcPrefix) {

@@ -12,7 +12,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
 | **Finanzas** | ✅ Tabla con el dinero de cada paquete y de cada tipo de movimiento (se expande), gráfica por mes y registro de movimientos |
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
-| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos y **alta de eventos** eligiendo cliente → su paquete → servicio |
+| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete → servicio y **lugar en el mapa** (búsqueda o punto marcado) |
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | Conexión, Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
@@ -146,6 +146,17 @@ conoce el módulo, se muestra igual).
   de ese cliente** y el **servicio del paquete** (opcional), más fecha, hora
   y nota. Sin cliente no se pueden elegir paquetes: el formulario avisa si el
   cliente no tiene paquetes comprados.
+- **Lugar del evento** (opcional): el alta y la edición de una agenda abren un
+  **mapa** (flutter_map + OpenStreetMap, igual en celular, computadora y web)
+  donde se BUSCA el lugar por nombre o se TOCA el punto; el nombre se puede
+  corregir a mano. La búsqueda la resuelve el backend
+  (`/api/admin/geocode` → Nominatim), no el dispositivo, así funciona en todas
+  las plataformas. El lugar se ve en el detalle de la agenda (con mini mapa y
+  botón **Abrir mapa**), en las tarjetas de próximos eventos, en la rejilla de
+  la semana y en las tarjetas de agenda del paquete del cliente. Requiere la
+  migración `Hardstreet-DB/2026-10-19_ubicacion_agendas.sql` (`location`,
+  `lat`, `lng` en `schedules`); sin ella las agendas se guardan igual, sin
+  lugar.
 
 ## Opciones de compartir por SERVICIO (Mi paquete)
 
@@ -532,8 +543,23 @@ el Drive), con las mismas tarjetas (misma altura, mismo redondeo, misma
 separación) y con la **vista de lista** cuando se conmuta a lista (icono o
 miniatura, nombre, peso y el menú de acciones de cada elemento). Las fotos usan
 el mismo tamaño de miniatura (480 px, que el servidor reduce una vez y guarda en
-caché). Al abrir la carpeta se dejan **pedidas** las primeras miniaturas, así la
-cuadrícula aparece con las fotos en vez de ir llenándose a cuentagotas.
+caché), los **vídeos también tienen la suya** (el servidor les saca el primer
+fotograma con `ffmpeg-static`, que ahora es dependencia normal: si el servidor
+viejo no lo tiene, `npm install` y reiniciar) y los **RAW (DNG, CR2, CR3, NEF,
+ARW…)** muestran la vista previa JPEG que la cámara guarda dentro del archivo;
+si un RAW no trae ninguna, se ve el icono del tipo, nunca un recuadro roto. Al
+abrir la carpeta se dejan **pedidas** las primeras miniaturas, así la cuadrícula
+aparece con las fotos en vez de ir llenándose a cuentagotas. El **visor de
+vídeo** enseña esa miniatura como póster mientras carga, avisa «Cargando…» al
+buffering y explica el error si el formato no se puede reproducir.
+
+**Descargar y ver archivos grandes.** Un archivo de una carpeta compartida vive
+en el servidor del drive (o en la computadora de su dueño), no en este disco: la
+descarga pide los bytes por HTTP —directo al destino y por trozos, así un vídeo
+de cientos de MB no se carga en memoria— y el ZIP de una selección se arma en la
+app. Para **ver** un vídeo, el servidor entrega por rangos (`206`), de modo que
+empieza a reproducirse sin bajarlo entero y se puede adelantar incluso cuando
+la carpeta está en la computadora de quien comparte.
 
 La **ficha** de cada compartido —de dónde es la carpeta, quién la comparte (o a
 quiénes se la compartí), su estado y lo que se puede hacer— va **en el listado**,

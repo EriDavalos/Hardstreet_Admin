@@ -16,7 +16,7 @@ import 'package:hardstreet_admin/pages/users_page.dart';
 //   * un Empleado no ve filas Admin ni el chip de ese rol;
 //   * un Admin SÍ las ve y puede filtrarlas;
 //   * el filtro por rol deja a la vista solo ese rol;
-//   * el formulario ofrece los roles como CARPETITAS (sin el Admin para
+//   * el formulario ofrece los roles en un COMBO BOX (sin el Admin para
 //     quien no es Admin).
 // ==================================================================
 
@@ -144,7 +144,7 @@ void main() {
     expect(find.text('Ana Admin'), findsNothing);
   });
 
-  testWidgets('el rol se elige con CARPETITAS y sin Admin para no-Admins', (
+  testWidgets('el rol se elige en un COMBO BOX y sin Admin para no-Admins', (
     tester,
   ) async {
     HsSession.token = 't';
@@ -155,11 +155,18 @@ void main() {
     await tester.tap(find.text('Nuevo usuario'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Elige la carpeta del rol'), findsOneWidget);
-    expect(find.text('Sin rol'), findsWidgets);
-    expect(find.text('Empleado'), findsWidgets);
-    // La carpeta del rol Admin no se ofrece a un Empleado.
+    // El campo del rol es un desplegable (no carpetitas sueltas).
+    final combo = find.byKey(const ValueKey('user-role-select'));
+    expect(combo, findsOneWidget);
+    expect(find.text('Rol de la cuenta'), findsOneWidget);
+    expect(find.text('Elige la carpeta del rol'), findsNothing);
+
+    await tester.tap(combo);
+    await tester.pumpAndSettle();
+
+    // La opción del rol Admin no se ofrece a un Empleado.
     expect(find.byKey(const ValueKey('user-role-1')), findsNothing);
     expect(find.byKey(const ValueKey('user-role-2')), findsOneWidget);
+    expect(find.text('Sin rol'), findsWidgets);
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../hs_access.dart';
 import '../theme.dart';
 import 'anim.dart';
 import 'hs_modal.dart';
@@ -132,28 +133,30 @@ class SectionCard extends StatelessWidget {
                     : scheme.surfaceContainerHighest.withValues(alpha: .6),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, color: accent ? scheme.primary : scheme.onSurfaceVariant),
+              child: Icon(
+                icon,
+                color: accent ? scheme.primary : scheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 14),
             Text(
               title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
+              style: Theme.of(context).textTheme.titleMedium
                   ?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
               description,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.35,
-                  ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.35),
             ),
             if (primaryLabel != null) ...[
               const Spacer(),
               const SizedBox(height: 16),
-              FilledButton.tonal(onPressed: onPrimary, child: Text(primaryLabel!)),
+              FilledButton.tonal(
+                onPressed: onPrimary,
+                child: Text(primaryLabel!),
+              ),
             ],
           ],
         ),
@@ -201,8 +204,7 @@ class StatPill extends StatelessWidget {
               color: scheme.primary.withValues(alpha: .14),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon,
-                size: dense ? 11.5 : 13, color: scheme.primary),
+            child: Icon(icon, size: dense ? 11.5 : 13, color: scheme.primary),
           ),
           SizedBox(width: dense ? 6 : 7),
           Text(
@@ -221,10 +223,10 @@ class StatPill extends StatelessWidget {
 
 /// Círculo decorativo plano (geometría de fondo del hero).
 Widget _decoCircle(double d, Color c) => Container(
-      width: d,
-      height: d,
-      decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-    );
+  width: d,
+  height: d,
+  decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+);
 
 /// Barra de acento animada bajo el título: crece de 0 a su ancho con un
 /// pequeño retraso (dinamismo de entrada, estilo editorial).
@@ -246,10 +248,7 @@ class _AccentBar extends StatelessWidget {
           height: 4,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [
-                scheme.primary,
-                scheme.primary.withValues(alpha: .30),
-              ],
+              colors: [scheme.primary, scheme.primary.withValues(alpha: .30)],
             ),
             borderRadius: BorderRadius.circular(2),
           ),
@@ -271,6 +270,7 @@ class PageContainer extends StatelessWidget {
     required this.title,
     required this.description,
     required this.child,
+    this.module,
     this.actions,
     this.icon,
     this.stats = const [],
@@ -282,6 +282,11 @@ class PageContainer extends StatelessWidget {
 
   final String title;
   final String description;
+
+  /// Clave del módulo en `modules.module` (por ejemplo `settings`). Con ella
+  /// se toman el NOMBRE y la DESCRIPCIÓN de la base de datos; [title] y
+  /// [description] quedan como respaldo si el backend no los reporta.
+  final String? module;
   final Widget child;
 
   /// Botones principales (crear, refrescar...). En móvil van en otra fila,
@@ -330,7 +335,14 @@ class PageContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final compact = MediaQuery.sizeOf(context).width < 620;
-    final flip = _seed(title).isOdd;
+    final access = HsAccess.instance;
+    final shownTitle = module == null
+        ? title
+        : access.nameOf(module!, fallback: title);
+    final shownDescription = module == null
+        ? description
+        : access.descriptionOf(module!, fallback: description);
+    final flip = _seed(shownTitle).isOdd;
     final hasActions = actions?.isNotEmpty ?? false;
 
     final hero = Container(
@@ -351,9 +363,21 @@ class PageContainer extends StatelessWidget {
       child: Stack(
         children: [
           // Geometría decorativa plana (esquinas recortadas por el clip).
-          Positioned(right: -36, top: -48, child: _decoCircle(150, scheme.primary.withValues(alpha: .05))),
-          Positioned(right: 52, bottom: -60, child: _decoCircle(120, scheme.primary.withValues(alpha: .045))),
-          Positioned(left: -50, bottom: -70, child: _decoCircle(130, scheme.primary.withValues(alpha: .03))),
+          Positioned(
+            right: -36,
+            top: -48,
+            child: _decoCircle(150, scheme.primary.withValues(alpha: .05)),
+          ),
+          Positioned(
+            right: 52,
+            bottom: -60,
+            child: _decoCircle(120, scheme.primary.withValues(alpha: .045)),
+          ),
+          Positioned(
+            left: -50,
+            bottom: -70,
+            child: _decoCircle(130, scheme.primary.withValues(alpha: .03)),
+          ),
           Padding(
             padding: EdgeInsets.all(compact ? 16 : 22),
             child: Column(
@@ -376,7 +400,7 @@ class PageContainer extends StatelessWidget {
                           child: Container(
                             width: compact ? 48 : 56,
                             height: compact ? 48 : 56,
-                            decoration: const BoxDecoration(
+                            decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               gradient: LinearGradient(
                                 colors: [AppColors.brand, AppColors.brandDark],
@@ -384,8 +408,11 @@ class PageContainer extends StatelessWidget {
                                 end: Alignment.bottomRight,
                               ),
                             ),
-                            child: Icon(icon,
-                                color: Colors.white, size: compact ? 24 : 27),
+                            child: Icon(
+                              icon,
+                              color: Colors.white,
+                              size: compact ? 24 : 27,
+                            ),
                           ),
                         ),
                       ),
@@ -396,12 +423,10 @@ class PageContainer extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            title,
+                            shownTitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
+                            style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w800,
                                   // En el CELULAR la letra del héroe baja un
@@ -412,10 +437,8 @@ class PageContainer extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            description,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
+                            shownDescription,
+                            style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
                                   color: scheme.onSurfaceVariant,
                                   height: compact ? 1.25 : 1.3,
@@ -463,8 +486,7 @@ class PageContainer extends StatelessWidget {
                                 dense: true,
                               ),
                             ),
-                            if (i != stats.length - 1)
-                              const SizedBox(width: 8),
+                            if (i != stats.length - 1) const SizedBox(width: 8),
                           ],
                         ],
                       ),
@@ -532,8 +554,12 @@ class PageContainer extends StatelessWidget {
       ),
     );
 
-    final padding =
-        EdgeInsets.fromLTRB(compact ? 16 : 24, 18, compact ? 16 : 24, 24);
+    final padding = EdgeInsets.fromLTRB(
+      compact ? 16 : 24,
+      18,
+      compact ? 16 : 24,
+      24,
+    );
 
     // PIE FIJO: el contenido scrollea dentro de un [Expanded] y la barra
     // queda abajo, fuera del scroll (no se va con el último registro).
@@ -701,9 +727,7 @@ class EmptyState extends StatelessWidget {
             const SizedBox(height: 14),
             Text(
               title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
+              style: Theme.of(context).textTheme.titleMedium
                   ?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
@@ -712,9 +736,7 @@ class EmptyState extends StatelessWidget {
               child: Text(
                 message,
                 textAlign: TextAlign.center,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
+                style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
               ),
             ),
@@ -722,7 +744,10 @@ class EmptyState extends StatelessWidget {
               const SizedBox(height: 16),
               FadeSlideIn(
                 delayMs: 120,
-                child: FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+                child: FilledButton(
+                  onPressed: onAction,
+                  child: Text(actionLabel!),
+                ),
               ),
             ],
           ],
@@ -853,8 +878,11 @@ class HsRowMenu extends StatelessWidget {
     if (enabled.isEmpty) return const SizedBox.shrink();
     return PopupMenuButton<HsMenuAction>(
       tooltip: 'Acciones',
-      icon: Icon(Icons.more_vert_rounded,
-          size: 20, color: scheme.onSurfaceVariant),
+      icon: Icon(
+        Icons.more_vert_rounded,
+        size: 20,
+        color: scheme.onSurfaceVariant,
+      ),
       onSelected: (a) => a.onTap?.call(),
       itemBuilder: (context) => [
         for (final a in enabled)
@@ -863,8 +891,11 @@ class HsRowMenu extends StatelessWidget {
             child: ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              leading: Icon(a.icon,
-                  size: 20, color: a.destructive ? scheme.error : null),
+              leading: Icon(
+                a.icon,
+                size: 20,
+                color: a.destructive ? scheme.error : null,
+              ),
               title: Text(
                 a.label,
                 style: a.destructive ? TextStyle(color: scheme.error) : null,

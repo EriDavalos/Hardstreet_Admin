@@ -8,11 +8,13 @@ import '../event_widget.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
+import '../hs_place.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_pickers.dart';
+import '../widgets/hs_place_picker.dart';
 import '../widgets/hs_toast.dart';
 
 /// Paleta estable por servicio: cada servicio conserva su color en toda la
@@ -196,8 +198,7 @@ class _AgendasPageState extends State<AgendasPage> {
     // Sin id (p. ej. una fila de aviso) no hay detalle que abrir: ya se está
     // en Agendas, que es lo que el usuario esperaba.
     if (id <= 0) return;
-    final hits =
-        _all.where((a) => (a['id'] as num?)?.toInt() == id).toList();
+    final hits = _all.where((a) => (a['id'] as num?)?.toInt() == id).toList();
     if (hits.isEmpty) {
       _snack('Esa agenda ya no está disponible');
       return;
@@ -253,9 +254,11 @@ class _AgendasPageState extends State<AgendasPage> {
     if (isAndroidPlatform) {
       final ok = await UpcomingEventsWidget.requestPin();
       await UpcomingEventsWidget.publish(_all);
-      _snack(ok
-          ? 'Listo: coloca "Próximos eventos" donde quieras del inicio'
-          : 'Tu lanzador no lo coloca solo: búscalo en la lista de widgets');
+      _snack(
+        ok
+            ? 'Listo: coloca "Próximos eventos" donde quieras del inicio'
+            : 'Tu lanzador no lo coloca solo: búscalo en la lista de widgets',
+      );
       return;
     }
     if (isWindowsPlatform) {
@@ -263,9 +266,11 @@ class _AgendasPageState extends State<AgendasPage> {
       await UpcomingEventsWidget.publish(_all);
       final show = !UpcomingEventsWidget.desktopVisible;
       await UpcomingEventsWidget.setDesktopVisible(show);
-      _snack(show
-          ? 'Panel de eventos activado (esquina inferior derecha)'
-          : 'Panel de eventos oculto');
+      _snack(
+        show
+            ? 'Panel de eventos activado (esquina inferior derecha)'
+            : 'Panel de eventos oculto',
+      );
       return;
     }
     _snack('Esta plataforma no tiene widget de eventos');
@@ -297,9 +302,10 @@ class _AgendasPageState extends State<AgendasPage> {
       final key = (a['serviceId'] as num?)?.toInt() ?? -1;
       if (_hidden.contains(key)) return false;
       if (q.isEmpty) return true;
-      final hay = '${a['clientName'] ?? ''} ${a['packageName'] ?? ''} '
-              '${a['serviceName'] ?? ''} ${a['description'] ?? ''}'
-          .toLowerCase();
+      final hay =
+          '${a['clientName'] ?? ''} ${a['packageName'] ?? ''} '
+                  '${a['serviceName'] ?? ''} ${a['description'] ?? ''}'
+              .toLowerCase();
       return hay.contains(q);
     }).toList();
   }
@@ -321,11 +327,7 @@ class _AgendasPageState extends State<AgendasPage> {
           count: 1,
         );
       } else {
-        out[key] = (
-          color: prev.color,
-          icon: prev.icon,
-          count: prev.count + 1,
-        );
+        out[key] = (color: prev.color, icon: prev.icon, count: prev.count + 1);
       }
     }
     return out;
@@ -335,25 +337,20 @@ class _AgendasPageState extends State<AgendasPage> {
 
   List<Map<String, dynamic>> _eventsOfDay(DateTime day) {
     final key = hsDateKey(day);
-    return _filtered
-        .where((a) {
-          final d = _dateOf(a);
-          return d != null && hsDateKey(d) == key;
-        })
-        .toList()
+    return _filtered.where((a) {
+        final d = _dateOf(a);
+        return d != null && hsDateKey(d) == key;
+      }).toList()
       ..sort((a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}'));
   }
 
   List<Map<String, dynamic>> get _upcoming {
     final now = DateTime.now();
-    return (_filtered
-            .where((a) {
-              final d = _dateOf(a);
-              return d != null && d.isAfter(now);
-            })
-            .toList()
-          ..sort(
-              (a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}')))
+    return (_filtered.where((a) {
+            final d = _dateOf(a);
+            return d != null && d.isAfter(now);
+          }).toList()
+          ..sort((a, b) => '${a['eventDate']}'.compareTo('${b['eventDate']}')))
         .take(4)
         .toList();
   }
@@ -484,10 +481,8 @@ class _AgendasPageState extends State<AgendasPage> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
             child: Builder(
-              builder: (ctx) => _sidePanel(
-                scheme,
-                onPickDay: () => Navigator.of(ctx).pop(),
-              ),
+              builder: (ctx) =>
+                  _sidePanel(scheme, onPickDay: () => Navigator.of(ctx).pop()),
             ),
           ),
         ),
@@ -504,96 +499,119 @@ class _AgendasPageState extends State<AgendasPage> {
     final scheme = Theme.of(context).colorScheme;
     // El ancho manda TODO el maquetado (panel lateral, vista por defecto y
     // dónde vive "Nuevo evento"): se mide UNA sola vez, aquí.
-    return LayoutBuilder(builder: (context, page) {
-      final narrow = page.maxWidth < 860;
+    return LayoutBuilder(
+      builder: (context, page) {
+        final narrow = page.maxWidth < 860;
       return PageContainer(
-      title: 'Agendas',
-      description: 'Eventos agendados por cliente, paquete y servicio, en '
-          'vista de semana con horas o vista de mes.',
-      icon: Icons.event_available_rounded,
-      expand: true,
-      // En escritorio el alta va como botón con etiqueta en la cabecera; en
-      // móvil el héroe ya es alto, así que es el ícono "+" de la barra del
-      // calendario el que abre el alta (el calendario conserva su espacio).
-      actions: [
-        if (_canCreate && !narrow)
-          FilledButton.icon(
-            onPressed: _addEvent,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Nuevo evento'),
-          ),
-      ],
-      stats: [
-        StatPill(
-            icon: Icons.event_note_outlined, label: '${_all.length} agendas'),
-        StatPill(
-            icon: Icons.design_services_outlined,
-            label: '${_serviceSummary.length} servicios'),
-        StatPill(
-            icon: Icons.upcoming_outlined, label: '$_upcomingCount próximas'),
-      ],
-      child: Builder(builder: (context) {
-        // 1 = semana, 0 = mes; sin elegir aún: semana en escritorio, mes angosto.
-        final isWeek = _view != null ? _view == 1 : !narrow;
-        _isWeek = isWeek;
-
-        final main = Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Franja DESTACADA de próximos eventos: siempre visible (escritorio
-            // y móvil), encima del calendario.
-            if (!_loading && _error == null && _all.isNotEmpty) ...[
-              _upcomingStrip(scheme, narrow: narrow),
-              const SizedBox(height: 10),
-            ],
-            _toolbar(context, isWeek: isWeek, narrow: narrow),
-            const SizedBox(height: 10),
-            Expanded(child: _body(scheme, isWeek)),
-          ],
-        );
-
-        // Panel lateral fijo en escritorio; en móvil va en una hoja inferior.
-        if (narrow || _loading || _error != null || _all.isEmpty) return main;
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: 248,
-              child: FadeSlideIn(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(right: 2),
-                  child: _sidePanel(scheme),
-                ),
+        module: 'schedules',
+        title: 'Agendas',
+          description:
+              'Eventos agendados por cliente, paquete y servicio, en '
+              'vista de semana con horas o vista de mes.',
+          icon: Icons.event_available_rounded,
+          expand: true,
+          // En escritorio el alta va como botón con etiqueta en la cabecera; en
+          // móvil el héroe ya es alto, así que es el ícono "+" de la barra del
+          // calendario el que abre el alta (el calendario conserva su espacio).
+          actions: [
+            if (_canCreate && !narrow)
+              FilledButton.icon(
+                onPressed: _addEvent,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Nuevo evento'),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(child: main),
           ],
+          stats: [
+            StatPill(
+              icon: Icons.event_note_outlined,
+              label: '${_all.length} agendas',
+            ),
+            StatPill(
+              icon: Icons.design_services_outlined,
+              label: '${_serviceSummary.length} servicios',
+            ),
+            StatPill(
+              icon: Icons.upcoming_outlined,
+              label: '$_upcomingCount próximas',
+            ),
+          ],
+          child: Builder(
+            builder: (context) {
+              // 1 = semana, 0 = mes; sin elegir aún: semana en escritorio, mes angosto.
+              final isWeek = _view != null ? _view == 1 : !narrow;
+              _isWeek = isWeek;
+
+              final main = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Franja DESTACADA de próximos eventos: siempre visible (escritorio
+                  // y móvil), encima del calendario.
+                  if (!_loading && _error == null && _all.isNotEmpty) ...[
+                    _upcomingStrip(scheme, narrow: narrow),
+                    const SizedBox(height: 10),
+                  ],
+                  _toolbar(context, isWeek: isWeek, narrow: narrow),
+                  const SizedBox(height: 10),
+                  Expanded(child: _body(scheme, isWeek)),
+                ],
+              );
+
+              // Panel lateral fijo en escritorio; en móvil va en una hoja inferior.
+              if (narrow || _loading || _error != null || _all.isEmpty)
+                return main;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 248,
+                    child: FadeSlideIn(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(right: 2),
+                        child: _sidePanel(scheme),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(child: main),
+                ],
+              );
+            },
+          ),
         );
-      }),
-      );
-    });
+      },
+    );
   }
 
   /// Barra superior tipo Google Calendar: Hoy · ‹ › · título del periodo ·
   /// conmutador Semana/Mes (y en móvil el alta + los filtros).
-  Widget _toolbar(BuildContext context,
-      {required bool isWeek, required bool narrow}) {
+  Widget _toolbar(
+    BuildContext context, {
+    required bool isWeek,
+    required bool narrow,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final title = isWeek ? _weekTitle() : _monthTitle();
     return Row(
       children: [
         OutlinedButton(
+          // Clave propia: la barra y la cuenta regresiva de un evento pueden
+          // decir "Hoy" a la vez; así la prueba toca SIEMPRE este botón.
+          key: const ValueKey('agenda-today'),
           onPressed: _goToToday,
           style: OutlinedButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 14),
             side: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: .8)),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+              color: scheme.outlineVariant.withValues(alpha: .8),
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
           ),
-          child: const Text('Hoy', style: TextStyle(fontWeight: FontWeight.w700)),
+          child: const Text(
+            'Hoy',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
         const SizedBox(width: 4),
         IconButton(
@@ -681,7 +699,8 @@ class _AgendasPageState extends State<AgendasPage> {
       return const EmptyState(
         icon: Icons.event_busy_outlined,
         title: 'Sin agendas',
-        message: 'Todavía no hay eventos agendados. Las agendas se crean desde '
+        message:
+            'Todavía no hay eventos agendados. Las agendas se crean desde '
             'los paquetes del cliente (botón "Agendas").',
       );
     }
@@ -718,24 +737,24 @@ class _AgendasPageState extends State<AgendasPage> {
   }
 
   Widget _errorCard(ColorScheme scheme) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
-              const SizedBox(height: 10),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _reload,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Reintentar'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
+          const SizedBox(height: 10),
+          Text(_error!, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _reload,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar'),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   /// Franja DESTACADA de próximos eventos: arriba del calendario, siempre
   /// visible (escritorio y móvil), con la cuenta regresiva de cada uno.
@@ -774,21 +793,27 @@ class _AgendasPageState extends State<AgendasPage> {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 children: [
-                  Icon(Icons.upcoming_outlined, size: 16, color: scheme.primary),
+                  Icon(
+                    Icons.upcoming_outlined,
+                    size: 16,
+                    color: scheme.primary,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Próximos eventos',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                      ),
                     ),
                   ),
                   if (_upcomingCount > 0)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: scheme.primary,
                         borderRadius: BorderRadius.circular(999),
@@ -819,8 +844,11 @@ class _AgendasPageState extends State<AgendasPage> {
                       turns: open ? .5 : 0,
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
-                      child: Icon(Icons.expand_more, size: 22,
-                          color: scheme.onSurfaceVariant),
+                      child: Icon(
+                        Icons.expand_more,
+                        size: 22,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                 ],
               ),
@@ -864,7 +892,8 @@ class _AgendasPageState extends State<AgendasPage> {
                     for (var i = 0; i < upcoming.length; i++)
                       Padding(
                         padding: EdgeInsets.only(
-                            right: i == upcoming.length - 1 ? 0 : 10),
+                          right: i == upcoming.length - 1 ? 0 : 10,
+                        ),
                         child: _UpcomingEventCard(
                           agenda: upcoming[i],
                           onTap: () {
@@ -908,12 +937,18 @@ class _AgendasPageState extends State<AgendasPage> {
           month: _pickerMonth,
           selected: _selected,
           events: _eventsOfMonth(_pickerMonth),
-          onPrev: () =>
-              setState(() => _pickerMonth =
-                  DateTime(_pickerMonth.year, _pickerMonth.month - 1)),
-          onNext: () =>
-              setState(() => _pickerMonth =
-                  DateTime(_pickerMonth.year, _pickerMonth.month + 1)),
+          onPrev: () => setState(
+            () => _pickerMonth = DateTime(
+              _pickerMonth.year,
+              _pickerMonth.month - 1,
+            ),
+          ),
+          onNext: () => setState(
+            () => _pickerMonth = DateTime(
+              _pickerMonth.year,
+              _pickerMonth.month + 1,
+            ),
+          ),
           onPick: (d) {
             onPickDay?.call();
             _gotoDay(d);
@@ -927,9 +962,7 @@ class _AgendasPageState extends State<AgendasPage> {
             Expanded(
               child: Text(
                 'Mis servicios',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
+                style: Theme.of(context).textTheme.titleSmall
                     ?.copyWith(fontWeight: FontWeight.w800, fontSize: 13.5),
               ),
             ),
@@ -941,7 +974,10 @@ class _AgendasPageState extends State<AgendasPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   minimumSize: Size.zero,
                 ),
-                child: const Text('Mostrar todos', style: TextStyle(fontSize: 11.5)),
+                child: const Text(
+                  'Mostrar todos',
+                  style: TextStyle(fontSize: 11.5),
+                ),
               ),
           ],
         ),
@@ -1005,8 +1041,7 @@ class _ServiceToggle extends StatelessWidget {
               onChanged: (_) => onChanged(),
               activeColor: color,
               fillColor: WidgetStatePropertyAll(color),
-              side: BorderSide(
-                  color: color.withValues(alpha: .65), width: 1.6),
+              side: BorderSide(color: color.withValues(alpha: .65), width: 1.6),
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: VisualDensity.compact,
             ),
@@ -1084,8 +1119,11 @@ class _MiniPicker extends StatelessWidget {
             date: DateTime(month.year, month.month, d),
             day: d,
             selected:
-                selected != null && hsDateKey(selected!) == hsDateKey(DateTime(month.year, month.month, d)),
-            today: hsDateKey(DateTime.now()) ==
+                selected != null &&
+                hsDateKey(selected!) ==
+                    hsDateKey(DateTime(month.year, month.month, d)),
+            today:
+                hsDateKey(DateTime.now()) ==
                 hsDateKey(DateTime(month.year, month.month, d)),
             dot: events[hsDateKey(DateTime(month.year, month.month, d))]?.color,
             onTap: () => onPick(DateTime(month.year, month.month, d)),
@@ -1105,7 +1143,9 @@ class _MiniPicker extends StatelessWidget {
               child: Text(
                 '${name[0].toUpperCase()}${name.substring(1)} ${month.year}',
                 style: const TextStyle(
-                    fontWeight: FontWeight.w800, fontSize: 13),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
             IconButton(
@@ -1150,9 +1190,7 @@ class _MiniPicker extends StatelessWidget {
         const SizedBox(height: 2),
         for (var row = 0; row < cells.length ~/ 7; row++)
           Row(
-            children: [
-              for (var col = 0; col < 7; col++) cells[row * 7 + col],
-            ],
+            children: [for (var col = 0; col < 7; col++) cells[row * 7 + col]],
           ),
       ],
     );
@@ -1200,8 +1238,8 @@ class _MiniDay extends StatelessWidget {
                   color: selected
                       ? accent
                       : today
-                          ? accent.withValues(alpha: .12)
-                          : Colors.transparent,
+                      ? accent.withValues(alpha: .12)
+                      : Colors.transparent,
                 ),
               ),
               Text(
@@ -1211,13 +1249,13 @@ class _MiniDay extends StatelessWidget {
                   fontWeight: selected
                       ? FontWeight.w800
                       : today
-                          ? FontWeight.w700
-                          : FontWeight.w500,
+                      ? FontWeight.w700
+                      : FontWeight.w500,
                   color: selected
                       ? Colors.white
                       : today
-                          ? accent
-                          : scheme.onSurface,
+                      ? accent
+                      : scheme.onSurface,
                 ),
               ),
               if (dot != null && !selected)
@@ -1226,7 +1264,10 @@ class _MiniDay extends StatelessWidget {
                   child: Container(
                     width: 4,
                     height: 4,
-                    decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: dot,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
             ],
@@ -1287,7 +1328,13 @@ class _WeekCalendar extends StatefulWidget {
 class _WeekCalendarState extends State<_WeekCalendar> {
   static const double _hourH = 46;
   static const List<String> _weekLabels = [
-    'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM',
+    'LUN',
+    'MAR',
+    'MIÉ',
+    'JUE',
+    'VIE',
+    'SÁB',
+    'DOM',
   ];
 
   /// Hora inicial del scroll: "ahora" (menos una) si la semana contiene hoy,
@@ -1295,8 +1342,7 @@ class _WeekCalendarState extends State<_WeekCalendar> {
   double get _initialHour {
     final now = DateTime.now();
     final days = _weekDays;
-    final showsToday =
-        days.any((d) => hsDateKey(d) == hsDateKey(now));
+    final showsToday = days.any((d) => hsDateKey(d) == hsDateKey(now));
     int hour;
     if (showsToday) {
       hour = now.hour - 1;
@@ -1313,8 +1359,9 @@ class _WeekCalendarState extends State<_WeekCalendar> {
     return hour.clamp(0, 22).toDouble();
   }
 
-  late final ScrollController _scroll =
-      ScrollController(initialScrollOffset: _initialHour * _hourH);
+  late final ScrollController _scroll = ScrollController(
+    initialScrollOffset: _initialHour * _hourH,
+  );
 
   @override
   void dispose() {
@@ -1347,9 +1394,11 @@ class _WeekCalendarState extends State<_WeekCalendar> {
       final start = d.hour * 60 + d.minute;
       items.add(_Ev(a, start, math.min(start + 60, 24 * 60)));
     }
-    items.sort((a, b) => a.start != b.start
-        ? a.start.compareTo(b.start)
-        : b.end.compareTo(a.end));
+    items.sort(
+      (a, b) => a.start != b.start
+          ? a.start.compareTo(b.start)
+          : b.end.compareTo(a.end),
+    );
 
     final out = <_Ev>[];
     var cluster = <_Ev>[];
@@ -1394,124 +1443,126 @@ class _WeekCalendarState extends State<_WeekCalendar> {
     final scheme = Theme.of(context).colorScheme;
     final days = _weekDays;
     final todayKey = hsDateKey(DateTime.now());
-    final selectedKey =
-        widget.selected == null ? null : hsDateKey(widget.selected!);
+    final selectedKey = widget.selected == null
+        ? null
+        : hsDateKey(widget.selected!);
 
-    return LayoutBuilder(builder: (context, box) {
-      final gutter = box.maxWidth < 420 ? 36.0 : 44.0;
-      final dayW = math.max((box.maxWidth - gutter) / 7, 74.0);
-      final totalW = gutter + dayW * 7;
+    return LayoutBuilder(
+      builder: (context, box) {
+        final gutter = box.maxWidth < 420 ? 36.0 : 44.0;
+        final dayW = math.max((box.maxWidth - gutter) / 7, 74.0);
+        final totalW = gutter + dayW * 7;
 
-      final content = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Encabezados de día (LUN 19 …; hoy con círculo de marca).
-          SizedBox(
-            height: 52,
-            child: Row(
-              children: [
-                SizedBox(width: gutter),
-                for (final day in days)
-                  SizedBox(
-                    width: dayW,
-                    child: _DayHead(
-                      label: _weekLabels[day.weekday - 1],
-                      day: day,
-                      today: hsDateKey(day) == todayKey,
-                      selected: selectedKey == hsDateKey(day),
-                      onTap: () => widget.onSelectDay(day),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          // Eventos de todo el día (agendas sin hora).
-          SizedBox(
-            height: 30,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(width: gutter),
-                for (final day in days)
-                  SizedBox(
-                    width: dayW,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
-                      child: _AllDayPills(
-                        events: _eventsOf(day, timed: false),
-                        maxWidth: dayW - 10,
-                        onOpen: widget.onOpenEvent,
+        final content = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Encabezados de día (LUN 19 …; hoy con círculo de marca).
+            SizedBox(
+              height: 52,
+              child: Row(
+                children: [
+                  SizedBox(width: gutter),
+                  for (final day in days)
+                    SizedBox(
+                      width: dayW,
+                      child: _DayHead(
+                        label: _weekLabels[day.weekday - 1],
+                        day: day,
+                        today: hsDateKey(day) == todayKey,
+                        selected: selectedKey == hsDateKey(day),
+                        onTap: () => widget.onSelectDay(day),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Divider(
-            height: 1,
-            thickness: 1,
-            color: scheme.outlineVariant.withValues(alpha: .6),
-          ),
-          // Rejilla de horas con scroll vertical.
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _scroll,
-              child: SizedBox(
-                height: 24 * _hourH,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _TimeGutter(width: gutter, hourHeight: _hourH),
-                    for (final day in days)
-                      SizedBox(
-                        width: dayW,
-                        child: _DayColumn(
-                          day: day,
-                          hourHeight: _hourH,
-                          events: _place(_eventsOf(day, timed: true)),
-                          now: DateTime.now(),
-                          onOpenEvent: widget.onOpenEvent,
+            // Eventos de todo el día (agendas sin hora).
+            SizedBox(
+              height: 30,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: gutter),
+                  for (final day in days)
+                    SizedBox(
+                      width: dayW,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(3, 3, 3, 0),
+                        child: _AllDayPills(
+                          events: _eventsOf(day, timed: false),
+                          maxWidth: dayW - 10,
+                          onOpen: widget.onOpenEvent,
                         ),
                       ),
-                  ],
+                    ),
+                ],
+              ),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: .6),
+            ),
+            // Rejilla de horas con scroll vertical.
+            Expanded(
+              child: SingleChildScrollView(
+                controller: _scroll,
+                child: SizedBox(
+                  height: 24 * _hourH,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _TimeGutter(width: gutter, hourHeight: _hourH),
+                      for (final day in days)
+                        SizedBox(
+                          width: dayW,
+                          child: _DayColumn(
+                            day: day,
+                            hourHeight: _hourH,
+                            events: _place(_eventsOf(day, timed: true)),
+                            now: DateTime.now(),
+                            onOpenEvent: widget.onOpenEvent,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
-      );
+          ],
+        );
 
-      // En pantallas angostas la semana se desplaza en horizontal.
-      final body = totalW <= box.maxWidth
-          ? content
-          : SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(width: totalW, child: content),
-            );
+        // En pantallas angostas la semana se desplaza en horizontal.
+        final body = totalW <= box.maxWidth
+            ? content
+            : SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: totalW, child: content),
+              );
 
-      return AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: Offset(.10 * widget.slideDirection, 0),
-              end: Offset.zero,
-            ).animate(anim),
-            child: child,
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 260),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: Offset(.10 * widget.slideDirection, 0),
+                end: Offset.zero,
+              ).animate(anim),
+              child: child,
+            ),
           ),
-        ),
-        layoutBuilder: (current, previous) => Stack(
-          children: [...previous, ?current],
-        ),
-        child: KeyedSubtree(
-          key: ValueKey('week-${hsDateKey(days.first)}'),
-          child: body,
-        ),
-      );
-    });
+          layoutBuilder: (current, previous) =>
+              Stack(children: [...previous, ?current]),
+          child: KeyedSubtree(
+            key: ValueKey('week-${hsDateKey(days.first)}'),
+            child: body,
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -1572,19 +1623,21 @@ class _DayHead extends StatelessWidget {
               color: today
                   ? null
                   : selected
-                      ? accent.withValues(alpha: .13)
-                      : Colors.transparent,
+                  ? accent.withValues(alpha: .13)
+                  : Colors.transparent,
             ),
             child: Text(
               '${day.day}',
               style: TextStyle(
                 fontSize: 15,
-                fontWeight: today || selected ? FontWeight.w800 : FontWeight.w600,
+                fontWeight: today || selected
+                    ? FontWeight.w800
+                    : FontWeight.w600,
                 color: today
                     ? Colors.white
                     : selected
-                        ? accent
-                        : scheme.onSurface,
+                    ? accent
+                    : scheme.onSurface,
               ),
             ),
           ),
@@ -1615,37 +1668,40 @@ class _AllDayPills extends StatelessWidget {
       runSpacing: 3,
       children: [
         for (final a in events.take(3))
-          Builder(builder: (context) {
-            final color = _serviceColorOf((a['serviceId'] as num?)?.toInt());
-            final client = (a['clientName'] ?? '').toString().trim();
-            final fg = Color.lerp(color, scheme.onSurface, .30)!;
-            return GestureDetector(
-              onTap: () => onOpen(a),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxWidth),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: .16),
-                    borderRadius: BorderRadius.circular(6),
-                    border:
-                        Border.all(color: color.withValues(alpha: .45)),
-                  ),
-                  child: Text(
-                    client.isEmpty ? 'Evento' : client,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                      color: fg,
+          Builder(
+            builder: (context) {
+              final color = _serviceColorOf((a['serviceId'] as num?)?.toInt());
+              final client = (a['clientName'] ?? '').toString().trim();
+              final fg = Color.lerp(color, scheme.onSurface, .30)!;
+              return GestureDetector(
+                onTap: () => onOpen(a),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: color.withValues(alpha: .45)),
+                    ),
+                    child: Text(
+                      client.isEmpty ? 'Evento' : client,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: fg,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            );
-          }),
+              );
+            },
+          ),
         if (events.length > 3)
           Padding(
             padding: const EdgeInsets.only(top: 3),
@@ -1724,35 +1780,37 @@ class _DayColumn extends StatelessWidget {
     final line = scheme.outlineVariant.withValues(alpha: .5);
     final isToday = hsDateKey(day) == hsDateKey(now);
 
-    return LayoutBuilder(builder: (context, box) {
-      final w = box.maxWidth;
-      return Stack(
-        children: [
-          // Líneas horizontales por hora.
-          Positioned.fill(
-            child: Column(
-              children: [
-                for (var h = 0; h < 24; h++)
-                  Container(
-                    height: hourHeight,
-                    decoration: BoxDecoration(
-                      border: h == 0
-                          ? null
-                          : Border(top: BorderSide(color: line, width: 1)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (isToday)
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = box.maxWidth;
+        return Stack(
+          children: [
+            // Líneas horizontales por hora.
             Positioned.fill(
-              child: Container(color: scheme.primary.withValues(alpha: .04)),
+              child: Column(
+                children: [
+                  for (var h = 0; h < 24; h++)
+                    Container(
+                      height: hourHeight,
+                      decoration: BoxDecoration(
+                        border: h == 0
+                            ? null
+                            : Border(top: BorderSide(color: line, width: 1)),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          for (final ev in events) _block(ev, w),
-          if (isToday) _nowLine(),
-        ],
-      );
-    });
+            if (isToday)
+              Positioned.fill(
+                child: Container(color: scheme.primary.withValues(alpha: .04)),
+              ),
+            for (final ev in events) _block(ev, w),
+            if (isToday) _nowLine(),
+          ],
+        );
+      },
+    );
   }
 
   Widget _block(_Ev ev, double width) {
@@ -1760,6 +1818,7 @@ class _DayColumn extends StatelessWidget {
     final client = (ev.agenda['clientName'] ?? '').toString().trim();
     final service = (ev.agenda['serviceName'] ?? '').toString().trim();
     final package = (ev.agenda['packageName'] ?? '').toString().trim();
+    final place = HsPlace.of(ev.agenda);
     final startLabel = hsParseDate(ev.agenda['eventDate']);
     final slotW = width / ev.cols;
     final height = math.max((ev.end - ev.start) / 60 * hourHeight - 3, 22.0);
@@ -1781,6 +1840,7 @@ class _DayColumn extends StatelessWidget {
           message: [
             if (service.isNotEmpty) service,
             if (package.isNotEmpty) package,
+            if (place != null) place.label,
           ].join(' · '),
           child: InkWell(
             onTap: () => onOpenEvent(ev.agenda),
@@ -1842,6 +1902,29 @@ class _DayColumn extends StatelessWidget {
                         color: Colors.white.withValues(alpha: .85),
                         height: 1.25,
                       ),
+                    ),
+                  if (height >= 78 && place != null)
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.place_outlined,
+                          size: 10,
+                          color: Colors.white.withValues(alpha: .9),
+                        ),
+                        const SizedBox(width: 2),
+                        Expanded(
+                          child: Text(
+                            place.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: Colors.white.withValues(alpha: .9),
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),
@@ -1939,17 +2022,19 @@ class _MonthCalendar extends StatelessWidget {
     for (var d = 1; d <= daysInMonth; d++) {
       final date = DateTime(month.year, month.month, d);
       final key = hsDateKey(date);
-      cells.add(StaggeredItem(
-        index: cells.length,
-        child: _DayCell(
-          key: ValueKey('day-$key'),
-          day: d,
-          selected: selected != null && hsDateKey(selected!) == key,
-          today: key == todayKey,
-          event: events[key],
-          onTap: () => onSelect(date),
+      cells.add(
+        StaggeredItem(
+          index: cells.length,
+          child: _DayCell(
+            key: ValueKey('day-$key'),
+            day: d,
+            selected: selected != null && hsDateKey(selected!) == key,
+            today: key == todayKey,
+            event: events[key],
+            onTap: () => onSelect(date),
+          ),
         ),
-      ));
+      );
     }
     while (cells.length % 7 != 0) {
       cells.add(const SizedBox.shrink());
@@ -2008,46 +2093,48 @@ class _MonthCalendar extends StatelessWidget {
       ),
     );
 
-    return LayoutBuilder(builder: (context, box) {
-      final avail = box.maxHeight;
-      final freeHeight = avail.isFinite ? avail - _weekH - _gap : 0.0;
-      final fits = rows > 0 && freeHeight >= _minRow * rows;
+    return LayoutBuilder(
+      builder: (context, box) {
+        final avail = box.maxHeight;
+        final freeHeight = avail.isFinite ? avail - _weekH - _gap : 0.0;
+        final fits = rows > 0 && freeHeight >= _minRow * rows;
 
-      // Animación de cambio de mes: el mes entrante entra desde el lado hacia
-      // el que se navegó, con fade suave.
-      final gridWidget = AnimatedSwitcher(
-        duration: const Duration(milliseconds: 280),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: Offset(0.14 * slideDirection, 0),
-              end: Offset.zero,
-            ).animate(anim),
-            child: child,
+        // Animación de cambio de mes: el mes entrante entra desde el lado hacia
+        // el que se navegó, con fade suave.
+        final gridWidget = AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: Offset(0.14 * slideDirection, 0),
+                end: Offset.zero,
+              ).animate(anim),
+              child: child,
+            ),
           ),
-        ),
-        layoutBuilder: (current, previous) => Stack(
-          alignment: Alignment.topCenter,
-          children: [...previous, ?current],
-        ),
-        child: KeyedSubtree(
-          key: ValueKey('month-${month.year}-${month.month}'),
-          child: fits
-              ? SizedBox(height: freeHeight, child: grid(fill: true))
-              : grid(fill: false),
-        ),
-      );
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.topCenter,
+            children: [...previous, ?current],
+          ),
+          child: KeyedSubtree(
+            key: ValueKey('month-${month.year}-${month.month}'),
+            child: fits
+                ? SizedBox(height: freeHeight, child: grid(fill: true))
+                : grid(fill: false),
+          ),
+        );
 
-      final body = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [head, gridWidget],
-      );
-      if (fits) return body;
-      return SingleChildScrollView(child: body);
-    });
+        final body = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [head, gridWidget],
+        );
+        if (fits) return body;
+        return SingleChildScrollView(child: body);
+      },
+    );
   }
 }
 
@@ -2094,132 +2181,145 @@ class _DayCellState extends State<_DayCell> {
         onTap: widget.onTap,
         behavior: HitTestBehavior.opaque,
         child: Center(
-          child: LayoutBuilder(builder: (context, box) {
-            // El círculo se adapta al espacio de la celda (nunca desborda).
-            final double availH = box.maxHeight - 8;
-            final double availW = box.maxWidth - 6;
-            final double cap = math.min(availW, _MonthCalendar._maxCircle);
-            final double size =
-                math.min(math.max(availH, 20.0), math.max(cap, 20.0));
-            final double badge = math.min(math.max(size * 0.38, 14.0), 21.0);
-
-            final Color fg;
-            final Color border;
-            final Gradient? gradient;
-            final Color tint;
-            if (widget.selected) {
-              gradient = LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  accent,
-                  Color.lerp(accent, Colors.black, .28) ?? accent,
-                ],
+          child: LayoutBuilder(
+            builder: (context, box) {
+              // El círculo se adapta al espacio de la celda (nunca desborda).
+              final double availH = box.maxHeight - 8;
+              final double availW = box.maxWidth - 6;
+              final double cap = math.min(availW, _MonthCalendar._maxCircle);
+              final double size = math.min(
+                math.max(availH, 20.0),
+                math.max(cap, 20.0),
               );
-              fg = Colors.white;
-              border = accent;
-              tint = Colors.transparent;
-            } else if (e != null) {
-              gradient = null;
-              fg = e.color;
-              border = e.color.withValues(alpha: _hover ? .85 : .45);
-              tint = e.color.withValues(alpha: _hover ? .22 : .10);
-            } else {
-              gradient = null;
-              fg = scheme.onSurface;
-              border = widget.today
-                  ? accent.withValues(alpha: .55)
-                  : Colors.transparent;
-              tint = _hover
-                  ? scheme.surfaceContainerHighest.withValues(alpha: .9)
-                  : Colors.transparent;
-            }
+              final double badge = math.min(math.max(size * 0.38, 14.0), 21.0);
 
-            return SizedBox(
-              width: size,
-              height: size,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  AnimatedScale(
-                    duration: const Duration(milliseconds: 170),
-                    curve: Curves.easeOut,
-                    scale: widget.selected ? 1 : (_hover ? 1.04 : .97),
-                    child: AnimatedContainer(
+              final Color fg;
+              final Color border;
+              final Gradient? gradient;
+              final Color tint;
+              if (widget.selected) {
+                gradient = LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    accent,
+                    Color.lerp(accent, Colors.black, .28) ?? accent,
+                  ],
+                );
+                fg = Colors.white;
+                border = accent;
+                tint = Colors.transparent;
+              } else if (e != null) {
+                gradient = null;
+                fg = e.color;
+                border = e.color.withValues(alpha: _hover ? .85 : .45);
+                tint = e.color.withValues(alpha: _hover ? .22 : .10);
+              } else {
+                gradient = null;
+                fg = scheme.onSurface;
+                border = widget.today
+                    ? accent.withValues(alpha: .55)
+                    : Colors.transparent;
+                tint = _hover
+                    ? scheme.surfaceContainerHighest.withValues(alpha: .9)
+                    : Colors.transparent;
+              }
+
+              return SizedBox(
+                width: size,
+                height: size,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    AnimatedScale(
                       duration: const Duration(milliseconds: 170),
                       curve: Curves.easeOut,
-                      decoration: BoxDecoration(
-                        color: gradient == null ? tint : null,
-                        gradient: gradient,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: border, width: 1.4),
-                        boxShadow: widget.selected
-                            ? [
-                                BoxShadow(
-                                  color: accent.withValues(alpha: .35),
-                                  blurRadius: 9,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '${widget.day}',
-                        style: TextStyle(
-                          fontSize: math.min(math.max(size * 0.36, 11.0), 15.0),
-                          fontWeight: widget.selected || e != null
-                              ? FontWeight.w800
-                              : FontWeight.w500,
-                          color: fg,
+                      scale: widget.selected ? 1 : (_hover ? 1.04 : .97),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 170),
+                        curve: Curves.easeOut,
+                        decoration: BoxDecoration(
+                          color: gradient == null ? tint : null,
+                          gradient: gradient,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: border, width: 1.4),
+                          boxShadow: widget.selected
+                              ? [
+                                  BoxShadow(
+                                    color: accent.withValues(alpha: .35),
+                                    blurRadius: 9,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '${widget.day}',
+                          style: TextStyle(
+                            fontSize: math.min(
+                              math.max(size * 0.36, 11.0),
+                              15.0,
+                            ),
+                            fontWeight: widget.selected || e != null
+                                ? FontWeight.w800
+                                : FontWeight.w500,
+                            color: fg,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  if (e != null)
-                    Positioned(
-                      right: -1,
-                      bottom: -1,
-                      child: TweenAnimationBuilder<double>(
-                        tween: Tween(begin: .55, end: 1),
-                        duration: const Duration(milliseconds: 320),
-                        curve: Curves.easeOutBack,
-                        builder: (context, t, child) => Opacity(
-                          opacity: t.clamp(0.0, 1.0),
-                          child: Transform.scale(scale: t, child: child),
-                        ),
-                        child: Container(
-                          width: badge,
-                          height: badge,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                e.color,
-                                Color.lerp(e.color, Colors.white, .38) ??
-                                    e.color,
+                    if (e != null)
+                      Positioned(
+                        right: -1,
+                        bottom: -1,
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween(begin: .55, end: 1),
+                          duration: const Duration(milliseconds: 320),
+                          curve: Curves.easeOutBack,
+                          builder: (context, t, child) => Opacity(
+                            opacity: t.clamp(0.0, 1.0),
+                            child: Transform.scale(scale: t, child: child),
+                          ),
+                          child: Container(
+                            width: badge,
+                            height: badge,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  e.color,
+                                  Color.lerp(e.color, Colors.white, .38) ??
+                                      e.color,
+                                ],
+                              ),
+                              border: Border.all(
+                                color: scheme.surface,
+                                width: 1.6,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: e.color.withValues(alpha: .45),
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 1),
+                                ),
                               ],
                             ),
-                            border:
-                                Border.all(color: scheme.surface, width: 1.6),
-                            boxShadow: [
-                              BoxShadow(
-                                color: e.color.withValues(alpha: .45),
-                                blurRadius: 5,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
+                            child: Icon(
+                              e.icon,
+                              size: badge * .62,
+                              color: Colors.white,
+                            ),
                           ),
-                          child: Icon(e.icon, size: badge * .62, color: Colors.white),
                         ),
                       ),
-                    ),
-                ],
-              ),
-            );
-          }),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -2232,8 +2332,11 @@ class _DayCellState extends State<_DayCell> {
 
 /// Iniciales de un nombre (avatar de las tarjetas de evento).
 String _initials(String name) {
-  final parts =
-      name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
   if (parts.isEmpty) return '?';
   if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
   return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
@@ -2263,6 +2366,7 @@ class _UpcomingEventCard extends StatelessWidget {
     final client = (agenda['clientName'] ?? '').toString().trim();
     final package = (agenda['packageName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
+    final place = HsPlace.of(agenda);
     final countdown = _countdownLabel(date);
 
     return InkWell(
@@ -2291,21 +2395,23 @@ class _UpcomingEventCard extends StatelessWidget {
                   Text(
                     date == null ? '--' : '${date.day}',
                     style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: color),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                    ),
                   ),
                   Text(
                     date == null
                         ? ''
                         : kHsMonths[date.month - 1]
-                            .substring(0, 3)
-                            .toUpperCase(),
+                              .substring(0, 3)
+                              .toUpperCase(),
                     style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: .3,
-                        color: color),
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .3,
+                      color: color,
+                    ),
                   ),
                 ],
               ),
@@ -2323,13 +2429,17 @@ class _UpcomingEventCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 12.5),
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12.5,
+                          ),
                         ),
                       ),
                       if (countdown.isNotEmpty)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: color.withValues(alpha: .16),
                             borderRadius: BorderRadius.circular(999),
@@ -2337,9 +2447,10 @@ class _UpcomingEventCard extends StatelessWidget {
                           child: Text(
                             countdown,
                             style: TextStyle(
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w800,
-                                color: color),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              color: color,
+                            ),
                           ),
                         ),
                     ],
@@ -2352,14 +2463,19 @@ class _UpcomingEventCard extends StatelessWidget {
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Icon(Icons.schedule_rounded,
-                          size: 12, color: scheme.onSurfaceVariant),
+                      Icon(
+                        Icons.schedule_rounded,
+                        size: 12,
+                        color: scheme.onSurfaceVariant,
+                      ),
                       const SizedBox(width: 3),
                       Flexible(
                         child: Text(
@@ -2369,13 +2485,36 @@ class _UpcomingEventCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
-                              color: scheme.onSurfaceVariant),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ],
                   ),
+                  // LUGAR: solo aparece si la agenda lo tiene agregado.
+                  if (place != null) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(Icons.place_outlined, size: 12, color: color),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            place.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2398,8 +2537,7 @@ class _AgendaDetailDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return FormDialog(
       icon: Icons.event_note_outlined,
-      title:
-          agendas.length == 1 ? 'Detalle de la agenda' : 'Agendas del día',
+      title: agendas.length == 1 ? 'Detalle de la agenda' : 'Agendas del día',
       subtitle: hsDateLabel(date),
       maxWidth: 480,
       onCancel: () => Navigator.of(context).pop(),
@@ -2430,9 +2568,9 @@ class _AgendaDetailBlock extends StatelessWidget {
     final package = (agenda['packageName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
     final desc = (agenda['description'] ?? '').toString().trim();
+    final place = HsPlace.of(agenda);
 
-    Widget detailRow(IconData icon, String label, String value,
-        {Color? tint}) {
+    Widget detailRow(IconData icon, String label, String value, {Color? tint}) {
       return Padding(
         padding: const EdgeInsets.only(top: 7),
         child: Row(
@@ -2477,7 +2615,10 @@ class _AgendaDetailBlock extends StatelessWidget {
                 child: Text(
                   _initials(client),
                   style: TextStyle(
-                      color: color, fontWeight: FontWeight.w800, fontSize: 11.5),
+                    color: color,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11.5,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
@@ -2487,7 +2628,9 @@ class _AgendaDetailBlock extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 13.5),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
                 ),
               ),
               Container(
@@ -2499,16 +2642,34 @@ class _AgendaDetailBlock extends StatelessWidget {
                 child: Text(
                   date == null ? '--' : hsTimeLabel(date),
                   style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w800, color: color),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
                 ),
               ),
             ],
           ),
-          detailRow(Icons.inventory_2_outlined, 'Paquete',
-              package.isEmpty ? '—' : package),
-          detailRow(Icons.design_services_outlined, 'Servicio',
-              service.isEmpty ? 'Sin servicio específico' : service,
-              tint: color),
+          detailRow(
+            Icons.inventory_2_outlined,
+            'Paquete',
+            package.isEmpty ? '—' : package,
+          ),
+          detailRow(
+            Icons.design_services_outlined,
+            'Servicio',
+            service.isEmpty ? 'Sin servicio específico' : service,
+            tint: color,
+          ),
+          // LUGAR: nombre (+ mapa si tiene coordenadas). Las agendas sin
+          // ubicación no muestran la fila.
+          if (place != null) ...[
+            detailRow(Icons.place_outlined, 'Lugar', place.label, tint: color),
+            if (place.hasCoords) ...[
+              const SizedBox(height: 8),
+              HsPlaceMapPreview(place: place),
+            ],
+          ],
           if (desc.isNotEmpty) detailRow(Icons.notes_outlined, 'Nota', desc),
         ],
       ),
@@ -2574,8 +2735,7 @@ class _PickerField extends StatelessWidget {
             Expanded(
               child: Text(
                 emptyMessage!,
-                style:
-                    TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),
           ],
@@ -2593,12 +2753,14 @@ class _PickerField extends StatelessWidget {
       initialValue: selected == 0 ? null : selected,
       isExpanded: true,
       borderRadius: BorderRadius.circular(14),
-      icon: Icon(Icons.keyboard_arrow_down_rounded,
-          color: Theme.of(context).colorScheme.onSurfaceVariant),
+      icon: Icon(
+        Icons.keyboard_arrow_down_rounded,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
       style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
+        fontWeight: FontWeight.w600,
+        color: Theme.of(context).colorScheme.onSurface,
+      ),
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, size: 20),
@@ -2640,6 +2802,7 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
 
   int _serviceId = 0;
   late DateTime _dateTime;
+  HsPlace? _place;
   bool _saving = false;
   String? _error;
 
@@ -2777,8 +2940,13 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     final picked = await showHsDatePicker(context, initialDate: _dateTime);
     if (picked == null) return;
     setState(() {
-      _dateTime = DateTime(picked.year, picked.month, picked.day,
-          _dateTime.hour, _dateTime.minute);
+      _dateTime = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        _dateTime.hour,
+        _dateTime.minute,
+      );
     });
   }
 
@@ -2786,8 +2954,13 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     final picked = await showHsTimePicker(context, initialTime: _dateTime);
     if (picked == null) return;
     setState(() {
-      _dateTime = DateTime(_dateTime.year, _dateTime.month, _dateTime.day,
-          picked.hour, picked.minute);
+      _dateTime = DateTime(
+        _dateTime.year,
+        _dateTime.month,
+        _dateTime.day,
+        picked.hour,
+        picked.minute,
+      );
     });
   }
 
@@ -2796,8 +2969,13 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
   void _quickDay(int daysAhead) {
     final base = DateTime.now().add(Duration(days: daysAhead));
     setState(() {
-      _dateTime = DateTime(base.year, base.month, base.day, _dateTime.hour,
-          _dateTime.minute);
+      _dateTime = DateTime(
+        base.year,
+        base.month,
+        base.day,
+        _dateTime.hour,
+        _dateTime.minute,
+      );
     });
   }
 
@@ -2824,6 +3002,7 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
         'serviceId': _serviceId == 0 ? null : _serviceId,
         'eventDate': hsDateTimeValue(_dateTime),
         'description': _desc.text.trim(),
+        ...?(_place?.toBody()),
       });
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -2908,8 +3087,11 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                 ],
               ),
             ),
-            Icon(Icons.edit_calendar_outlined,
-                size: 16, color: scheme.onSurfaceVariant),
+            Icon(
+              Icons.edit_calendar_outlined,
+              size: 16,
+              color: scheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -2920,38 +3102,39 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
   Widget _dayChips() {
     final scheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
-    final chips = <(String, int)>[
-      ('Hoy', 0),
-      ('Mañana', 1),
-      ('En 7 días', 7),
-    ];
+    final chips = <(String, int)>[('Hoy', 0), ('Mañana', 1), ('En 7 días', 7)];
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         for (final (label, days) in chips)
-          Builder(builder: (context) {
-            final selected = _isSameDay(
-                _dateTime, DateTime(now.year, now.month, now.day + days));
-            return ChoiceChip(
-              label: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : scheme.onSurfaceVariant,
+          Builder(
+            builder: (context) {
+              final selected = _isSameDay(
+                _dateTime,
+                DateTime(now.year, now.month, now.day + days),
+              );
+              return ChoiceChip(
+                label: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : scheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-              selected: selected,
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              selectedColor: AppColors.brand,
-              backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: .45),
-              onSelected:
-                  _saving ? null : (_) => _quickDay(days),
-            );
-          }),
+                selected: selected,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                selectedColor: AppColors.brand,
+                backgroundColor: scheme.surfaceContainerHighest.withValues(
+                  alpha: .45,
+                ),
+                onSelected: _saving ? null : (_) => _quickDay(days),
+              );
+            },
+          ),
       ],
     );
   }
@@ -2959,9 +3142,8 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
   @override
   Widget build(BuildContext context) {
     final busyPackages = _loadingPackages;
-    final sinPaquetes = !_loadingPackages &&
-        _clientId != 0 &&
-        _packages.isEmpty;
+    final sinPaquetes =
+        !_loadingPackages && _clientId != 0 && _packages.isEmpty;
     return FormDialog(
       icon: Icons.event_available_rounded,
       title: 'Nuevo evento',
@@ -3081,7 +3263,8 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                     icon: Icons.design_services_outlined,
                     selected: _serviceId,
                     enabled: !_saving,
-                    helper: 'Opcional: déjalo en "Sin servicio específico" '
+                    helper:
+                        'Opcional: déjalo en "Sin servicio específico" '
                         'si el evento es general.',
                     options: [
                       const DropdownMenuItem(
@@ -3148,6 +3331,15 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                 ],
               );
             })(),
+          ),
+          const SizedBox(height: 14),
+          FormSection(
+            label: 'Lugar (opcional)',
+            child: HsPlaceField(
+              place: _place,
+              enabled: !_saving,
+              onChanged: (place) => setState(() => _place = place),
+            ),
           ),
           const SizedBox(height: 14),
           FormSection(

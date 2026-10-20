@@ -130,15 +130,18 @@ class FormDialog extends StatelessWidget {
   }
 
   /// Cabecera: avatar degradado + título/subtítulo + cerrar.
-  Widget _header(BuildContext context, ColorScheme scheme,
-      {required bool compact}) {
+  Widget _header(
+    BuildContext context,
+    ColorScheme scheme, {
+    required bool compact,
+  }) {
     return Row(
       children: [
         Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               colors: [AppColors.brand, AppColors.brandDark],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -163,7 +166,9 @@ class FormDialog extends StatelessWidget {
               Text(
                 title,
                 style: const TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w800),
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty)
                 Text(
@@ -200,6 +205,12 @@ class FormDialog extends StatelessWidget {
         minWidth: target <= 0 ? 0 : target * .96,
       ),
       child: SizedBox(
+        // Ancho FIJO en escritorio: además de mantener el tamaño del diálogo,
+        // evita que AlertDialog pida las medidas intrínsecas del contenido.
+        // Un FlutterMap (mapa de la agenda) contiene un LayoutBuilder y NO
+        // puede calcular intrínsecos: sin este ancho el diálogo reventaba al
+        // abrir una agenda con ubicación.
+        width: target > 0 ? target : null,
         height: contentHeight,
         child: SingleChildScrollView(
           child: TweenAnimationBuilder<double>(
@@ -237,7 +248,9 @@ class FormDialog extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 20),
-                      Expanded(child: _FormBody(error: error, children: children)),
+                      Expanded(
+                        child: _FormBody(error: error, children: children),
+                      ),
                     ],
                   )
                 else
@@ -282,26 +295,26 @@ class FormDialog extends StatelessWidget {
   }
 
   List<Widget> _buttons() => [
-        ...?footer,
-        TextButton(
-          onPressed: saving ? null : onCancel,
-          child: const Text('Cancelar'),
-        ),
-        FilledButton.icon(
-          onPressed: saving ? null : onSave,
-          icon: saving
-              ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : const Icon(Icons.check_rounded, size: 18),
-          label: Text(saveLabel),
-        ),
-      ];
+    ...?footer,
+    TextButton(
+      onPressed: saving ? null : onCancel,
+      child: const Text('Cancelar'),
+    ),
+    FilledButton.icon(
+      onPressed: saving ? null : onSave,
+      icon: saving
+          ? const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.check_rounded, size: 18),
+      label: Text(saveLabel),
+    ),
+  ];
 }
 
 /// Cuerpo del formulario (children + banner de error).
@@ -416,10 +429,10 @@ class FormSection extends StatelessWidget {
         Text(
           label.toUpperCase(),
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                letterSpacing: .9,
-                fontWeight: FontWeight.w700,
-              ),
+            color: scheme.onSurfaceVariant,
+            letterSpacing: .9,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const SizedBox(height: 10),
         child,

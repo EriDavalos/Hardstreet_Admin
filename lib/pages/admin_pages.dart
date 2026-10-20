@@ -46,15 +46,24 @@ const adminSections = [
 
 /// Página genérica "Próximamente" para módulos no disponibles.
 class ComingSoonPage extends StatelessWidget {
-  const ComingSoonPage({super.key, required this.title, this.section});
+  const ComingSoonPage({
+    super.key,
+    required this.title,
+    this.section,
+    this.module,
+  });
 
   final String title;
   final AdminSection? section;
+
+  /// Clave en `modules.module`: de ahí salen el nombre y la descripción.
+  final String? module;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
+      module: module,
       title: title,
       description:
           'Este módulo todavía no está disponible. Estamos trabajando en ello.',
@@ -278,6 +287,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final upcoming = _upcomingAgendas;
 
     return PageContainer(
+      module: 'dashboard',
       title: 'Dashboard',
       description: wide
           ? 'Todo el resumen en una sola vista, sin bajar.'

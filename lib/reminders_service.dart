@@ -127,15 +127,21 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Marca UN aviso como leído (optimista, luego confirma con el server).
-  Future<void> markRead(int id) async {
-    final i = _reminders.indexWhere((r) => _int(r['id']) == id);
+  ///
+  /// [source] = 'event' (agenda) o 'print' (envío a impresión del equipo).
+  /// Para `print` se busca también por origen, porque los ids de las dos
+  /// tablas pueden coincidir.
+  Future<void> markRead(int id, {String source = 'event'}) async {
+    bool same(Map<String, dynamic> r) =>
+        _int(r['id']) == id && _sourceOf(r) == source;
+    final i = _reminders.indexWhere(same);
     if (i >= 0 && _isUnread(_reminders[i])) {
       _reminders[i] = {..._reminders[i], 'isRead': 1};
       _unread = _reminders.where((r) => _isUnread(r)).length;
       notifyListeners();
     }
     try {
-      await HsApi.markReminderRead(id);
+      await HsApi.markReminderRead(id, source: source);
     } catch (_) {
       // El server rechazó: el próximo refresh corrige el estado.
     }
@@ -167,9 +173,15 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     for (final r in list) {
       if (!_isUnread(r)) continue;
       final id = _int(r['id']);
-      if (id == null || _notifiedIds.contains(id)) continue;
-      _notifiedIds.add(id);
-      fresh.add(r);
+      if (id == null) continue;
+      // Los avisos de impresión viven en otra tabla y sus ids pueden chocar
+      // con los de la agenda: se desplazan tanto en la bandeja del teléfono
+      // como en el control de "ya notificado".
+      final isPrint = _sourceOf(r) == 'print';
+      final key = isPrint ? 1000000 + id : id;
+      if (_notifiedIds.contains(key)) continue;
+      _notifiedIds.add(key);
+      fresh.add(isPrint ? {...r, 'id': key} : r);
     }
     if (fresh.isEmpty) return;
     try {
@@ -180,6 +192,10 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   static bool _isUnread(Map<String, dynamic> r) => _int(r['isRead']) == 0;
+
+  /// Origen del aviso: 'event' (agenda) o 'print' (envío a impresión).
+  static String _sourceOf(Map<String, dynamic> r) =>
+      (r['source'] ?? 'event').toString();
 
   /// Puebla el estado en PRUEBAS sin red ni polling. No usar en producción.
   void seedForTest(List<Map<String, dynamic>> list) {

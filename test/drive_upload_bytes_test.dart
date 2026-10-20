@@ -259,6 +259,35 @@ void main() {
     expect(drive.uploadJobs.single.status, 'done');
   });
 
+  test('un VÍDEO también se sube desde la app y la web', () async {
+    final uploads = <http.Request>[];
+    _mockUploads(MockClient((r) async {
+      if (r.url.path.endsWith('/api/drive')) {
+        return _json({'folders': [], 'files': []});
+      }
+      uploads.add(r);
+      return _json({'saved': 1, 'names': ['boda.mp4']});
+    }));
+    final drive = DriveApiService(baseUrl: 'http://drive.test');
+    final bytes = Uint8List.fromList(List<int>.filled(64, 9));
+    final file = XFile.fromData(
+      bytes,
+      name: 'boda.mp4',
+      path: 'no-existe/boda.mp4',
+      length: bytes.length,
+    );
+
+    final saved = await drive.uploadFromFiles([file]);
+
+    expect(saved, 1);
+    expect(
+      uploads.single.url.path,
+      endsWith('/api/upload'),
+      reason: 'el vídeo del navegador viaja por bytes, igual que una foto',
+    );
+    expect(drive.uploadJobs.single.status, 'done');
+  });
+
   test('un formato que el Drive no guarda falla al instante y con motivo',
       () async {
     final tried = <Uri>[];

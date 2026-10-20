@@ -68,28 +68,98 @@ class DriveItem {
       kind == DriveItemKind.text;
 
   DriveItem copyWith({int? childCount, bool? countKnown}) => DriveItem(
-        name: name,
-        isFolder: isFolder,
-        modified: modified,
-        size: size,
-        childCount: childCount ?? this.childCount,
-        countKnown: countKnown ?? this.countKnown,
-      );
+    name: name,
+    isFolder: isFolder,
+    modified: modified,
+    size: size,
+    childCount: childCount ?? this.childCount,
+    countKnown: countKnown ?? this.countKnown,
+  );
 }
 
 const List<String> kImageExtensions = [
-  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp',
+  // Teléfonos y cámaras: HEIC/HEIF (iPhone), AVIF y TIFF. El servidor las
+  // acepta y les saca miniatura con sharp; antes un HEIC del teléfono se
+  // rechazaba con "formato no admitido".
+  '.heic',
+  '.heif',
+  '.avif',
+  '.tif',
+  '.tiff',
+];
+
+/// RAW de cámara: el servidor del Drive les saca su vista previa JPEG
+/// embebida para que la cuadrícula enseñe una miniatura identificable.
+const List<String> kRawExtensions = [
+  '.dng',
+  '.cr2',
+  '.cr3',
+  '.crw',
+  '.nef',
+  '.nrw',
+  '.arw',
+  '.srf',
+  '.sr2',
+  '.raf',
+  '.rw2',
+  '.orf',
+  '.pef',
+  '.srw',
+  '.raw',
+  '.rwl',
+  '.dcr',
+  '.kdc',
+  '.3fr',
+  '.erf',
+  '.mef',
+  '.mos',
+  '.mrw',
+  '.x3f',
+  '.iiq',
 ];
 
 /// Extensión de VÍDEO: el Drive lo lista y lo reproduce en su visor.
 const List<String> kVideoExtensions = [
-  '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.3gp', '.wmv',
-  '.mpeg', '.mpg', '.ogv',
+  '.mp4',
+  '.m4v',
+  '.mov',
+  '.webm',
+  '.mkv',
+  '.avi',
+  '.3gp',
+  '.wmv',
+  '.mpeg',
+  '.mpg',
+  '.ogv',
+  // Cámaras que no graban MP4/MOV: AVCHD (MTS/M2TS), DV, FLV…
+  '.mts',
+  '.m2ts',
+  '.m2v',
+  '.flv',
+  '.vob',
+  '.mp2',
+  '.mxf',
+  // Insta360 / DJI / cámaras de acción.
+  '.insv',
+  '.lrv',
 ];
 
 /// Extensión de AUDIO: se escucha en el mismo visor.
 const List<String> kAudioExtensions = [
-  '.mp3', '.m4a', '.wav', '.ogg', '.oga', '.aac', '.flac', '.opus',
+  '.mp3',
+  '.m4a',
+  '.wav',
+  '.ogg',
+  '.oga',
+  '.aac',
+  '.flac',
+  '.opus',
 ];
 
 /// Documentos PDF.
@@ -97,8 +167,17 @@ const List<String> kPdfExtensions = ['.pdf'];
 
 /// Archivos de TEXTO: se pueden LEER dentro de la app, sin abrir nada más.
 const List<String> kTextExtensions = [
-  '.txt', '.csv', '.json', '.md', '.log', '.xml', '.yml', '.yaml',
-  '.ini', '.srt', '.vtt',
+  '.txt',
+  '.csv',
+  '.json',
+  '.md',
+  '.log',
+  '.xml',
+  '.yml',
+  '.yaml',
+  '.ini',
+  '.srt',
+  '.vtt',
 ];
 
 /// Qué es un archivo del Drive.
@@ -106,13 +185,25 @@ const List<String> kTextExtensions = [
 /// Antes TODO era "imagen": el Drive listaba y mostraba solo fotos. Ahora una
 /// carpeta puede traer vídeos, música, PDF y documentos, y cada uno se abre de
 /// una manera: el tipo decide el icono de la tarjeta y el visor que lo atiende.
-enum DriveItemKind { folder, image, video, audio, pdf, text, other }
+enum DriveItemKind { folder, image, raw, video, audio, pdf, text, other }
+
+/// A partir de este peso, un vídeo se REPRODUCE en calidad ligera.
+///
+/// El servidor del Drive lo reencoda a 720p al vuelo (vive en el módulo
+/// Archivos compartidos / Drive): el original de 1 GB por la conexión de casa
+/// del dueño no da tiempo a empezar, y el reproductor se queda cargando.
+const int kLightPlaybackBytes = 50 * 1024 * 1024;
+
+/// ¿Este archivo conviene pedirlo en CALIDAD LIGERA al reproducirlo?
+bool wantsLightPlayback(DriveItem item) =>
+    item.kind == DriveItemKind.video && (item.size ?? 0) >= kLightPlaybackBytes;
 
 /// Tipo de un archivo por su extensión (`'boda.mp4'` → vídeo).
 DriveItemKind driveItemKindOf(String name) {
   final i = name.lastIndexOf('.');
   final ext = i <= 0 ? '' : name.substring(i).toLowerCase();
   if (kImageExtensions.contains(ext)) return DriveItemKind.image;
+  if (kRawExtensions.contains(ext)) return DriveItemKind.raw;
   if (kVideoExtensions.contains(ext)) return DriveItemKind.video;
   if (kAudioExtensions.contains(ext)) return DriveItemKind.audio;
   if (kPdfExtensions.contains(ext)) return DriveItemKind.pdf;
@@ -124,6 +215,7 @@ DriveItemKind driveItemKindOf(String name) {
 String driveKindLabel(DriveItemKind kind) => switch (kind) {
   DriveItemKind.folder => 'Carpeta',
   DriveItemKind.image => 'Imagen',
+  DriveItemKind.raw => 'RAW',
   DriveItemKind.video => 'Vídeo',
   DriveItemKind.audio => 'Audio',
   DriveItemKind.pdf => 'PDF',
@@ -549,7 +641,8 @@ abstract class DriveBase extends ChangeNotifier {
                 : (_sharedCounts[_pathKey(e.real)] ?? 0),
             // Solo se sabe con certeza si el listado del estudio la trae
             // (compartida del primer nivel) o si se preguntó su contenido.
-            countKnown: e.real.length == 1 ||
+            countKnown:
+                e.real.length == 1 ||
                 _sharedCounts.containsKey(_pathKey(e.real)),
           ),
       ];
@@ -643,10 +736,11 @@ abstract class DriveBase extends ChangeNotifier {
   static String _pathKey(List<String> segments) => segments.join('/');
 
   /// Segmentos de una ruta del Drive ('XV/ReynaCoot' → ['XV','ReynaCoot']).
-  static List<String> _segments(String path) => drivePathNormalize(path)
-      .split('/')
-      .where((s) => s.isNotEmpty)
-      .toList(growable: false);
+  static List<String> _segments(String path) =>
+      drivePathNormalize(path)
+          .split('/')
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
 
   static bool _isPrefix(List<String> prefix, List<String> full) {
     if (prefix.length > full.length) return false;
@@ -843,6 +937,7 @@ abstract class DriveBase extends ChangeNotifier {
     final shown = path.sublist(hiddenPathPrefix.clamp(0, path.length));
     return shown.isEmpty ? 'Mi Drive' : shown.join(' / ');
   }
+
   String? _search;
   String? get search => _search;
 
@@ -953,18 +1048,22 @@ abstract class DriveBase extends ChangeNotifier {
   /// _Namespace`). Por eso la subida web va por BYTES; en escritorio este
   /// método hereda y usa las rutas reales, que es más liviano.
   Future<int> uploadFromFiles(List<XFile> sources, {bool overwrite = false}) {
-    return uploadFromPaths(
-      [for (final f in sources) f.path],
-      overwrite: overwrite,
-    );
+    return uploadFromPaths([
+      for (final f in sources) f.path,
+    ], overwrite: overwrite);
   }
+
   Future<void> createFolder(String name);
   Future<void> rename(DriveItem item, String newName);
   Future<void> delete(DriveItem item);
   Future<({int moved, List<String> errors})> moveItems(
-      List<String> names, List<String> targetPath);
+    List<String> names,
+    List<String> targetPath,
+  );
   Future<({int copied, List<String> errors})> copyItems(
-      List<String> names, List<String> targetPath);
+    List<String> names,
+    List<String> targetPath,
+  );
   Future<({int deleted, List<String> errors})> deleteItems(List<String> names);
   List<String> listFolders(List<String> rel);
 
@@ -994,15 +1093,24 @@ abstract class DriveBase extends ChangeNotifier {
   /// carpeta que el drive está mostrando. La usan las pantallas que navegan por
   /// su cuenta (el selector de fotos) para leer o descargar un archivo de SU
   /// carpeta y no del archivo homónimo de otra.
-  String absolutePathIn(List<String> rel, DriveItem item) => absolutePathOf(item);
+  String absolutePathIn(List<String> rel, DriveItem item) =>
+      absolutePathOf(item);
 
   /// Vuelve a subir el archivo de un trabajo que quedó en error (botón
   /// "Resubir" del panel). Mantiene la misma fila del trabajo.
   Future<void> retryUpload(String jobId);
 
   /// Fuente para miniaturas: versión liviana (remota) o ruta local.
-  String thumbSource(DriveItem item, {int width = 320}) =>
-      absolutePathOf(item);
+  String thumbSource(DriveItem item, {int width = 320}) => absolutePathOf(item);
+
+  /// ¿Se le puede pedir a ESTE drive la miniatura de [item]?
+  ///
+  /// Las fotos, siempre. Los VÍDEOS también cuando quien los sirve sabe sacar
+  /// su primer fotograma (el servidor del drive lo hace con ffmpeg): así la
+  /// tarjeta de un vídeo enseña una imagen de verdad y no un icono. En un
+  /// drive de DISCO no hay quien la genere —el archivo es un vídeo y `Image`
+  /// no lo pinta—, así que allí se queda el icono del tipo.
+  bool canThumb(DriveItem item) => item.isImage;
 
   /// Miniatura de [item] dentro de una carpeta CONCRETA [rel] (en segmentos),
   /// sin depender de la carpeta que el drive está mostrando ahora mismo.
@@ -1029,6 +1137,13 @@ abstract class DriveBase extends ChangeNotifier {
   String fullSource(DriveItem item, {int? previewWidth}) =>
       absolutePathOf(item);
 
+  /// Fuente con la que se REPRODUCE un vídeo o un audio en el visor.
+  ///
+  /// Por defecto manda el original. Los drives que pueden pedir una versión
+  /// LIGERA lo sobreescriben: un vídeo de más de 50 MB se pide en calidad
+  /// ligera (720p) para que el reproductor empiece en segundos.
+  String playSource(DriveItem item) => fullSource(item);
+
   /// Igual que [fullSource] pero para un archivo dentro de [rel], sin mover la
   /// carpeta que el drive está mostrando. La usa el visor para pedir la ORIGINAL
   /// después de la miniatura rápida.
@@ -1046,7 +1161,11 @@ abstract class DriveBase extends ChangeNotifier {
 
   /// Envuelve una operación marcando el estado de carga global.
   @protected
-  Future<T> runBusy<T>(DriveBusy kind, String label, Future<T> Function() op) async {
+  Future<T> runBusy<T>(
+    DriveBusy kind,
+    String label,
+    Future<T> Function() op,
+  ) async {
     busy = kind;
     busyLabel = label;
     notifyListeners();
@@ -1311,6 +1430,22 @@ abstract class DriveBase extends ChangeNotifier {
   }
 
   bool hasImageExt(String name) => kImageExtensions.contains(extOf(name));
+
+  /// ¿Se puede SUBIR como foto? (las normales y los RAW de cámara).
+  ///
+  /// Se mantiene aparte de [hasImageExt] porque el selector de fotos del sitio
+  /// web solo ofrece imágenes que el navegador sabe pintar, mientras que el
+  /// Drive acepta RAW y les genera su miniatura.
+  bool hasPhotoExt(String name) {
+    final ext = extOf(name);
+    return kImageExtensions.contains(ext) || kRawExtensions.contains(ext);
+  }
+
+  /// ¿Se puede SUBIR como vídeo? El Drive ya los lista y los reproduce.
+  bool hasVideoExt(String name) => kVideoExtensions.contains(extOf(name));
+
+  /// Archivos que el Drive acepta subir hoy (fotos, RAW y vídeos).
+  bool hasUploadExt(String name) => hasPhotoExt(name) || hasVideoExt(name);
 
   /// Tipo de un archivo de ESTE drive, por su nombre.
   DriveItemKind kindOf(String name) => driveItemKindOf(name);

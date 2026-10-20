@@ -85,24 +85,29 @@ Future<void> _reveal(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('lista servicios con icono y descripción, SIN la liga del Drive',
-      (tester) async {
-    _installMock(posts: []);
-    await _pumpPage(tester);
+  testWidgets(
+    'lista servicios con icono y descripción, SIN la liga del Drive',
+    (tester) async {
+      _installMock(posts: []);
+      await _pumpPage(tester);
 
-    expect(find.text('Cobertura en evento'), findsOneWidget);
-    expect(find.text('Video y fotos del evento completo'), findsOneWidget);
-    expect(find.text('Álbum de fotos'), findsOneWidget);
-    // La liga del Drive NO aparece en el catálogo (se administra en el
-    // paquete comprado, no aquí).
-    expect(find.text('https://drive.google.com/drive/u/0/boda'),
-        findsNothing);
-    expect(find.text('1 con enlace'), findsNothing);
-    expect(find.textContaining('con enlace'), findsNothing);
-  });
+      expect(find.text('Cobertura en evento'), findsOneWidget);
+      expect(find.text('Video y fotos del evento completo'), findsOneWidget);
+      expect(find.text('Álbum de fotos'), findsOneWidget);
+      // La liga del Drive NO aparece en el catálogo (se administra en el
+      // paquete comprado, no aquí).
+      expect(
+        find.text('https://drive.google.com/drive/u/0/boda'),
+        findsNothing,
+      );
+      expect(find.text('1 con enlace'), findsNothing);
+      expect(find.textContaining('con enlace'), findsNothing);
+    },
+  );
 
-  testWidgets('crear servicio manda nombre, icono y descripción (sin url)',
-      (tester) async {
+  testWidgets('crear servicio manda nombre, icono y descripción (sin url)', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     _installMock(posts: posts);
     await _pumpPage(tester);
@@ -132,8 +137,9 @@ void main() {
     expect(create.first.containsKey('url'), isFalse);
   });
 
-  testWidgets('editar servicio manda el id y solo los campos cambiados',
-      (tester) async {
+  testWidgets('editar servicio manda el id y solo los campos cambiados', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     _installMock(posts: posts);
     await _pumpPage(tester);
@@ -153,8 +159,9 @@ void main() {
     expect(update.first['name'], 'Álbum premium');
   });
 
-  testWidgets('los parámetros especiales guardan el máximo de fotos',
-      (tester) async {
+  testWidgets('los parámetros especiales guardan el máximo de fotos', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     _installMock(posts: posts);
     await _pumpPage(tester);
@@ -178,8 +185,9 @@ void main() {
     expect(update.first['allowFolder'], isTrue);
   });
 
-  testWidgets('sin «Abrir carpeta» tampoco se puede elegir fotos',
-      (tester) async {
+  testWidgets('sin «Abrir carpeta» tampoco se puede elegir fotos', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     _installMock(posts: posts);
     await _pumpPage(tester);

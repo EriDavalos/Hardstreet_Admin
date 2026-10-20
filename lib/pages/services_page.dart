@@ -238,6 +238,7 @@ class _ServicesPageState extends State<ServicesPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PageContainer(
+      module: 'services',
       title: 'Servicios',
       description:
           'Catálogo de servicios de los paquetes: icono, nombre, descripción y '

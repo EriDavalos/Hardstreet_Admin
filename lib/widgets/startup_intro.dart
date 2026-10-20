@@ -38,24 +38,34 @@ class _StartupIntroState extends State<StartupIntro>
   );
 
   /// Marca: entra con rebote (easeOutBack) y un poco de escala.
-  late final Animation<double> _logo =
-      CurvedAnimation(parent: _c, curve: const Interval(0, .42, curve: Curves.easeOutBack));
+  late final Animation<double> _logo = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(0, .42, curve: Curves.easeOutBack),
+  );
 
   /// Nombre de la app: aparece y se "asienta" (letter spacing).
-  late final Animation<double> _title =
-      CurvedAnimation(parent: _c, curve: const Interval(.16, .56, curve: Curves.easeOutCubic));
+  late final Animation<double> _title = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(.16, .56, curve: Curves.easeOutCubic),
+  );
 
   /// Bajada ("Panel de administración").
-  late final Animation<double> _subtitle =
-      CurvedAnimation(parent: _c, curve: const Interval(.30, .68, curve: Curves.easeOutCubic));
+  late final Animation<double> _subtitle = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(.30, .68, curve: Curves.easeOutCubic),
+  );
 
   /// Barra de progreso.
-  late final Animation<double> _bar =
-      CurvedAnimation(parent: _c, curve: const Interval(.34, .9, curve: Curves.easeOutCubic));
+  late final Animation<double> _bar = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(.34, .9, curve: Curves.easeOutCubic),
+  );
 
   /// Fundido final hacia el contenido real.
-  late final Animation<double> _exit =
-      CurvedAnimation(parent: _c, curve: const Interval(.88, 1, curve: Curves.easeIn));
+  late final Animation<double> _exit = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(.88, 1, curve: Curves.easeIn),
+  );
 
   @override
   void initState() {
@@ -158,7 +168,9 @@ class _StartupIntroState extends State<StartupIntro>
                           width: 168,
                           height: 4,
                           decoration: BoxDecoration(
-                            color: scheme.onSurfaceVariant.withValues(alpha: .18),
+                            color: scheme.onSurfaceVariant.withValues(
+                              alpha: .18,
+                            ),
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: Align(
@@ -168,8 +180,11 @@ class _StartupIntroState extends State<StartupIntro>
                               child: Container(
                                 height: 4,
                                 decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [AppColors.brand, AppColors.brandDark],
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      AppColors.brand,
+                                      AppColors.brandDark,
+                                    ],
                                   ),
                                   borderRadius: BorderRadius.circular(3),
                                 ),

@@ -132,6 +132,14 @@ class SharedDrive extends DriveBase {
   String thumbSource(DriveItem item, {int width = 320}) =>
       service.thumbUrl(shareId, [...path, item.name], width: width);
 
+  /// El servidor saca el PRIMER FOTOGRAMA de un vídeo y la vista previa de un
+  /// RAW: también enseñan miniatura en una carpeta compartida.
+  @override
+  bool canThumb(DriveItem item) =>
+      item.kind == DriveItemKind.image ||
+      item.kind == DriveItemKind.raw ||
+      item.kind == DriveItemKind.video;
+
   @override
   String thumbSourceIn(List<String> rel, DriveItem item, {int width = 320}) =>
       service.thumbUrl(shareId, [...rel, item.name], width: width);
@@ -139,11 +147,15 @@ class SharedDrive extends DriveBase {
   @override
   String fullSource(DriveItem item, {int? previewWidth}) => previewWidth == null
       ? service.fileUrl(shareId, [...path, item.name])
-      : service.thumbUrl(
-          shareId,
-          [...path, item.name],
-          width: previewWidth,
-        );
+      : service.thumbUrl(shareId, [...path, item.name], width: previewWidth);
+
+  /// REPRODUCCIÓN: los vídeos grandes se ven en CALIDAD LIGERA (el servidor
+  /// los reencoda a 720p al vuelo, sin bajar el original completo).
+  @override
+  String playSource(DriveItem item) => service.fileUrl(shareId, [
+    ...path,
+    item.name,
+  ], light: wantsLightPlayback(item));
 
   @override
   List<String> listFolders(List<String> rel) => _folders[_key(rel)] ?? const [];

@@ -266,8 +266,7 @@ class LocalShareService {
           name: '${e['name'] ?? ''}',
           isFolder: e['isFolder'] == true,
           size: (e['size'] as num?)?.toInt(),
-          modified:
-              ms == null || ms <= 0
+          modified: ms == null || ms <= 0
               ? null
               : DateTime.fromMillisecondsSinceEpoch(ms),
           childCount: count ?? 0,
@@ -292,10 +291,15 @@ class LocalShareService {
   }
 
   /// URL del archivo original (para el visor).
-  String fileUrl(int shareId, List<String> path) {
+  ///
+  /// [light] pide la versión RECODIFICADA (calidad ligera) de un vídeo grande:
+  /// el servidor lo trae por el túnel y lo reencoda a 720p al vuelo, así el
+  /// reproductor empieza antes. La DESCARGA no la usa: baja el original.
+  String fileUrl(int shareId, List<String> path, {bool light = false}) {
     final q = {
       'share': '$shareId',
       'path': path.join('/'),
+      if (light) 'play': 'low',
       if (_token.isNotEmpty) 'apikey': _token,
     };
     return _u('/api/local/file', q).toString();
@@ -397,9 +401,7 @@ class LocalShareService {
       }),
     );
     req.headers.addAll(_headers);
-    req.files.add(
-      http.MultipartFile.fromBytes('file', bytes, filename: name),
-    );
+    req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: name));
     final streamed = await _client
         .send(req)
         .timeout(const Duration(minutes: 5));
@@ -459,9 +461,7 @@ class LocalShareService {
         : const {};
     return (
       deleted: (data['deleted'] as num?)?.toInt() ?? 0,
-      errors: [
-        for (final e in ((data['errors'] as List?) ?? const [])) '$e',
-      ],
+      errors: [for (final e in ((data['errors'] as List?) ?? const [])) '$e'],
     );
   }
 
@@ -496,9 +496,7 @@ class LocalShareService {
         : const {};
     return (
       moved: (data[move ? 'moved' : 'copied'] as num?)?.toInt() ?? 0,
-      errors: [
-        for (final e in ((data['errors'] as List?) ?? const [])) '$e',
-      ],
+      errors: [for (final e in ((data['errors'] as List?) ?? const [])) '$e'],
     );
   }
 
@@ -597,6 +595,14 @@ class LocalShareDrive extends DriveBase {
   String thumbSource(DriveItem item, {int width = 320}) =>
       service.thumbUrl(shareId, _segments(item), width: width);
 
+  /// Fotos, RAW y VÍDEOS: el servidor saca el primer fotograma del vídeo y la
+  /// vista previa embebida del RAW.
+  @override
+  bool canThumb(DriveItem item) =>
+      item.kind == DriveItemKind.image ||
+      item.kind == DriveItemKind.raw ||
+      item.kind == DriveItemKind.video;
+
   /// Preview del VISOR.
   ///
   /// Se le pide al servidor la versión REDIMENSIONADA (`/api/local/thumb`,
@@ -608,6 +614,16 @@ class LocalShareDrive extends DriveBase {
   String fullSource(DriveItem item, {int? previewWidth}) => previewWidth == null
       ? service.fileUrl(shareId, _segments(item))
       : service.thumbUrl(shareId, _segments(item), width: previewWidth);
+
+  /// REPRODUCCIÓN: un vídeo de más de 50 MB se ve en CALIDAD LIGERA (el
+  /// servidor lo reencoda a 720p al vuelo). Descargar sigue bajando el
+  /// original; esto es solo para verlo.
+  @override
+  String playSource(DriveItem item) => service.fileUrl(
+    shareId,
+    _segments(item),
+    light: wantsLightPlayback(item),
+  );
 
   @override
   List<String> listFolders(List<String> rel) => const [];

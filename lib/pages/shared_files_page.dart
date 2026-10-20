@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../app_platform.dart';
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../local_share_agent.dart';
 import '../local_share_service.dart';
@@ -14,7 +15,6 @@ import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/hs_modal.dart';
-import '../widgets/hs_pager.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 import 'drive_page.dart' show DrivePage;
@@ -76,9 +76,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   List<Map<String, dynamic>> _shared = const [];
   List<Map<String, dynamic>> _received = const [];
 
-  // Paginación de las carpetas (30 de fábrica; 50/100/200 abajo).
-  int _page = 1;
-  int _pageSize = kHsDefaultPageSize;
   List<Map<String, dynamic>> _candidates = const [];
   bool _canShare = true;
   bool _canDelete = true;
@@ -344,7 +341,8 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       HsFilterGroup(
         id: 'origen',
         title: '¿Dónde está la carpeta?',
-        help: 'Las de la computadora las sirve la app de su dueño; las del '
+        help:
+            'Las de la computadora las sirve la app de su dueño; las del '
             'drive están siempre en el servidor.',
         options: [
           HsFilterOption(
@@ -1163,6 +1161,20 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     List<Map<String, dynamic>> received,
     List<Map<String, dynamic>> mine,
   ) {
+    final access = HsAccess.instance;
+    final moduleTitle = access.nameOf(
+      'shared_files',
+      fallback: 'Archivos compartidos',
+    );
+    final fallbackDescription = _readOnly
+        ? 'Las carpetas que te comparten otros usuarios. Se ven y se '
+              'descargan aquí.'
+        : 'Comparte una CARPETA DE TU COMPUTADORA con otros usuarios y abre '
+              'las que te comparten.';
+    final moduleDescription = access.descriptionOf(
+      'shared_files',
+      fallback: fallbackDescription,
+    );
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -1223,7 +1235,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                         child: Container(
                           width: isCompact ? 48 : 54,
                           height: isCompact ? 48 : 54,
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: LinearGradient(
                               colors: [AppColors.brand, AppColors.brandDark],
@@ -1245,7 +1257,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Archivos compartidos',
+                            moduleTitle,
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w800,
@@ -1254,11 +1266,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            _readOnly
-                                ? 'Las carpetas que te comparten otros '
-                                      'usuarios. Se ven y se descargan aquí.'
-                                : 'Comparte una CARPETA DE TU COMPUTADORA con '
-                                      'otros usuarios y abre las que te comparten.',
+                            moduleDescription,
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(color: scheme.onSurfaceVariant),
                           ),
@@ -1315,7 +1323,6 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                   compact: isCompact,
                   onChanged: (v) => setState(() {
                     _view = v;
-                    _page = 1;
                     _searchController.clear();
                   }),
                 ),
@@ -1324,12 +1331,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
                 HsSearchFilterBar(
                   hint: 'Buscar carpeta o persona',
                   controller: _searchController,
-                  onChanged: (_) => setState(() => _page = 1),
+                  onChanged: (_) => setState(() {}),
                   groups: _filterGroups(),
                   selected: {'origen': _originFilter},
                   onApply: (filters) => setState(() {
                     _originFilter = filters['origen'] ?? '';
-                    _page = 1;
                   }),
                   trailing: Tooltip(
                     message: _grid ? 'Vista de lista' : 'Vista de cuadrícula',
@@ -1656,31 +1662,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     required void Function(Map<String, dynamic>) onOpen,
   }) {
     if (entries.isEmpty) return empty;
-    // Paginado: la cuadrícula/lista muestra la página actual y la barra va
-    // fija ABAJO, para no perderla al bajar entre carpetas.
-    final rows = HsPages(
-      total: entries.length,
-      page: _page,
-      pageSize: _pageSize,
-    ).slice(entries);
-    final footer = Padding(
-      padding: EdgeInsets.fromLTRB(
-        isCompact ? 14 : 24,
-        0,
-        isCompact ? 14 : 24,
-        isCompact ? 6 : 10,
-      ),
-      child: HsPager(
-        total: entries.length,
-        page: _page,
-        pageSize: _pageSize,
-        onPage: (p) => setState(() => _page = p),
-        onPageSize: (n) => setState(() {
-          _pageSize = n;
-          _page = 1;
-        }),
-      ),
-    );
+    // Son CARPETAS, no una tabla: se muestran todas (sin paginado), como una
+    // carpeta del Drive.
+    final rows = entries;
     Widget body;
     if (_grid) {
       body = LayoutBuilder(
@@ -1778,12 +1762,7 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
         ),
       );
     }
-    return Column(
-      children: [
-        Expanded(child: body),
-        footer,
-      ],
-    );
+    return body;
   }
 
   /// ¿Puedo descargar esta carpeta? (en las mías, siempre).
@@ -2211,9 +2190,7 @@ class _FolderCard extends StatelessWidget {
                         children: [
                           // Lo que se concedió (o lo que YO puedo hacer): se ve
                           // en el listado sin abrir el diálogo de permisos.
-                          _PermIcons(
-                            perms: _entryPermissions(entry, shared),
-                          ),
+                          _PermIcons(perms: _entryPermissions(entry, shared)),
                           _ShareStatusPill(status: status),
                         ],
                       ),

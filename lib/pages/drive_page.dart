@@ -16,7 +16,12 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show HardwareKeyboard, HapticFeedback, KeyEvent, KeyDownEvent, LogicalKeyboardKey;
+    show
+        HardwareKeyboard,
+        HapticFeedback,
+        KeyEvent,
+        KeyDownEvent,
+        LogicalKeyboardKey;
 
 import '../../app_constants.dart';
 import '../../app_platform.dart';
@@ -35,7 +40,7 @@ import '../../widgets/hs_modal.dart';
 /// Permiso del módulo Archivos ("drive" en la BD) para el rol logueado.
 ///
 /// El widget solo OCULTA lo que el rol no puede hacer: si no tiene `create` no
-/// hay "Nueva carpeta" ni "Subir imágenes"; sin `update` no hay renombrar ni
+/// hay "Nueva carpeta" ni "Subir archivos"; sin `update` no hay renombrar ni
 /// mover; sin `delete` no hay eliminar; sin `download` no se puede sacar una
 /// imagen. En modo degradado (el backend no respondió) se muestra todo, igual
 /// que en el resto del panel, para no dejar la sección inservible.
@@ -132,8 +137,10 @@ class _PressMovePointerState extends MultiDragPointerState {
   @override
   void checkForResolutionAfterMove() {
     if (pendingDelta == null) return;
-    final slop =
-        computeHitSlop(kind, gestureSettings).clamp(8.0, 24.0).toDouble();
+    final slop = computeHitSlop(
+      kind,
+      gestureSettings,
+    ).clamp(8.0, 24.0).toDouble();
     if (_timer != null) {
       // AÚN en la espera: movimiento grande = scroll intencional → rechazar.
       if (pendingDelta!.distance > slop) _reject();
@@ -157,8 +164,7 @@ class _PressMovePointerState extends MultiDragPointerState {
 
 /// Reconoce: mantener presionado [delay] y DESPUÉS mover el dedo para
 /// arrastrar. Reemplaza a LongPressDraggable en móvil.
-class PressMoveMultiDragGestureRecognizer
-    extends MultiDragGestureRecognizer {
+class PressMoveMultiDragGestureRecognizer extends MultiDragGestureRecognizer {
   PressMoveMultiDragGestureRecognizer({
     super.debugOwner,
     super.allowedButtonsFilter,
@@ -213,11 +219,13 @@ class PressMoveDraggable<T extends Object> extends Draggable<T> {
 
   @override
   MultiDragGestureRecognizer createRecognizer(
-      GestureMultiDragStartCallback onStart) {
+    GestureMultiDragStartCallback onStart,
+  ) {
     return PressMoveMultiDragGestureRecognizer(
-      delay: delay,
-      onHoldSelect: onHoldSelect,
-    )..onStart = (Offset position) {
+        delay: delay,
+        onHoldSelect: onHoldSelect,
+      )
+      ..onStart = (Offset position) {
         final drag = onStart(position);
         if (drag != null) HapticFeedback.selectionClick();
         return drag;
@@ -341,7 +349,8 @@ class _DrivePageState extends State<DrivePage> {
       return false;
     }
     final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return false; // hay un diálogo abierto
+    if (route != null && !route.isCurrent)
+      return false; // hay un diálogo abierto
 
     if (event.logicalKey == LogicalKeyboardKey.escape &&
         (_selectMode || _selected.isNotEmpty)) {
@@ -363,7 +372,8 @@ class _DrivePageState extends State<DrivePage> {
         _selected.isNotEmpty) {
       setState(() => _clipboardNames = _selected.toList(growable: false));
       _snack(
-          '${_clipboardNames.length} elemento${_clipboardNames.length == 1 ? '' : 's'} copiado${_clipboardNames.length == 1 ? '' : 's'} al portapapeles');
+        '${_clipboardNames.length} elemento${_clipboardNames.length == 1 ? '' : 's'} copiado${_clipboardNames.length == 1 ? '' : 's'} al portapapeles',
+      );
       return true;
     }
     if (event.logicalKey == LogicalKeyboardKey.keyV &&
@@ -389,7 +399,8 @@ class _DrivePageState extends State<DrivePage> {
     if (result == null) return;
     if (result.copied > 0) {
       _snack(
-          '${result.copied} elemento${result.copied == 1 ? '' : 's'} pegado${result.copied == 1 ? '' : 's'}');
+        '${result.copied} elemento${result.copied == 1 ? '' : 's'} pegado${result.copied == 1 ? '' : 's'}',
+      );
     }
     _showErrors(result.errors);
   }
@@ -464,18 +475,14 @@ class _DrivePageState extends State<DrivePage> {
 
   /// Descarga la lista dada: 1 archivo suelto; varios (o carpetas) en ZIP.
   Future<void> _downloadItems(List<DriveItem> items) => _guarded(() async {
-        // Candado de respaldo: cualquier camino que se me escape en la UI
-        // (visor, menús, panel de descargas) queda cortado aquí.
-        if (!_driveCan(widget.drive, 'download')) {
-          _snack('Tu rol no puede descargar archivos del Drive', error: true);
-          return;
-        }
-        await downloadDriveSelection(
-          context,
-          drive: widget.drive,
-          items: items,
-        );
-      });
+    // Candado de respaldo: cualquier camino que se me escape en la UI
+    // (visor, menús, panel de descargas) queda cortado aquí.
+    if (!_driveCan(widget.drive, 'download')) {
+      _snack('Tu rol no puede descargar archivos del Drive', error: true);
+      return;
+    }
+    await downloadDriveSelection(context, drive: widget.drive, items: items);
+  });
 
   // ==================== Selección ====================
 
@@ -521,8 +528,9 @@ class _DrivePageState extends State<DrivePage> {
       // Rango desde el ancla (o desde el primero si no hay ancla) hasta aquí.
       final b = _indexOf(item.name);
       if (b >= 0) {
-        final a =
-            (_anchorIndex >= 0 && _anchorIndex < names.length) ? _anchorIndex : 0;
+        final a = (_anchorIndex >= 0 && _anchorIndex < names.length)
+            ? _anchorIndex
+            : 0;
         final lo = a <= b ? a : b;
         final hi = a <= b ? b : a;
         _selectMode = true;
@@ -568,8 +576,7 @@ class _DrivePageState extends State<DrivePage> {
   void _onContentPointerDown(PointerDownEvent event) {
     _lastPointerKind = event.kind;
     if (event.kind != PointerDeviceKind.mouse || event.buttons != 1) return;
-    final box =
-        _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(event.position);
     final size = box.size;
@@ -587,7 +594,8 @@ class _DrivePageState extends State<DrivePage> {
     if (hitName != null) {
       // Doble clic manual: segundo pulsó sobre la misma tarjeta en <400ms.
       final now = DateTime.now();
-      final isDouble = hitName == _lastClickItem &&
+      final isDouble =
+          hitName == _lastClickItem &&
           _lastClickAt != null &&
           now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
       _lastClickItem = hitName;
@@ -615,13 +623,14 @@ class _DrivePageState extends State<DrivePage> {
   void _onContentPointerMove(PointerEvent event) {
     if (_marqueeStart == null) return;
     if (event.kind != PointerDeviceKind.mouse) return;
-    final box =
-        _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final local = box.globalToLocal(event.position);
     final size = box.size;
-    final clamped = Offset(local.dx.clamp(0.0, size.width),
-        local.dy.clamp(-200.0, double.infinity));
+    final clamped = Offset(
+      local.dx.clamp(0.0, size.width),
+      local.dy.clamp(-200.0, double.infinity),
+    );
     final rect = Rect.fromPoints(_marqueeStart!, clamped);
     if (rect.width.abs() < 4 && rect.height.abs() < 4) return;
     setState(() => _marqueeRect = rect);
@@ -679,22 +688,21 @@ class _DrivePageState extends State<DrivePage> {
       return;
     }
     final files = details.files
-        .where((f) => kImageExtensions.contains(
-            f.name.contains('.')
-                ? f.name.substring(f.name.lastIndexOf('.')).toLowerCase()
-                : ''))
+        .where((f) => widget.drive.hasUploadExt(f.name))
         .toList();
     if (files.isEmpty) {
-      _snack('Solo se pueden subir imágenes (jpg, png, gif, webp, bmp)',
-          error: true);
+      _snack(
+        'Solo se pueden subir fotos (jpg, png, gif, webp, bmp), RAW '
+        '(dng, cr2, cr3…) o vídeos (mp4, mov, webm…)',
+        error: true,
+      );
       return;
     }
     // En el navegador lo soltado son BLOBS (sin ruta en el disco): se suben sus
     // bytes, igual que con el selector.
-    await _startUpload(
-      [for (final f in files) f.path],
-      files: kIsWeb ? files : null,
-    );
+    await _startUpload([
+      for (final f in files) f.path,
+    ], files: kIsWeb ? files : null);
   }
 
   /// Flujo completo de subida: detecta duplicados → pregunta qué hacer →
@@ -729,9 +737,11 @@ class _DrivePageState extends State<DrivePage> {
       }
       overwrite = action;
     }
-    final saved = await _guarded(() => files != null
-        ? widget.drive.uploadFromFiles(files, overwrite: overwrite)
-        : widget.drive.uploadFromPaths(paths, overwrite: overwrite));
+    final saved = await _guarded(
+      () => files != null
+          ? widget.drive.uploadFromFiles(files, overwrite: overwrite)
+          : widget.drive.uploadFromPaths(paths, overwrite: overwrite),
+    );
     if (saved == null) return; // el error ya se mostró
     // Que las fotos recién subidas se vean YA con su copia local.
     _registerLocalPreviews();
@@ -742,7 +752,8 @@ class _DrivePageState extends State<DrivePage> {
         ? ' · $pending con error (puedes resubirla${pending == 1 ? '' : 's'} desde el panel)'
         : '';
     if (saved > 0) {
-      _snack('$saved imagen${saved == 1 ? '' : 'es'} subida${saved == 1 ? '' : 's'} a "${widget.drive.locationLabel}"$errTail');
+      final what = saved == 1 ? 'archivo subido' : 'archivos subidos';
+      _snack('$saved $what a "${widget.drive.locationLabel}"$errTail');
     }
   }
 
@@ -764,9 +775,9 @@ class _DrivePageState extends State<DrivePage> {
             constraints: const BoxConstraints(maxWidth: 360),
             child: AlertDialog(
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(22)),
-              contentPadding:
-                  const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -776,8 +787,11 @@ class _DrivePageState extends State<DrivePage> {
                       color: scheme.primary.withValues(alpha: .10),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.copy_all_rounded,
-                        color: scheme.primary, size: 26),
+                    child: Icon(
+                      Icons.copy_all_rounded,
+                      color: scheme.primary,
+                      size: 26,
+                    ),
                   ),
                   const SizedBox(height: 14),
                   Text(
@@ -785,9 +799,7 @@ class _DrivePageState extends State<DrivePage> {
                         ? 'El archivo ya existe'
                         : '${dups.length} archivos ya existen',
                     textAlign: TextAlign.center,
-                    style: Theme.of(ctx)
-                        .textTheme
-                        .titleMedium
+                    style: Theme.of(ctx).textTheme.titleMedium
                         ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 6),
@@ -821,8 +833,10 @@ class _DrivePageState extends State<DrivePage> {
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: () => Navigator.pop(ctx, false),
-                      icon: const Icon(Icons.auto_awesome_motion_rounded,
-                          size: 17),
+                      icon: const Icon(
+                        Icons.auto_awesome_motion_rounded,
+                        size: 17,
+                      ),
                       label: const Text('Mantener ambos (renombrar)'),
                     ),
                   ),
@@ -840,8 +854,10 @@ class _DrivePageState extends State<DrivePage> {
       transitionBuilder: (ctx, anim, _, child) => FadeTransition(
         opacity: anim,
         child: ScaleTransition(
-          scale: Tween<double>(begin: .92, end: 1).animate(
-              CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
+          scale: Tween<double>(
+            begin: .92,
+            end: 1,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
           child: child,
         ),
       ),
@@ -870,21 +886,40 @@ class _DrivePageState extends State<DrivePage> {
 
   Future<void> _upload() async {
     try {
+      // El selector debe enseñar FOTOS Y VÍDEOS en TODAS las plataformas:
+      // Windows/escritorio usa `extensions`, Android usa `mimeTypes`, Apple
+      // usa `uniformTypeIdentifiers` y la web `webWildCards`. Antes solo iban
+      // las extensiones, y en las plataformas que no las leen el diálogo se
+      // quedaba con las imágenes (un vídeo ni siquiera se podía elegir).
       const typeGroup = XTypeGroup(
-        label: 'Imágenes',
-        extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+        label: 'Fotos y vídeos',
+        extensions: [
+          // Fotos normales (+ HEIC/HEIF del iPhone y AVIF/TIFF de cámara).
+          'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+          'heic', 'heif', 'avif', 'tif', 'tiff',
+          // RAW de cámara (el servidor les extrae su vista previa).
+          'dng', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2',
+          'raf', 'rw2', 'orf', 'pef', 'srw', 'raw', 'rwl', 'dcr', 'kdc',
+          '3fr', 'erf', 'mef', 'mos', 'mrw', 'x3f', 'iiq',
+          // Vídeos: el Drive los lista, los reproduce y los sube igual que
+          // las fotos (en trozos si son grandes).
+          'mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', '3gp', 'wmv', 'mpeg',
+          'mpg', 'ogv',
+          // Cámaras de video: AVCHD (MTS/M2TS), DV, FLV, Insta360/DJI.
+          'mts', 'm2ts', 'm2v', 'flv', 'vob', 'mp2', 'mxf', 'insv', 'lrv',
+        ],
+        mimeTypes: ['image/*', 'video/*'],
+        uniformTypeIdentifiers: ['public.image', 'public.movie'],
+        webWildCards: ['image/*', 'video/*'],
       );
       final files = await openFiles(acceptedTypeGroups: [typeGroup]);
       if (files.isEmpty) {
-        _snack('No se seleccionaron imágenes');
+        _snack('No se seleccionaron archivos');
         return;
       }
       // Se pasan los XFile (no solo su ruta): en el navegador la ruta es un
       // Blob y la subida tiene que ir por bytes.
-      await _startUpload(
-        files.map((f) => f.path).toList(),
-        files: files,
-      );
+      await _startUpload(files.map((f) => f.path).toList(), files: files);
     } catch (e) {
       _snack('No se pudo subir: $e', error: true);
     }
@@ -907,7 +942,7 @@ class _DrivePageState extends State<DrivePage> {
 
   Future<void> _rename(DriveItem item) async {
     final name = await _promptText(
-      title: item.isFolder ? 'Renombrar carpeta' : 'Renombrar imagen',
+      title: item.isFolder ? 'Renombrar carpeta' : 'Renombrar archivo',
       label: 'Nuevo nombre',
       initial: item.name,
     );
@@ -937,7 +972,9 @@ class _DrivePageState extends State<DrivePage> {
     _clearSelection();
     if (result == null) return;
     if (result.deleted > 0) {
-      _snack('${result.deleted} elemento${result.deleted == 1 ? '' : 's'} eliminado${result.deleted == 1 ? '' : 's'}');
+      _snack(
+        '${result.deleted} elemento${result.deleted == 1 ? '' : 's'} eliminado${result.deleted == 1 ? '' : 's'}',
+      );
     }
     _showErrors(result.errors);
   }
@@ -971,11 +1008,11 @@ class _DrivePageState extends State<DrivePage> {
                   // Ruta actual
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: Theme.of(ctx)
-                          .colorScheme
-                          .surfaceContainerHighest
+                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest
                           .withValues(alpha: .5),
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -1013,7 +1050,9 @@ class _DrivePageState extends State<DrivePage> {
                                   dense: true,
                                   onTap: () => setDialogState(() {
                                     current = current.sublist(
-                                        0, current.length - 1);
+                                      0,
+                                      current.length - 1,
+                                    );
                                   }),
                                 ),
                               for (final f in folders)
@@ -1064,7 +1103,9 @@ class _DrivePageState extends State<DrivePage> {
     _clearSelection();
     if (result == null) return;
     if (result.moved > 0) {
-      _snack('${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'}');
+      _snack(
+        '${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'}',
+      );
     }
     _showErrors(result.errors);
   }
@@ -1077,7 +1118,9 @@ class _DrivePageState extends State<DrivePage> {
     _clearSelection();
     if (result == null) return;
     if (result.copied > 0) {
-      _snack('${result.copied} elemento${result.copied == 1 ? '' : 's'} copiado${result.copied == 1 ? '' : 's'}');
+      _snack(
+        '${result.copied} elemento${result.copied == 1 ? '' : 's'} copiado${result.copied == 1 ? '' : 's'}',
+      );
     }
     _showErrors(result.errors);
   }
@@ -1166,14 +1209,19 @@ class _DrivePageState extends State<DrivePage> {
         PopupMenuItem<String>(
           value: value,
           height: 40,
-          child: Row(children: [
-            Icon(icon, size: 17),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Text(label,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-          ]),
+          child: Row(
+            children: [
+              Icon(icon, size: 17),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         );
     final action = await showMenu<String>(
       context: context,
@@ -1189,11 +1237,17 @@ class _DrivePageState extends State<DrivePage> {
       items: many
           ? [
               if (_driveCan(widget.drive, 'download'))
-                entry('download-many', Icons.download_rounded,
-                    'Descargar ${_selected.length} seleccionadas'),
+                entry(
+                  'download-many',
+                  Icons.download_rounded,
+                  'Descargar ${_selected.length} seleccionadas',
+                ),
               if (_driveCan(widget.drive, 'delete'))
-                entry('delete-many', Icons.delete_outline,
-                    'Eliminar ${_selected.length} seleccionadas'),
+                entry(
+                  'delete-many',
+                  Icons.delete_outline,
+                  'Eliminar ${_selected.length} seleccionadas',
+                ),
             ]
           : [
               entry('open', Icons.open_in_new_rounded, 'Abrir'),
@@ -1274,7 +1328,9 @@ class _DrivePageState extends State<DrivePage> {
     _clearSelection();
     if (result == null) return;
     if (result.moved > 0) {
-      _snack('${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'} a "${targetPath.isEmpty ? widget.drive.rootLabel : targetPath.last}"');
+      _snack(
+        '${result.moved} elemento${result.moved == 1 ? '' : 's'} movido${result.moved == 1 ? '' : 's'} a "${targetPath.isEmpty ? widget.drive.rootLabel : targetPath.last}"',
+      );
     }
     _showErrors(result.errors);
   }
@@ -1343,8 +1399,7 @@ class _DrivePageState extends State<DrivePage> {
         stackBox != null &&
         contentBox.attached &&
         stackBox.attached) {
-      marqueeOffset =
-          contentBox.localToGlobal(Offset.zero, ancestor: stackBox);
+      marqueeOffset = contentBox.localToGlobal(Offset.zero, ancestor: stackBox);
     }
 
     // Botón "atrás" del SISTEMA (Android): mientras no estemos en la raíz del
@@ -1363,333 +1418,356 @@ class _DrivePageState extends State<DrivePage> {
         }
       },
       child: DropTarget(
-      onDragEntered: (_) {
-        // Al arrastrar desde el explorador, sube la vista al inicio para
-        // que se vea la zona de destino de inmediato.
-        if (_scrollController.isSafe && _scrollController.safeOffset > 0) {
-          _scrollController.animateTo(
-            0,
-            duration: const Duration(milliseconds: 350),
-            curve: Curves.easeOutCubic,
-          );
-        }
-        setState(() => _externalDrag = true);
-      },
-      onDragExited: (_) => setState(() => _externalDrag = false),
-      onDragDone: _handleExternalDrop,
-      child: Stack(
-      children: [
-        // El Listener va DENTRO del Stack y envuelve SOLO el contenido: las
-        // ventanas flotantes (actividad, barra de selección) quedan por encima
-        // y sus clics ya no se cuelan al fondo —antes, tocar la ventanita de
-        // actividad también seleccionaba tarjetas y hasta abría carpetas de
-        // detrás, y arrastrar en ella dibujaba la marquesina.
-        Listener(
-          onPointerDown: _onContentPointerDown,
-          onPointerMove: _onContentPointerMove,
-          onPointerUp: _onContentPointerUp,
-          onPointerCancel: _onContentPointerUp,
-          child: Column(
+        onDragEntered: (_) {
+          // Al arrastrar desde el explorador, sube la vista al inicio para
+          // que se vea la zona de destino de inmediato.
+          if (_scrollController.isSafe && _scrollController.safeOffset > 0) {
+            _scrollController.animateTo(
+              0,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOutCubic,
+            );
+          }
+          setState(() => _externalDrag = true);
+        },
+        onDragExited: (_) => setState(() => _externalDrag = false),
+        onDragDone: _handleExternalDrop,
+        child: Stack(
           children: [
-            // ===== Header hero: tarjeta plana con degradado sutil y
-            // círculos geométricos (mismo lenguaje visual que los módulos) ==
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
-              child: Container(
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(isCompact ? 18 : 22),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      scheme.primary.withValues(alpha: .08),
-                      scheme.primary.withValues(alpha: .015),
-                    ],
-                  ),
-                  border:
-                      Border.all(color: scheme.primary.withValues(alpha: .16)),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      right: -40,
-                      top: -52,
-                      child: Container(
-                        width: 150,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: .05),
-                          shape: BoxShape.circle,
+            // El Listener va DENTRO del Stack y envuelve SOLO el contenido: las
+            // ventanas flotantes (actividad, barra de selección) quedan por encima
+            // y sus clics ya no se cuelan al fondo —antes, tocar la ventanita de
+            // actividad también seleccionaba tarjetas y hasta abría carpetas de
+            // detrás, y arrastrar en ella dibujaba la marquesina.
+            Listener(
+              onPointerDown: _onContentPointerDown,
+              onPointerMove: _onContentPointerMove,
+              onPointerUp: _onContentPointerUp,
+              onPointerCancel: _onContentPointerUp,
+              child: Column(
+                children: [
+                  // ===== Header hero: tarjeta plana con degradado sutil y
+                  // círculos geométricos (mismo lenguaje visual que los módulos) ==
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
+                    child: Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(
+                          isCompact ? 18 : 22,
+                        ),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            scheme.primary.withValues(alpha: .08),
+                            scheme.primary.withValues(alpha: .015),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: .16),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      left: -46,
-                      bottom: -64,
-                      child: Container(
-                        width: 120,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: .035),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: EdgeInsets.all(isCompact ? 16 : 20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                      child: Stack(
                         children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              PopIn(
-                                child: Container(
-                                  padding: const EdgeInsets.all(3.5),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: scheme.primary
-                                          .withValues(alpha: .28),
-                                    ),
-                                  ),
-                                  child: Container(
-                                    width: isCompact ? 48 : 54,
-                                    height: isCompact ? 48 : 54,
-                                    decoration: const BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          AppColors.brand,
-                                          AppColors.brandDark
-                                        ],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                    ),
-                                    child: Icon(
-                                      Icons.folder_copy_outlined,
-                                      color: Colors.white,
-                                      size: isCompact ? 24 : 26,
-                                    ),
-                                  ),
-                                ),
+                          Positioned(
+                            right: -40,
+                            top: -52,
+                            child: Container(
+                              width: 150,
+                              height: 150,
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: .05),
+                                shape: BoxShape.circle,
                               ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
+                            ),
+                          ),
+                          Positioned(
+                            left: -46,
+                            bottom: -64,
+                            child: Container(
+                              width: 120,
+                              height: 120,
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: .035),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: EdgeInsets.all(isCompact ? 16 : 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Row(
-                                      children: [
-                                        if (widget.onBack != null) ...[
-                                          IconButton(
-                                            tooltip: widget.backTooltip,
-                                            visualDensity: VisualDensity.compact,
-                                            onPressed: widget.onBack,
-                                            icon: const Icon(
-                                              Icons.arrow_back_rounded,
-                                              size: 20,
+                                    PopIn(
+                                      child: Container(
+                                        padding: const EdgeInsets.all(3.5),
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: scheme.primary.withValues(
+                                              alpha: .28,
                                             ),
                                           ),
-                                          const SizedBox(width: 2),
-                                        ],
-                                        Flexible(
-                                          child: Text(
-                                            widget.title,
+                                        ),
+                                        child: Container(
+                                          width: isCompact ? 48 : 54,
+                                          height: isCompact ? 48 : 54,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                AppColors.brand,
+                                                AppColors.brandDark,
+                                              ],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
+                                          ),
+                                          child: Icon(
+                                            Icons.folder_copy_outlined,
+                                            color: Colors.white,
+                                            size: isCompact ? 24 : 26,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              if (widget.onBack != null) ...[
+                                                IconButton(
+                                                  tooltip: widget.backTooltip,
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                  onPressed: widget.onBack,
+                                                  icon: const Icon(
+                                                    Icons.arrow_back_rounded,
+                                                    size: 20,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 2),
+                                              ],
+                                              Flexible(
+                                                child: Text(
+                                                  widget.title,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .headlineSmall
+                                                      ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                      ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            drive.path.isEmpty ||
+                                                    drive.locationLabel ==
+                                                        'Mi Drive'
+                                                ? (widget.subtitle ??
+                                                      'Raíz del almacenamiento')
+                                                : drive.locationLabel,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: Theme.of(context)
                                                 .textTheme
-                                                .headlineSmall
+                                                .bodySmall
                                                 ?.copyWith(
-                                                  fontWeight: FontWeight.w800,
+                                                  color:
+                                                      scheme.onSurfaceVariant,
                                                 ),
                                           ),
+                                        ],
+                                      ),
+                                    ),
+                                    // Crear (carpeta/subir) solo con permiso: las
+                                    // acciones que el rol no tiene NO se dibujan.
+                                    if (!isCompact) ...[
+                                      if (_driveCan(
+                                        widget.drive,
+                                        'create',
+                                      )) ...[
+                                        const SizedBox(width: 16),
+                                        OutlinedButton.icon(
+                                          onPressed: _newFolder,
+                                          icon: const Icon(
+                                            Icons.create_new_folder_outlined,
+                                            size: 18,
+                                          ),
+                                          label: const Text('Nueva carpeta'),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        FilledButton.icon(
+                                          onPressed: _upload,
+                                          icon: const Icon(
+                                            Icons.upload_file,
+                                            size: 18,
+                                          ),
+                                          label: const Text('Subir archivos'),
                                         ),
                                       ],
+                                    ] else ...[
+                                      if (_driveCan(
+                                        widget.drive,
+                                        'create',
+                                      )) ...[
+                                        _RoundAction(
+                                          icon:
+                                              Icons.create_new_folder_outlined,
+                                          tooltip: 'Nueva carpeta',
+                                          onTap: _newFolder,
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      // Sin botón de recargar: en la app se
+                                      // recarga deslizando hacia abajo (en el
+                                      // escritorio, cada acción ya refresca).
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _searchController,
+                                        onChanged: drive.setSearch,
+                                        decoration: const InputDecoration(
+                                          hintText: 'Buscar en esta carpeta',
+                                          prefixIcon: Icon(
+                                            Icons.search,
+                                            size: 20,
+                                          ),
+                                        ),
+                                      ),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      drive.path.isEmpty ||
-                                              drive.locationLabel == 'Mi Drive'
-                                          ? (widget.subtitle ??
-                                                'Raíz del almacenamiento')
-                                          : drive.locationLabel,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                              color: scheme.onSurfaceVariant),
+                                    const SizedBox(width: 10),
+                                    Tooltip(
+                                      message: _grid
+                                          ? 'Vista de lista'
+                                          : 'Vista de cuadrícula',
+                                      child: IconButton.filledTonal(
+                                        onPressed: () =>
+                                            setState(() => _grid = !_grid),
+                                        icon: Icon(
+                                          _grid
+                                              ? Icons.view_list_rounded
+                                              : Icons.grid_view_rounded,
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
-                              ),
-                              // Crear (carpeta/subir) solo con permiso: las
-                              // acciones que el rol no tiene NO se dibujan.
-                              if (!isCompact) ...[
-                                if (_driveCan(widget.drive, 'create')) ...[
-                                  const SizedBox(width: 16),
-                                  OutlinedButton.icon(
-                                    onPressed: _newFolder,
-                                    icon: const Icon(
-                                      Icons.create_new_folder_outlined,
-                                      size: 18,
-                                    ),
-                                    label: const Text('Nueva carpeta'),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  FilledButton.icon(
-                                    onPressed: _upload,
-                                    icon:
-                                        const Icon(Icons.upload_file, size: 18),
-                                    label: const Text('Subir imágenes'),
-                                  ),
-                                ],
-                              ] else ...[
-                                if (_driveCan(widget.drive, 'create')) ...[
-                                  _RoundAction(
-                                    icon: Icons.create_new_folder_outlined,
-                                    tooltip: 'Nueva carpeta',
-                                    onTap: _newFolder,
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
-                                // Sin botón de recargar: en la app se
-                                // recarga deslizando hacia abajo (en el
-                                // escritorio, cada acción ya refresca).
                               ],
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _searchController,
-                                  onChanged: drive.setSearch,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Buscar en esta carpeta',
-                                    prefixIcon: Icon(Icons.search, size: 20),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Tooltip(
-                                message: _grid
-                                    ? 'Vista de lista'
-                                    : 'Vista de cuadrícula',
-                                child: IconButton.filledTonal(
-                                  onPressed: () =>
-                                      setState(() => _grid = !_grid),
-                                  icon: Icon(
-                                    _grid
-                                        ? Icons.view_list_rounded
-                                        : Icons.grid_view_rounded,
-                                  ),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
-            // móvil, donde sirve para saltar a cualquier carpeta padre) =====
-            //
-            // En una carpeta COMPARTIDA la ruta se dibuja también en la raíz
-            // (`onRootTap != null`): la primera miga es el MÓDULO del que se
-            // abrió y, al tocarla, se vuelve a su listado.
-            if (drive.path.isNotEmpty || widget.onRootTap != null)
-              Padding(
-                padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: _Breadcrumbs(
-                    drive: drive,
-                    onDropMove: _doMove,
-                    onRootTap: widget.onRootTap,
                   ),
-                ),
-              ),
-            // ===== Barra de estado =====
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
-              child: Row(
-                children: [
-                  _CountPill(
-                    icon: Icons.folder_rounded,
-                    label: '$foldersCount carpetas',
+                  const SizedBox(height: 10),
+                  // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
+                  // móvil, donde sirve para saltar a cualquier carpeta padre) =====
+                  //
+                  // En una carpeta COMPARTIDA la ruta se dibuja también en la raíz
+                  // (`onRootTap != null`): la primera miga es el MÓDULO del que se
+                  // abrió y, al tocarla, se vuelve a su listado.
+                  if (drive.path.isNotEmpty || widget.onRootTap != null)
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _Breadcrumbs(
+                          drive: drive,
+                          onDropMove: _doMove,
+                          onRootTap: widget.onRootTap,
+                        ),
+                      ),
+                    ),
+                  // ===== Barra de estado =====
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
+                    child: Row(
+                      children: [
+                        _CountPill(
+                          icon: Icons.folder_rounded,
+                          label: '$foldersCount carpetas',
+                        ),
+                        const SizedBox(width: 8),
+                        _CountPill(
+                          icon: Icons.image_outlined,
+                          label: '$imagesCount imágenes',
+                        ),
+                        if (drive.search != null) ...[
+                          const SizedBox(width: 8),
+                          _CountPill(
+                            icon: Icons.filter_alt,
+                            label: 'filtro: "${drive.search}"',
+                          ),
+                        ],
+                        const Spacer(),
+                        // Aviso discreto: si un refresco falló se conserva el listado
+                        // en pantalla, pero se dice que puede estar viejo (antes se
+                        // reemplazaba el directorio entero por "Error").
+                        if (drive.error != null) ...[
+                          _CountPill(
+                            icon: Icons.cloud_off_outlined,
+                            label: 'Sin conexión · reintentar',
+                            color: scheme.error,
+                            onTap: drive.refresh,
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        if (!_selectMode && drive.visibleItems.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _selectMode = true;
+                                if (_selected.isEmpty) {
+                                  _selected.add(drive.visibleItems.first.name);
+                                  _anchorIndex = 0;
+                                }
+                              });
+                            },
+                            icon: const Icon(Icons.checklist, size: 18),
+                            label: const Text('Seleccionar'),
+                          ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                  _CountPill(
-                    icon: Icons.image_outlined,
-                    label: '$imagesCount imágenes',
-                  ),
-                  if (drive.search != null) ...[
-                    const SizedBox(width: 8),
-                    _CountPill(
-                      icon: Icons.filter_alt,
-                      label: 'filtro: "${drive.search}"',
-                    ),
-                  ],
-                  const Spacer(),
-                  // Aviso discreto: si un refresco falló se conserva el listado
-                  // en pantalla, pero se dice que puede estar viejo (antes se
-                  // reemplazaba el directorio entero por "Error").
-                  if (drive.error != null) ...[
-                    _CountPill(
-                      icon: Icons.cloud_off_outlined,
-                      label: 'Sin conexión · reintentar',
-                      color: scheme.error,
-                      onTap: drive.refresh,
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  if (!_selectMode && drive.visibleItems.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _selectMode = true;
-                          if (_selected.isEmpty) {
-                            _selected.add(drive.visibleItems.first.name);
-                            _anchorIndex = 0;
-                          }
-                        });
-                      },
-                      icon: const Icon(Icons.checklist, size: 18),
-                      label: const Text('Seleccionar'),
-                    ),
-                ],
-              ),
-            ),
-            // ===== Contenido =====
-            Expanded(
-              // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
-              // botón de recargar en el encabezado).
-              child: RefreshIndicator(
-                onRefresh: drive.refresh,
-                child: drive.loading && drive.items.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
-                  // El panel bloqueante solo cuando NO hay nada que mostrar:
-                  // si ya se ve una carpeta, se queda a la vista.
-                  : drive.error != null && drive.items.isEmpty
-                      ? EmptyState(
-                          icon: Icons.folder_off_outlined,
-                          title: 'Error',
-                          message: drive.error!,
-                          actionLabel: 'Reintentar',
-                          onAction: drive.refresh,
-                        )
-                      : drive.visibleItems.isEmpty
+                  // ===== Contenido =====
+                  Expanded(
+                    // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
+                    // botón de recargar en el encabezado).
+                    child: RefreshIndicator(
+                      onRefresh: drive.refresh,
+                      child: drive.loading && drive.items.isEmpty
+                          ? const Center(child: CircularProgressIndicator())
+                          // El panel bloqueante solo cuando NO hay nada que mostrar:
+                          // si ya se ve una carpeta, se queda a la vista.
+                          : drive.error != null && drive.items.isEmpty
+                          ? EmptyState(
+                              icon: Icons.folder_off_outlined,
+                              title: 'Error',
+                              message: drive.error!,
+                              actionLabel: 'Reintentar',
+                              onAction: drive.refresh,
+                            )
+                          : drive.visibleItems.isEmpty
                           ? EmptyState(
                               icon: drive.scoped && drive.path.isEmpty
                                   ? Icons.folder_off_outlined
@@ -1697,23 +1775,24 @@ class _DrivePageState extends State<DrivePage> {
                               title: drive.search != null
                                   ? 'Sin resultados'
                                   : drive.scoped && drive.path.isEmpty
-                                      ? 'Aún no se te comparte ninguna carpeta'
-                                      : 'Esta carpeta está vacía',
+                                  ? 'Aún no se te comparte ninguna carpeta'
+                                  : 'Esta carpeta está vacía',
                               message: drive.search != null
                                   ? 'No hay coincidencias en esta carpeta.'
                                   : drive.scoped && drive.path.isEmpty
-                                      ? 'Tu fotógrafo todavía no compartió carpetas '
-                                          'contigo. En cuanto las asigne a tus '
-                                          'paquetes, aparecerán aquí.'
-                                      : 'Sube imágenes o crea una carpeta para organizar tu contenido.',
+                                  ? 'Tu fotógrafo todavía no compartió carpetas '
+                                        'contigo. En cuanto las asigne a tus '
+                                        'paquetes, aparecerán aquí.'
+                                  : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
                               // Sin permiso de crear, la tarjeta vacía invita
                               // pero no ofrece el botón.
-                              actionLabel: drive.scoped &&
-                                      drive.path.isEmpty ||
+                              actionLabel:
+                                  drive.scoped && drive.path.isEmpty ||
                                       !_driveCan(widget.drive, 'create')
                                   ? null
-                                  : 'Subir imágenes',
-                              onAction: drive.scoped && drive.path.isEmpty ||
+                                  : 'Subir archivos',
+                              onAction:
+                                  drive.scoped && drive.path.isEmpty ||
                                       !_driveCan(widget.drive, 'create')
                                   ? null
                                   : _upload,
@@ -1730,7 +1809,8 @@ class _DrivePageState extends State<DrivePage> {
                               switchOutCurve: Curves.easeIn,
                               child: KeyedSubtree(
                                 key: ValueKey(
-                                    'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}'),
+                                  'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}',
+                                ),
                                 child: (_grid
                                     ? _GridContent(
                                         drive: drive,
@@ -1776,158 +1856,163 @@ class _DrivePageState extends State<DrivePage> {
                                       )),
                               ),
                             ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-        ),
-        // ===== Recuadro de selección (marquesina) =====
-        if (_marqueeRect != null)
-          Positioned.fromRect(
-            rect: _marqueeRect!.shift(marqueeOffset),
-            child: IgnorePointer(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: scheme.primary.withValues(alpha: .12),
-                  border: Border.all(
-                    color: scheme.primary.withValues(alpha: .8),
-                    width: 1.5,
+            // ===== Recuadro de selección (marquesina) =====
+            if (_marqueeRect != null)
+              Positioned.fromRect(
+                rect: _marqueeRect!.shift(marqueeOffset),
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .12),
+                      border: Border.all(
+                        color: scheme.primary.withValues(alpha: .8),
+                        width: 1.5,
+                      ),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(3),
                 ),
               ),
-            ),
-          ),
-        // ===== Overlay "Suelta para subir" =====
-        if (_externalDrag)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Container(
-                color: scheme.primary.withValues(alpha: .10),
-                child: Center(
-                  child: AnimatedScale(
-                    scale: 1,
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutBack,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 28, vertical: 20),
-                      decoration: BoxDecoration(
-                        color: scheme.primary,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: scheme.primary.withValues(alpha: .45),
-                            blurRadius: 30,
-                            offset: const Offset(0, 10),
+            // ===== Overlay "Suelta para subir" =====
+            if (_externalDrag)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Container(
+                    color: scheme.primary.withValues(alpha: .10),
+                    child: Center(
+                      child: AnimatedScale(
+                        scale: 1,
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutBack,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 20,
                           ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.upload_rounded,
-                              color: Colors.white, size: 34),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Suelta para subir',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            borderRadius: BorderRadius.circular(18),
+                            boxShadow: [
+                              BoxShadow(
+                                color: scheme.primary.withValues(alpha: .45),
+                                blurRadius: 30,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Se subirán a "${drive.locationLabel}"',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: .85),
-                              fontSize: 12.5,
-                            ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.upload_rounded,
+                                color: Colors.white,
+                                size: 34,
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Suelta para subir',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Se subirán a "${drive.locationLabel}"',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: .85),
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-        // ===== Capa de fuera de la ventanita de actividad =====
-        // Con la ventanita ABIERTA se pone delante del contenido (la misma
-        // idea que el panel de la campanita de avisos): un clic de FUERA la
-        // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
-        // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
-        // la barra de selección para que esa barra siga funcionando.
-        if (_panelOpen &&
-            (drive.uploadJobs.isNotEmpty ||
+            // ===== Capa de fuera de la ventanita de actividad =====
+            // Con la ventanita ABIERTA se pone delante del contenido (la misma
+            // idea que el panel de la campanita de avisos): un clic de FUERA la
+            // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
+            // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
+            // la barra de selección para que esa barra siga funcionando.
+            if (_panelOpen &&
+                (drive.uploadJobs.isNotEmpty ||
+                    drive.downloadJobs.isNotEmpty ||
+                    _notices.isNotEmpty))
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _panelOpen = false),
+                ),
+              ),
+            // ===== Barra de acciones de selección =====
+            // Solo existe cuando hay selección: sin estado oculto que robe clics.
+            if (_selectMode && _selected.isNotEmpty)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _SelectionBar(
+                  can: drive.canDo,
+                  count: _selected.length,
+                  compact: isCompact,
+                  onClear: _clearSelection,
+                  onSelectAll: _selectAll,
+                  onMove: () => _guarded(() async {
+                    final dest = await _pickDestination(move: true);
+                    if (dest != null) await _moveSelected(dest);
+                  }),
+                  onCopy: () => _guarded(() async {
+                    final dest = await _pickDestination(move: false);
+                    if (dest != null) await _copySelected(dest);
+                  }),
+                  onDownload: () => _downloadItems(_selectedItems()),
+                  onDelete: () =>
+                      _guarded(() => _deleteItems(_selected.toList())),
+                ),
+              ),
+            // ===== Overlay de operación en curso (carga global) =====
+            // ===== Carga NO bloqueante: subidas estilo Drive =====
+            // (las subidas usan su propio panel con progreso por archivo;
+            //  las demás operaciones muestran un spinner discreto, sin velo)
+            if (drive.busy != DriveBusy.none &&
+                drive.busy != DriveBusy.uploading)
+              Positioned(
+                top: 6,
+                left: hPad,
+                child: _BusyChip(label: drive.busyLabel),
+              ),
+            // ===== Panel inferior de transferencias y avisos (ocultable) =====
+            // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
+            // una ventanita abajo a la derecha, con botón para minimizarla.
+            if (drive.uploadJobs.isNotEmpty ||
                 drive.downloadJobs.isNotEmpty ||
-                _notices.isNotEmpty))
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _panelOpen = false),
-            ),
-          ),
-        // ===== Barra de acciones de selección =====
-        // Solo existe cuando hay selección: sin estado oculto que robe clics.
-        if (_selectMode && _selected.isNotEmpty)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _SelectionBar(
-              can: drive.canDo,
-              count: _selected.length,
-              compact: isCompact,
-              onClear: _clearSelection,
-              onSelectAll: _selectAll,
-              onMove: () => _guarded(() async {
-                final dest = await _pickDestination(move: true);
-                if (dest != null) await _moveSelected(dest);
-              }),
-              onCopy: () => _guarded(() async {
-                final dest = await _pickDestination(move: false);
-                if (dest != null) await _copySelected(dest);
-              }),
-              onDownload: () => _downloadItems(_selectedItems()),
-              onDelete: () => _guarded(
-                  () => _deleteItems(_selected.toList())),
-            ),
-          ),
-        // ===== Overlay de operación en curso (carga global) =====
-        // ===== Carga NO bloqueante: subidas estilo Drive =====
-        // (las subidas usan su propio panel con progreso por archivo;
-        //  las demás operaciones muestran un spinner discreto, sin velo)
-        if (drive.busy != DriveBusy.none &&
-            drive.busy != DriveBusy.uploading)
-          Positioned(
-            top: 6,
-            left: hPad,
-            child: _BusyChip(label: drive.busyLabel),
-          ),
-        // ===== Panel inferior de transferencias y avisos (ocultable) =====
-        // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
-        // una ventanita abajo a la derecha, con botón para minimizarla.
-        if (drive.uploadJobs.isNotEmpty ||
-            drive.downloadJobs.isNotEmpty ||
-            _notices.isNotEmpty)
-          Positioned(
-            right: hPad,
-            bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
-            child: _ActivityPanel(
-              open: _panelOpen,
-              drive: drive,
-              notices: _notices,
-              onToggle: () => setState(() => _panelOpen = !_panelOpen),
-              onClearNotices: () => setState(() => _notices.clear()),
-              onDismissNotice: (i) => setState(() {
-                if (i >= 0 && i < _notices.length) _notices.removeAt(i);
-              }),
-            ),
-          ),
-      ],
-      ),
+                _notices.isNotEmpty)
+              Positioned(
+                right: hPad,
+                bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
+                child: _ActivityPanel(
+                  open: _panelOpen,
+                  drive: drive,
+                  notices: _notices,
+                  onToggle: () => setState(() => _panelOpen = !_panelOpen),
+                  onClearNotices: () => setState(() => _notices.clear()),
+                  onDismissNotice: (i) => setState(() {
+                    if (i >= 0 && i < _notices.length) _notices.removeAt(i);
+                  }),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -2043,98 +2128,99 @@ class _SelectionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return SafeArea(
-          top: false,
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Material(
+          elevation: 12,
+          shadowColor: scheme.primary.withValues(alpha: .45),
+          borderRadius: BorderRadius.circular(20),
+          color: scheme.primary,
           child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Material(
-              elevation: 12,
-              shadowColor: scheme.primary.withValues(alpha: .45),
-              borderRadius: BorderRadius.circular(20),
-              color: scheme.primary,
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 8 : 14,
-                  vertical: 8,
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 8 : 14,
+              vertical: 8,
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Cancelar selección',
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close, color: Colors.white),
                 ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: 'Cancelar selección',
-                      onPressed: onClear,
-                      icon: const Icon(Icons.close, color: Colors.white),
+                const SizedBox(width: 2),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
                     ),
-                    const SizedBox(width: 2),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: .18),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '$count',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        count == 1
-                            ? 'elemento seleccionado'
-                            : 'elementos seleccionados',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: .95),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: onSelectAll,
-                      style: TextButton.styleFrom(
-                        foregroundColor:
-                            Colors.white.withValues(alpha: .92),
-                      ),
-                      child: const Text('Todos'),
-                    ),
-                    const SizedBox(width: 2),
-                    // Cada acción exige su permiso (rol del Drive, o lo que
-                    // dio el dueño de una carpeta compartida).
-                    if (can('update'))
-                      _BarAction(
-                        tooltip: 'Mover a...',
-                        icon: Icons.drive_file_move_outline,
-                        onPressed: onMove,
-                      ),
-                    if (can('create'))
-                      _BarAction(
-                        tooltip: 'Copiar a...',
-                        icon: Icons.copy_all_outlined,
-                        onPressed: onCopy,
-                      ),
-                    if (can('download'))
-                      _BarAction(
-                        tooltip: 'Descargar',
-                        icon: Icons.download_rounded,
-                        onPressed: onDownload,
-                      ),
-                    if (can('delete'))
-                      _BarAction(
-                        tooltip: 'Eliminar',
-                        icon: Icons.delete_outline,
-                        onPressed: onDelete,
-                      ),
-                  ],
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    count == 1
+                        ? 'elemento seleccionado'
+                        : 'elementos seleccionados',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .95),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onSelectAll,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white.withValues(alpha: .92),
+                  ),
+                  child: const Text('Todos'),
+                ),
+                const SizedBox(width: 2),
+                // Cada acción exige su permiso (rol del Drive, o lo que
+                // dio el dueño de una carpeta compartida).
+                if (can('update'))
+                  _BarAction(
+                    tooltip: 'Mover a...',
+                    icon: Icons.drive_file_move_outline,
+                    onPressed: onMove,
+                  ),
+                if (can('create'))
+                  _BarAction(
+                    tooltip: 'Copiar a...',
+                    icon: Icons.copy_all_outlined,
+                    onPressed: onCopy,
+                  ),
+                if (can('download'))
+                  _BarAction(
+                    tooltip: 'Descargar',
+                    icon: Icons.download_rounded,
+                    onPressed: onDownload,
+                  ),
+                if (can('delete'))
+                  _BarAction(
+                    tooltip: 'Eliminar',
+                    icon: Icons.delete_outline,
+                    onPressed: onDelete,
+                  ),
+              ],
             ),
           ),
+        ),
+      ),
     );
   }
 }
@@ -2264,15 +2350,14 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
             borderRadius: BorderRadius.circular(8),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: hovering
                     ? scheme.primary.withValues(alpha: .15)
                     : current
-                        ? scheme.primary.withValues(alpha: .08)
-                        : null,
+                    ? scheme.primary.withValues(alpha: .08)
+                    : null,
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -2351,10 +2436,7 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
         child: SingleChildScrollView(
           controller: _scroll,
           scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: children,
-          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: children),
         ),
       ),
     );
@@ -2394,7 +2476,7 @@ class _GridContent extends StatelessWidget {
   final ValueChanged<DriveItem> onRename;
   final ValueChanged<DriveItem> onDelete;
   final void Function(DriveItem target, DragTargetDetails<Object> details)
-      onDrop;
+  onDrop;
   final Map<String, GlobalKey> itemKeys;
   final ValueChanged<DriveItem> onTapSelect;
 
@@ -2431,7 +2513,11 @@ class _GridContent extends StatelessWidget {
           // recargar (deslizar hacia abajo) no se dispara.
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
-              compact ? 14 : 24, 4, compact ? 14 : 24, compact ? 150 : 110),
+            compact ? 14 : 24,
+            4,
+            compact ? 14 : 24,
+            compact ? 150 : 110,
+          ),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossCount,
             mainAxisSpacing: 12,
@@ -2442,7 +2528,9 @@ class _GridContent extends StatelessWidget {
           itemBuilder: (context, i) {
             final item = items[i];
             final key = itemKeys.putIfAbsent(
-                item.name, () => GlobalKey(debugLabel: 'grid-${item.name}'));
+              item.name,
+              () => GlobalKey(debugLabel: 'grid-${item.name}'),
+            );
             // Entrada al DESLIZAR: la tarjeta que aparece al bajar entra con
             // fade + deslizamiento; lo ya visible (y una foto recién subida)
             // se pinta directo.
@@ -2564,18 +2652,17 @@ class _GridItem extends StatelessWidget {
         onAcceptWithDetails: onDrop,
         builder: (context, candidate, rejected) {
           final hovering = candidate.isNotEmpty && canDrop;
-          return _card(
-            scheme,
-            context,
-            hovering: hovering,
-          );
+          return _card(scheme, context, hovering: hovering);
         },
       ),
     );
   }
 
-  Widget _card(ColorScheme scheme, BuildContext context,
-      {bool hovering = false}) {
+  Widget _card(
+    ColorScheme scheme,
+    BuildContext context, {
+    bool hovering = false,
+  }) {
     return _Hover(
       builder: (context, mouseHover) {
         final hovered = mouseHover || hovering;
@@ -2591,21 +2678,22 @@ class _GridItem extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,                  decoration: BoxDecoration(
+                  curve: Curves.easeOutCubic,
+                  decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
                       color: isSelected
                           ? scheme.primary
                           : hovered
-                              ? scheme.primary.withValues(alpha: .45)
-                              : Colors.transparent,
+                          ? scheme.primary.withValues(alpha: .45)
+                          : Colors.transparent,
                       width: 2.5,
                     ),
                     color: isSelected
                         ? scheme.primary.withValues(alpha: .14)
                         : hovered
-                            ? scheme.primary.withValues(alpha: .05)
-                            : null,
+                        ? scheme.primary.withValues(alpha: .05)
+                        : null,
                     // Diseño PLANO: sin sombras; el estado se comunica con
                     // borde y tinte de color.
                   ),
@@ -2651,7 +2739,9 @@ class _GridItem extends StatelessWidget {
                       Transform.scale(scale: s, child: child),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 7, vertical: 3),
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: scheme.primary,
                       borderRadius: BorderRadius.circular(20),
@@ -2784,8 +2874,7 @@ class _FolderCard extends StatelessWidget {
         onTap: onOpen,
         onLongPress: onLongPress,
         // CLICK DERECHO: menú contextual.
-        onSecondaryTapUp: (details) =>
-            onContextMenu(details.globalPosition),
+        onSecondaryTapUp: (details) => onContextMenu(details.globalPosition),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2840,9 +2929,7 @@ class _FolderCard extends StatelessWidget {
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleSmall
+                    style: Theme.of(context).textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 2),
@@ -2853,10 +2940,8 @@ class _FolderCard extends StatelessWidget {
                     !item.countKnown
                         ? 'Carpeta compartida'
                         : '${item.childCount} '
-                            'elemento${item.childCount == 1 ? '' : 's'}',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
+                              'elemento${item.childCount == 1 ? '' : 's'}',
+                    style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ],
@@ -2901,29 +2986,31 @@ class _FileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // Solo las FOTOS tienen miniatura: el servidor no sabe generarla de un
-    // vídeo ni de un PDF (y pedirla era pintar un recuadro roto).
-    final src = item.isImage ? drive.thumbSource(item, width: 480) : '';
+    // La miniatura la tiene lo que el drive sabe generar: las FOTOS siempre y
+    // los VÍDEOS (el servidor les saca el primer fotograma). Un PDF o un ZIP no
+    // tienen quién se la haga, así que enseñan el icono de su tipo.
+    final hasThumb = drive.canThumb(item);
+    final src = hasThumb ? drive.thumbSource(item, width: 480) : '';
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
         onTap: onOpen,
         onLongPress: onLongPress,
         // CLICK DERECHO: menú contextual.
-        onSecondaryTapUp: (details) =>
-            onContextMenu(details.globalPosition),
+        onSecondaryTapUp: (details) => onContextMenu(details.globalPosition),
         borderRadius: BorderRadius.circular(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
               child: ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(14)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(14),
+                ),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (item.isImage)
+                    if (hasThumb)
                       DriveThumb(
                         source: src,
                         // El drive dice si sirve por RED (una carpeta
@@ -2932,6 +3019,10 @@ class _FileCard extends StatelessWidget {
                         localPreview: localPreview,
                         size: double.infinity,
                         big: true,
+                        // Si la miniatura no llega (el servidor no tiene
+                        // ffmpeg, o el vídeo no se deja abrir) se ve el icono
+                        // de su tipo, nunca un recuadro roto.
+                        fallback: _FileTile(item: item),
                       )
                     else
                       _FileTile(item: item),
@@ -2939,11 +3030,7 @@ class _FileCard extends StatelessWidget {
                     // icono del tipo no se sabe si hay que tocar para que
                     // suene.
                     if (item.isPlayable)
-                      const Positioned(
-                        left: 8,
-                        bottom: 8,
-                        child: _PlayBadge(),
-                      ),
+                      const Positioned(left: 8, bottom: 8, child: _PlayBadge()),
                     Positioned(
                       top: 6,
                       right: 6,
@@ -2968,19 +3055,16 @@ class _FileCard extends StatelessWidget {
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
+                    style: Theme.of(context).textTheme.bodyMedium
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     _metaLabel(item),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(
-                            color: scheme.onSurfaceVariant, fontSize: 11),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
                   ),
                 ],
               ),
@@ -3201,7 +3285,7 @@ class _ListContent extends StatelessWidget {
   final ValueChanged<DriveItem> onRename;
   final ValueChanged<DriveItem> onDelete;
   final void Function(DriveItem target, DragTargetDetails<Object> details)
-      onDrop;
+  onDrop;
   final Map<String, GlobalKey> itemKeys;
   final ValueChanged<DriveItem> onTapSelect;
   final void Function(DriveItem item, Offset position) onContextMenu;
@@ -3219,23 +3303,24 @@ class _ListContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final items = drive.visibleItems;
-    final headerStyle = Theme.of(context)
-        .textTheme
-        .labelSmall
-        ?.copyWith(
-            color: scheme.onSurfaceVariant, fontWeight: FontWeight.w700);
+    final headerStyle = Theme.of(context).textTheme.labelSmall
+        ?.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w700);
 
-    final dividerColor = Theme.of(context).dividerTheme.color ??
+    final dividerColor =
+        Theme.of(context).dividerTheme.color ??
         scheme.outlineVariant.withValues(alpha: .5);
     return Card(
       margin: EdgeInsets.fromLTRB(
-          compact ? 14 : 24, 4, compact ? 14 : 24, compact ? 150 : 110),
+        compact ? 14 : 24,
+        4,
+        compact ? 14 : 24,
+        compact ? 150 : 110,
+      ),
       child: Column(
         children: [
           if (!compact)
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
                   const SizedBox(width: 40),
@@ -3261,7 +3346,9 @@ class _ListContent extends StatelessWidget {
               itemBuilder: (context, i) {
                 final item = items[i];
                 final key = itemKeys.putIfAbsent(
-                    item.name, () => GlobalKey(debugLabel: 'row-${item.name}'));
+                  item.name,
+                  () => GlobalKey(debugLabel: 'row-${item.name}'),
+                );
                 // Igual que en la cuadrícula: anima solo lo que llega al bajar.
                 return ScrollReveal(
                   animate: _scrolledDown && !noEntrance.contains(item.name),
@@ -3384,10 +3471,14 @@ class _ListRow extends StatelessWidget {
     );
   }
 
-  Widget _row(ColorScheme scheme, BuildContext context,
-      {bool hovering = false}) {
+  Widget _row(
+    ColorScheme scheme,
+    BuildContext context, {
+    bool hovering = false,
+  }) {
     // La miniatura solo tiene sentido en una FOTO.
-    final src = item.isImage ? drive.thumbSource(item, width: 120) : '';
+    final hasThumb = drive.canThumb(item);
+    final src = hasThumb ? drive.thumbSource(item, width: 120) : '';
     return InkWell(
       onTap: onTapSelect,
       onLongPress: onLongPress,
@@ -3402,8 +3493,8 @@ class _ListRow extends StatelessWidget {
           color: isSelected
               ? scheme.primary.withValues(alpha: .16)
               : hovering
-                  ? scheme.primary.withValues(alpha: .14)
-                  : null,
+              ? scheme.primary.withValues(alpha: .14)
+              : null,
           border: Border(
             left: BorderSide(
               width: 3.5,
@@ -3416,31 +3507,28 @@ class _ListRow extends StatelessWidget {
           children: [
             // Icono o miniatura
             SizedBox(
-                width: 40,
-                height: 40,
-                child: item.isFolder
-                    ? Icon(
-                        Icons.folder_rounded,
-                        color: scheme.primary,
-                        size: 26,
-                      )
-                    : item.isImage
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: DriveThumb(
-                          source: src,
-                          isRemote: drive.isRemote,
-                          localPreview: localPreview,
-                          size: 40,
-                        ),
-                      )
-                    // Un vídeo, un PDF o un ZIP no tienen miniatura: su icono
-                    // dice de un vistazo qué es.
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: _FileTile(item: item, big: false),
+              width: 40,
+              height: 40,
+              child: item.isFolder
+                  ? Icon(Icons.folder_rounded, color: scheme.primary, size: 26)
+                  : hasThumb
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: DriveThumb(
+                        source: src,
+                        isRemote: drive.isRemote,
+                        localPreview: localPreview,
+                        size: 40,
+                        fallback: _FileTile(item: item, big: false),
                       ),
-              ),
+                    )
+                  // Un PDF o un ZIP no tienen miniatura: su icono dice de un
+                  // vistazo qué es.
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: _FileTile(item: item, big: false),
+                    ),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -3489,8 +3577,7 @@ class _ListRow extends StatelessWidget {
             ],
             if (isSelected && selectedNames.length > 1) ...[
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: scheme.primary,
                   borderRadius: BorderRadius.circular(20),
@@ -3528,8 +3615,18 @@ class _ListRow extends StatelessWidget {
 String _dateLabel(DateTime? d) {
   if (d == null) return '—';
   const months = [
-    'ene', 'feb', 'mar', 'abr', 'may', 'jun',
-    'jul', 'ago', 'sep', 'oct', 'nov', 'dic',
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sep',
+    'oct',
+    'nov',
+    'dic',
   ];
   return '${d.day} ${months[d.month - 1]} ${d.year}';
 }
@@ -3615,8 +3712,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
 
   /// Acerca o aleja la imagen (mantiene el centro).
   void _zoomBy(double factor) {
-    _zoom.value = _zoom.value.clone()
-      ..scaleByDouble(factor, factor, factor, 1);
+    _zoom.value = _zoom.value.clone()..scaleByDouble(factor, factor, factor, 1);
   }
 
   @override
@@ -3709,11 +3805,14 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     _fullUrl = '';
     if (mounted) setState(() {});
     try {
-      final f = await api.fetchOriginalChunked(item, onProgress: (p) {
-        if (!mounted || key != _fullKey) return;
-        _fullProgress = p;
-        setState(() {});
-      });
+      final f = await api.fetchOriginalChunked(
+        item,
+        onProgress: (p) {
+          if (!mounted || key != _fullKey) return;
+          _fullProgress = p;
+          setState(() {});
+        },
+      );
       if (!mounted || key != _fullKey) return;
       setState(() {
         _fullFile = f;
@@ -3770,62 +3869,61 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-              InteractiveViewer(
-                transformationController: _zoom,
-                maxScale: 6,
-                child: Center(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // 1) Preview ligero: se ve AL INSTANTE.
-                    DriveThumb(
-                      source: src,
-                      isRemote: isRemote,
-                      size: double.infinity,
-                      big: true,
-                      contain: true,
-                      // A pantalla completa NO se redondean las esquinas.
-                      rounded: false,
-                      onReady: () {
-                        if (!mounted || _previewReady) return;
-                        setState(() => _previewReady = true);
-                      },
-                    ),
-                    // 2) Original por chunks: aparece encima (nítido) al
-                    //    completar, con transición suave.
-                    if (_fullFile != null)
-                      Image.file(
-                        _fullFile!,
-                        fit: BoxFit.contain,
-                        frameBuilder: (c, child, frame, sync) =>
-                            AnimatedOpacity(
-                          opacity: frame == null ? 0 : 1,
-                          duration: const Duration(milliseconds: 250),
-                          child: child,
-                        ),
-                      )
-                    // 2b) Original por RED: en una carpeta COMPARTIDA (su dueño
-                    //     o el servidor del compartido) y, como respaldo, si la
-                    //     descarga por chunks falla. Si también falla, queda el
-                    //     preview.
-                    else if (_fullUrl.isNotEmpty)
-                      Image.network(
-                        _fullUrl,
-                        fit: BoxFit.contain,
-                        frameBuilder: (c, child, frame, sync) {
-                          if (sync) return child;
-                          return AnimatedOpacity(
-                            opacity: frame == null ? 0 : 1,
-                            duration: const Duration(milliseconds: 200),
-                            child: child,
-                          );
-                        },
-                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          InteractiveViewer(
+            transformationController: _zoom,
+            maxScale: 6,
+            child: Center(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 1) Preview ligero: se ve AL INSTANTE.
+                  DriveThumb(
+                    source: src,
+                    isRemote: isRemote,
+                    size: double.infinity,
+                    big: true,
+                    contain: true,
+                    // A pantalla completa NO se redondean las esquinas.
+                    rounded: false,
+                    onReady: () {
+                      if (!mounted || _previewReady) return;
+                      setState(() => _previewReady = true);
+                    },
+                  ),
+                  // 2) Original por chunks: aparece encima (nítido) al
+                  //    completar, con transición suave.
+                  if (_fullFile != null)
+                    Image.file(
+                      _fullFile!,
+                      fit: BoxFit.contain,
+                      frameBuilder: (c, child, frame, sync) => AnimatedOpacity(
+                        opacity: frame == null ? 0 : 1,
+                        duration: const Duration(milliseconds: 250),
+                        child: child,
                       ),
-                  ],
-                ),
+                    )
+                  // 2b) Original por RED: en una carpeta COMPARTIDA (su dueño
+                  //     o el servidor del compartido) y, como respaldo, si la
+                  //     descarga por chunks falla. Si también falla, queda el
+                  //     preview.
+                  else if (_fullUrl.isNotEmpty)
+                    Image.network(
+                      _fullUrl,
+                      fit: BoxFit.contain,
+                      frameBuilder: (c, child, frame, sync) {
+                        if (sync) return child;
+                        return AnimatedOpacity(
+                          opacity: frame == null ? 0 : 1,
+                          duration: const Duration(milliseconds: 200),
+                          child: child,
+                        );
+                      },
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
+                ],
               ),
             ),
+          ),
           // Progreso discreto de la descarga del original.
           if (_fullLoading)
             Positioned(
@@ -3877,12 +3975,13 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                           ),
                           Text(
                             [
-                              if (_metaLabel(item).isNotEmpty)
-                                _metaLabel(item),
+                              if (_metaLabel(item).isNotEmpty) _metaLabel(item),
                               if (total > 1) '${_index + 1} de $total',
                             ].join(' · '),
                             style: const TextStyle(
-                                color: Colors.white60, fontSize: 11.5),
+                              color: Colors.white60,
+                              fontSize: 11.5,
+                            ),
                           ),
                         ],
                       ),
@@ -3931,35 +4030,35 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
               ],
             ),
           ),
-              if (widget.images.length > 1) ...[
-                Positioned(
-                  left: 10,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: _ViewerAction(
-                      icon: Icons.chevron_left,
-                      tooltip: 'Anterior',
-                      onTap: () => _move(-1),
-                    ),
-                  ),
+          if (widget.images.length > 1) ...[
+            Positioned(
+              left: 10,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _ViewerAction(
+                  icon: Icons.chevron_left,
+                  tooltip: 'Anterior',
+                  onTap: () => _move(-1),
                 ),
-                Positioned(
-                  right: 10,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: _ViewerAction(
-                      icon: Icons.chevron_right,
-                      tooltip: 'Siguiente',
-                      onTap: () => _move(1),
-                    ),
-                  ),
+              ),
+            ),
+            Positioned(
+              right: 10,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _ViewerAction(
+                  icon: Icons.chevron_right,
+                  tooltip: 'Siguiente',
+                  onTap: () => _move(1),
                 ),
+              ),
+            ),
+          ],
         ],
-            ],
-          ),
-        );
+      ),
+    );
   }
 }
 
@@ -4022,7 +4121,9 @@ class _BusyChip extends StatelessWidget {
             Text(
               label,
               style: const TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w600),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -4104,18 +4205,26 @@ class _ActivityPanel extends StatelessWidget {
                     color: scheme.primary.withValues(alpha: .16),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.bolt_rounded,
-                      size: 13, color: scheme.primary),
+                  child: Icon(
+                    Icons.bolt_rounded,
+                    size: 13,
+                    color: scheme.primary,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   parts.join(' · '),
                   style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(width: 6),
-                Icon(Icons.unfold_more_rounded,
-                    size: 15, color: scheme.onSurfaceVariant),
+                Icon(
+                  Icons.unfold_more_rounded,
+                  size: 15,
+                  color: scheme.onSurfaceVariant,
+                ),
               ],
             ),
           ),
@@ -4150,11 +4259,14 @@ class _ActivityPanel extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: .5)),
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
           ),
           child: ConstrainedBox(
-            constraints:
-                BoxConstraints(maxWidth: 400, maxHeight: screenH * .58),
+            constraints: BoxConstraints(
+              maxWidth: 400,
+              maxHeight: screenH * .58,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4193,7 +4305,8 @@ class _ActivityPanel extends StatelessWidget {
   /// Encabezado del panel: icono, título, resumen en vivo y acciones.
   Widget _header(ColorScheme scheme, String resumen) {
     // Punto EN VIVO: solo cuando hay algo transfiriéndose ahora mismo.
-    final working = drive.uploadJobs.any((j) => j.status == 'uploading') ||
+    final working =
+        drive.uploadJobs.any((j) => j.status == 'uploading') ||
         drive.downloadJobs.any((j) => j.status == 'downloading');
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
@@ -4224,11 +4337,15 @@ class _ActivityPanel extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: scheme.primary.withValues(alpha: .15),
                   borderRadius: BorderRadius.circular(11),
-                  border:
-                      Border.all(color: scheme.primary.withValues(alpha: .28)),
+                  border: Border.all(
+                    color: scheme.primary.withValues(alpha: .28),
+                  ),
                 ),
-                child: Icon(Icons.notifications_active_outlined,
-                    size: 18, color: scheme.primary),
+                child: Icon(
+                  Icons.notifications_active_outlined,
+                  size: 18,
+                  color: scheme.primary,
+                ),
               ),
               if (working)
                 Positioned(
@@ -4256,8 +4373,10 @@ class _ActivityPanel extends StatelessWidget {
                   children: [
                     const Text(
                       'Actividad',
-                      style:
-                          TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     if (working) ...[
                       const SizedBox(width: 6),
@@ -4291,15 +4410,21 @@ class _ActivityPanel extends StatelessWidget {
               tooltip: 'Limpiar avisos',
               visualDensity: VisualDensity.compact,
               onPressed: onClearNotices,
-              icon: Icon(Icons.delete_sweep_outlined,
-                  size: 19, color: scheme.onSurfaceVariant),
+              icon: Icon(
+                Icons.delete_sweep_outlined,
+                size: 19,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           IconButton(
             tooltip: 'Ocultar',
             visualDensity: VisualDensity.compact,
             onPressed: onToggle,
-            icon: Icon(Icons.keyboard_arrow_down_rounded,
-                size: 22, color: scheme.onSurfaceVariant),
+            icon: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 22,
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -4351,9 +4476,7 @@ class _NoticeRow extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 1),
             child: Icon(
-              notice.error
-                  ? Icons.error_outline
-                  : Icons.check_circle_outline,
+              notice.error ? Icons.error_outline : Icons.check_circle_outline,
               size: 16,
               color: color,
             ),
@@ -4379,8 +4502,7 @@ class _NoticeRow extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 iconSize: 15,
                 onPressed: onDismiss,
-                icon: Icon(Icons.close_rounded,
-                    color: scheme.onSurfaceVariant),
+                icon: Icon(Icons.close_rounded, color: scheme.onSurfaceVariant),
               ),
             ),
         ],
@@ -4444,7 +4566,9 @@ class _PanelSection extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 12.6, fontWeight: FontWeight.w800),
+                        fontSize: 12.6,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     if (subtitle != null && subtitle!.isNotEmpty)
                       Text(
@@ -4504,25 +4628,28 @@ class _UploadsCard extends StatelessWidget {
       icon: active > 0
           ? Icons.cloud_upload_outlined
           : failed > 0
-              ? Icons.error_outline
-              : Icons.cloud_done_outlined,
+          ? Icons.error_outline
+          : Icons.cloud_done_outlined,
       title: active > 0
           ? 'Subiendo $total ${total == 1 ? 'foto' : 'fotos'}…'
           : failed > 0
-              ? '$done completada${done == 1 ? '' : 's'} · '
-                  '$failed con error${failed == 1 ? '' : 's'}'
-              : '$total subida${total == 1 ? '' : 's'} '
-                  'completada${total == 1 ? '' : 's'}',
+          ? '$done completada${done == 1 ? '' : 's'} · '
+                '$failed con error${failed == 1 ? '' : 's'}'
+          : '$total subida${total == 1 ? '' : 's'} '
+                'completada${total == 1 ? '' : 's'}',
       subtitle: active > 0
           ? '$done de $total fotos'
-              '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}'
+                '${failed > 0 ? ' · $failed con error${failed == 1 ? '' : 's'}' : ''}'
           : null,
       action: active > 0
           ? TextButton.icon(
               onPressed: drive.cancelAllUploads,
               style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
               icon: const Icon(Icons.cancel_outlined, size: 15),
-              label: const Text('Cancelar todo', style: TextStyle(fontSize: 12)),
+              label: const Text(
+                'Cancelar todo',
+                style: TextStyle(fontSize: 12),
+              ),
             )
           : IconButton(
               tooltip: 'Limpiar',
@@ -4573,8 +4700,9 @@ class _UploadsCard extends StatelessWidget {
               onCancel: job.status == 'uploading'
                   ? () => drive.cancelUpload(job.id)
                   : null,
-              onRetry:
-                  job.status == 'error' ? () => drive.retryUpload(job.id) : null,
+              onRetry: job.status == 'error'
+                  ? () => drive.retryUpload(job.id)
+                  : null,
             ),
         ],
       ),
@@ -4612,8 +4740,9 @@ class UploadJobTile extends StatelessWidget {
         color: scheme.surface.withValues(alpha: .65),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: (failed ? scheme.error : scheme.outlineVariant)
-              .withValues(alpha: failed ? .45 : .35),
+          color: (failed ? scheme.error : scheme.outlineVariant).withValues(
+            alpha: failed ? .45 : .35,
+          ),
         ),
       ),
       child: Row(
@@ -4700,8 +4829,11 @@ class UploadJobTile extends StatelessWidget {
                 else if (job.status == 'cancelled')
                   Row(
                     children: [
-                      Icon(Icons.cancel_outlined,
-                          size: 14, color: scheme.onSurfaceVariant),
+                      Icon(
+                        Icons.cancel_outlined,
+                        size: 14,
+                        color: scheme.onSurfaceVariant,
+                      ),
                       const SizedBox(width: 5),
                       Text(
                         'Cancelada',
@@ -4715,8 +4847,7 @@ class UploadJobTile extends StatelessWidget {
                 else if (job.status == 'done')
                   Row(
                     children: [
-                      Icon(Icons.check_circle,
-                          size: 14, color: scheme.primary),
+                      Icon(Icons.check_circle, size: 14, color: scheme.primary),
                       const SizedBox(width: 5),
                       Text(
                         _sizeLabel(job.total),
@@ -4735,10 +4866,7 @@ class UploadJobTile extends StatelessWidget {
                           'Error: ${job.error ?? 'desconocido'}',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.error,
-                          ),
+                          style: TextStyle(fontSize: 11, color: scheme.error),
                         ),
                       ),
                       // Volver a intentar el archivo que falló, sin repetir
@@ -4789,26 +4917,31 @@ class _DownloadsCard extends StatelessWidget {
     final done = jobs.where((j) => j.status == 'done').length;
     final failed = jobs.where((j) => j.status == 'error').length;
     final totalBytes = jobs.fold<int>(
-        0, (a, j) => j.status == 'downloading' ? a + j.total : a);
+      0,
+      (a, j) => j.status == 'downloading' ? a + j.total : a,
+    );
     final gotBytes = jobs.fold<int>(
-        0, (a, j) => j.status == 'downloading' ? a + j.received : a);
-    final globalPct =
-        totalBytes > 0 ? (gotBytes / totalBytes).clamp(0.0, 1.0) : null;
+      0,
+      (a, j) => j.status == 'downloading' ? a + j.received : a,
+    );
+    final globalPct = totalBytes > 0
+        ? (gotBytes / totalBytes).clamp(0.0, 1.0)
+        : null;
 
     return _PanelSection(
       key: const ValueKey('downloads_card'),
       icon: active > 0
           ? Icons.downloading_outlined
           : failed > 0
-              ? Icons.error_outline
-              : Icons.download_done_outlined,
+          ? Icons.error_outline
+          : Icons.download_done_outlined,
       title: active > 0
           ? 'Descargando $active ${active == 1 ? 'archivo' : 'archivos'}…'
           : failed > 0
-              ? '$done lista${done == 1 ? '' : 's'} · '
-                  '$failed con error${failed == 1 ? '' : 'es'}'
-              : '$done descarga${done == 1 ? '' : 's'} '
-                  'completada${done == 1 ? '' : 's'}',
+          ? '$done lista${done == 1 ? '' : 's'} · '
+                '$failed con error${failed == 1 ? '' : 'es'}'
+          : '$done descarga${done == 1 ? '' : 's'} '
+                'completada${done == 1 ? '' : 's'}',
       subtitle: active > 0 && globalPct != null
           ? '${(globalPct * 100).toStringAsFixed(0)} % en curso'
           : null,
@@ -4893,8 +5026,9 @@ class DownloadJobTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final pct =
-        job.total > 0 ? (job.received / job.total).clamp(0.0, 1.0) : null;
+    final pct = job.total > 0
+        ? (job.received / job.total).clamp(0.0, 1.0)
+        : null;
     final failed = job.status == 'error';
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3),
@@ -4903,8 +5037,9 @@ class DownloadJobTile extends StatelessWidget {
         color: scheme.surface.withValues(alpha: .65),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: (failed ? scheme.error : scheme.outlineVariant)
-              .withValues(alpha: failed ? .45 : .35),
+          color: (failed ? scheme.error : scheme.outlineVariant).withValues(
+            alpha: failed ? .45 : .35,
+          ),
         ),
       ),
       child: Row(

@@ -284,6 +284,7 @@ class _FinancePageState extends State<FinancePage> {
     final narrow = MediaQuery.sizeOf(context).width < 620;
 
     return PageContainer(
+      module: 'finance',
       title: 'Finanzas',
       description: narrow
           ? 'Cada paquete y cada movimiento, con su desglose.'

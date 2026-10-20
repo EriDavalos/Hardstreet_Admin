@@ -96,7 +96,7 @@ void main() {
 
     // Nada de crear: ni carpeta ni subir imágenes.
     expect(find.text('Nueva carpeta'), findsNothing);
-    expect(find.text('Subir imágenes'), findsNothing);
+    expect(find.text('Subir archivos'), findsNothing);
 
     // El menú del elemento solo ofrece abrirlo (protegido).
     await _rightClick(tester, find.text('una.png'));
@@ -112,7 +112,7 @@ void main() {
     await _pumpDrive(tester, const ['read', 'create', 'update', 'delete', 'download']);
 
     expect(find.text('Nueva carpeta'), findsOneWidget);
-    expect(find.text('Subir imágenes'), findsOneWidget);
+    expect(find.text('Subir archivos'), findsOneWidget);
 
     await _rightClick(tester, find.text('una.png'));
     expect(find.text('Descargar'), findsOneWidget);

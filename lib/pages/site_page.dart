@@ -830,6 +830,7 @@ class _SitePageState extends State<SitePage> {
                 .fold(0, (a, b) => a + b);
 
     return PageContainer(
+      module: 'web',
       title: 'Sitio web',
       description: 'Diseña la página por secciones: cada una con su '
           'miniatura, sus textos, sus imágenes y sus opciones. Lo que guardes '

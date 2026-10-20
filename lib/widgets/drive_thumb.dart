@@ -28,6 +28,7 @@ class DriveThumb extends StatefulWidget {
     this.contain = false,
     this.rounded = true,
     this.onReady,
+    this.fallback,
   });
 
   /// URL (drive remoto) o ruta absoluta (drive local) de la miniatura.
@@ -54,6 +55,12 @@ class DriveThumb extends StatefulWidget {
   /// Avisa cuando la imagen ya se está viendo. El visor lo usa para pedir la
   /// ORIGINAL justo después de mostrar la miniatura rápida.
   final VoidCallback? onReady;
+
+  /// Qué enseñar si la miniatura no se pudo cargar. Lo usa la tarjeta de un
+  /// VÍDEO: si el servidor no sabe sacarle el primer fotograma (no tiene
+  /// ffmpeg), en vez de un recuadro con "reintentar" se ve el icono de su
+  /// tipo, como antes.
+  final Widget? fallback;
 
   /// Reintentos automáticos de descarga antes de darla por fallida.
   static const int maxRetries = 3;
@@ -83,7 +90,8 @@ class _DriveThumbState extends State<DriveThumb> {
   void didUpdateWidget(covariant DriveThumb old) {
     super.didUpdateWidget(old);
     // Otro archivo en la misma celda: reinicia todo el estado de carga.
-    if (old.source != widget.source || old.localPreview != widget.localPreview) {
+    if (old.source != widget.source ||
+        old.localPreview != widget.localPreview) {
       _timer?.cancel();
       _timer = null;
       _attempt = 0;
@@ -123,8 +131,8 @@ class _DriveThumbState extends State<DriveThumb> {
         setState(() => _failed = true);
         return;
       }
-      final delay = DriveThumb.retryDelays[
-          _retries.clamp(0, DriveThumb.retryDelays.length - 1)];
+      final delay = DriveThumb
+          .retryDelays[_retries.clamp(0, DriveThumb.retryDelays.length - 1)];
       _retries++;
       _timer?.cancel();
       _timer = Timer(delay, () {
@@ -170,7 +178,12 @@ class _DriveThumbState extends State<DriveThumb> {
     final scheme = Theme.of(context).colorScheme;
     final fit = widget.contain ? BoxFit.contain : BoxFit.cover;
     // Resolución de decodificación: las miniaturas pequeñas no necesitan más.
-    final px = widget.big ? null : (widget.size * MediaQuery.devicePixelRatioOf(context)).round().clamp(32, 1024);
+    final px = widget.big
+        ? null
+        : (widget.size * MediaQuery.devicePixelRatioOf(context)).round().clamp(
+            32,
+            1024,
+          );
     final hasLocal = _hasLocal;
 
     final layers = <Widget>[
@@ -225,7 +238,10 @@ class _DriveThumbState extends State<DriveThumb> {
     final Widget content = Stack(
       fit: StackFit.expand,
       children: [
-        if (!_ready && !hasLocal) _placeholder(scheme, failed: _failed),
+        if (!_ready && !hasLocal)
+          _failed && widget.fallback != null
+              ? widget.fallback!
+              : _placeholder(scheme, failed: _failed),
         ...layers,
       ],
     );

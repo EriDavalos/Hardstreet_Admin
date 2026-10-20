@@ -8,6 +8,7 @@ import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../service_icons.dart';
+import '../theme.dart' show AppColors;
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/drive_thumb.dart';
@@ -246,11 +247,15 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         (catalog['photosMax'] as num?)?.toInt() ??
         0;
     var current = const <String>[];
+    // Enviado a impresión = solo lectura (las fotos NO se pueden cambiar
+    // hasta que el estudio reabra el envío).
+    var readOnly = s['sentToPrint'] == true || (s['printStatus'] ?? '') == 'sent' || (s['printStatus'] ?? '') == 'finished';
     try {
       final info = await HsApi.myServiceItemsInfo(serviceId);
       current = info.items;
       if (info.folder.isNotEmpty) folder = info.folder;
       if (info.max > 0) max = info.max;
+      readOnly = readOnly || info.sent;
     } catch (_) {
       // Backend viejo: se usan los datos del paquete y la lista guardada.
     }
@@ -270,9 +275,81 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       folder: folder,
       max: max,
       initial: current,
+      readOnly: readOnly,
     );
     if (saved == null) return;
     await _load();
+  }
+
+  /// Envía a impresión la selección ACTUAL del servicio.
+  ///
+  /// Después de enviar, el cliente deja de poder modificarla (solo verla)
+  /// hasta que el estudio la reabra desde el módulo de impresiones.
+  Future<void> _sendToPrint(Map<String, dynamic> s, String name) async {
+    final serviceId = (s['id'] as num?)?.toInt() ?? 0;
+    final count = (s['items'] as num?)?.toInt() ?? 0;
+    if (serviceId == 0 || count == 0) {
+      HsToast.info('Elige tus fotos antes de enviarlas');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enviar a impresión'),
+        content: Text(
+          'Se enviarán $count ${count == 1 ? 'foto' : 'fotos'} de '
+          '«${name.isEmpty ? 'este servicio' : name}» al estudio.\n\n'
+          'Después de enviarlas ya no podrás cambiar la selección: solo verla. '
+          'Si necesitas cambiar algo, pídele al estudio que reabra el envío.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.send_rounded, size: 18),
+            label: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await HsApi.sendMyPrintRequest(serviceId);
+      if (!mounted) return;
+      // Se marca el servicio EN EL ACTO: el botón «Enviar a impresión»
+      // desaparece aunque la recarga falle o tarde (antes seguía ahí hasta
+      // refrescar, y se podía intentar enviar dos veces).
+      setState(() {
+        _packages = [
+          for (final p in _packages)
+            {
+              ...p,
+              if (p['services'] is List)
+                'services': [
+                  for (final raw in p['services'] as List)
+                    if (raw is Map && (raw['id'] as num?)?.toInt() == serviceId)
+                      {
+                        ...raw.cast<String, dynamic>(),
+                        'sentToPrint': true,
+                        'printStatus': 'sent',
+                      }
+                    else
+                      raw,
+                ],
+            },
+        ];
+      });
+      HsToast.success(
+        'Fotos enviadas a impresión',
+        details: 'El estudio las recortará al formato elegido.',
+      );
+      await _load();
+    } catch (_) {
+      // El aviso de error ya lo mostró la API.
+    }
   }
 
   /// Marca un aviso como leído (optimista) y confirma con el servidor.
@@ -315,6 +392,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final paid = ((_selected['paid'] as num?) ?? 0).toDouble();
 
     return PageContainer(
+      module: 'my_package',
       title: 'Mi paquete',
       description:
           'Avance de tus paquetes: lo que ya cumplimos y las carpetas del '
@@ -1231,6 +1309,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         shareFolder.isNotEmpty;
     final canPick = _photoService(s);
     final items = (s['items'] as num?)?.toInt() ?? 0;
+    final printStatus = (s['printStatus'] ?? '').toString().trim();
+    final sentToPrint = s['sentToPrint'] == true || printStatus.isNotEmpty;
     final done = _isDone(s);
     final progress = _isInProgress(s);
     final color = done
@@ -1389,8 +1469,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(99),
                                   child: LinearProgressIndicator(
-                                    value: (items / photosMax)
-                                        .clamp(0.0, 1.0),
+                                    value: (items / photosMax).clamp(0.0, 1.0),
                                     minHeight: 5,
                                     color: const Color(0xFF2F6BFF),
                                     backgroundColor: const Color(0xFF2F6BFF)
@@ -1436,13 +1515,73 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                         ),
                       ),
                       icon: Icon(
-                        items > 0
+                        sentToPrint
+                            ? Icons.lock_outline_rounded
+                            : items > 0
                             ? Icons.check_circle_outline_rounded
                             : Icons.photo_library_outlined,
                         size: 16,
                       ),
                       label: Text(
-                        items > 0 ? 'Mis fotos ($items)' : 'Elegir fotos',
+                        sentToPrint
+                            ? 'Ver fotos ($items)'
+                            : items > 0
+                            ? 'Mis fotos ($items)'
+                            : 'Elegir fotos',
+                      ),
+                    ),
+                  if (pickOn && items > 0 && !sentToPrint)
+                    OutlinedButton.icon(
+                      onPressed: () => _sendToPrint(s, name),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      icon: const Icon(Icons.send_rounded, size: 16),
+                      label: const Text('Enviar a impresión'),
+                    ),
+                  if (sentToPrint)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.warn.withValues(alpha: .12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: AppColors.warn.withValues(alpha: .38),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            printStatus == 'finished'
+                                ? Icons.task_alt_rounded
+                                : Icons.print_outlined,
+                            size: 14,
+                            color: AppColors.warn,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            printStatus == 'finished'
+                                ? 'Impresión terminada'
+                                : 'Enviadas a impresión',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.warn,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   if (showFolder && shareFolder.isNotEmpty)

@@ -6,7 +6,7 @@ class AppConstants {
   AppConstants._();
 
   /// Nombre visible de la aplicación (título de ventana, web y Android).
-  static const String appName = 'Hardstreet Admin';
+  static const String appName = 'Hardstreet Plataform';
 
   /// Base del API del drive.
   ///
@@ -30,7 +30,7 @@ class AppConstants {
   /// pubspec.yaml o pásala con --dart-define=SP_VERSION=x.y.z al compilar.
   static const String buildVersion = String.fromEnvironment(
     'SP_VERSION',
-    defaultValue: '1.1.1',
+    defaultValue: '1.1.2',
   );
 
   /// Override opcional (útil en desarrollo): --dart-define=APP_VERSION=x.y.z

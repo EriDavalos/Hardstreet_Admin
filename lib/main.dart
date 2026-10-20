@@ -26,8 +26,10 @@ import 'pages/login_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
 import 'pages/services_page.dart';
+import 'pages/settings_page.dart';
 import 'pages/shared_files_page.dart';
 import 'pages/site_page.dart';
+import 'pages/print_page.dart';
 import 'pages/storage_page.dart';
 import 'pages/users_page.dart';
 import 'package_notifications_service.dart';
@@ -200,7 +202,20 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   }
 
   void _onSettingsChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // El widget de eventos vive FUERA de la app: se le recuerda el tema nuevo
+    // (el acento o el modo se pueden cambiar desde Configuraciones).
+    UpcomingEventsWidget.refresh();
+  }
+
+  /// ¿La app se ve oscura AHORA? (el modo "sistema" sigue al equipo)
+  bool get _isDarkNow {
+    final mode = AppSettings.instance.themeMode;
+    if (mode == HsThemeMode.dark) return true;
+    if (mode == HsThemeMode.light) return false;
+    return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+        Brightness.dark;
   }
 
   @override
@@ -342,7 +357,12 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
         navigatorKey: _navKey,
         theme: AppTheme.light(),
         darkTheme: AppTheme.dark(),
-        themeMode: AppSettings.instance.dark ? ThemeMode.dark : ThemeMode.light,
+        // Apariencia elegida en Configuraciones: sistema / claro / oscuro.
+        themeMode: switch (AppSettings.instance.themeMode) {
+          HsThemeMode.system => ThemeMode.system,
+          HsThemeMode.light => ThemeMode.light,
+          HsThemeMode.dark => ThemeMode.dark,
+        },
         // Rueda del ratón: traduce deltas horizontales (drivers que mandan
         // la rueda vertical en dx) a scroll vertical en TODOS los módulos.
         scrollBehavior: const HsScrollBehavior(),
@@ -404,7 +424,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     }
     if (_loggedIn || (_hasSession && AppSettings.instance.loaded)) {
       return AdminHome(
-        dark: AppSettings.instance.dark,
+        dark: _isDarkNow,
         onToggleTheme: () {
           final v = !AppSettings.instance.dark;
           AppSettings.instance.setDark(v); // persiste
@@ -600,6 +620,9 @@ class _VersionErrorScreen extends StatelessWidget {
 /// Se usa para saber a qué secciones se tiene acceso SIN depender del menú
 /// dibujado: elegir el módulo de arranque y reaccionar cuando los permisos
 /// cambian. El orden es el del panel (mismo criterio que el sidebar).
+/// Nombre de RESPALDO de cada sección. El nombre visible real es
+/// `modules.name` y llega en [HsAccess.catalog]; esto solo se usa si el
+/// backend todavía no lo reporta (modo degradado o pruebas).
 const Map<_Section, String> _kSectionModules = {
   _Section.dashboard: 'Dashboard',
   _Section.clientDashboard: 'Mi paquete',
@@ -608,6 +631,7 @@ const Map<_Section, String> _kSectionModules = {
   _Section.agendas: 'Agendas',
   _Section.finance: 'Finanzas',
   _Section.storage: 'Almacenamiento',
+  _Section.prints: 'Impresiones',
   _Section.connection: 'Conexión',
   _Section.users: 'Usuarios',
   _Section.roles: 'Roles',
@@ -618,6 +642,30 @@ const Map<_Section, String> _kSectionModules = {
   _Section.site: kSiteModuleName,
   _Section.settings: 'Configuraciones',
   _Section.reports: 'Reportes',
+};
+
+/// CLAVE de módulo (`modules.module`) de cada sección. Es la identidad que
+/// manda: los permisos, el nombre y la descripción se buscan por ella, así
+/// que renombrar un módulo en la BD no rompe el menú.
+const Map<_Section, String> _kSectionKeys = {
+  _Section.dashboard: 'dashboard',
+  _Section.clientDashboard: 'my_package',
+  _Section.drive: 'drive',
+  _Section.sharedFiles: 'shared_files',
+  _Section.agendas: 'schedules',
+  _Section.finance: 'finance',
+  _Section.storage: 'storage',
+  _Section.prints: 'print',
+  _Section.connection: 'connection',
+  _Section.users: 'users',
+  _Section.roles: 'rols',
+  _Section.clients: 'clients',
+  _Section.packages: 'packages',
+  _Section.services: 'services',
+  _Section.activity: 'activity',
+  _Section.site: 'web',
+  _Section.settings: 'settings',
+  _Section.reports: 'reports',
 };
 
 /// Índices de las secciones del panel.
@@ -636,6 +684,7 @@ enum _Section {
   services,
   activity,
   storage,
+  prints,
   settings,
   reports,
   site,
@@ -733,20 +782,20 @@ class _AdminHomeState extends State<AdminHome> {
       // Si la sección actual dejó de ser visible, regresa a Archivos.
       if (!mounted) return;
       final canSee = switch (_section) {
-        _Section.users => _canSee('Usuarios'),
-        _Section.roles => _canSee('Roles'),
-        _Section.clients => _canSee('Clientes'),
-        _Section.packages => _canSee('Paquetes'),
-        _Section.agendas => _canSee('Agendas'),
-        _Section.finance => _canSee('Finanzas'),
-        _Section.dashboard => _canSee('Dashboard'),
-        _Section.clientDashboard => _canSee('Mi paquete'),
-        _Section.drive => _canSee('Archivos'),
-        _Section.activity => _canSee('Actividad'),
-        _Section.storage => _canSee('Almacenamiento'),
-        _Section.connection => _canSee('Conexión'),
-        _Section.settings => _canSee('Configuraciones'),
-        _Section.reports => _canSee('Reportes'),
+        _Section.users => _canSee('users'),
+        _Section.roles => _canSee('rols'),
+        _Section.clients => _canSee('clients'),
+        _Section.packages => _canSee('packages'),
+        _Section.agendas => _canSee('schedules'),
+        _Section.finance => _canSee('finance'),
+        _Section.dashboard => _canSee('dashboard'),
+        _Section.clientDashboard => _canSee('my_package'),
+        _Section.drive => _canSee('drive'),
+        _Section.activity => _canSee('activity'),
+        _Section.storage => _canSee('storage'),
+        _Section.connection => _canSee('connection'),
+        _Section.settings => _canSee('settings'),
+        _Section.reports => _canSee('reports'),
         _ => true,
       };
       if (!canSee) {
@@ -775,7 +824,7 @@ class _AdminHomeState extends State<AdminHome> {
   /// verlas) y la página se encarga del detalle o del alta.
   void _onWidgetRequest() {
     if (!mounted || UpcomingEventsWidget.requested.value == null) return;
-    if (_canSee('Agendas')) setState(() => _section = _Section.agendas);
+    if (_canSee('schedules')) setState(() => _section = _Section.agendas);
   }
 
   /// Descarga los permisos del usuario (HsAccess) y refresca el menú.
@@ -794,9 +843,9 @@ class _AdminHomeState extends State<AdminHome> {
     // Primero el orden REAL del menú (lo fija la BD y ya viene filtrado por
     // permisos); si todavía no hay menú dibujado, el orden del panel.
     for (final s in _menuOrder) {
-      if (s != null && _canSee(_kSectionModules[s] ?? '')) return s;
+      if (s != null && _canSee(_kSectionKeys[s] ?? '')) return s;
     }
-    for (final entry in _kSectionModules.entries) {
+    for (final entry in _kSectionKeys.entries) {
       if (_canSee(entry.value)) return entry.key;
     }
     return _Section.dashboard;
@@ -841,7 +890,9 @@ class _AdminHomeState extends State<AdminHome> {
   /// tiene "Ver" de verdad, para no ofrecer una pantalla que el backend va a
   /// rechazar.
   bool _visibleModule(String module) =>
-      (module == 'Actividad' || module == 'Archivos compartidos')
+      (module == 'activity' ||
+          module == 'shared_files' ||
+          module == 'print')
       ? _canSee(module)
       : _showModule(module);
 
@@ -930,6 +981,15 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.storage,
         'Almacenamiento',
+      ),
+      (
+        const AdminDestination(
+          icon: Icons.print_outlined,
+          label: 'Impresiones',
+          header: 'Operación',
+        ),
+        _Section.prints,
+        'Impresiones',
       ),
       (
         const AdminDestination(
@@ -1033,10 +1093,13 @@ class _AdminHomeState extends State<AdminHome> {
     final useCatalog = !access.degraded && access.catalog.isNotEmpty;
 
     final allList = all.toList();
+    // La CLAVE (`modules.module`) es la identidad del módulo: con ella se
+    // consultan permisos, nombre y categoría, aunque el nombre visible cambie.
     final entries = <(int, _Section?, String, AdminDestination)>[
       for (var i = 0; i < allList.length; i++)
-        if (allList[i].$3.isEmpty || _visibleModule(allList[i].$3))
-          (i, allList[i].$2, allList[i].$3, allList[i].$1),
+        if (allList[i].$2 != null &&
+            _visibleModule(_kSectionKeys[allList[i].$2] ?? ''))
+          (i, allList[i].$2, _kSectionKeys[allList[i].$2] ?? '', allList[i].$1),
     ];
 
     if (useCatalog) {
@@ -1070,10 +1133,15 @@ class _AdminHomeState extends State<AdminHome> {
       } else {
         header = dest.header; // modo degradado: encabezados estáticos
       }
+      final fallback = section == null
+          ? dest.label
+          : (_kSectionModules[section] ?? dest.label);
       destinations.add(
         AdminDestination(
           icon: dest.icon,
-          label: dest.label,
+          // NOMBRE desde `modules.name`; el de siempre solo si la BD aún no
+          // lo reporta.
+          label: access.nameOf(module, fallback: fallback),
           header: header ?? AdminDestination.headerNone,
         ),
       );
@@ -1104,12 +1172,12 @@ class _AdminHomeState extends State<AdminHome> {
             final target = map[key];
             if (target == null) return;
             final visible = switch (target) {
-              _Section.drive => _canSee('Archivos'),
-              _Section.clients => _canSee('Clientes'),
-              _Section.packages => _canSee('Paquetes'),
-              _Section.agendas => _canSee('Agendas'),
-              _Section.finance => _canSee('Finanzas'),
-              _Section.roles => _canSee('Roles'),
+              _Section.drive => _canSee('drive'),
+              _Section.clients => _canSee('clients'),
+              _Section.packages => _canSee('packages'),
+              _Section.agendas => _canSee('schedules'),
+              _Section.finance => _canSee('finance'),
+              _Section.roles => _canSee('rols'),
               _ => false,
             };
             if (visible) setState(() => _section = target);
@@ -1131,7 +1199,10 @@ class _AdminHomeState extends State<AdminHome> {
         );
         break;
       case _Section.drive:
-        body = DrivePage(drive: _drive);
+        body = DrivePage(
+          drive: _drive,
+          title: access.nameOf('drive', fallback: 'Archivos'),
+        );
         break;
       case _Section.sharedFiles:
         body = const SharedFilesPage();
@@ -1160,6 +1231,9 @@ class _AdminHomeState extends State<AdminHome> {
       case _Section.storage:
         body = const StoragePage();
         break;
+      case _Section.prints:
+        body = const PrintPage();
+        break;
       case _Section.clients:
         body = const ClientsPage();
         break;
@@ -1170,18 +1244,23 @@ class _AdminHomeState extends State<AdminHome> {
         body = const FinancePage();
         break;
       case _Section.settings:
-        body = ComingSoonPage(
-          title: 'Configuraciones',
-          section: adminSections[2],
-        );
+        // APARIENCIA (tema y color) + lo que el panel necesita a mano.
+        body = const SettingsPage();
         break;
       case _Section.reports:
-        body = ComingSoonPage(title: 'Reportes', section: adminSections[3]);
+        body = ComingSoonPage(
+          module: 'reports',
+          title: access.nameOf('reports', fallback: 'Reportes'),
+          section: adminSections[3],
+        );
         break;
     }
 
     return AdminShell(
-      title: _kSectionModules[_section] ?? 'Dashboard',
+      title: access.nameOf(
+        _kSectionKeys[_section] ?? '',
+        fallback: _kSectionModules[_section] ?? 'Dashboard',
+      ),
       selectedIndex: () {
         // Índice DENTRO de los destinos visibles (el sidebar filtra módulos
         // sin permiso, así que el índice del enum ya no coincide).

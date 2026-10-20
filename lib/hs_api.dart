@@ -66,6 +66,7 @@ class HsMeta {
 typedef HsModulePerms = ({
   String key,
   String name,
+  String description,
   Set<String> actions,
   int? order,
   String? categoryKey,
@@ -120,7 +121,8 @@ class HsPageResult {
     final server = rawTotal is num;
     final total = server ? rawTotal.toInt() : items.length;
     final limit = (data['limit'] as num?)?.toInt();
-    final pages = (data['pages'] as num?)?.toInt() ??
+    final pages =
+        (data['pages'] as num?)?.toInt() ??
         (server && limit != null && limit > 0
             ? (total + limit - 1) ~/ limit
             : 1);
@@ -208,6 +210,82 @@ class HsApi {
   /// un `MockClient` para no tocar la red. En producción es el de
   /// `package:http` (mismo comportamiento de siempre).
   static http.Client client = http.Client();
+
+  /// ¿El backend desplegado TODAVÍA no tiene `/api/admin/geocode`?
+  ///
+  /// Mientras la ruta no exista (404), la búsqueda de lugares va DIRECTO a
+  /// OpenStreetMap: así el mapa funciona sin esperar un redeploy. Se recuerda
+  /// durante la sesión para no repetir el 404 en cada búsqueda.
+  static bool _geocodeRouteMissing = false;
+
+  /// Última consulta directa a Nominatim (su política pide ≤ 1 por segundo).
+  static DateTime? _lastNominatim;
+
+  /// Pausa lo justo para no pasarse del ritmo de Nominatim.
+  static Future<void> _nominatimTurn() async {
+    final last = _lastNominatim;
+    if (last != null) {
+      final wait = 1100 - DateTime.now().difference(last).inMilliseconds;
+      if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
+    }
+    _lastNominatim = DateTime.now();
+  }
+
+  static const String _nominatimBase = 'https://nominatim.openstreetmap.org';
+
+  /// Llamada directa a Nominatim (respaldo cuando el backend no tiene ruta).
+  static Future<http.Response> _nominatimGet(
+    String path,
+    Map<String, String> query,
+  ) {
+    final uri = Uri.parse('$_nominatimBase$path')
+        .replace(queryParameters: query);
+    return client
+        .get(
+          uri,
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Language': 'es',
+            // En la web el navegador ignora este encabezado (es "prohibido"),
+            // pero en celular/escritorio identifica a la app como pide OSM.
+            'User-Agent': 'HardstreetAdmin/1.1 (panel de agendas)',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+  }
+
+  /// Un resultado de Nominatim con la MISMA forma que manda el backend.
+  static Map<String, dynamic>? _placeOfNominatim(Object? raw) {
+    if (raw is! Map) return null;
+    final lat = double.tryParse('${raw['lat'] ?? ''}');
+    final lng = double.tryParse('${raw['lon'] ?? ''}');
+    if (lat == null || lng == null || !lat.isFinite || !lng.isFinite) {
+      return null;
+    }
+    final display = (raw['display_name'] ?? '').toString().trim();
+    final address = raw['address'] is Map
+        ? (raw['address'] as Map).cast<Object?, Object?>()
+        : const <Object?, Object?>{};
+    String first(Object? v) => (v ?? '').toString().trim();
+    var name = first(
+      address['tourism'] ??
+          address['leisure'] ??
+          address['amenity'] ??
+          address['building'] ??
+          address['house_name'] ??
+          address['venue'] ??
+          raw['name'],
+    );
+    if (name.isEmpty) name = display.split(',').first.trim();
+    if (name.isEmpty && display.isEmpty) name = 'Ubicación';
+    return {
+      'name': name.length > 255 ? name.substring(0, 255) : name,
+      'address': display,
+      'displayName': display,
+      'lat': lat,
+      'lng': lng,
+    };
+  }
 
   static Uri _u(String path, [Map<String, String>? query]) =>
       Uri.parse('$base$path').replace(queryParameters: query);
@@ -610,8 +688,15 @@ class HsApi {
   /// Lo mismo, pero con lo que hace falta para el MÓDULO de selección: la
   /// carpeta compartida del servicio, el máximo de fotos y si está habilitado.
   /// Un backend viejo devuelve sólo `items`; aquí se completan valores seguros.
-  static Future<
-      ({List<String> items, String folder, int max, bool pickPhotos})>
+  static Future<({
+    List<String> items,
+    String folder,
+    int max,
+    bool pickPhotos,
+    String printStatus,
+    int? printRequestId,
+    bool sent,
+  })>
   myServiceItemsInfo(int serviceId) async {
     final data = await get(
       '/api/my/service-items',
@@ -625,8 +710,121 @@ class HsApi {
       folder: (data['folder'] ?? '').toString().trim(),
       max: (data['max'] as num?)?.toInt() ?? 0,
       pickPhotos: data['pickPhotos'] == true,
+      printStatus: (data['printStatus'] ?? '').toString().trim(),
+      printRequestId: (data['printRequestId'] as num?)?.toInt(),
+      sent: data['sent'] == true,
     );
   }
+
+  // ==================== IMPRESIONES ====================
+
+  /// Envía a impresión la selección ACTUAL de un servicio del paquete.
+  /// A partir de aquí el cliente solo puede VERLA hasta que el estudio
+  /// reabra el envío.
+  static Future<void> sendMyPrintRequest(int serviceId) async {
+    await post('/api/my/print-requests', {'serviceId': serviceId});
+  }
+
+  /// Estado del envío a impresión de un servicio (cliente).
+  static Future<({
+    String status,
+    int? requestId,
+    List<String> photos,
+    String formatName,
+    int border,
+    bool canEdit,
+  })>
+  myPrintRequest(int serviceId) async {
+    final data = await get(
+      '/api/my/print-requests',
+      query: {'serviceId': '$serviceId'},
+    );
+    return (
+      status: (data['status'] ?? '').toString().trim(),
+      requestId: (data['requestId'] as num?)?.toInt(),
+      photos: ((data['photos'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      formatName: (data['formatName'] ?? '').toString().trim(),
+      border: (data['border'] as num?)?.toInt() ?? 0,
+      canEdit: data['canEdit'] == true,
+    );
+  }
+
+  /// Envíos a impresión + formatos del estudio (módulo Impresiones).
+  static Future<({
+    List<Map<String, dynamic>> requests,
+    List<Map<String, dynamic>> formats,
+  })>
+  printRequests() async {
+    final data = await get('/api/admin/print-requests');
+    return (
+      requests: ((data['requests'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList(),
+      formats: ((data['formats'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList(),
+    );
+  }
+
+  /// Crea (o actualiza) un formato de impresión.
+  static Future<Map<String, dynamic>> savePrintFormat({
+    required String name,
+    required double width,
+    required double height,
+    String unit = 'in',
+  }) async {
+    final data = await post('/api/admin/print-formats', {
+      'name': name,
+      'width': width,
+      'height': height,
+      'unit': unit,
+    });
+    final item = data['format'] ?? data['item'];
+    return item is Map ? item.cast<String, dynamic>() : const {};
+  }
+
+  static Future<void> deletePrintFormat(int id) =>
+      delete('/api/admin/print-formats?id=$id');
+
+  /// GUARDA el formato, el borde y las posiciones de las fotos SIN cerrar el
+  /// envío. El cliente sigue sin poder cambiar su selección hasta «Terminar».
+  static Future<void> savePrintRequestConfig({
+    required int requestId,
+    required int formatId,
+    required int border,
+    Map<String, dynamic> crops = const {},
+  }) => post('/api/admin/print-requests', {
+    'action': 'save',
+    'requestId': requestId,
+    'formatId': formatId,
+    'border': border,
+    'crops': crops,
+  });
+
+  /// Cierra un envío: guarda el formato, el borde y las posiciones.
+  static Future<void> finishPrintRequest({
+    required int requestId,
+    required int formatId,
+    required int border,
+    Map<String, dynamic> crops = const {},
+  }) => post('/api/admin/print-requests', {
+    'action': 'finish',
+    'requestId': requestId,
+    'formatId': formatId,
+    'border': border,
+    'crops': crops,
+  });
+
+  /// Reabre un envío para que el cliente vuelva a poder cambiar la selección.
+  static Future<void> reopenPrintRequest(int requestId) =>
+      post('/api/admin/print-requests', {
+        'action': 'reopen',
+        'requestId': requestId,
+      });
 
   /// Avisa al CLIENTE de un paquete (desde el administrador del paquete).
   /// [kind] = `fotos-disponibles` | `servicio-terminado` | `paquete`.
@@ -649,8 +847,7 @@ class HsApi {
   }
 
   /// MIS avisos del paquete (los manda el estudio desde el panel).
-  static Future<
-      ({List<Map<String, dynamic>> items, int unread})>
+  static Future<({List<Map<String, dynamic>> items, int unread})>
   myNotifications() async {
     final data = await get('/api/my/notifications') as Map? ?? const {};
     final items = ((data['notifications'] as List?) ?? const [])
@@ -718,6 +915,7 @@ class HsApi {
       modules.add((
         key: key,
         name: name,
+        description: (m['description'] ?? '').toString().trim(),
         actions: ((m['actions'] as List?) ?? const [])
             .map((a) => a.toString().toLowerCase())
             .toSet(),
@@ -1270,6 +1468,93 @@ class HsApi {
   static Future<void> deleteAgenda(int id) =>
       delete('/api/admin/agendas?id=$id');
 
+  /// Busca LUGARES por nombre para el lugar de una agenda.
+  ///
+  /// Cada resultado: `{ name, address, displayName, lat, lng }`.
+  /// La búsqueda la hace el backend (OpenStreetMap/Nominatim), así el panel
+  /// funciona igual en celular y en computadora.
+  static Future<List<Map<String, dynamic>>> searchPlaces(String query) async {
+    final q = query.trim();
+    if (q.length < 3) return const [];
+    if (!_geocodeRouteMissing) {
+      try {
+        final data = await get('/api/admin/geocode', query: {'q': q});
+        return ((data['results'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      } on ApiException catch (e) {
+        // 404 = el backend todavía no tiene la ruta (o no está desplegado).
+        // Cualquier otro error (sesión, permiso, red) se informa tal cual.
+        if (e.statusCode != 404) rethrow;
+        _geocodeRouteMissing = true;
+      }
+    }
+    return _searchPlacesDirect(q);
+  }
+
+  /// Respaldo DIRECTO contra OpenStreetMap (Nominatim permite CORS).
+  static Future<List<Map<String, dynamic>>> _searchPlacesDirect(
+    String q,
+  ) async {
+    await _nominatimTurn();
+    final http.Response r;
+    try {
+      r = await _nominatimGet('/search', {
+        'format': 'jsonv2',
+        'addressdetails': '1',
+        'limit': '8',
+        'q': q,
+      });
+    } catch (_) {
+      throw ApiException('No se pudo buscar el lugar. Revisa la conexión.');
+    }
+    if (r.statusCode != 200) {
+      throw ApiException('No se pudo buscar el lugar (HTTP ${r.statusCode})');
+    }
+    final decoded = jsonDecode(r.body);
+    if (decoded is! List) return const [];
+    return [for (final raw in decoded) ?_placeOfNominatim(raw)];
+  }
+
+  /// Qué lugar hay en un PUNTO del mapa (al tocarlo).
+  /// Devuelve `{ name, address, displayName, lat, lng }` o null.
+  static Future<Map<String, dynamic>?> reversePlace(num lat, num lng) async {
+    if (!_geocodeRouteMissing) {
+      try {
+        final data = await get(
+          '/api/admin/geocode',
+          query: {'lat': '$lat', 'lng': '$lng'},
+        );
+        final place = data['place'];
+        return place is Map ? place.cast<String, dynamic>() : null;
+      } on ApiException catch (e) {
+        // El backend TAMBIÉN responde 404 cuando el punto no tiene dirección;
+        // ese caso NO significa que la ruta falte (mensaje distinto).
+        if (e.statusCode != 404 || e.message != 'Error HTTP 404') rethrow;
+        _geocodeRouteMissing = true;
+      }
+    }
+    await _nominatimTurn();
+    final http.Response r;
+    try {
+      r = await _nominatimGet('/reverse', {
+        'format': 'jsonv2',
+        'zoom': '18',
+        'addressdetails': '1',
+        'lat': '$lat',
+        'lng': '$lng',
+      });
+    } catch (_) {
+      throw ApiException('No se pudo identificar el punto del mapa.');
+    }
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('No se pudo identificar el punto del mapa.');
+    }
+    return _placeOfNominatim(jsonDecode(r.body));
+  }
+
   // ---------------- Avisos de eventos (recordatorios) ----------------
 
   /// Mis avisos de eventos próximos (falta 1 semana / falta 1 día).
@@ -1283,8 +1568,12 @@ class HsApi {
   }
 
   /// Marca UN aviso como leído.
-  static Future<void> markReminderRead(int id) =>
-      put('/api/reminders', {'id': id});
+  ///
+  /// [source] distingue los recordatorios de eventos (`event`) de los avisos
+  /// del equipo (`print`, envíos a impresión): viven en tablas distintas y el
+  /// servidor necesita saber cuál actualizar.
+  static Future<void> markReminderRead(int id, {String source = 'event'}) =>
+      put('/api/reminders', {'id': id, 'source': source});
 
   /// Marca TODOS mis avisos como leídos.
   static Future<void> markAllRemindersRead() =>

@@ -6,6 +6,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_constants.dart';
 import 'drive_host.dart';
 import 'hs_api.dart';
+import 'theme.dart' show AppColors;
+
+/// Modo de apariencia de la app (módulo Configuraciones).
+///
+/// `system` sigue al tema del teléfono/equipo; `light` y `dark` lo fijan.
+enum HsThemeMode { system, light, dark }
 
 /// Configuraciones persistentes de la app (modo oscuro, sesión, etc.).
 /// Usa shared_preferences: funciona en Windows, Android y WEB (localStorage),
@@ -22,6 +28,8 @@ class AppSettings extends ChangeNotifier {
   static final AppSettings instance = AppSettings._();
 
   static const _kDark = 'app.dark';
+  static const _kThemeMode = 'app.theme.mode';
+  static const _kAccent = 'app.accent';
   static const _kRemember = 'app.remember';
   static const _kToken = 'app.token';
   static const _kUser = 'app.user';
@@ -37,7 +45,11 @@ class AppSettings extends ChangeNotifier {
   static const _kNotifyBase = 'app.notify.base';
 
   bool _loaded = false;
-  bool _dark = false;
+
+  /// Apariencia: claro/oscuro/sistema y color de acento. Se aplica en TODO el
+  /// panel (botones, selección, acentos) y se guarda al instante.
+  HsThemeMode _themeMode = HsThemeMode.light;
+  String _accent = AppColors.defaultAccent;
 
   // ---- Servicio de compartir (switch de "Archivos compartidos") ----
   bool _shareServing = false;
@@ -55,8 +67,14 @@ class AppSettings extends ChangeNotifier {
   /// true cuando ya se leyeron las preferencias del disco/storage.
   bool get loaded => _loaded;
 
-  /// ¿Modo oscuro activado? (persistente)
-  bool get dark => _dark;
+  /// Modo de apariencia elegido (persistente).
+  HsThemeMode get themeMode => _themeMode;
+
+  /// Clave del color de acento elegido ("azul", "violeta"…).
+  String get accent => _accent;
+
+  /// ¿Modo oscuro FIJADO a mano? (el menú rápido lo usa para el icono)
+  bool get dark => _themeMode == HsThemeMode.dark;
 
   /// ¿El usuario encendió el SERVICIO DE COMPARTIR? (persistente)
   ///
@@ -135,7 +153,9 @@ class AppSettings extends ChangeNotifier {
       // Sin sesión no hay avisos que llevar al teléfono (el worker nativo
       // para solo al ver que ya no hay token).
       await sp.remove(_kNotifyToken);
-    } catch (_) {/* noop */}
+    } catch (_) {
+      /* noop */
+    }
     notifyListeners();
   }
 
@@ -144,7 +164,22 @@ class AppSettings extends ChangeNotifier {
     if (_loaded) return;
     try {
       final sp = await SharedPreferences.getInstance();
-      _dark = sp.getBool(_kDark) ?? false;
+      // Apariencia: primero el modo nuevo; las instalaciones viejas solo
+      // tienen el interruptor de modo oscuro (se respeta como preferencia).
+      final savedMode = sp.getString(_kThemeMode);
+      _themeMode = switch (savedMode) {
+        'system' => HsThemeMode.system,
+        'dark' => HsThemeMode.dark,
+        'light' => HsThemeMode.light,
+        // Sin preferencia nueva: el antiguo "modo oscuro" manda.
+        _ =>
+          (sp.getBool(_kDark) ?? false) ? HsThemeMode.dark : HsThemeMode.light,
+      };
+      final savedAccent = sp.getString(_kAccent);
+      if (savedAccent != null && AppColors.accents.containsKey(savedAccent)) {
+        _accent = savedAccent;
+      }
+      AppColors.setBrand(AppColors.accents[_accent]!);
       // La base del CRUD la lee el worker nativo de avisos (Android): se
       // actualiza en cada arranque por si cambió la compilación.
       await sp.setString(_kNotifyBase, AppConstants.crudApiBase);
@@ -171,7 +206,9 @@ class AppSettings extends ChangeNotifier {
         try {
           final decoded = jsonDecode(userJson);
           if (decoded is Map) _savedUser = decoded.cast<String, dynamic>();
-        } catch (_) {/* usuario corrupto: se ignora */}
+        } catch (_) {
+          /* usuario corrupto: se ignora */
+        }
       }
       if (!hasSavedSession) {
         _savedToken = null;
@@ -226,16 +263,42 @@ class AppSettings extends ChangeNotifier {
     }
   }
 
-  /// Cambia el modo oscuro y lo guarda al instante.
-  Future<void> setDark(bool value) async {
-    if (_dark == value) return;
-    _dark = value;
+  /// Cambia el modo de apariencia (sistema/claro/oscuro) y lo guarda.
+  Future<void> setThemeMode(HsThemeMode value) async {
+    if (_themeMode == value) return;
+    _themeMode = value;
     notifyListeners();
     try {
       final sp = await SharedPreferences.getInstance();
-      await sp.setBool(_kDark, value);
+      await sp.setString(_kThemeMode, value.name);
+      // Se mantiene el booleano viejo al día: si alguien vuelve a una versión
+      // anterior, al menos conserva claro/oscuro.
+      await sp.setBool(_kDark, value == HsThemeMode.dark);
     } catch (_) {
       // Sin storage: el cambio vale solo para esta sesión.
     }
   }
+
+  /// Cambia el COLOR DE ACENTO (clave de la paleta) y lo guarda.
+  Future<void> setAccent(String key) async {
+    final color = AppColors.accents[key];
+    if (color == null) return;
+    _accent = key;
+    AppColors.setBrand(color);
+    notifyListeners();
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(_kAccent, key);
+    } catch (_) {
+      // Sin storage: el cambio vale solo para esta sesión.
+    }
+  }
+
+  /// Cambia el modo oscuro (atajo del menú): fija claro u oscuro.
+  Future<void> setDark(bool value) =>
+      setThemeMode(value ? HsThemeMode.dark : HsThemeMode.light);
+
+  /// Compatibilidad con el resto de la app: un bool oscuro (widgets nativos)
+  /// sigue leyendo el modo guardado [dark].
+  Future<void> setDarkLegacy(bool value) => setDark(value);
 }

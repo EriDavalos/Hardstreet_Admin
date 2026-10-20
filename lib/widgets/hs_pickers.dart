@@ -39,23 +39,24 @@ Future<DateTime?> showHsDatePicker(
     builder: (ctx, child) => Theme(
       data: Theme.of(ctx).copyWith(
         datePickerTheme: DatePickerThemeData(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
           headerBackgroundColor: AppColors.brand,
           headerForegroundColor: Colors.white,
-          todayBorder: const BorderSide(color: AppColors.brand, width: 1.6),
+          todayBorder: BorderSide(color: AppColors.brand, width: 1.6),
           dayBackgroundColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected)
-                ? AppColors.brand
-                : null,
+            (states) =>
+                states.contains(WidgetState.selected) ? AppColors.brand : null,
           ),
           dayForegroundColor: WidgetStateProperty.resolveWith(
             (states) => states.contains(WidgetState.selected)
                 ? Colors.white
                 : scheme.onSurface,
           ),
-          dayOverlayColor:
-              WidgetStatePropertyAll(AppColors.brand.withValues(alpha: .10)),
+          dayOverlayColor: WidgetStatePropertyAll(
+            AppColors.brand.withValues(alpha: .10),
+          ),
           yearShape: WidgetStatePropertyAll(
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
@@ -82,8 +83,9 @@ Future<TimeOfDay?> showHsTimePicker(
     builder: (ctx, child) => Theme(
       data: Theme.of(ctx).copyWith(
         timePickerTheme: TimePickerThemeData(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
           backgroundColor: scheme.surface,
           hourMinuteColor: AppColors.brand.withValues(alpha: .10),
           hourMinuteTextColor: AppColors.brand,
