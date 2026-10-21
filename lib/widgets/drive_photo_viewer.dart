@@ -112,7 +112,18 @@ class _DrivePhotoViewerState extends State<DrivePhotoViewer> {
   String _fullKey = '';
 
   @override
+  void initState() {
+    super.initState();
+    // El ORIGINAL solo se pide al ACERCAR: a tamaño de pantalla el preview ya
+    // se ve nítido. Antes se bajaba el archivo entero en cuanto la miniatura
+    // aparecía, así que la foto cambiaba de "baja" a "alta" calidad un rato
+    // después de abrir.
+    _zoom.addListener(_onZoomChanged);
+  }
+
+  @override
   void dispose() {
+    _zoom.removeListener(_onZoomChanged);
     _zoom.dispose();
     // Fuera de RAM; el archivo queda en caché de disco.
     if (widget.originalSrc.trim().isNotEmpty) {
@@ -135,9 +146,11 @@ class _DrivePhotoViewerState extends State<DrivePhotoViewer> {
       ..scaleByDouble(2.5, 2.5, 2.5, 1);
   }
 
-  /// La miniatura rápida ya se ve: desde aquí se pide la original.
-  void _onPreviewReady() {
-    if (!mounted || _showOriginal || _fullFile != null) return;
+  /// Al ACERCAR se pide la original (detalle real al 100%).
+  void _onZoomChanged() {
+    if (!mounted) return;
+    if (_zoom.value.getMaxScaleOnAxis() <= 1.05) return;
+    if (_showOriginal || _fullFile != null || _fullLoading) return;
     _loadFull();
   }
 
@@ -221,7 +234,6 @@ class _DrivePhotoViewerState extends State<DrivePhotoViewer> {
                       big: true,
                       contain: true,
                       rounded: false,
-                      onReady: _onPreviewReady,
                     ),
                     // Original por chunks: entra nítida sobre la miniatura.
                     if (_fullFile != null)

@@ -7,26 +7,25 @@ import '../hs_format.dart';
 import '../widgets/common.dart';
 import '../widgets/finance_chart.dart';
 import '../widgets/form_dialog.dart';
-import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
 // MÓDULO FINANZAS
 //
-// Todo el dinero del negocio en UNA pantalla bien distribuida:
-//   * Arriba, la tira de totales (cuadros horizontales).
-//   * Abajo, la TABLA con el dinero de cada paquete y de cada tipo de
-//     movimiento. La página NO hace scroll: en escritorio la tabla y la
-//     gráfica van en dos columnas y solo la tabla scrollea por dentro; en
-//     pantallas angostas todo vive en una sola zona con scroll propio.
+// Una vista moderna con TRES pestañas:
 //
-// La tabla expande cada fila:
-//   * Paquete    → su resumen (cobrado, por cobrar, ganado, ahorro, gastos,
-//                  inversión, abono externo), sus movimientos y sus acciones.
-//   * Movimiento → se desglosa según su tipo, registro por registro.
+//   * RESUMEN      el DINERO ACTUAL (abonado + abono externo - gastos -
+//                  inversión - ahorro - pagos) y la tabla del movimiento
+//                  del dinero: abonado, gastos, inversión, ahorro, por
+//                  cobrar y abono externo. Abajo, la gráfica de los
+//                  últimos meses y los movimientos recientes.
+//   * POR PAQUETE  esa misma información separada por paquete (los
+//                  paquetes gratis SIN movimiento no aparecen).
+//   * PAGOS        todo lo pagado a cada colaborador y empleado: total
+//                  histórico, cuántos pagos y en qué paquetes.
 //
-// "Ganado" es el DISPONIBLE de los datos (abonado - gastado - ahorro +
-// abono externo): es el dinero que de verdad queda.
+// Los pagos a colaboradores/empleados SÍ salen del dinero actual (antes se
+// trataban como un "gasto invisible").
 // ==================================================================
 
 /// Etiqueta / icono / color de cada tipo de movimiento (mismo lenguaje que el
@@ -58,33 +57,27 @@ Color _kindColor(String kind) => switch (kind) {
   _ => FinanceColors.red,
 };
 
-/// Tipos de movimiento que se listan como filas de la tabla (en orden).
-/// Los PAGOS van al final y con la etiqueta que aclara que son un registro:
-/// no se descuentan del paquete.
-const List<String> _kKindRows = [
-  'abono',
+/// Tipos que se pueden REGISTRAR desde Finanzas. Los abonos entran por el
+/// paquete y los pagos se reparten desde el administrador del paquete (ahí se
+/// elige a quién), así que aquí no se ofrecen.
+const List<String> _kEditableKinds = [
   'gasto',
   'inversion',
   'ahorro',
   'abono_externo',
-  'pago',
 ];
 
-/// Fila especial de la tabla: los movimientos del NEGOCIO (sin paquete).
-const String _kGeneralRow = 'general';
-
-/// Alto MÍNIMO que necesita la tarjeta de la tabla (encabezado + una fila)
-/// para no recortarse. Por debajo de esto la vista de escritorio deja de usar
-/// las dos columnas: en una ventana baja el bloque de totales se comía el
-/// espacio y la tabla desbordaba la pantalla.
-const double _kTableMinHeight = 210;
-
-/// Alto aproximado que ocupa el bloque del resumen del dinero (todos los
-/// cuadros en una lista vertical). Se usa para decidir si el resumen y la
-/// tabla CABEN juntos en la ventana; si no, todo baja a una zona con scroll.
-/// Es a propósito algo holgado: en una ventana mediana es preferible
-/// desplazar un poco a que algo se recorte.
-const double _kSummaryHeight = 420;
+/// Iniciales de un nombre (avatar de las personas).
+String _initials(String name) {
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+  return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+}
 
 class FinancePage extends StatefulWidget {
   const FinancePage({super.key});
@@ -98,16 +91,14 @@ class _FinancePageState extends State<FinancePage> {
   String? _error;
   FinanceData _data = const FinanceData();
 
-  /// Claves de las filas EXPANDIDAS de la tabla ('pkg:10', 'kind:gasto'…).
+  /// 0 = Resumen, 1 = Por paquete, 2 = Pagos.
+  int _tab = 0;
+
+  /// Búsqueda de la pestaña "Por paquete".
+  String _packageQuery = '';
+
+  /// Filas expandidas (paquetes y personas).
   final Set<String> _open = <String>{};
-
-  /// Móvil: los cuadros de totales se pueden MINIMIZAR para dejarle la
-  /// pantalla a la tabla de "Dinero por paquete y movimiento".
-  bool _kpisOpen = true;
-
-  /// Búsqueda y filtro de la tabla ("Ver": todo, paquetes o movimientos).
-  String _query = '';
-  String _viewFilter = '';
 
   @override
   void initState() {
@@ -151,79 +142,20 @@ class _FinancePageState extends State<FinancePage> {
     });
   }
 
-  /// Paquetes que pasan la búsqueda de la tabla.
+  /// Paquetes que pasan la búsqueda de la pestaña "Por paquete".
   List<FinancePackage> get _visiblePackages {
-    final q = _query.trim().toLowerCase();
+    final q = _packageQuery.trim().toLowerCase();
+    if (q.isEmpty) return _data.packages;
     return _data.packages
-        .where((p) {
-          if (q.isEmpty) return true;
-          return '${p.name} ${p.clientName}'.toLowerCase().contains(q);
-        })
+        .where((p) => '${p.name} ${p.clientName}'.toLowerCase().contains(q))
         .toList(growable: false);
   }
 
-  /// Tipos de movimiento que pasan la búsqueda.
-  List<String> get _visibleKinds {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _kKindRows;
-    return _kKindRows
-        .where((k) => _kindLabel(k).toLowerCase().contains(q))
-        .toList(growable: false);
-  }
-
-  bool get _showPackages => _viewFilter != 'movimientos';
-  bool get _showMovements => _viewFilter != 'paquetes';
-
-  /// MÓDULO DE FILTROS de la tabla de finanzas.
-  List<HsFilterGroup> get _filterGroups {
-    final q = _query.trim().toLowerCase();
-    final pkgCount = _data.packages
-        .where(
-          (p) =>
-              q.isEmpty ||
-              '${p.name} ${p.clientName}'.toLowerCase().contains(q),
-        )
-        .length;
-    return [
-      HsFilterGroup(
-        id: 'view',
-        title: 'Qué quieres ver',
-        help:
-            'La búsqueda filtra paquetes por cliente/nombre y movimientos '
-            'por su tipo.',
-        options: [
-          HsFilterOption(
-            value: '',
-            label: 'Paquetes y movimientos',
-            count: pkgCount + _kKindRows.length,
-            icon: Icons.table_rows_rounded,
-          ),
-          HsFilterOption(
-            value: 'paquetes',
-            label: 'Solo paquetes',
-            count: pkgCount,
-            icon: Icons.inventory_2_outlined,
-          ),
-          HsFilterOption(
-            value: 'movimientos',
-            label: 'Solo movimientos',
-            count: _kKindRows.length,
-            icon: Icons.receipt_long_outlined,
-            color: FinanceColors.investment,
-          ),
-        ],
-      ),
-    ];
-  }
-
-  /// Abre el diálogo para REGISTRAR un movimiento.
-  ///
-  /// SIN [package] el movimiento es GENERAL (del negocio): el módulo ya no
-  /// obliga a elegir un paquete. El paquete solo se elige si se quiere
-  /// atribuir el gasto/ahorro a un paquete del cliente.
+  /// Abre el diálogo para REGISTRAR un movimiento (gasto, inversión, ahorro
+  /// o abono externo). Sin paquete el movimiento es GENERAL (del negocio).
   Future<void> _addMovement({
     FinancePackage? package,
-    String kind = 'ahorro',
+    String kind = 'gasto',
   }) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -237,7 +169,7 @@ class _FinancePageState extends State<FinancePage> {
       ),
     );
     if (saved == true) {
-      _snack(
+      HsToast.info(
         package == null
             ? 'Movimiento general registrado'
             : 'Movimiento registrado en ${package.name}',
@@ -246,300 +178,375 @@ class _FinancePageState extends State<FinancePage> {
     }
   }
 
-  /// Aviso neutro de la interfaz (el éxito/error lo avisa la capa de API
-  /// con el mensaje del backend).
-  void _snack(String msg) => HsToast.info(msg);
-
-  /// Píldoras de detalle en UNA sola fila, deslizable de lado. En el teléfono
-  /// el [Wrap] las apilaba en tres renglones y se comía el espacio de la
-  /// información; así todo el desglose vive en un renglón.
-  Widget _pillsRow(List<Widget> pills) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.only(right: 2),
-    child: Row(
-      children: [
-        for (final p in pills) ...[p, const SizedBox(width: 8)],
-      ],
-    ),
-  );
-
-  /// Botones de acción del desglose, también en UNA fila (se desliza si no
-  /// caben) en vez de apilarse uno por renglón.
-  Widget _buttonsRow(List<Widget> buttons) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.only(right: 2),
-    child: Row(
-      children: [
-        for (final b in buttons) ...[b, const SizedBox(width: 8)],
-      ],
-    ),
-  );
-
   @override
   Widget build(BuildContext context) {
     final t = _data.totals;
     final currency = _data.currency;
-    // En el teléfono la descripción larga del héroe se come media pantalla:
-    // ahí va una más corta para que el dinero empiece antes.
     final narrow = MediaQuery.sizeOf(context).width < 620;
 
     return PageContainer(
       module: 'finance',
       title: 'Finanzas',
       description: narrow
-          ? 'Cada paquete y cada movimiento, con su desglose.'
-          : 'El dinero en una tabla: cada paquete y cada tipo de '
-                'movimiento, con su desglose al expandir.',
+          ? 'El dinero actual, por paquete y por persona.'
+          : 'El dinero actual del negocio: abonado, salidas, ahorro y pagos, '
+                'con el detalle por paquete y por persona.',
       icon: Icons.account_balance_wallet_outlined,
       onRefresh: _reload,
-      // Sin scroll de página: la tabla scrollea por dentro.
-      expand: true,
-      // En el teléfono los dos botones van en UNA fila (se desliza si no
-      // caben): apilados se comían el alto de la tabla.
       actionsInline: true,
       stats: [
         StatPill(
-          icon: Icons.savings_outlined,
-          label: 'Ganado ${hsMoney(t.disponible, currency)}',
+          icon: Icons.account_balance_wallet_rounded,
+          label: 'Actual ${hsMoney(t.dineroActual, currency)}',
         ),
         StatPill(
-          icon: Icons.lock_outline_rounded,
-          label: 'Ahorro ${hsMoney(t.ahorro, currency)}',
+          icon: Icons.hourglass_bottom_rounded,
+          label: 'Por cobrar ${hsMoney(t.porCobrar, currency)}',
         ),
         StatPill(
-          icon: Icons.trending_down_rounded,
-          label: 'Salidas ${hsMoney(t.gastado, currency)}',
+          icon: Icons.handshake_outlined,
+          label: 'Pagado a personas ${hsMoney(t.pagos, currency)}',
         ),
       ],
       actions: [
-        if (_canSave) ...[
-          // Son DOS acciones distintas y no se mezclan: el movimiento
-          // (gasto/inversión/abono externo/ahorro general) va como acción
-          // principal y aparte, con su propio color, el ahorro.
+        if (_canSave)
           HsActionButton(
             onPressed: () => _addMovement(kind: 'gasto'),
             icon: Icons.add,
-            // En el teléfono la etiqueta completa no cabe en el botón y
-            // quedaba a medias: ahí va la versión corta.
-            label: narrow ? 'Nuevo movimiento' : 'Agregar movimiento',
+            label: narrow ? 'Movimiento' : 'Registrar movimiento',
           ),
-          HsActionButton(
-            primary: false,
-            tint: FinanceColors.teal,
-            onPressed: () => _addMovement(kind: 'ahorro'),
-            icon: Icons.savings_outlined,
-            label: 'Abonar al ahorro',
-          ),
-        ],
       ],
       child: _body(Theme.of(context).colorScheme, t, currency),
     );
   }
 
-  // ---------------------------------------------------------------
-  // Cuerpo
-  // ---------------------------------------------------------------
-
   Widget _body(ColorScheme scheme, FinanceTotals t, String currency) {
     if (_loading) return const ListSkeleton(lines: 3, cardHeight: 104);
     if (_error != null) return _errorCard(scheme);
-    // Mismo umbral del héroe: en el teléfono el resumen va apilado.
-    final narrow = MediaQuery.sizeOf(context).width < 620;
 
-    // MÓVIL: TODO en una sola zona con scroll —el resumen del dinero ARRIBA,
-    // junto con la tabla— para poder bajar y ver más información. El bloque
-    // se puede MINIMIZAR con el botón del encabezado.
-    if (narrow) {
-      return SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _kpiHeader(scheme, t),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              alignment: Alignment.topCenter,
-              child: _kpisOpen
-                  ? Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      // Los grupos se apilan (una columna): en el teléfono es lo
-                      // único que deja leer las etiquetas completas.
-                      child: _MoneySummary(
-                        totals: t,
-                        currency: currency,
-                        showNotes: false,
-                      ),
-                    )
-                  : const SizedBox(width: double.infinity),
-            ),
-            _tableCard(scheme, currency, inline: true),
-            const SizedBox(height: 14),
-            _chartCard(scheme),
-            const SizedBox(height: 14),
-            _savingsCard(scheme, t, currency),
-          ],
-        ),
-      );
-    }
-
-    // ESCRITORIO: el resumen del dinero TAMBIÉN se puede minimizar. Es un
-    // bloque alto (los cuatro grupos en fila) y cuando se está trabajando con
-    // la tabla de abajo estorba: minimizado, el encabezado queda en UNA línea
-    // y la tabla y la gráfica se reparten toda la pantalla.
-    // ESCRITORIO: el resumen del dinero TAMBIÉN se puede minimizar. Es un
-    // bloque alto (los cuatro grupos en fila) y cuando se está trabajando con
-    // la tabla de abajo estorba: minimizado, el encabezado queda en UNA línea
-    // y la tabla y la gráfica se reparten toda la pantalla.
-    //
-    // El reparto se decide por el ALTO disponible, no solo por el ancho: los
-    // bloques de arriba (encabezado + resumen) tienen alto propio y, si no
-    // caben junto con la tabla, todo baja a UNA zona con scroll en vez de
-    // recortarse.
-    return LayoutBuilder(
-      builder: (context, box) {
-        const header = 48.0; // encabezado del resumen + su separación
-        final summary = _kpisOpen ? _kSummaryHeight : 0.0;
-        final caben =
-            box.maxWidth >= 980 &&
-            box.maxHeight >= header + summary + _kTableMinHeight;
-
-        // Resumen arriba: encabezado + (si está abierto) los cuatro grupos.
-        final top = <Widget>[
-          _kpiHeader(scheme, t, showEarned: false),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            alignment: Alignment.topCenter,
-            child: _kpisOpen
-                ? Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: _MoneySummary(totals: t, currency: currency),
-                  )
-                : const SizedBox(width: double.infinity),
-          ),
-        ];
-
-        // Cabe: el resumen queda fijo arriba y abajo la tabla | gráfica + ahorro
-        // se reparten el resto del alto (sin scroll de página).
-        if (caben) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ...top,
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 3, child: _tableCard(scheme, currency)),
-                    const SizedBox(width: 14),
-                    Expanded(flex: 2, child: _sideColumn(scheme, t, currency)),
-                  ],
-                ),
-              ),
-            ],
-          );
-        }
-
-        // Angosto o bajo: todo en UNA zona con scroll (la página no crece y cada
-        // pieza conserva su espacio; nada se recorta).
-        return SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ...top,
-              _tableCard(scheme, currency, inline: true),
-              const SizedBox(height: 14),
-              _chartCard(scheme),
-              const SizedBox(height: 14),
-              _savingsCard(scheme, t, currency),
-            ],
-          ),
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _tabs(scheme),
+        const SizedBox(height: 16),
+        switch (_tab) {
+          1 => _packagesTab(scheme, currency),
+          2 => _paymentsTab(scheme, currency),
+          _ => _summaryTab(scheme, t, currency),
+        },
+      ],
     );
   }
 
-  /// Encabezado del bloque de cuadros: título + botón para minimizar/mostrar
-  /// (así la tabla gana toda la pantalla cuando se quiere trabajar con ella).
-  ///
-  /// Se usa en móvil y en escritorio. En escritorio el "Ganado" del extremo
-  /// se omite ([showEarned] = false): ese número ya va en la píldora de la
-  /// cabecera y repetirlo sería ruido.
-  Widget _kpiHeader(
-    ColorScheme scheme,
-    FinanceTotals t, {
-    bool showEarned = true,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+  // ---------------------------------------------------------------
+  // Pestañas
+  // ---------------------------------------------------------------
+
+  Widget _tabs(ColorScheme scheme) {
+    const tabs = <(String, IconData)>[
+      ('Resumen', Icons.dashboard_outlined),
+      ('Por paquete', Icons.inventory_2_outlined),
+      ('Pagos', Icons.handshake_outlined),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          Icon(
-            Icons.account_balance_wallet_outlined,
-            size: 16,
-            color: scheme.primary,
-          ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              'Resumen del dinero',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: scheme.onSurfaceVariant,
-              ),
+          for (var i = 0; i < tabs.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _TabPill(
+              key: ValueKey('finance-tab-$i'),
+              label: tabs[i].$1,
+              icon: tabs[i].$2,
+              selected: _tab == i,
+              onTap: () => setState(() => _tab = i),
             ),
-          ),
-          if (_kpisOpen && showEarned)
-            Text(
-              'Ganado ${hsMoney(t.disponible)}',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: FinanceColors.positive,
-              ),
-            ),
-          const SizedBox(width: 4),
-          Tooltip(
-            message: _kpisOpen
-                ? 'Minimizar los cuadros'
-                : 'Mostrar los cuadros',
-            child: IconButton(
-              visualDensity: VisualDensity.compact,
-              onPressed: () => setState(() => _kpisOpen = !_kpisOpen),
-              icon: AnimatedRotation(
-                turns: _kpisOpen ? 0 : .5,
-                duration: const Duration(milliseconds: 180),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------
+  // Resumen
+  // ---------------------------------------------------------------
+
+  Widget _summaryTab(ColorScheme scheme, FinanceTotals t, String currency) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _currentMoneyCard(scheme, t, currency),
+        const SizedBox(height: 14),
+        _moneyTable(scheme, t, currency),
+        const SizedBox(height: 14),
+        _chartCard(scheme),
+        const SizedBox(height: 14),
+        _recentMovementsCard(scheme, currency),
+      ],
+    );
+  }
+
+  /// La tarjeta grande del dinero que se tiene HOY, con la fórmula a la vista.
+  Widget _currentMoneyCard(
+    ColorScheme scheme,
+    FinanceTotals t,
+    String currency,
+  ) {
+    final positive = t.dineroActual >= 0;
+    final tint = positive ? FinanceColors.positive : FinanceColors.red;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [tint.withValues(alpha: .16), tint.withValues(alpha: .035)],
+        ),
+        border: Border.all(color: tint.withValues(alpha: .32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: tint.withValues(alpha: .16),
+                  borderRadius: BorderRadius.circular(11),
+                ),
                 child: Icon(
-                  Icons.keyboard_arrow_up_rounded,
-                  size: 20,
-                  color: scheme.onSurfaceVariant,
+                  Icons.account_balance_wallet_rounded,
+                  size: 18,
+                  color: tint,
                 ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'DINERO ACTUAL',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    letterSpacing: .8,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: tint.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'HOY',
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    letterSpacing: .5,
+                    fontWeight: FontWeight.w800,
+                    color: tint,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              hsMoney(t.dineroActual, currency),
+              style: TextStyle(
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -.5,
+                color: tint,
+              ),
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Abonado + abono externo − gastos − inversión − ahorro − pagos',
+            style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MiniStat(
+                label: 'Abonado',
+                value: hsMoney(t.ganancias, currency),
+                tint: FinanceColors.positive,
+                icon: Icons.payments_outlined,
+              ),
+              _MiniStat(
+                label: 'Por cobrar',
+                value: hsMoney(t.porCobrar, currency),
+                tint: FinanceColors.amber,
+                icon: Icons.hourglass_bottom_rounded,
+              ),
+              _MiniStat(
+                label: 'Pagos a personas',
+                value: hsMoney(t.pagos, currency),
+                tint: _kindColor('pago'),
+                icon: Icons.handshake_outlined,
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  /// Columna lateral (escritorio): la gráfica por mes y el ahorro.
-  Widget _sideColumn(ColorScheme scheme, FinanceTotals t, String currency) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _chartCard(scheme),
-          const SizedBox(height: 14),
-          _savingsCard(scheme, t, currency),
-        ],
+  /// La TABLA del movimiento del dinero: cada concepto con su monto y una
+  /// barra proporcional (dinámica, animada al abrir la vista).
+  Widget _moneyTable(ColorScheme scheme, FinanceTotals t, String currency) {
+    final rows = <_MoneyRow>[
+      _MoneyRow(
+        label: 'Abonado',
+        note: 'Cobrado a los clientes',
+        amount: t.ganancias,
+        icon: _kindIcon('abono'),
+        tint: FinanceColors.positive,
+      ),
+      _MoneyRow(
+        label: 'Abono externo',
+        note: 'Dinero extra que entra',
+        amount: t.abonoExterno,
+        icon: _kindIcon('abono_externo'),
+        tint: FinanceColors.blue,
+      ),
+      _MoneyRow(
+        label: 'Gastos',
+        note: 'Todos los gastos de la empresa',
+        amount: t.gastos,
+        icon: _kindIcon('gasto'),
+        tint: FinanceColors.red,
+      ),
+      _MoneyRow(
+        label: 'Inversión',
+        note: 'Todas las inversiones de la empresa',
+        amount: t.inversiones,
+        icon: _kindIcon('inversion'),
+        tint: FinanceColors.investment,
+      ),
+      _MoneyRow(
+        label: 'Ahorro',
+        note: 'Lo que se tiene apartado',
+        amount: t.ahorro,
+        icon: _kindIcon('ahorro'),
+        tint: FinanceColors.teal,
+      ),
+      _MoneyRow(
+        label: 'Pagos',
+        note: 'Pagado a colaboradores y empleados',
+        amount: t.pagos,
+        icon: _kindIcon('pago'),
+        tint: _kindColor('pago'),
+        onTap: () => setState(() => _tab = 2),
+      ),
+      _MoneyRow(
+        label: 'Por cobrar',
+        note: 'Falta por cobrar de los paquetes',
+        amount: t.porCobrar,
+        icon: Icons.hourglass_bottom_rounded,
+        tint: FinanceColors.amber,
+      ),
+    ];
+    num top = 0;
+    for (final r in rows) {
+      if (r.amount.abs() > top) top = r.amount.abs();
+    }
+    if (top <= 0) top = 1;
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.table_rows_rounded, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Movimiento del dinero',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  'Toca Pagos para el detalle',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final r in rows)
+              _MoneyBarRow(
+                row: r,
+                currency: currency,
+                share: r.amount.abs() / top,
+              ),
+            Divider(
+              height: 18,
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
+            Row(
+              children: [
+                Icon(
+                  Icons.account_balance_wallet_rounded,
+                  size: 17,
+                  color: t.dineroActual >= 0
+                      ? FinanceColors.positive
+                      : FinanceColors.red,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'DINERO ACTUAL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      letterSpacing: .6,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  hsMoney(t.dineroActual, currency),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: t.dineroActual >= 0
+                        ? FinanceColors.positive
+                        : FinanceColors.red,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _chartCard(ColorScheme scheme) => Card(
     child: Padding(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -556,7 +563,7 @@ class _FinancePageState extends State<FinancePage> {
             ],
           ),
           const SizedBox(height: 12),
-          FinanceMonthBars(months: _data.months, height: 120),
+          FinanceMonthBars(months: _data.months, height: 130),
           const SizedBox(height: 12),
           const FinanceLegend(),
         ],
@@ -564,457 +571,265 @@ class _FinancePageState extends State<FinancePage> {
     ),
   );
 
-  /// Tarjeta del AHORRO: su total y el botón para apartar más.
-  /// En pantallas angostas el botón baja a su propia línea: así el monto no
-  /// se queda con 100 px y termina partido en dos renglones.
-  Widget _savingsCard(ColorScheme scheme, FinanceTotals t, String currency) {
-    const teal = FinanceColors.teal;
-    final conAhorro = _data.packages.where((p) => p.ahorro > 0).length;
-    final texts = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Ahorro apartado',
-          style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
-        ),
-        Text(
-          hsMoney(t.ahorro, currency),
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: teal,
-          ),
-        ),
-        Text(
-          conAhorro == 1 ? 'En 1 paquete' : 'En $conAhorro paquetes',
-          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-        ),
-      ],
-    );
-    final button = _canSave
-        ? FilledButton.tonalIcon(
-            onPressed: () => _addMovement(kind: 'ahorro'),
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('Abonar'),
-          )
-        : null;
+  Widget _recentMovementsCard(ColorScheme scheme, String currency) {
+    final moves = _data.movements.take(6).toList(growable: false);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: LayoutBuilder(
-          builder: (context, box) {
-            final header = Row(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
               children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: teal.withValues(alpha: .13),
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                  child: const Icon(
-                    Icons.savings_rounded,
-                    color: teal,
-                    size: 20,
-                  ),
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 18,
+                  color: scheme.primary,
                 ),
-                const SizedBox(width: 12),
-                Expanded(child: texts),
-              ],
-            );
-            if (button != null && box.maxWidth < 480) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [header, const SizedBox(height: 12), button],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: header),
-                if (button != null) ...[const SizedBox(width: 12), button],
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------
-  // Tabla
-  // ---------------------------------------------------------------
-
-  /// La tarjeta de la tabla. [inline] = sin lista propia (la usa la vista
-  /// angosta, que mete todo en una sola zona con scroll).
-  Widget _tableCard(
-    ColorScheme scheme,
-    String currency, {
-    bool inline = false,
-  }) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final wide = box.maxWidth >= 620;
-          final head = <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-              child: HsSearchFilterBar(
-                hint: 'Buscar paquete, cliente o movimiento…',
-                initial: _query,
-                onChanged: (v) => setState(() => _query = v),
-                groups: _filterGroups,
-                selected: {'view': _viewFilter},
-                onApply: (filters) => setState(
-                  () => _viewFilter = filters['view'] ?? '',
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.table_chart_outlined,
-                    size: 18,
-                    color: scheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Dinero por paquete y movimiento',
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-              child: Text(
-                'Toca una fila para desglosarla. El "Ganado" de cada paquete '
-                'es su disponible.',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
-            ),
-            Divider(height: 1, color: Theme.of(context).dividerColor),
-            _headRow(scheme, wide),
-            Divider(height: 1, color: Theme.of(context).dividerColor),
-          ];
-          final rows = _tableRows(scheme, wide, currency);
-          if (inline) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [...head, ...rows],
-            );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ...head,
-              // Scroll NO vago: se construyen todas las filas aunque la
-              // tarjeta tenga poco alto (así el desglose y las acciones de
-              // cada fila están listos al alcanzarlas con el scroll).
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: rows,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  List<Widget> _tableRows(ColorScheme scheme, bool wide, String currency) {
-    // Sin paginado: la tabla muestra TODO lo que pasa la búsqueda y el filtro
-    // (los totales de arriba los calcula el backend sobre el catálogo entero).
-    final visible = _visiblePackages;
-    final kinds = _visibleKinds;
-    return [
-      if (_showPackages) ...[
-        _groupHead(scheme, 'PAQUETES', Icons.inventory_2_outlined),
-        if (visible.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: Text(
-              _data.packages.isEmpty
-                  ? 'Todavía no hay paquetes activos.'
-                  : 'Ningún paquete coincide con la búsqueda.',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            ),
-          )
-        else ...[
-          for (final p in visible) _packageRow(scheme, p, wide, currency),
-        ],
-        const SizedBox(height: 6),
-      ],
-      if (_showMovements) ...[
-        _groupHead(scheme, 'MOVIMIENTOS', Icons.receipt_long_outlined),
-        // El dinero del negocio (sin paquete) va PRIMERO y aparte: es el que
-        // se registra con "Agregar movimiento" sin elegir paquete.
-        if ((_data.generalMovements.isNotEmpty || !_data.general.isEmpty) &&
-            (_query.trim().isEmpty ||
-                'general sin paquete'.contains(_query.trim().toLowerCase())))
-          _generalRow(scheme, wide, currency),
-        for (final kind in kinds) _kindRow(scheme, kind, wide, currency),
-        if (kinds.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: Text(
-              'Ningún tipo de movimiento coincide con la búsqueda.',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            ),
-          ),
-      ],
-      const SizedBox(height: 8),
-    ];
-  }
-
-  /// Fila de los movimientos GENERALES (sin paquete): el dinero del negocio
-  /// que no se atribuye a ningún paquete del cliente.
-  Widget _generalRow(ColorScheme scheme, bool wide, String currency) {
-    const key = 'kind:$_kGeneralRow';
-    final open = _open.contains(key);
-    final g = _data.general;
-    final moves = _data.generalMovements;
-    final neto = g.neto;
-    final color = neto < 0 ? FinanceColors.red : FinanceColors.positive;
-    return Column(
-      children: [
-        InkWell(
-          onTap: () => _toggle(key),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 7, 0, 7),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: wide ? 5 : 7,
-                  child: Row(
-                    children: [
-                      AnimatedRotation(
-                        turns: open ? .25 : 0,
-                        duration: const Duration(milliseconds: 180),
-                        child: Icon(
-                          Icons.chevron_right_rounded,
-                          size: 18,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.storefront_outlined,
-                        size: 16,
-                        color: FinanceColors.blue,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'General (sin paquete)',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: wide ? 12.5 : 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              moves.isEmpty
-                                  ? 'Movimientos del negocio'
-                                  : '${moves.length} movimiento'
-                                        '${moves.length == 1 ? '' : 's'} del negocio',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _amountCell(
-                  neto < 0
-                      ? '−${hsMoney(neto.abs(), currency)}'
-                      : hsMoney(neto, currency),
-                  color,
-                ),
-                if (wide)
-                  _amountCell(
-                    g.ahorro > 0 ? hsMoney(g.ahorro, currency) : '—',
-                    g.ahorro > 0 ? FinanceColors.teal : scheme.onSurfaceVariant,
-                  ),
-                if (wide)
-                  _amountCell(
-                    g.salidas > 0 ? hsMoney(g.salidas, currency) : '—',
-                    g.salidas > 0 ? FinanceColors.red : scheme.onSurfaceVariant,
-                  ),
-              ],
-            ),
-          ),
-        ),
-        if (open)
-          Container(
-            width: double.infinity,
-            color: scheme.surfaceContainerHighest.withValues(alpha: .22),
-            padding: const EdgeInsets.fromLTRB(34, 10, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _pillsRow([
-                  _DetailPill('Gastos', g.gastos, FinanceColors.red, currency),
-                  _DetailPill(
-                    'Inversión',
-                    g.inversiones,
-                    FinanceColors.investment,
-                    currency,
-                  ),
-                  _DetailPill('Ahorro', g.ahorro, FinanceColors.teal, currency),
-                  _DetailPill(
-                    'Abono externo',
-                    g.abonoExterno,
-                    FinanceColors.blue,
-                    currency,
-                  ),
-                ]),
-                if (_canSave) ...[
-                  const SizedBox(height: 10),
-                  _buttonsRow([
-                    FilledButton.icon(
-                      onPressed: () => _addMovement(kind: 'gasto'),
-                      icon: const Icon(Icons.add, size: 16),
-                      label: const Text('Agregar movimiento general'),
-                    ),
-                  ]),
-                ],
-                const SizedBox(height: 10),
-                if (moves.isEmpty)
-                  Text(
-                    'Sin movimientos generales registrados.',
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Movimientos recientes',
                     style: TextStyle(
-                      fontSize: 11.5,
-                      color: scheme.onSurfaceVariant,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
                     ),
-                  )
-                else
-                  for (final m in moves.take(8))
-                    _movementLine(scheme, m, currency),
+                  ),
+                ),
               ],
             ),
-          ),
-        Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: .35)),
-      ],
-    );
-  }
-
-  /// Cabecera de columnas. Los anchos (flex) coinciden con [_packageRow] y
-  /// [_kindRow]: en la vista ANGOSTA solo hay dos columnas (concepto y
-  /// monto), así que las salidas viajan dentro del renglón y todo se alinea.
-  Widget _headRow(ColorScheme scheme, bool wide) {
-    final conceptFlex = wide ? 5 : 7;
-    Widget head(String label, int flex) => Expanded(
-      flex: flex,
-      child: Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: Text(
-          label.toUpperCase(),
-          textAlign: TextAlign.right,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 9.5,
-            letterSpacing: .4,
-            fontWeight: FontWeight.w800,
-            color: scheme.onSurfaceVariant,
-          ),
+            const SizedBox(height: 6),
+            if (moves.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Todavía no hay movimientos registrados.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else
+              for (final m in moves) _movementLine(scheme, m, currency),
+          ],
         ),
       ),
     );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 7, 0, 7),
-      child: Row(
-        children: [
-          Expanded(
-            flex: conceptFlex,
-            child: Text(
-              'CONCEPTO',
-              style: TextStyle(
-                fontSize: 9.5,
-                letterSpacing: .4,
-                fontWeight: FontWeight.w800,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          head('Monto', 3),
-          if (wide) head('Ahorro', 3),
-          if (wide) head('Salidas', 3),
-        ],
-      ),
-    );
   }
 
-  /// Separador de grupo dentro de la tabla.
-  Widget _groupHead(ColorScheme scheme, String label, IconData icon) {
+  /// Una línea de movimiento: concepto, destinatario/paquete, fecha y monto.
+  Widget _movementLine(ColorScheme scheme, FinanceMovement m, String currency) {
+    final when = hsParseDate(m.created);
+    final where = m.packageName.isEmpty
+        ? m.clientName
+        : (m.clientName.isEmpty
+              ? m.packageName
+              : '${m.packageName} · ${m.clientName}');
+    final detail = [
+      if (m.kind == 'pago' && m.userName.trim().isNotEmpty)
+        '→ ${m.userName.trim()}',
+      if (m.description.trim().isNotEmpty) m.description.trim(),
+      if (where.isNotEmpty) where,
+      if (when != null) hsShortDate(when),
+    ].join('  ·  ');
+    final color = _kindColor(m.kind);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(icon, size: 13, color: scheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              letterSpacing: .7,
-              fontWeight: FontWeight.w800,
-              color: scheme.primary,
+          Icon(_kindIcon(m.kind), size: 13, color: color),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              detail.isEmpty ? _kindLabel(m.kind) : detail,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
             ),
           ),
           const SizedBox(width: 8),
-          Expanded(
-            child: Divider(color: scheme.outlineVariant.withValues(alpha: .5)),
+          Text(
+            hsMoney(m.amount, currency),
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// Fila de UN paquete (se expande para ver su desglose).
-  Widget _packageRow(
+  // ---------------------------------------------------------------
+  // Por paquete
+  // ---------------------------------------------------------------
+
+  Widget _packagesTab(ColorScheme scheme, String currency) {
+    final visible = _visiblePackages;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                onChanged: (v) => setState(() => _packageQuery = v),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  hintText: 'Buscar paquete o cliente…',
+                  prefixIcon: Icon(Icons.search, size: 20),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_data.packages.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: EmptyState(
+                icon: Icons.inventory_2_outlined,
+                title: 'Sin paquetes con movimiento',
+                message:
+                    'Aquí aparecen los paquetes con dinero o movimientos. '
+                    'Los paquetes gratis sin abonos ni gastos se omiten.',
+              ),
+            ),
+          )
+        else if (visible.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Ningún paquete coincide con la búsqueda.',
+                style: TextStyle(color: scheme.onSurfaceVariant),
+              ),
+            ),
+          )
+        else
+          LayoutBuilder(
+            builder: (context, box) => box.maxWidth >= 900
+                ? _packageTable(scheme, visible, currency)
+                : _packageCards(scheme, visible, currency),
+          ),
+      ],
+    );
+  }
+
+  String _packageKey(int id) => 'pkg:$id';
+
+  Widget _packageTable(
     ColorScheme scheme,
-    FinancePackage p,
-    bool wide,
+    List<FinancePackage> rows,
     String currency,
   ) {
-    final key = 'pkg:${p.id}';
+    const conceptW = 230.0;
+    const cellW = 96.0;
+    // Ancho EXACTO de la tabla: dentro del scroll horizontal el alto es
+    // intrínseco y el ancho debe ser acotado (si no, `double.infinity` del
+    // desglose no tendría contra qué medirse).
+    const tableW = 14 + conceptW + cellW * 8 + 14;
+    Widget head(String label) => SizedBox(
+      width: cellW,
+      child: Text(
+        label,
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 9,
+          letterSpacing: .3,
+          fontWeight: FontWeight.w800,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+    );
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: tableW,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                color: scheme.surfaceContainerHighest.withValues(alpha: .3),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: conceptW,
+                      child: Text(
+                        'PAQUETE',
+                        style: TextStyle(
+                          fontSize: 9,
+                          letterSpacing: .4,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    head('ABONADO'),
+                    head('GASTOS'),
+                    head('INVERSIÓN'),
+                    head('AHORRO'),
+                    head('POR COBRAR'),
+                    head('EXTERNO'),
+                    head('PAGOS'),
+                    head('ACTUAL'),
+                  ],
+                ),
+              ),
+              for (final p in rows) _packageTableRow(scheme, p, currency),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _packageTableRow(
+    ColorScheme scheme,
+    FinancePackage p,
+    String currency,
+  ) {
+    const conceptW = 230.0;
+    const cellW = 96.0;
+    final key = _packageKey(p.id);
     final open = _open.contains(key);
+    Widget cell(String text, Color color) => SizedBox(
+      width: cellW,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerRight,
+          child: Text(
+            text,
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
     return Column(
       children: [
         InkWell(
           onTap: () => _toggle(key),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 7, 0, 7),
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
             child: Row(
               children: [
-                Expanded(
-                  flex: wide ? 5 : 7,
+                SizedBox(
+                  width: conceptW,
                   child: Row(
                     children: [
                       AnimatedRotation(
@@ -1022,17 +837,17 @@ class _FinancePageState extends State<FinancePage> {
                         duration: const Duration(milliseconds: 180),
                         child: Icon(
                           Icons.chevron_right_rounded,
-                          size: 18,
+                          size: 17,
                           color: scheme.onSurfaceVariant,
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       Icon(
                         Icons.inventory_2_outlined,
-                        size: 16,
+                        size: 15,
                         color: scheme.primary,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 7),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1041,8 +856,8 @@ class _FinancePageState extends State<FinancePage> {
                               p.name.isEmpty ? 'Paquete' : p.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: wide ? 12.5 : 12,
+                              style: const TextStyle(
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -1051,7 +866,7 @@ class _FinancePageState extends State<FinancePage> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: 10,
                                 color: scheme.onSurfaceVariant,
                               ),
                             ),
@@ -1061,15 +876,44 @@ class _FinancePageState extends State<FinancePage> {
                     ],
                   ),
                 ),
-                // GANADO = el disponible del paquete.
-                _amountCell(
-                  hsMoney(p.disponible, currency),
-                  FinanceColors.positive,
+                cell(
+                  hsMoney(p.paid, currency),
+                  p.paid > 0 ? FinanceColors.positive : scheme.onSurfaceVariant,
                 ),
-                if (wide)
-                  _amountCell(hsMoney(p.ahorro, currency), FinanceColors.teal),
-                if (wide)
-                  _amountCell(hsMoney(p.salidas, currency), FinanceColors.red),
+                cell(
+                  hsMoney(p.gastos, currency),
+                  p.gastos > 0 ? FinanceColors.red : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.inversiones, currency),
+                  p.inversiones > 0
+                      ? FinanceColors.investment
+                      : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.ahorro, currency),
+                  p.ahorro > 0 ? FinanceColors.teal : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.balance, currency),
+                  p.balance > 0 ? FinanceColors.amber : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.abonoExterno, currency),
+                  p.abonoExterno > 0
+                      ? FinanceColors.blue
+                      : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.pagos, currency),
+                  p.pagos > 0 ? _kindColor('pago') : scheme.onSurfaceVariant,
+                ),
+                cell(
+                  hsMoney(p.disponible, currency),
+                  p.disponible >= 0
+                      ? FinanceColors.positive
+                      : FinanceColors.red,
+                ),
               ],
             ),
           ),
@@ -1078,7 +922,7 @@ class _FinancePageState extends State<FinancePage> {
           Container(
             width: double.infinity,
             color: scheme.surfaceContainerHighest.withValues(alpha: .22),
-            padding: const EdgeInsets.fromLTRB(34, 10, 14, 14),
+            padding: const EdgeInsets.fromLTRB(28, 10, 14, 14),
             child: _packageDetail(scheme, p, currency),
           ),
         Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: .35)),
@@ -1086,66 +930,228 @@ class _FinancePageState extends State<FinancePage> {
     );
   }
 
-  /// Desglose de UN paquete: su dinero por concepto, sus movimientos y sus
-  /// acciones.
+  Widget _packageCards(
+    ColorScheme scheme,
+    List<FinancePackage> rows,
+    String currency,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final p in rows) ...[
+          _packageCard(scheme, p, currency),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
+  Widget _packageCard(ColorScheme scheme, FinancePackage p, String currency) {
+    final key = _packageKey(p.id);
+    final open = _open.contains(key);
+    final tint = p.disponible >= 0 ? FinanceColors.positive : FinanceColors.red;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => _toggle(key),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: .12),
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                        child: Icon(
+                          Icons.inventory_2_outlined,
+                          size: 18,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              p.name.isEmpty ? 'Paquete' : p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              p.clientName.isEmpty ? '—' : p.clientName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            hsMoney(p.disponible, currency),
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: tint,
+                            ),
+                          ),
+                          Text(
+                            'Actual',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      AnimatedRotation(
+                        turns: open ? .25 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _MiniStat(
+                        label: 'Abonado',
+                        value: hsMoney(p.paid, currency),
+                        tint: FinanceColors.positive,
+                        icon: Icons.payments_outlined,
+                      ),
+                      _MiniStat(
+                        label: 'Gastos',
+                        value: hsMoney(p.gastos, currency),
+                        tint: FinanceColors.red,
+                        icon: Icons.trending_down,
+                      ),
+                      _MiniStat(
+                        label: 'Inversión',
+                        value: hsMoney(p.inversiones, currency),
+                        tint: FinanceColors.investment,
+                        icon: Icons.trending_up,
+                      ),
+                      _MiniStat(
+                        label: 'Ahorro',
+                        value: hsMoney(p.ahorro, currency),
+                        tint: FinanceColors.teal,
+                        icon: Icons.savings_rounded,
+                      ),
+                      _MiniStat(
+                        label: 'Por cobrar',
+                        value: hsMoney(p.balance, currency),
+                        tint: FinanceColors.amber,
+                        icon: Icons.hourglass_bottom_rounded,
+                      ),
+                      _MiniStat(
+                        label: 'Externo',
+                        value: hsMoney(p.abonoExterno, currency),
+                        tint: FinanceColors.blue,
+                        icon: Icons.account_balance_wallet_outlined,
+                      ),
+                      if (p.pagos > 0)
+                        _MiniStat(
+                          label: 'Pagos',
+                          value: hsMoney(p.pagos, currency),
+                          tint: _kindColor('pago'),
+                          icon: Icons.handshake_outlined,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (open)
+            Container(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .22),
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+              child: _packageDetail(scheme, p, currency),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _packageDetail(ColorScheme scheme, FinancePackage p, String currency) {
     final moves = _data.movementsOf(p.id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Los detalles van en UNA fila que se desliza: en el teléfono ya no
-        // roban media pantalla en tres renglones.
-        _pillsRow([
-          _DetailPill('Cobrado', p.paid, FinanceColors.positive, currency),
-          _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
-          _DetailPill(
-            'Ganado (disponible)',
-            p.disponible,
-            FinanceColors.positive,
-            currency,
-          ),
-          _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
-          _DetailPill('Gastos', p.gastos, FinanceColors.red, currency),
-          _DetailPill(
-            'Inversión',
-            p.inversiones,
-            FinanceColors.investment,
-            currency,
-          ),
-          _DetailPill(
-            'Abono externo',
-            p.abonoExterno,
-            FinanceColors.blue,
-            currency,
-          ),
-          if (p.pagos > 0)
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _DetailPill('Abonado', p.paid, FinanceColors.positive, currency),
+            _DetailPill('Por cobrar', p.balance, FinanceColors.amber, currency),
+            _DetailPill('Gastos', p.gastos, FinanceColors.red, currency),
             _DetailPill(
-              'Pagos (solo registro)',
-              p.pagos,
-              FinanceColors.amber,
+              'Inversión',
+              p.inversiones,
+              FinanceColors.investment,
               currency,
             ),
-          _DetailPill(
-            'Ganancia estimada',
-            p.gananciaEstimada,
-            FinanceColors.teal,
-            currency,
-          ),
-        ]),
+            _DetailPill('Ahorro', p.ahorro, FinanceColors.teal, currency),
+            _DetailPill(
+              'Abono externo',
+              p.abonoExterno,
+              FinanceColors.blue,
+              currency,
+            ),
+            if (p.pagos > 0)
+              _DetailPill('Pagos', p.pagos, _kindColor('pago'), currency),
+            _DetailPill(
+              'Dinero actual',
+              p.disponible,
+              p.disponible >= 0 ? FinanceColors.positive : FinanceColors.red,
+              currency,
+            ),
+          ],
+        ),
         if (_canSave) ...[
-          const SizedBox(height: 12),
-          _buttonsRow([
-            FilledButton.tonalIcon(
-              onPressed: () => _addMovement(kind: 'ahorro', package: p),
-              icon: const Icon(Icons.savings_outlined, size: 16),
-              label: const Text('Abonar al ahorro'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _addMovement(kind: 'gasto', package: p),
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Agregar movimiento'),
-            ),
-          ]),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: () => _addMovement(kind: 'ahorro', package: p),
+                icon: const Icon(Icons.savings_outlined, size: 16),
+                label: const Text('Abonar al ahorro'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _addMovement(kind: 'gasto', package: p),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Agregar movimiento'),
+              ),
+            ],
+          ),
         ],
         const SizedBox(height: 10),
         if (moves.isEmpty)
@@ -1164,12 +1170,12 @@ class _FinancePageState extends State<FinancePage> {
             ),
           ),
           const SizedBox(height: 4),
-          for (final m in moves.take(8)) _movementLine(scheme, m, currency),
-          if (moves.length > 8)
+          for (final m in moves.take(6)) _movementLine(scheme, m, currency),
+          if (moves.length > 6)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                'y ${moves.length - 8} más…',
+                'y ${moves.length - 6} más…',
                 style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
             ),
@@ -1178,129 +1184,228 @@ class _FinancePageState extends State<FinancePage> {
     );
   }
 
-  /// Fila de UN tipo de movimiento. Al expandir se desglosa según su tipo:
-  /// cada registro con su paquete, su fecha y su monto.
-  Widget _kindRow(ColorScheme scheme, String kind, bool wide, String currency) {
-    final key = 'kind:$kind';
-    final open = _open.contains(key);
-    final moves = _data.movementsOfKind(kind);
-    final total = _kindTotal(kind);
-    final color = _kindColor(kind);
-    // Gastos e inversión son salidas; el ahorro se aparta; los abonos (y los
-    // externos) son dinero que entra.
-    final esSalida = kind == 'gasto' || kind == 'inversion';
-    final monto = total > 0
-        ? (esSalida ? '−${hsMoney(total, currency)}' : hsMoney(total, currency))
-        : '—';
+  // ---------------------------------------------------------------
+  // Pagos a personas
+  // ---------------------------------------------------------------
+
+  Widget _paymentsTab(ColorScheme scheme, String currency) {
+    final payees = _data.payees;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InkWell(
-          onTap: () => _toggle(key),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 7, 0, 7),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: wide ? 5 : 7,
-                  child: Row(
-                    children: [
-                      AnimatedRotation(
-                        turns: open ? .25 : 0,
-                        duration: const Duration(milliseconds: 180),
-                        child: Icon(
-                          Icons.chevron_right_rounded,
-                          size: 18,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Icon(_kindIcon(kind), size: 16, color: color),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _kindLabel(kind),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: wide ? 12.5 : 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _amountCell(monto, total > 0 ? color : scheme.onSurfaceVariant),
-                if (wide)
-                  _amountCell(
-                    kind == 'ahorro' && total > 0
-                        ? hsMoney(total, currency)
-                        : '—',
-                    kind == 'ahorro' && total > 0
-                        ? FinanceColors.teal
-                        : scheme.onSurfaceVariant,
-                  ),
-                if (wide)
-                  _amountCell(
-                    esSalida && total > 0 ? hsMoney(total, currency) : '—',
-                    esSalida && total > 0 ? color : scheme.onSurfaceVariant,
-                  ),
-              ],
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: _kindColor('pago').withValues(alpha: .10),
+            border: Border.all(
+              color: _kindColor('pago').withValues(alpha: .30),
             ),
           ),
-        ),
-        if (open)
-          Container(
-            width: double.infinity,
-            color: scheme.surfaceContainerHighest.withValues(alpha: .22),
-            padding: const EdgeInsets.fromLTRB(34, 10, 14, 14),
-            child: moves.isEmpty
-                ? Text(
-                    'Sin registros de "${_kindLabel(kind)}".',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: scheme.onSurfaceVariant,
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _kindColor('pago').withValues(alpha: .18),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.handshake_outlined,
+                  size: 20,
+                  color: _kindColor('pago'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'TOTAL PAGADO A PERSONAS',
+                      style: TextStyle(
+                        fontSize: 10,
+                        letterSpacing: .6,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final m in moves.take(12))
-                        _movementLine(scheme, m, currency),
-                      if (moves.length > 12)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'y ${moves.length - 12} más…',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        hsMoney(_data.totalPagos, currency),
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: _kindColor('pago'),
                         ),
-                    ],
-                  ),
+                      ),
+                    ),
+                    Text(
+                      payees.length == 1
+                          ? 'En 1 persona'
+                          : 'En ${payees.length} personas',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        Divider(height: 1, color: scheme.outlineVariant.withValues(alpha: .35)),
+        ),
+        const SizedBox(height: 14),
+        if (payees.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: EmptyState(
+                icon: Icons.handshake_outlined,
+                title: 'Sin pagos a personas',
+                message:
+                    'Cuando se reparta un pago a colaboradores o empleados '
+                    'desde el paquete de un cliente, aquí verás a cada quien '
+                    'con su total.',
+              ),
+            ),
+          )
+        else
+          for (final p in payees) ...[
+            _payeeCard(scheme, p, currency),
+            const SizedBox(height: 10),
+          ],
       ],
     );
   }
 
-  /// Total de un tipo (los abonos salen de `ganancias`).
-  num _kindTotal(String kind) {
-    final t = _data.totals;
-    return switch (kind) {
-      'abono' => t.ganancias,
-      'ahorro' => t.ahorro,
-      'inversion' => t.inversiones,
-      'abono_externo' => t.abonoExterno,
-      'pago' => t.pagos,
-      _ => t.gastos,
-    };
+  Widget _payeeCard(ColorScheme scheme, FinancePayee p, String currency) {
+    final key = 'payee:${p.userId}';
+    final open = _open.contains(key);
+    final moves = _data.paymentsOf(p.userId);
+    final tint = _kindColor('pago');
+    final when = hsParseDate(p.lastPaid);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: moves.isEmpty ? null : () => _toggle(key),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: tint.withValues(alpha: .16),
+                    child: Text(
+                      _initials(p.label),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: tint,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          p.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          [
+                            if (p.roleName.trim().isNotEmpty) p.roleName.trim(),
+                            '${p.count} pago${p.count == 1 ? '' : 's'}',
+                            '${p.packageCount} paquete'
+                                '${p.packageCount == 1 ? '' : 's'}',
+                            if (when != null) 'último ${hsShortDate(when)}',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    hsMoney(p.total, currency),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: tint,
+                    ),
+                  ),
+                  if (moves.isNotEmpty)
+                    AnimatedRotation(
+                      turns: open ? .25 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (open && moves.isNotEmpty)
+            Container(
+              width: double.infinity,
+              color: scheme.surfaceContainerHighest.withValues(alpha: .22),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'PAGOS RECIBIDOS',
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: .5,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final m in moves.take(12))
+                    _paymentLine(scheme, m, currency),
+                  if (moves.length > 12)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'y ${moves.length - 12} más…',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
-  /// Una línea de movimiento: concepto, paquete/cliente, fecha y monto.
-  Widget _movementLine(ColorScheme scheme, FinanceMovement m, String currency) {
+  Widget _paymentLine(ColorScheme scheme, FinancePayment m, String currency) {
     final when = hsParseDate(m.created);
     final where = m.packageName.isEmpty
         ? m.clientName
@@ -1308,59 +1413,37 @@ class _FinancePageState extends State<FinancePage> {
               ? m.packageName
               : '${m.packageName} · ${m.clientName}');
     final detail = [
-      if (m.userName.trim().isNotEmpty) '→ ${m.userName.trim()}',
-      if (m.description.trim().isNotEmpty) m.description.trim(),
       if (where.isNotEmpty) where,
+      if (m.description.trim().isNotEmpty) m.description.trim(),
       if (when != null) hsShortDate(when),
     ].join('  ·  ');
-    final color = _kindColor(m.kind);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(_kindIcon(m.kind), size: 13, color: color),
+          Icon(Icons.handshake_outlined, size: 13, color: _kindColor('pago')),
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              detail.isEmpty ? _kindLabel(m.kind) : detail,
+              detail.isEmpty ? 'Pago' : detail,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
             ),
           ),
+          const SizedBox(width: 8),
           Text(
             hsMoney(m.amount, currency),
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w800,
-              color: color,
+              color: _kindColor('pago'),
             ),
           ),
         ],
       ),
     );
   }
-
-  /// Celda de dinero alineada a la derecha (nunca desborda).
-  Widget _amountCell(String text, Color color) => Expanded(
-    flex: 3,
-    child: Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        alignment: Alignment.centerRight,
-        child: Text(
-          text,
-          maxLines: 1,
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w800,
-            color: color,
-          ),
-        ),
-      ),
-    ),
-  );
 
   Widget _errorCard(ColorScheme scheme) => Card(
     child: Padding(
@@ -1380,6 +1463,242 @@ class _FinancePageState extends State<FinancePage> {
       ),
     ),
   );
+}
+
+// ==================================================================
+// Piezas de la vista
+// ==================================================================
+
+/// Pestaña (píldora) del módulo.
+class _TabPill extends StatelessWidget {
+  const _TabPill({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final tint = selected ? scheme.primary : scheme.onSurfaceVariant;
+    return Material(
+      color: selected
+          ? scheme.primary.withValues(alpha: .12)
+          : scheme.surfaceContainerHighest.withValues(alpha: .35),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected
+                  ? scheme.primary.withValues(alpha: .45)
+                  : scheme.outlineVariant.withValues(alpha: .45),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: tint),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: tint,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Una fila de la tabla del dinero.
+class _MoneyRow {
+  const _MoneyRow({
+    required this.label,
+    required this.note,
+    required this.amount,
+    required this.icon,
+    required this.tint,
+    this.onTap,
+  });
+
+  final String label;
+  final String note;
+  final num amount;
+  final IconData icon;
+  final Color tint;
+  final VoidCallback? onTap;
+}
+
+/// Fila con su monto y una barra proporcional animada.
+class _MoneyBarRow extends StatelessWidget {
+  const _MoneyBarRow({
+    required this.row,
+    required this.currency,
+    required this.share,
+  });
+
+  final _MoneyRow row;
+  final String currency;
+  final double share;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(row.icon, size: 15, color: row.tint),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  row.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                hsMoney(row.amount, currency),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: row.tint,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  row.note,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 120,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    height: 5,
+                    color: scheme.surfaceContainerHighest.withValues(alpha: .7),
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: share.clamp(0.0, 1.0)),
+                      duration: const Duration(milliseconds: 520),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, v, _) => FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: v,
+                        heightFactor: 1,
+                        child: Container(color: row.tint),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (row.onTap == null) return content;
+    return InkWell(
+      onTap: row.onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: content,
+    );
+  }
+}
+
+/// Cuadro compacto de un dato (etiqueta + monto).
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({
+    required this.label,
+    required this.value,
+    required this.tint,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final Color tint;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: tint.withValues(alpha: .25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: tint),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              Text(
+                value,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: tint,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Píldora "Concepto monto" del desglose de un paquete.
@@ -1426,9 +1745,9 @@ class _DetailPill extends StatelessWidget {
 }
 
 // ==================================================================
-// Registrar un movimiento del paquete DESDE Finanzas
-// (ahorro / gasto / inversión / abono externo; el ahorro se puede capturar
-//  como cantidad o como PORCENTAJE del disponible del paquete)
+// Registrar un movimiento desde Finanzas
+// (gasto / inversión / ahorro / abono externo; el ahorro se puede capturar
+//  como cantidad o como PORCENTAJE del dinero actual)
 // ==================================================================
 
 class _FinanceMovementDialog extends StatefulWidget {
@@ -1437,7 +1756,7 @@ class _FinanceMovementDialog extends StatefulWidget {
     required this.currency,
     required this.totals,
     this.initial,
-    this.kind = 'ahorro',
+    this.kind = 'gasto',
   });
 
   final List<FinancePackage> packages;
@@ -1448,7 +1767,7 @@ class _FinanceMovementDialog extends StatefulWidget {
   final FinanceTotals totals;
   final FinancePackage? initial;
 
-  /// Tipo preseleccionado (`ahorro` por defecto).
+  /// Tipo preseleccionado.
   final String kind;
 
   @override
@@ -1456,8 +1775,7 @@ class _FinanceMovementDialog extends StatefulWidget {
 }
 
 class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
-  /// 0 = movimiento GENERAL (del negocio, sin paquete). Es el valor por
-  /// defecto: registrar un movimiento YA NO pide elegir un paquete.
+  /// 0 = movimiento GENERAL (del negocio, sin paquete).
   late int _packageId = widget.initial?.id ?? 0;
   late String _kind = widget.kind;
   String _mode = 'monto';
@@ -1479,9 +1797,9 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
   bool get _isSavings => _kind == 'ahorro';
   bool get _byPercent => _isSavings && _mode == 'porcentaje';
 
-  /// Base del ahorro en porcentaje: el disponible del paquete elegido o, si
-  /// el movimiento es general, el disponible del negocio.
-  num get _baseDisponible => _package?.disponible ?? widget.totals.disponible;
+  /// Base del ahorro en porcentaje: el dinero actual del paquete elegido o,
+  /// si el movimiento es general, el del negocio.
+  num get _baseDisponible => _package?.disponible ?? widget.totals.dineroActual;
   bool get _baseIsGeneral => _package == null;
 
   num get _percentValue =>
@@ -1562,7 +1880,7 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
     final amount = _resolved;
     return FormDialog(
       icon: _kindIcon(_kind),
-      title: _isSavings ? 'Abonar al ahorro' : 'Agregar movimiento',
+      title: _isSavings ? 'Abonar al ahorro' : 'Registrar movimiento',
       subtitle: _baseIsGeneral
           ? 'Movimiento GENERAL del negocio (no toca ningún paquete)'
           : 'Se registra en el paquete elegido y actualiza sus totales',
@@ -1573,8 +1891,6 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
       children: [
-        // El paquete es OPCIONAL y viene en "General": para registrar un
-        // gasto del negocio no hay que elegir ningún paquete.
         FormSection(
           label: 'Paquete (opcional)',
           child: InputDecorator(
@@ -1623,23 +1939,22 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final kind in _kKindRows)
-                if (kind != 'abono')
-                  ChoiceChip(
-                    label: Text(_kindLabel(kind)),
-                    avatar: Icon(
-                      _kindIcon(kind),
-                      size: 15,
-                      color: _kindColor(kind),
-                    ),
-                    selected: _kind == kind,
-                    onSelected: _saving
-                        ? null
-                        : (_) => setState(() {
-                            _kind = kind;
-                            if (!_isSavings) _mode = 'monto';
-                          }),
+              for (final kind in _kEditableKinds)
+                ChoiceChip(
+                  label: Text(_kindLabel(kind)),
+                  avatar: Icon(
+                    _kindIcon(kind),
+                    size: 15,
+                    color: _kindColor(kind),
                   ),
+                  selected: _kind == kind,
+                  onSelected: _saving
+                      ? null
+                      : (_) => setState(() {
+                          _kind = kind;
+                          if (!_isSavings) _mode = 'monto';
+                        }),
+                ),
             ],
           ),
         ),
@@ -1656,7 +1971,7 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
               Icon(
                 _baseIsGeneral
                     ? Icons.storefront_outlined
-                    : Icons.savings_outlined,
+                    : Icons.account_balance_wallet_outlined,
                 size: 16,
                 color: color,
               ),
@@ -1664,10 +1979,9 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
               Expanded(
                 child: Text(
                   _baseIsGeneral
-                      ? 'Disponible general del negocio (cobrado - gastado '
-                            '- ahorro + abono externo)'
-                      : 'Disponible del paquete (abonado - gastado - ahorro + '
-                            'abono externo)',
+                      ? 'Dinero actual del negocio (abonado + externo − gastos '
+                            '− inversión − ahorro − pagos)'
+                      : 'Dinero actual del paquete',
                   style: TextStyle(
                     fontSize: 11.5,
                     color: scheme.onSurfaceVariant,
@@ -1720,8 +2034,8 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
         if (_byPercent) ...[
           FormSection(
             label: _baseIsGeneral
-                ? 'Porcentaje del disponible general'
-                : 'Porcentaje del disponible',
+                ? 'Porcentaje del dinero actual general'
+                : 'Porcentaje del dinero actual',
             child: TextField(
               controller: _percent,
               autofocus: true,
@@ -1794,264 +2108,12 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Descripción',
-              hintText: 'Ej. Ahorro del mes, renta de equipo…',
+              hintText: 'Ej. Renta del estudio, pago de proveedor…',
               alignLabelWithHint: true,
             ),
           ),
         ),
       ],
-    );
-  }
-}
-
-// ==================================================================
-// Resumen del dinero: cuadros AGRUPADOS
-// ==================================================================
-// Antes los 10 cuadros eran una rejilla pareja y quedaba todo junto: no se
-// distinguía lo que GANAS de lo que SALE. Ahora van en cuatro tarjetas
-// (Lo que ganas · Cobros · Salidas · Apartado y pagos), cada una con su
-// título y sus cuadros dentro.
-//
-//  * Ventana ancha: los cuatro grupos en UNA fila, cada uno con sus cuadros
-//    apilados (el número se lee de un vistazo).
-//  * Ventana angosta / teléfono: los grupos se apilan en una columna.
-//
-// El diseño cambia por ANCHO, nunca por alto: así el bloque tiene siempre la
-// misma altura y no vuelve a comerse el espacio de la tabla de abajo.
-// ==================================================================
-
-/// Un grupo de cuadros (título + sus totales).
-class _MoneyGroup {
-  const _MoneyGroup(this.title, this.icon, this.tint, this.kpis);
-
-  final String title;
-  final IconData icon;
-  final Color tint;
-  final List<FinanceKpi> kpis;
-}
-
-class _MoneySummary extends StatelessWidget {
-  const _MoneySummary({
-    required this.totals,
-    required this.currency,
-    this.showNotes = true,
-  });
-
-  final FinanceTotals totals;
-  final String currency;
-
-  /// ¿Cada cuadro muestra su aclaración ("= Disponible", "Solo registro"…)?
-  /// En el teléfono se omite: el nombre del concepto se queda con todo el
-  /// ancho y nada se recorta.
-  final bool showNotes;
-
-  /// Los cuatro grupos, en el orden en que se leen: primero lo que ganas,
-  /// luego lo que entra, lo que sale y al final lo apartado.
-  List<_MoneyGroup> _groups() => [
-    _MoneyGroup(
-      'Lo que ganas',
-      Icons.workspace_premium_outlined,
-      FinanceColors.positive,
-      [
-        FinanceKpi(
-          label: 'Ganado',
-          amount: totals.disponible,
-          icon: Icons.savings_outlined,
-          tint: FinanceColors.positive,
-          note: '= Disponible',
-        ),
-        FinanceKpi(
-          label: 'Ganancia real',
-          amount: totals.gananciaReal,
-          icon: Icons.verified_outlined,
-          tint: FinanceColors.positive,
-          note: 'Contando los gastos',
-        ),
-        FinanceKpi(
-          label: 'Ganancia estimada',
-          amount: totals.gananciaEstimada,
-          icon: Icons.insights_outlined,
-          tint: FinanceColors.teal,
-          note: 'Ahorro e inversión aparte',
-        ),
-      ],
-    ),
-    _MoneyGroup('Cobros', Icons.payments_outlined, FinanceColors.positive, [
-      FinanceKpi(
-        label: 'Cobrado',
-        amount: totals.ganancias,
-        icon: Icons.payments_outlined,
-        tint: FinanceColors.positive,
-        note: 'Abonos recibidos',
-      ),
-      FinanceKpi(
-        label: 'Por cobrar',
-        amount: totals.porCobrar,
-        icon: Icons.hourglass_bottom_rounded,
-        tint: FinanceColors.amber,
-        note: 'De ${hsMoney(totals.facturado, currency)}',
-      ),
-      FinanceKpi(
-        label: 'Abono externo',
-        amount: totals.abonoExterno,
-        icon: Icons.account_balance_wallet_outlined,
-        tint: FinanceColors.blue,
-        note: 'Entra por fuera',
-      ),
-    ]),
-    _MoneyGroup('Salidas', Icons.trending_down, FinanceColors.red, [
-      FinanceKpi(
-        label: 'Gastos',
-        amount: totals.gastos,
-        icon: Icons.trending_down,
-        tint: FinanceColors.red,
-      ),
-      FinanceKpi(
-        label: 'Inversión',
-        amount: totals.inversiones,
-        icon: Icons.trending_up,
-        tint: FinanceColors.investment,
-      ),
-    ]),
-    _MoneyGroup(
-      'Apartado y pagos',
-      Icons.savings_outlined,
-      FinanceColors.teal,
-      [
-        FinanceKpi(
-          label: 'Ahorro',
-          amount: totals.ahorro,
-          icon: Icons.lock_outline_rounded,
-          tint: FinanceColors.teal,
-        ),
-        FinanceKpi(
-          label: 'Pagos',
-          amount: totals.pagos,
-          icon: Icons.handshake_outlined,
-          tint: FinanceColors.amber,
-          note: 'Solo registro',
-        ),
-      ],
-    ),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final groups = _groups();
-    // Un SOLO bloque con TODOS los cuadros, uno por línea (en vertical) y sin
-    // un recuadro por concepto: se lee como una lista, ocupa menos y no parte
-    // el dinero en tarjetas.
-    return Card(
-      margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < groups.length; i++) ...[
-              if (i > 0) const SizedBox(height: 4),
-              _sectionLabel(scheme, groups[i]),
-              for (final k in groups[i].kpis)
-                _kpiRow(scheme, k, showNote: showNotes),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Rótulo de una sección del resumen (Lo que ganas, Cobros…). Es solo una
-  /// línea con su icono: separa sin volver a meter recuadros.
-  Widget _sectionLabel(ColorScheme scheme, _MoneyGroup g) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 2),
-      child: Row(
-        children: [
-          Icon(g.icon, size: 12, color: g.tint),
-          const SizedBox(width: 6),
-          Text(
-            g.title.toUpperCase(),
-            style: TextStyle(
-              fontSize: 9.5,
-              letterSpacing: .7,
-              fontWeight: FontWeight.w800,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Divider(
-              height: 1,
-              color: scheme.outlineVariant.withValues(alpha: .5),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Una línea del resumen: icono, concepto (con su aclaración) y el monto a
-  /// la derecha. Va en UNA sola línea y sin recuadro: todos los cuadros juntos
-  /// en la misma tarjeta, uno debajo del otro.
-  Widget _kpiRow(ColorScheme scheme, FinanceKpi k, {required bool showNote}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Icon(k.icon, size: 15, color: k.tint),
-          const SizedBox(width: 8),
-          // El concepto tiene la mayor parte del ancho (nunca se recorta); la
-          // aclaración va después, más pequeña, y el dinero se ancla a la
-          // derecha. En el teléfono la aclaración se omite ([showNote]=false)
-          // para dejarle todo el ancho al nombre.
-          // El nombre nunca sale con puntos suspensivos: si el concepto es
-          // largo ("Ganancia estimada") se encoge lo justo para caber, así se
-          // lee completo en vez de recortado.
-          Expanded(
-            flex: 3,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  k.label.toUpperCase(),
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (showNote && k.note != null) ...[
-            const SizedBox(width: 8),
-            Flexible(
-              flex: 2,
-              child: Text(
-                k.note!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-              ),
-            ),
-          ],
-          const SizedBox(width: 12),
-          Text(
-            hsMoney(k.amount, currency),
-            style: TextStyle(
-              fontSize: 13.5,
-              fontWeight: FontWeight.w800,
-              color: k.tint,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

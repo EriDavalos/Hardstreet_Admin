@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../agenda_visibility.dart';
 import '../app_platform.dart';
 import '../event_widget.dart';
 import '../hs_access.dart';
@@ -33,6 +34,10 @@ const List<Color> _agendaPalette = [
 Color _serviceColorOf(int? id) => id == null
     ? const Color(0xFF64748B)
     : _agendaPalette[id.abs() % _agendaPalette.length];
+
+/// ROJO de los días OCUPADOS del calendario: un día con eventos se marca en
+/// rojo (el badge conserva el color/icono del servicio).
+const Color _kOccupiedRed = Color(0xFFDC2626);
 
 /// Resumen visual de UN día con eventos: color e icono del servicio y cuántos
 /// eventos tiene agendados.
@@ -502,9 +507,9 @@ class _AgendasPageState extends State<AgendasPage> {
     return LayoutBuilder(
       builder: (context, page) {
         final narrow = page.maxWidth < 860;
-      return PageContainer(
-        module: 'schedules',
-        title: 'Agendas',
+        return PageContainer(
+          module: 'schedules',
+          title: 'Agendas',
           description:
               'Eventos agendados por cliente, paquete y servicio, en '
               'vista de semana con horas o vista de mes.',
@@ -1671,7 +1676,9 @@ class _AllDayPills extends StatelessWidget {
           Builder(
             builder: (context) {
               final color = _serviceColorOf((a['serviceId'] as num?)?.toInt());
-              final client = (a['clientName'] ?? '').toString().trim();
+              // "Ocupado" si el servidor enmascaró el evento (es de otro
+              // cliente): el nombre nunca se pinta.
+              final client = agendaClientLabel(a);
               final fg = Color.lerp(color, scheme.onSurface, .30)!;
               return GestureDetector(
                 onTap: () => onOpen(a),
@@ -1688,7 +1695,7 @@ class _AllDayPills extends StatelessWidget {
                       border: Border.all(color: color.withValues(alpha: .45)),
                     ),
                     child: Text(
-                      client.isEmpty ? 'Evento' : client,
+                      client,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1815,7 +1822,9 @@ class _DayColumn extends StatelessWidget {
 
   Widget _block(_Ev ev, double width) {
     final color = _serviceColorOf((ev.agenda['serviceId'] as num?)?.toInt());
-    final client = (ev.agenda['clientName'] ?? '').toString().trim();
+    // Un evento de OTRO cliente llega enmascarado: se rotula "Ocupado" y no
+    // se pinta ni el cliente ni el servicio.
+    final client = agendaClientLabel(ev.agenda);
     final service = (ev.agenda['serviceName'] ?? '').toString().trim();
     final package = (ev.agenda['packageName'] ?? '').toString().trim();
     final place = HsPlace.of(ev.agenda);
@@ -1837,11 +1846,13 @@ class _DayColumn extends StatelessWidget {
           child: Transform.scale(scale: t, child: child),
         ),
         child: Tooltip(
-          message: [
-            if (service.isNotEmpty) service,
-            if (package.isNotEmpty) package,
-            if (place != null) place.label,
-          ].join(' · '),
+          message: isBusyAgenda(ev.agenda)
+              ? 'Ocupado'
+              : [
+                  if (service.isNotEmpty) service,
+                  if (package.isNotEmpty) package,
+                  if (place != null) place.label,
+                ].join(' · '),
           child: InkWell(
             onTap: () => onOpenEvent(ev.agenda),
             borderRadius: BorderRadius.circular(8),
@@ -1871,7 +1882,7 @@ class _DayColumn extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
                   Text(
-                    client.isEmpty ? 'Evento' : client,
+                    client,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -2210,10 +2221,13 @@ class _DayCellState extends State<_DayCell> {
                 border = accent;
                 tint = Colors.transparent;
               } else if (e != null) {
+                // DÍA OCUPADO: el número y el aro van en ROJO para ver de un
+                // vistazo qué días están tomados. El badge de abajo sigue
+                // mostrando el icono (y el color) del servicio agendado.
                 gradient = null;
-                fg = e.color;
-                border = e.color.withValues(alpha: _hover ? .85 : .45);
-                tint = e.color.withValues(alpha: _hover ? .22 : .10);
+                fg = _kOccupiedRed;
+                border = _kOccupiedRed.withValues(alpha: _hover ? .9 : .5);
+                tint = _kOccupiedRed.withValues(alpha: _hover ? .22 : .10);
               } else {
                 gradient = null;
                 fg = scheme.onSurface;
@@ -2363,7 +2377,8 @@ class _UpcomingEventCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final date = hsParseDate(agenda['eventDate']);
     final color = _serviceColorOf((agenda['serviceId'] as num?)?.toInt());
-    final client = (agenda['clientName'] ?? '').toString().trim();
+    final busy = isBusyAgenda(agenda);
+    final client = agendaClientLabel(agenda, fallback: 'Sin cliente');
     final package = (agenda['packageName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
     final place = HsPlace.of(agenda);
@@ -2425,7 +2440,7 @@ class _UpcomingEventCard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          client.isEmpty ? 'Sin cliente' : client,
+                          client,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -2457,10 +2472,12 @@ class _UpcomingEventCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    [
-                      if (service.isNotEmpty) service,
-                      if (package.isNotEmpty) package,
-                    ].join(' · '),
+                    busy
+                        ? 'Horario ocupado'
+                        : [
+                            if (service.isNotEmpty) service,
+                            if (package.isNotEmpty) package,
+                          ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -2563,12 +2580,81 @@ class _AgendaDetailBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final date = hsParseDate(agenda['eventDate']);
+
+    // HUECO OCUPADO: el evento es de OTRO cliente, así que el servidor solo
+    // mandó la hora (sin cliente, paquete, servicio, nota ni lugar). Se dice
+    // exactamente eso y nada más: que ese rato está tomado.
+    if (isBusyAgenda(agenda)) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: .55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 15,
+              backgroundColor: scheme.onSurfaceVariant.withValues(alpha: .14),
+              child: Icon(
+                Icons.lock_outline_rounded,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Ocupado',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Horario reservado con otro cliente',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (date != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Text(
+                  hsTimeLabel(date),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
     final color = _serviceColorOf((agenda['serviceId'] as num?)?.toInt());
     final client = (agenda['clientName'] ?? '').toString().trim();
     final package = (agenda['packageName'] ?? '').toString().trim();
     final service = (agenda['serviceName'] ?? '').toString().trim();
     final desc = (agenda['description'] ?? '').toString().trim();
-    final place = HsPlace.of(agenda);
+    // TODAS las ubicaciones del evento, numeradas 1, 2, 3…
+    final places = HsPlace.allOf(agenda);
 
     Widget detailRow(IconData icon, String label, String value, {Color? tint}) {
       return Padding(
@@ -2661,14 +2747,18 @@ class _AgendaDetailBlock extends StatelessWidget {
             service.isEmpty ? 'Sin servicio específico' : service,
             tint: color,
           ),
-          // LUGAR: nombre (+ mapa si tiene coordenadas). Las agendas sin
-          // ubicación no muestran la fila.
-          if (place != null) ...[
-            detailRow(Icons.place_outlined, 'Lugar', place.label, tint: color),
-            if (place.hasCoords) ...[
-              const SizedBox(height: 8),
-              HsPlaceMapPreview(place: place),
-            ],
+          // UBICACIONES: una fila numerada por cada lugar (+ el mapa de la
+          // primera que tenga coordenadas). Sin lugares no se pinta nada.
+          for (var i = 0; i < places.length; i++)
+            detailRow(
+              Icons.place_outlined,
+              places.length > 1 ? 'Lugar ${i + 1}' : 'Lugar',
+              places[i].label,
+              tint: color,
+            ),
+          if (places.isNotEmpty && places.first.hasCoords) ...[
+            const SizedBox(height: 8),
+            HsPlaceMapPreview(place: places.first),
           ],
           if (desc.isNotEmpty) detailRow(Icons.notes_outlined, 'Nota', desc),
         ],
@@ -2802,7 +2892,17 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
 
   int _serviceId = 0;
   late DateTime _dateTime;
-  HsPlace? _place;
+
+  /// UBICACIONES del evento: una agenda puede tener varias y se numeran
+  /// solas (1, 2, 3…). Cada hueco puede estar vacío mientras se captura.
+  final List<HsPlace?> _places = [null];
+
+  /// Las ubicaciones ya capturadas, en orden (sin los huecos vacíos).
+  List<HsPlace> get _filledPlaces => [
+    for (final p in _places)
+      if (p != null && !p.isEmpty) p,
+  ];
+
   bool _saving = false;
   String? _error;
 
@@ -2997,12 +3097,16 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
       _error = null;
     });
     try {
+      final places = _filledPlaces;
       await HsApi.createAgenda({
         'purchasedPackageId': _packageId,
         'serviceId': _serviceId == 0 ? null : _serviceId,
         'eventDate': hsDateTimeValue(_dateTime),
         'description': _desc.text.trim(),
-        ...?(_place?.toBody()),
+        // VARIAS ubicaciones (numeradas por el servidor) y, por
+        // compatibilidad, la primera también suelta.
+        ...HsPlace.listBody(places),
+        if (places.isNotEmpty) ...places.first.toBody(),
       });
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -3334,11 +3438,19 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
           ),
           const SizedBox(height: 14),
           FormSection(
-            label: 'Lugar (opcional)',
-            child: HsPlaceField(
-              place: _place,
+            label: 'Ubicaciones (opcional)',
+            child: HsPlacesField(
+              places: _places,
               enabled: !_saving,
-              onChanged: (place) => setState(() => _place = place),
+              onChanged: (index, place) => setState(() {
+                _places[index] = place;
+              }),
+              onAdd: () => setState(() => _places.add(null)),
+              onRemove: (index) => setState(() {
+                _places.removeAt(index);
+                // Siempre queda al menos un hueco para capturar.
+                if (_places.isEmpty) _places.add(null);
+              }),
             ),
           ),
           const SizedBox(height: 14),

@@ -9,7 +9,8 @@ import '../widgets/hs_toast.dart';
 
 /// Pantalla de inicio de sesión REAL contra la API de Hardstreet
 /// (la misma que usa la web: POST /api/auth/login con header Bearer).
-/// Solo entran cuentas con rol Admin.
+/// Entran los roles que la app sabe atender —Admin, Superadministrador,
+/// Colaborador, Empleado y Cliente—; el resto se avisa aquí.
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onLogin});
 
@@ -58,11 +59,11 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final user = await HsApi.login(email, password);
       if (!mounted) return;
-      final role = (user['role'] ?? '').toString().toLowerCase();
-      if (role != 'admin' &&
-          role != 'colaborador' &&
-          role != 'cliente' &&
-          role != 'empleado') {
+      // Antes esta lista era fija y no incluía al Superadministrador: al
+      // iniciar sesión con ese rol el panel decía "esta cuenta no tiene
+      // acceso" aunque el servidor ya lo hubiera autenticado.
+      final role = (user['role'] ?? '').toString();
+      if (!HsSession.roleCanUsePanel(role)) {
         await HsApi.logout();
         if (!mounted) return;
         _snack('Esta cuenta no tiene acceso al panel de administración');

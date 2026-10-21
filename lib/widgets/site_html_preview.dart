@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:path_provider/path_provider.dart';
 
-import '../app_platform.dart';
 import '../site_preview_server.dart';
+import '../webview_env.dart';
 
 // ==================================================================
 // VISTA PREVIA REAL DEL SITIO (WebView)
@@ -110,18 +108,8 @@ class _SiteHtmlPreviewState extends State<SiteHtmlPreview> {
     }
     // En Windows el WebView2 necesita una carpeta de datos ESCRIBIBLE: la de
     // junto al .exe falla cuando la app está instalada en Archivos de programa.
-    if (isWindowsPlatform) {
-      try {
-        final dir = await getApplicationSupportDirectory();
-        final folder = Directory('${dir.path}${Platform.pathSeparator}webview2');
-        await folder.create(recursive: true);
-        _env = await WebViewEnvironment.create(
-          settings: WebViewEnvironmentSettings(userDataFolder: folder.path),
-        );
-      } catch (_) {
-        // Sin entorno propio: el plugin usa el de fábrica (suele funcionar).
-      }
-    }
+    // Es el MISMO entorno que usa el visor de vídeo (ver `webview_env.dart`).
+    _env = await sharedWebViewEnvironment();
     if (!mounted) return;
     setState(() => _base = base);
   }

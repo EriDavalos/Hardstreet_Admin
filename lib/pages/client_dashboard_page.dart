@@ -131,6 +131,9 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     return raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
   }
 
+  /// VERDE de "servicio cumplido": el mismo verde de la paleta del panel.
+  static const _doneColor = Color(0xFF16A34A);
+
   static int _statusId(Map<String, dynamic> s) {
     final st = s['status'];
     if (st is Map) return (st['id'] as num? ?? 0).toInt();
@@ -352,6 +355,31 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       await _load();
     } catch (_) {
       // El aviso de error ya lo mostró la API.
+    }
+  }
+
+  /// Abre lo que anuncia una novedad: selección de fotos del servicio
+  /// («Ya puedes elegir tus fotos») o, si no hay servicio, solo la marca
+  /// como leída.
+  Future<void> _openNotification(Map<String, dynamic> n) async {
+    final id = (n['id'] as num?)?.toInt() ?? 0;
+    if (n['isRead'] != true && id > 0) await _readNotification(id);
+    final kind = (n['kind'] ?? '').toString();
+    final serviceId = (n['serviceId'] as num?)?.toInt() ?? 0;
+    if (serviceId <= 0) return;
+    final svc = _services.firstWhere(
+      (s) => (s['id'] as num?)?.toInt() == serviceId,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (svc.isEmpty) return;
+    // «Fotos disponibles» (y el cierre de un servicio) llevan a sus fotos;
+    // el resto de avisos del paquete ya se está viendo aquí mismo.
+    if (kind == 'fotos-disponibles' || kind == 'impresion-terminada') {
+      final catalog = (svc['service'] is Map)
+          ? (svc['service'] as Map).cast<String, dynamic>()
+          : const <String, dynamic>{};
+      final name = (catalog['name'] ?? 'Servicio').toString();
+      await _pickServiceItems(svc, name);
     }
   }
 
@@ -702,12 +730,13 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
 
   Widget _noticeRow(ColorScheme scheme, Map<String, dynamic> n) {
     final unread = n['isRead'] != true;
-    final id = (n['id'] as num?)?.toInt() ?? 0;
     final kind = (n['kind'] ?? '').toString();
     final when = _noticeWhen(n);
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: unread && id > 0 ? () => _readNotification(id) : null,
+      // Tocar la novedad la marca leída y, si es de un servicio, abre SUS
+      // fotos: el aviso lleva a la información que anuncia.
+      onTap: () => _openNotification(n),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
         child: Row(
@@ -1183,7 +1212,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   label: 'Completados',
                   count: doneCount,
                   icon: Icons.task_alt_rounded,
-                  color: const Color(0xFF2F6BFF),
+                  color: _doneColor,
                 ),
               ],
             ),
@@ -1238,7 +1267,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               title: 'Completados',
               subtitle: 'Servicios que ya entregamos.',
               icon: Icons.task_alt_rounded,
-              accent: const Color(0xFF2F6BFF),
+              accent: _doneColor,
               services: completed,
             ),
         ],
@@ -1316,8 +1345,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final sentToPrint = s['sentToPrint'] == true || printStatus.isNotEmpty;
     final done = _isDone(s);
     final progress = _isInProgress(s);
+    // Lo CUMPLIDO va en VERDE (antes azul, igual que "en proceso": no se
+    // distinguía de un vistazo qué estaba terminado).
     final color = done
-        ? const Color(0xFF2F6BFF)
+        ? _doneColor
         : progress
         ? const Color(0xFF3B82F6)
         : const Color(0xFFD97706);
@@ -1330,13 +1361,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
-        color: done
-            ? const Color(0xFF2F6BFF).withValues(alpha: .05)
-            : scheme.surface,
+        color: done ? _doneColor.withValues(alpha: .05) : scheme.surface,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: done
-              ? const Color(0xFF2F6BFF).withValues(alpha: .28)
+              ? _doneColor.withValues(alpha: .30)
               : canPick
               ? const Color(0xFF2F6BFF).withValues(alpha: .32)
               : scheme.outlineVariant.withValues(alpha: .50),

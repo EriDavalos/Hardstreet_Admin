@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hardstreet_admin/app_constants.dart';
 import 'package:hardstreet_admin/drive_base.dart';
+import 'package:hardstreet_admin/hs_api.dart';
 
 // ==================================================================
 // FOTOS DEL DRIVE EN EL PANEL: ¿redimensionada o tal cual?
@@ -24,8 +25,8 @@ void main() {
         ),
         'https://oriongo.ddns.net/thumb/XV/ReynaCoot.jpg?w=320',
       );
-      // Con puerto y con el token de la sesión en la query: la miniatura se
-      // pide por RUTA y el token no viaja en ella.
+      // Con puerto: la miniatura se pide por RUTA (sin la query del archivo).
+      // Sin sesión no se agrega token (aquí no hay ninguna).
       expect(
         driveImagePreview(
           'http://oriongo.ddns.net:4000/files/a/b.jpg?apikey=SECRETO',
@@ -58,6 +59,21 @@ void main() {
           driveImagePreview('https://oriongo.ddns.net/files/a.jpg',
               width: 99999),
           endsWith('?w=2048'));
+    });
+
+    test('la miniatura lleva el token: el servidor sabe de qué EMPRESA es', () {
+      addTearDown(() => HsSession.token = null);
+      HsSession.token = 'jwt-de-prueba';
+      expect(
+        driveImagePreview(
+          'https://oriongo.ddns.net/files/Boda/Ana.jpg',
+          width: 640,
+        ),
+        'https://oriongo.ddns.net/thumb/Boda/Ana.jpg?w=640&apikey=jwt-de-prueba',
+        reason:
+            'sin el token, /thumb busca la foto en la RAÍZ y la portada de la '
+            'categoría/paquete sale en blanco',
+      );
     });
 
     test('cualquier OTRO enlace se usa tal cual', () {

@@ -155,7 +155,43 @@ class ApiException implements Exception {
 /// Sesión en memoria (el token vive mientras la app esté abierta).
 class HsSession {
   static String? token;
-  static Map<String, dynamic>? user;
+
+  static Map<String, dynamic>? _user;
+
+  /// Usuario de la sesión. Se asigna por el setter para que la empresa y el
+  /// flag de Superadministrador se lean SIEMPRE (login, "Recordarme" y
+  /// pruebas que fijan el usuario a mano).
+  static Map<String, dynamic>? get user => _user;
+  static set user(Map<String, dynamic>? value) => setUser(value);
+
+  // ---------------- EMPRESA (multi-estudio) ----------------
+  //
+  // Cada usuario pertenece a UNA empresa. El Superadministrador no tiene: él
+  // elige con qué empresa trabaja ([activeCompanyId]) y es el único que entra
+  // al módulo Empresas y a la carpeta raíz del Drive.
+  static int? companyId;
+  static String companyName = '';
+  static bool isSuperAdmin = false;
+
+  /// Empresa ACTIVA del Superadministrador (null = todas).
+  static int? activeCompanyId;
+
+  /// Empresa con la que viajan las peticiones (header `X-Company-Id`).
+  static int? get workingCompanyId =>
+      isSuperAdmin ? activeCompanyId : companyId;
+
+  /// Fija el usuario de la sesión y lee de él su empresa y si es Superadmin.
+  /// Pasa SIEMPRE por aquí (login y "Recordarme"): si no, una sesión
+  /// restaurada no sabría en qué empresa trabaja.
+  static void setUser(Map<String, dynamic>? u) {
+    _user = u;
+    final data = u ?? const <String, dynamic>{};
+    isSuperAdmin = data['isSuperAdmin'] == true;
+    final cid = data['companyId'];
+    companyId = cid is int ? cid : int.tryParse('${cid ?? ''}');
+    companyName = (data['companyName'] ?? '').toString();
+    if (!isSuperAdmin) activeCompanyId = null;
+  }
 
   static bool get isLogged => token != null && token!.isNotEmpty;
 
@@ -170,11 +206,31 @@ class HsSession {
 
   static String get role => (user?['role'] ?? '').toString();
 
-  static bool get isAdmin => role.toLowerCase() == 'admin';
+  /// ¿Es administrador? El Superadministrador TAMBIÉN: es el nivel más alto
+  /// (administra todas las empresas), así que las reglas del rol Admin —ver y
+  /// editar la cuenta Admin, asignar ese rol— le aplican igual.
+  static bool get isAdmin {
+    final r = role.toLowerCase().trim();
+    return isSuperAdmin || r == 'admin' || r == 'superadmin';
+  }
+
+  /// ¿Esta cuenta puede usar el panel? Son los roles que la app sabe atender.
+  /// El resto (un rol nuevo sin pantalla) no entra y se avisa en el login.
+  static bool roleCanUsePanel(String role) => const {
+    'admin',
+    'superadmin',
+    'colaborador',
+    'empleado',
+    'cliente',
+  }.contains(role.trim().toLowerCase());
 
   static void clear() {
     token = null;
-    user = null;
+    _user = null;
+    companyId = null;
+    companyName = '';
+    isSuperAdmin = false;
+    activeCompanyId = null;
   }
 
   /// Ruta ACTUAL del drive dentro del panel (carpetas desde la raíz).
@@ -293,6 +349,10 @@ class HsApi {
   static Map<String, String> _headers() => {
     'Content-Type': 'application/json',
     if (HsSession.isLogged) 'Authorization': 'Bearer ${HsSession.token}',
+    // EMPRESA ACTIVA: solo el Superadministrador la elige; para los demás el
+    // backend ignora el header y usa la empresa de SU usuario.
+    if (HsSession.workingCompanyId != null)
+      'X-Company-Id': '${HsSession.workingCompanyId}',
   };
 
   /// Primer texto no vacío de la lista (`message`, luego `error`).
@@ -434,7 +494,7 @@ class HsApi {
       'password': password,
     }, notify: false);
     HsSession.token = (data['token'] ?? '').toString();
-    HsSession.user = (data['user'] as Map?)?.cast<String, dynamic>();
+    HsSession.setUser((data['user'] as Map?)?.cast<String, dynamic>());
     if (!HsSession.isLogged) {
       throw ApiException('El servidor no devolvió token');
     }
@@ -448,6 +508,61 @@ class HsApi {
       // el logout del servidor es cortesía: el token se descarta igual
     }
     HsSession.clear();
+  }
+
+  // ---------------- Empresas (Superadministrador) ----------------
+
+  /// Empresas del sistema con sus administradores y conteos.
+  /// GET /api/admin/companies (solo Superadmin).
+  static Future<List<Map<String, dynamic>>> companies() async {
+    final data = await get('/api/admin/companies');
+    return ((data['companies'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Crea una empresa (nombre + carpeta raíz dentro del Drive).
+  static Future<Map<String, dynamic>?> createCompany({
+    required String name,
+    String folderPath = '',
+    String? color,
+  }) async {
+    final data = await post('/api/admin/companies', {
+      'name': name,
+      'folderPath': folderPath,
+      'color': ?color,
+    });
+    return (data['company'] as Map?)?.cast<String, dynamic>();
+  }
+
+  /// Edita nombre, carpeta raíz, color o estado de una empresa.
+  static Future<Map<String, dynamic>?> updateCompany({
+    required int id,
+    String? name,
+    String? folderPath,
+    String? color,
+    bool? active,
+  }) async {
+    final data = await put('/api/admin/companies', {
+      'id': id,
+      'name': ?name,
+      'folderPath': ?folderPath,
+      'color': ?color,
+      'active': ?active,
+    });
+    return (data['company'] as Map?)?.cast<String, dynamic>();
+  }
+
+  /// Desactiva una empresa (no borra sus datos).
+  static Future<void> deactivateCompany(int id) async {
+    await deleteBody('/api/admin/companies', {'id': id});
+  }
+
+  /// Empresa con la que trabaja el Superadministrador (null = todas).
+  static void setActiveCompany(int? id) {
+    if (!HsSession.isSuperAdmin) return;
+    HsSession.activeCompanyId = id;
   }
 
   // ---------------- Módulos (sidebar) ----------------
@@ -846,6 +961,83 @@ class HsApi {
     return (data['sent'] as num?)?.toInt() ?? 0;
   }
 
+  // ---------------- Notificaciones (módulo) ----------------
+
+  /// EVENTOS, ROLES e HISTORIAL del módulo Notificaciones.
+  /// → GET /api/admin/notifications
+  static Future<Map<String, dynamic>> adminNotifications() async {
+    final data = await get('/api/admin/notifications');
+    return (data as Map?)?.cast<String, dynamic>() ?? const {};
+  }
+
+  /// Guarda qué roles reciben UN evento (y si está encendido).
+  static Future<void> saveNotificationRule({
+    required String eventKey,
+    required List<int> roleIds,
+    required bool enabled,
+  }) => post('/api/admin/notifications', {
+    'action': 'save-rule',
+    'eventKey': eventKey,
+    'roleIds': roleIds,
+    'enabled': enabled,
+  });
+
+  /// Manda un aviso manual a los roles elegidos. Devuelve cuántos llegaron.
+  static Future<int> sendAdminNotification({
+    required String title,
+    String body = '',
+    required List<int> roleIds,
+    String target = 'notifications',
+  }) async {
+    final data = await post('/api/admin/notifications', {
+      'action': 'send',
+      'title': title,
+      'body': body,
+      'roleIds': roleIds,
+      'target': target,
+    });
+    return (data['sent'] as num?)?.toInt() ?? 0;
+  }
+
+  // ---------------- Ubicaciones guardadas ----------------
+
+  /// Lugares que el estudio reutiliza al agendar → GET /api/admin/locations.
+  static Future<List<Map<String, dynamic>>> savedLocations() async {
+    final data = await get('/api/admin/locations');
+    return ((data['locations'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Guarda (o actualiza) una ubicación y devuelve la lista de nuevo.
+  static Future<List<Map<String, dynamic>>> saveSavedLocation({
+    required String name,
+    String address = '',
+    required double lat,
+    required double lng,
+  }) async {
+    final data = await post('/api/admin/locations', {
+      'name': name,
+      'address': address,
+      'lat': lat,
+      'lng': lng,
+    });
+    return ((data['locations'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Deja de ofrecer una ubicación guardada.
+  static Future<List<Map<String, dynamic>>> deleteSavedLocation(int id) async {
+    final data = await delete('/api/admin/locations?id=$id');
+    return ((data['locations'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
+
   /// MIS avisos del paquete (los manda el estudio desde el panel).
   static Future<({List<Map<String, dynamic>> items, int unread})>
   myNotifications() async {
@@ -1195,10 +1387,19 @@ class HsApi {
   });
 
   /// Crear compra nueva desde el catálogo y asignarla.
-  static Future<void> addPackageFromCatalog(int userId, int packageId) => post(
-    '/api/admin/client-packages',
-    {'userId': userId, 'packageId': packageId},
-  );
+  ///
+  /// [price] es OPCIONAL: si se omite se usa el precio del catálogo; si se
+  /// manda, la compra del cliente queda con ese precio especial (el catálogo
+  /// no se modifica).
+  static Future<void> addPackageFromCatalog(
+    int userId,
+    int packageId, {
+    num? price,
+  }) => post('/api/admin/client-packages', {
+    'userId': userId,
+    'packageId': packageId,
+    'price': ?price,
+  });
 
   /// Quitar el paquete del cliente (baja del vínculo).
   static Future<void> removeClientPackage(int userId, int usersPackageId) =>
@@ -1432,7 +1633,12 @@ class HsApi {
 
   /// Agendas de evento: todas, las de un cliente o las de un paquete comprado.
   /// Cada una: `{ id, purchasedPackageId, userId, clientName, packageName,
-  /// serviceId, serviceName, eventDate, description }`.
+  /// serviceId, serviceName, eventDate, description, location, lat, lng,
+  /// busy }`.
+  ///
+  /// `busy: true` = hueco OCUPADO sin detalle: el servidor lo manda así
+  /// cuando quien consulta es un CLIENTE y el evento es de otro cliente
+  /// (solo llegan la fecha y la hora). Ver `agenda_visibility.dart`.
   static Future<List<Map<String, dynamic>>> agendas({
     int? userId,
     int? purchasedPackageId,
@@ -1457,6 +1663,11 @@ class HsApi {
 
   /// Crea una agenda `{ purchasedPackageId, serviceId, eventDate, description }`.
   /// `eventDate` viaja como `yyyy-MM-dd HH:mm:ss`.
+  ///
+  /// Para VARIAS ubicaciones se agrega `locations: [{ location, lat, lng }]`
+  /// (el servidor las numera 1, 2, 3… en el orden recibido) y, por
+  /// compatibilidad con un backend viejo, la primera también viaja suelta en
+  /// `location`/`lat`/`lng`.
   static Future<void> createAgenda(Map<String, dynamic> body) =>
       post('/api/admin/agendas', body);
 

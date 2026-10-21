@@ -11,6 +11,7 @@ import '../app_platform.dart';
 import '../drive_base.dart';
 import '../open_file.dart';
 import '../theme.dart';
+import '../webview_env.dart';
 import 'drive_file_visuals.dart';
 import 'drive_web_player.dart';
 import 'hs_modal.dart';
@@ -135,6 +136,15 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   /// Se está abriendo con el sistema (descarga + lanzar el programa).
   bool _opening = false;
 
+  /// Entorno de WebView2 ya preparado (Windows) y si ya se intentó.
+  ///
+  /// En una instalación de Windows (Archivos de programa) el WebView no puede
+  /// usar la carpeta de datos de junto al .exe. Se crea uno propio, escribible,
+  /// y el reproductor no se pinta hasta tenerlo: si no, el `<video>` nacía en
+  /// un WebView que nunca llegó a arrancar (pantalla negra en el release).
+  WebViewEnvironment? _webEnv;
+  bool _webReady = false;
+
   /// Pantalla completa del VISOR: se ocultan la barra superior y las flechas
   /// para que el vídeo ocupe todo. El botón de pantalla completa del
   /// reproductor HTML llama aquí (en la app la API del navegador no siempre
@@ -159,6 +169,53 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   void initState() {
     super.initState();
     _prepare();
+    _bootWebView();
+  }
+
+  /// Duración REAL del vídeo, leída del servidor.
+  ///
+  /// La "calidad ligera" llega en MP4 FRAGMENTADO y no trae la duración en la
+  /// cabecera: el navegador ve `Infinity`, la barra no avanza y el total sale
+  /// mal. El servidor la calcula con ffmpeg y la manda en `X-Video-Duration`;
+  /// aquí se le pasa al reproductor para que la barra use los minutos de
+  /// verdad desde el primer segundo.
+  Future<void> _applyDuration(
+    InAppWebViewController controller,
+    DriveViewTarget target,
+  ) async {
+    if (kWeb || !target.isRemote || target.item.kind != DriveItemKind.video) {
+      return;
+    }
+    try {
+      // Se pregunta por el ORIGINAL (sin `play=low`): el HEAD no tiene que
+      // arrancar el reencodado, solo dar la duración.
+      final uri = Uri.parse(target.source);
+      final query = Map<String, String>.from(uri.queryParameters)
+        ..remove('play');
+      final head = await http
+          .head(uri.replace(queryParameters: query.isEmpty ? null : query))
+          .timeout(const Duration(seconds: 6));
+      final seconds =
+          double.tryParse(head.headers['x-video-duration'] ?? '') ?? 0;
+      if (seconds <= 0) return;
+      await controller.evaluateJavascript(
+        source:
+            'window.hsSetDuration&&hsSetDuration('
+            '${seconds.toStringAsFixed(3)})',
+      );
+    } catch (_) {
+      // Sin duración se usa la que diga el navegador, como antes.
+    }
+  }
+
+  /// Prepara el entorno del navegador integrado (solo Windows lo necesita).
+  Future<void> _bootWebView() async {
+    final env = await sharedWebViewEnvironment();
+    if (!mounted) return;
+    setState(() {
+      _webEnv = env;
+      _webReady = true;
+    });
   }
 
   @override
@@ -426,7 +483,21 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
             '${target.item.name.hashCode}-${target.source.hashCode}-${target.poster.hashCode}',
       );
     }
+    // El navegador todavía no tiene su carpeta de datos lista: se espera (es
+    // cuestión de milisegundos) antes de crear el WebView. Sin esto, en el
+    // release instalado el WebView se creaba con la carpeta de junto al .exe
+    // —que no se puede escribir— y el vídeo no llegaba a verse nunca.
+    if (!_webReady) {
+      return const Center(
+        child: SizedBox(
+          width: 26,
+          height: 26,
+          child: CircularProgressIndicator(strokeWidth: 2.5),
+        ),
+      );
+    }
     return InAppWebView(
+      webViewEnvironment: _webEnv,
       key: ValueKey('drive-file-player-${target.item.name}'),
       initialData: InAppWebViewInitialData(
         data: html,
@@ -443,6 +514,11 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
             return null;
           },
         );
+      },
+      // La página ya tiene montado el reproductor: se le pasa la duración real
+      // (el HTML la usa para el total y para la barra).
+      onLoadStop: (controller, _) {
+        unawaited(_applyDuration(controller, target));
       },
       initialSettings: InAppWebViewSettings(
         // Sin un toque previo: el vídeo empieza al abrirlo (es lo que el
@@ -475,6 +551,13 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
     bool nativeShell = false,
   }) {
     final src = _htmlEscape(target.source);
+    // ¿CALIDAD LIGERA? = el servidor reencoda AL VUELO (`?play=low`) y cada
+    // petición es un ffmpeg nuevo: no se puede saltar a un byte como en un
+    // archivo. Adelantar se hace pidiendo otra vez el vídeo desde ese segundo
+    // (`&t=`) y llevando la cuenta del salto (`baseOff`).
+    final lightJs = target.source.contains('play=low') ? 'true' : 'false';
+    // La URL como literal de JS: la barra de avance la reusa al adelantar.
+    final srcJson = jsonEncode(target.source).replaceAll('</', r'<\/');
     // PDF: el visor del navegador integrado (iframe), no un <video>.
     if (target.kind == DriveItemKind.pdf) {
       return '<!doctype html><html><head><meta charset="utf-8">'
@@ -605,7 +688,18 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'box-shadow:0 0 0 4px rgba(125,160,255,.18);border:0}'
         'input[type=range]::-moz-range-thumb{width:13px;height:13px;'
         'border-radius:50%;background:var(--accent);border:0}'
-        '#seek{flex:1 1 auto;min-width:70px}'
+        // BARRA DE CARGA del vídeo: lo YA VISTO en el color de la marca, lo
+        // descargado en gris claro y lo que falta en gris tenue. Antes era una
+        // línea plana con un punto: no se veía cuánto llevaba reproducido.
+        '#seek{flex:1 1 auto;min-width:70px;--played:0%;--buffered:0%;'
+        'height:5px;background:linear-gradient(to right,'
+        'var(--accent) 0 var(--played),'
+        'rgba(255,255,255,.46) var(--played) var(--buffered),'
+        'rgba(255,255,255,.20) var(--buffered) 100%)}'
+        '#seek::-webkit-slider-thumb{width:14px;height:14px;'
+        'box-shadow:0 0 0 3px rgba(125,160,255,.28),'
+        '0 2px 8px rgba(0,0,0,.55)}'
+        '#seek:active::-webkit-slider-thumb{transform:scale(1.15)}'
         '#vol{width:72px;flex:0 0 auto}'
         '#error{display:none;position:absolute;z-index:5;left:50%;top:50%;'
         'transform:translate(-50%,-50%);width:min(420px,86vw);'
@@ -661,7 +755,26 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'dur=document.getElementById("dur"),mute=document.getElementById("mute"),'
         'vol=document.getElementById("vol"),full=document.getElementById("full");'
         'var nativeShell=$nativeFs;'
+        // La calidad ligera NO se puede adelantar por bytes: se pide otra vez
+        // el vídeo con `&t=<segundos>` y se lleva la cuenta en `baseOff`.
+        'var lightStream=$lightJs,baseSrc=$srcJson,baseOff=0;'
         'var seeking=false,timer=null,bufferingNow=false;'
+        // DURACIÓN DE VERDAD. La calidad ligera llega en MP4 FRAGMENTADO y el
+        // navegador no sabe cuánto dura: `m.duration` es Infinity, la barra se
+        // quedaba en 0 y, cuando el navegador "adivinaba" un total que iba
+        // creciendo, el punto se movía HACIA ATRÁS. El visor manda la duración
+        // real (leída por el servidor con ffmpeg) por [hsSetDuration].
+        'var knownDuration=0,lastTime=-1,lastMove=Date.now();'
+        'function total(){if(knownDuration>0)return knownDuration;'
+        'return isFinite(m.duration)&&m.duration>0?m.duration:0}'
+        'window.hsSetDuration=function(v){v=Number(v);if(!(v>0))return;'
+        'knownDuration=v;dur.textContent=fmt(v);paintBar()};'
+        // ¿El vídeo AVANZA? (sirve para no enseñar el giro de carga encima de
+        // un vídeo que se está reproduciendo bien).
+        'function moving(){if(m.paused)return false;'
+        'if(m.currentTime>lastTime+0.02){'
+        'lastTime=m.currentTime;lastMove=Date.now();return true}'
+        'return Date.now()-lastMove<1200}'
         'function fmt(n){if(!isFinite(n)||n<0)return "--:--";'
         'var s=Math.floor(n%60),h=Math.floor(n/3600),mm=Math.floor(n/60)%60;'
         'return (h?h+":"+String(mm).padStart(2,"0"):mm)+":"+'
@@ -674,17 +787,24 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'function hide(){statusEl.style.opacity="0"}'
         // Cuánto del vídeo ya está en el búfer (0..99 %), para que el aviso de
         // carga también DIGA algo mientras se reproduce con red lenta.
-        'function bufferedPct(){try{if(m.duration>0){var b=m.buffered;'
+        'function bufferedPct(){try{var d=total();if(d>0){var b=m.buffered;'
         'for(var i=0;i<b.length;i++){'
         'if(b.start(i)<=m.currentTime+.5&&b.end(i)>=m.currentTime){'
         // Cuatro llaves: cierra el if del rango, el for, el if de duration y
         // el try. Con tres, el `catch` quedaba DENTRO del try y el script
         // entero no compilaba (el vídeo se quedaba "Cargando…" para siempre y
         // ningún control respondía).
-        'return Math.min(99,Math.round(b.end(i)/m.duration*100))}}}}catch(_){}'
+        'return Math.min(99,Math.round((baseOff+b.end(i))/d*100))}}}}catch(_){}'
         'return 0}'
         'function loadLabel(){var p=bufferedPct();'
         'return "Cargando vídeo…"+(p?" "+p+" %":"")}'
+        // Pinta la barra: visto (marca), descargado (claro) y resto (tenue).
+        'function paintBar(){'
+        'var d=total();'
+        'var p=d>0?Math.min(100,(baseOff+m.currentTime)/d*100):0;'
+        'var b=Math.max(p,bufferedPct());'
+        'seek.style.setProperty("--played",p.toFixed(2)+"%");'
+        'seek.style.setProperty("--buffered",b.toFixed(2)+"%")}'
         'function buffering(){bufferingNow=true;spinner.style.display="block";'
         'show(loadLabel())}'
         'function ready(){bufferingNow=false;spinner.style.display="none";hide()}'
@@ -693,18 +813,57 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         // hubiera encendido el aviso. Mientras se reproduce, si el búfer se
         // agota (readyState < 3), el giro se queda hasta que vuelve a fluir.
         'function syncStatus(){if(m.error)return;'
+        // Si el tiempo AVANZA, no hay nada que cargar: se oculta el giro
+        // aunque `readyState` siga bajo (los MP4 fragmentados casi nunca
+        // llegan a 3 y el círculo se quedaba encima del vídeo reproduciendo).
+        'if(!m.paused&&moving()){bufferingNow=false;'
+        'spinner.style.display="none";hide();return}'
         'if(m.seeking||(!m.paused&&(bufferingNow||m.readyState<3))){'
         'bufferingNow=true;spinner.style.display="block";show(loadLabel())}'
         'else if(m.readyState>=2){bufferingNow=false;'
         'spinner.style.display="none";hide()}}'
-        'function poke(){controls.classList.add("show");clearTimeout(timer);'
-        'timer=setTimeout(function(){if(!m.paused)'
-        'controls.classList.remove("show")},2800)}'
+        // Los controles (y con ellos la barra de carga) NO se esconden solos
+        // mientras el vídeo se reproduce: se quiere ver el avance y poder
+        // arrastrar en cualquier momento. Solo se ocultan si el visor se
+        // cierra.
+        'function poke(){controls.classList.add("show");clearTimeout(timer)}'
         'function toggle(){if(m.paused){'
         'try{var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}'
         '}else{m.pause()}}'
+        // ADELANTAR. En un ARCHIVO normal basta con mover `currentTime`; en la
+        // calidad ligera hay que PEDIR el vídeo otra vez desde ese segundo (si
+        // no, el servidor arranca un ffmpeg desde el principio y el vídeo
+        // "vuelve a empezar": ése era el fallo de la barra).
+        'function applySeek(t){'
+        'var d=total();if(!(d>0))return;if(!(t>=0))t=0;'
+        'if(d>0&&t>d-0.4)t=Math.max(0,d-0.4);'
+        'if(!lightStream){m.currentTime=t;return}'
+        'var wasPlaying=!m.paused;'
+        'baseOff=t;lastTime=-1;'
+        'if(d>0)seek.value=String(t/d*1000);'
+        'cur.textContent=fmt(t);'
+        'buffering();'
+        'm.src=baseSrc+(baseSrc.indexOf("?")>=0?"&":"?")+"t="+t.toFixed(2);'
+        'if(wasPlaying){'
+        'try{var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}'
+        '}else{'
+        // En pausa: se queda en pausa en el punto nuevo (no arranca solo).
+        'm.pause();'
+        'm.addEventListener("canplay",function(){m.pause()},{once:true})}}'
+        'function jump(delta){var d=total();if(!(d>0))return;'
+        'var t=Math.max(0,Math.min(d-0.5,baseOff+m.currentTime+delta));'
+        'if(d>0)seek.value=String(t/d*1000);'
+        'applySeek(t)}'
         'm.addEventListener("loadedmetadata",function(){'
-        'dur.textContent=fmt(m.duration)});'
+        'dur.textContent=fmt(total());paintBar();'
+        // Si el servidor NO pudo reencodar desde `t` (sin ffmpeg) mandó el
+        // vídeo desde el principio: se corrige la cuenta para no mentir con la
+        // barra (mejor empezar de cero que señalar un minuto que no es).
+        'if(lightStream&&baseOff>0&&isFinite(m.duration)&&m.duration>0){'
+        'var expect=Math.max(0,total()-baseOff);'
+        'if(Math.abs(m.duration-expect)>2){baseOff=0;seek.value="0";'
+        'cur.textContent=fmt(0)}}'
+        '});'
         'm.addEventListener("loadeddata",ready);'
         'm.addEventListener("canplay",ready);'
         'm.addEventListener("playing",function(){ready();icon();poke()});'
@@ -715,19 +874,24 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         // Al buscar, al volver a cargar y al reponerse el búfer el aviso se
         // sincroniza al instante (no hay que esperar al sondeo de 600 ms).
         'm.addEventListener("seeking",buffering);'
-        'm.addEventListener("seeked",syncStatus);'
-        'm.addEventListener("progress",function(){if(bufferingNow)syncStatus()});'
+        'm.addEventListener("seeked",function(){syncStatus();paintBar()});'
+        'm.addEventListener("progress",function(){paintBar();'
+        'if(bufferingNow)syncStatus()});'
         'm.addEventListener("play",poke);'
-        'm.addEventListener("ended",function(){icon();syncStatus()});'
+        'm.addEventListener("ended",function(){icon();syncStatus();paintBar()});'
         'm.addEventListener("timeupdate",function(){if(seeking)return;'
-        'cur.textContent=fmt(m.currentTime);'
-        'if(m.duration>0)seek.value=String(m.currentTime/m.duration*1000)});'
+        'cur.textContent=fmt(baseOff+m.currentTime);'
+        'var d=total();'
+        'if(d>0)seek.value=String(Math.min(1000,(baseOff+m.currentTime)/d*1000));'
+        'paintBar()});'
         'm.addEventListener("error",function(){ready();'
         'spinner.style.display="none";err.style.display="flex"});'
         'seek.addEventListener("input",function(){seeking=true;'
-        'if(m.duration>0)cur.textContent=fmt(m.duration*seek.value/1000)});'
-        'seek.addEventListener("change",function(){if(m.duration>0)'
-        'm.currentTime=m.duration*seek.value/1000;seeking=false});'
+        'seek.style.setProperty("--played",Number(seek.value)/10+"%");'
+        'var d=total();'
+        'if(d>0)cur.textContent=fmt(d*seek.value/1000)});'
+        'seek.addEventListener("change",function(){var d=total();'
+        'var t=d>0?d*seek.value/1000:0;applySeek(t);seeking=false});'
         'play.addEventListener("click",toggle);'
         'big.addEventListener("click",toggle);'
         'm.addEventListener("click",toggle);'
@@ -753,11 +917,11 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'document.addEventListener("keydown",function(ev){'
         'if(ev.key===" "||ev.key==="k"){ev.preventDefault();toggle()}'
         'else if(ev.key==="ArrowRight"){'
-        'm.currentTime=Math.min(m.duration||0,m.currentTime+5)}'
+        'jump(5)}'
         'else if(ev.key==="ArrowLeft"){'
-        'm.currentTime=Math.max(0,m.currentTime-5)}'
+        'jump(-5)}'
         'else if(ev.key==="f"){full.click()}});'
-        'seek.value="0";vol.value=String(m.volume);icon();poke();'
+        'seek.value="0";vol.value=String(m.volume);icon();paintBar();poke();'
         'if(m.readyState>=2)ready();'
         // Descarga completa en caché: `loadeddata`/`canplay` pueden haber
         // ocurrido ANTES de estos manejadores. Este sondeo deja el estado

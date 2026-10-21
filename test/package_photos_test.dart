@@ -17,11 +17,12 @@ import 'package:hardstreet_admin/widgets/drive_thumb.dart';
 // catálogo no se parecía a la página. Ahora se pide la MISMA foto que ve la
 // web (`url_image`), al servidor del drive y en tamaño de tarjeta:
 //
-//   https://servidor/thumb/<ruta>?w=640
+//   https://servidor/thumb/<ruta>?w=640&apikey=<token>
 //
-// SIN token: `/thumb` es público (son las imágenes del catálogo y de la web).
-// Antes la URL llevaba `?apikey=` y un rol al que se le quitó "Ver Drive"
-// recibía 403 en las portadas: justo el error que se reportó.
+// `/thumb` NO exige permisos (las portadas se ven aunque al rol se le haya
+// quitado "Ver Drive"), pero SÍ necesita saber de qué EMPRESA es la foto: la
+// ruta que ve el panel es relativa a su carpeta. Sin el token, un usuario de
+// empresa pedía la foto en la RAÍZ del disco y la portada salía en blanco.
 // ==================================================================
 
 const _drivePhoto =
@@ -135,10 +136,12 @@ void main() {
       reason: 'la foto se pide al servidor del drive, no a una URL inventada',
     );
     expect(photo.source, contains('w=640'));
+    // El token va en la query (Image.network no manda cabeceras) y es lo que
+    // dice al servidor en qué CARPETA DE EMPRESA buscar la foto.
     expect(
       photo.source,
-      isNot(contains('apikey')),
-      reason: 'la miniatura es pública: no se lleva el token de la sesión',
+      contains('apikey=token-de-prueba'),
+      reason: 'sin el token, la foto de una empresa se busca en la raíz (404)',
     );
     expect(photo.isRemote, isTrue);
   });

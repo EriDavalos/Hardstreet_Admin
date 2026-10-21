@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart'
     show WidgetsBinding, WidgetsBindingObserver, AppLifecycleState;
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'event_widget.dart';
 import 'hs_api.dart';
@@ -12,13 +13,20 @@ import 'reminder_notifications_native.dart';
 ///
 /// - Consulta `GET /api/reminders` en segundo plano cada [pollInterval]
 ///   (mientras hay sesión iniciada).
-/// - Cuando llega un aviso NUEVO, dispara una notificación NATIVA en
-///   Android (en Windows la campanita con badge cumple ese papel).
+/// - Cuando llega un aviso NUEVO, dispara una notificación NATIVA (Android,
+///   iOS y Windows: toast del sistema, aunque el panel esté detrás de otra
+///   ventana).
 /// - Mantiene `unread` y `reminders` reactivos para la campanita de la
 ///   top bar.
 /// - Alimenta el WIDGET de "próximos eventos" (inicio de Android / panel de
 ///   Windows) con las agendas que vienen, aprovechando este mismo ciclo de
 ///   refresco.
+///
+/// Con la app cerrada quien consulta es el worker nativo de Android
+/// (`PackageNotificationsReceiver`) o el panel en la bandeja de Windows (ver
+/// `flutter_window.cpp`): cerrar la ventana ya no apaga los avisos. Los ids ya
+/// mostrados se PERSISTEN ([_kNotifiedIds]) para que el worker y la app no
+/// avisen dos veces del mismo evento.
 ///
 /// Singleton simple: `RemindersService.instance`. El polling se inicia y
 /// detiene desde el panel al entrar/salir de sesión.
@@ -28,17 +36,27 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Cuánto espera entre consultas al servidor.
   ///
-  /// 30 segundos: los avisos llegan casi al instante sin abrir una conexión
+  /// 15 segundos: los avisos llegan casi al instante sin abrir una conexión
   /// permanente contra el backend (que en Vercel no la mantendría). Además se
   /// refresca al VOLVER a la app (ver [didChangeAppLifecycleState]), así que
   /// al desbloquear el teléfono o regresar a la ventana los avisos ya están.
-  static const Duration pollInterval = Duration(seconds: 30);
+  static const Duration pollInterval = Duration(seconds: 15);
+
+  /// Cada cuánto se empuja el widget de próximos eventos. Es más caro (pide
+  /// las agendas completas), así que no hace falta en cada consulta.
+  static const Duration eventWidgetInterval = Duration(minutes: 1);
+  DateTime _lastWidgetFeed = DateTime.fromMillisecondsSinceEpoch(0);
 
   Timer? _timer;
 
   /// Ids de avisos que YA se notificaron (evita repetir la notificación
   /// en cada ciclo de polling).
+  ///
+  /// Se PERSISTEN bajo [_kNotifiedIds]: el worker nativo de Android publica
+  /// avisos con la app cerrada y escribe en LA MISMA preferencia, y al abrir
+  /// la app no se debe volver a avisar de lo que el teléfono ya mostró.
   final Set<int> _notifiedIds = <int>{};
+  static const _kNotifiedIds = 'app.notified.reminders';
 
   List<Map<String, dynamic>> _reminders = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> get reminders => _reminders;
@@ -52,6 +70,9 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
   /// Backend de notificaciones nativas. Sustituible en pruebas para no
   /// depender de la plataforma.
   ReminderNotifier notifier = NativeReminderPlugin.instance;
+
+  /// De dónde se leen los avisos (sustituible en pruebas).
+  Future<List<Map<String, dynamic>>> Function() fetch = HsApi.reminders;
 
   /// Inicia el polling (seguro llamar varias veces).
   void start() {
@@ -92,16 +113,67 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     _reminders = <Map<String, dynamic>>[];
     _unread = 0;
     _notifiedIds.clear();
+    _lastWidgetFeed = DateTime.fromMillisecondsSinceEpoch(0);
+    // Otro usuario en el mismo equipo debe recibir SUS avisos aunque el id
+    // del evento coincida.
+    unawaited(_clearNotified());
     notifyListeners();
     unawaited(UpcomingEventsWidget.publish(const []));
+  }
+
+  /// Lee del disco los ids ya notificados.
+  ///
+  /// Se lee en CADA consulta (no una vez por sesión) porque el worker nativo
+  /// de Android escribe en la MISMA preferencia mientras la app está cerrada:
+  /// así, al volver, la app sabe lo que el teléfono ya avisó y no lo repite.
+  Future<void> _loadNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_kNotifiedIds) ?? '';
+      for (final part in raw.split(',')) {
+        final id = int.tryParse(part.trim());
+        if (id != null) _notifiedIds.add(id);
+      }
+    } catch (_) {
+      // Sin storage: la protección vale solo para esta ejecución.
+    }
+  }
+
+  /// Guarda los ids ya notificados (los últimos 200 bastan).
+  Future<void> _saveNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final ids = _notifiedIds.toList()..sort();
+      final keep = ids.length > 200 ? ids.sublist(ids.length - 200) : ids;
+      await sp.setString(_kNotifiedIds, keep.join(','));
+    } catch (_) {
+      // Sin storage: se sigue sin persistir.
+    }
+  }
+
+  Future<void> _clearNotified() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove(_kNotifiedIds);
+    } catch (_) {
+      // idem
+    }
+  }
+
+  /// SOLO PRUEBAS: olvida el set de la sesión SIN borrar el disco (simula
+  /// «se cerró y se volvió a abrir la app»).
+  @visibleForTesting
+  void forgetNotifiedSession() {
+    _notifiedIds.clear();
   }
 
   /// Consulta los avisos del usuario y actualiza estado.
   /// No lanza: un fallo de red simplemente deja el estado anterior.
   Future<void> refresh() async {
     if (!_started) return;
+    await _loadNotified();
     try {
-      final list = await HsApi.reminders();
+      final list = await fetch();
       _reminders = list;
       _unread = list.where((r) => _isUnread(r)).length;
       notifyListeners();
@@ -118,6 +190,10 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> feedEventWidget() async {
     if (!UpcomingEventsWidget.supported) return;
     if (!UpcomingEventsWidget.autoFeed) return;
+    // No en cada consulta: las agendas son más pesadas que los avisos.
+    final now = DateTime.now();
+    if (now.difference(_lastWidgetFeed) < eventWidgetInterval) return;
+    _lastWidgetFeed = now;
     try {
       final agendas = await HsApi.agendas();
       await UpcomingEventsWidget.publish(agendas, reminders: _reminders);
@@ -174,14 +250,19 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isUnread(r)) continue;
       final id = _int(r['id']);
       if (id == null) continue;
-      // Los avisos de impresión viven en otra tabla y sus ids pueden chocar
-      // con los de la agenda: se desplazan tanto en la bandeja del teléfono
-      // como en el control de "ya notificado".
-      final isPrint = _sourceOf(r) == 'print';
-      final key = isPrint ? 1000000 + id : id;
+      // Los avisos de impresión y los del módulo Notificaciones viven en
+      // otra tabla: sus ids pueden chocar con los de la agenda. Se desplazan
+      // SOLO para el control de "ya notificado" (la clave que se manda a la
+      // bandeja conserva el id real, que es el que luego se marca leído).
+      final source = _sourceOf(r);
+      final key = source == 'print'
+          ? 1000000 + id
+          : source == 'notification'
+          ? 2000000 + id
+          : id;
       if (_notifiedIds.contains(key)) continue;
       _notifiedIds.add(key);
-      fresh.add(isPrint ? {...r, 'id': key} : r);
+      fresh.add(r);
     }
     if (fresh.isEmpty) return;
     try {
@@ -189,6 +270,7 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {
       // Mejor esfuerzo: la campanita sigue siendo el aviso principal.
     }
+    await _saveNotified();
   }
 
   static bool _isUnread(Map<String, dynamic> r) => _int(r['isRead']) == 0;

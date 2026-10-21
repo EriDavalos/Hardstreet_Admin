@@ -16,7 +16,10 @@ import 'package:hardstreet_admin/widgets/hs_place_picker.dart';
 ///   (siempre visible en la semana por defecto, sin depender de la fecha).
 /// - día 20 a las 16:00, servicio "Sesión de fotos" (icono de cámara).
 /// - día 22 SIN hora (medianoche) -> fila de "todo el día" de la semana.
-void _installMockClient({List<Map<String, dynamic>>? posts}) {
+void _installMockClient({
+  List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? agendas,
+}) {
   final now = DateTime.now();
   String two(int n) => n.toString().padLeft(2, '0');
   String dayOf(DateTime d) => '${d.year}-${two(d.month)}-${two(d.day)}';
@@ -37,7 +40,9 @@ void _installMockClient({List<Map<String, dynamic>>? posts}) {
       }
       return http.Response(
         jsonEncode({
-          'agendas': [
+          // [agendas] permite simular lo que manda el servidor a un CLIENTE
+          // (sus eventos + los ajenos enmascarados con `busy: true`).
+          'agendas': agendas ?? [
             {
               'id': 1,
               'purchasedPackageId': 1,
@@ -168,6 +173,7 @@ Future<void> _pumpAgendas(
   WidgetTester tester,
   Size size, {
   List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? agendas,
 }) async {
   await tester.binding.setSurfaceSize(size);
   // En pruebas, MediaQuery NO sigue al tamaño de la superficie: hay que
@@ -179,7 +185,7 @@ Future<void> _pumpAgendas(
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
-  _installMockClient(posts: posts);
+  _installMockClient(posts: posts, agendas: agendas);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -200,6 +206,16 @@ Finder _weekBlock() => find.descendant(
   of: find.byKey(const ValueKey('agenda-calendar')),
   matching: find.text('Cliente Test'),
 );
+
+/// Número que muestra el hueco [i] de ubicaciones del alta (1, 2, 3…).
+String _placeNumber(WidgetTester tester, int i) => tester
+    .widget<Text>(
+      find.descendant(
+        of: find.byKey(ValueKey('agenda-place-number-$i')),
+        matching: find.byType(Text),
+      ),
+    )
+    .data!;
 
 void main() {
   testWidgets(
@@ -303,6 +319,51 @@ void main() {
     expect(find.textContaining('Sesión de fotos'), findsWidgets);
     await _tapPump(tester, find.byTooltip('Cerrar'));
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Agendas: los días OCUPADOS se marcan en ROJO', (tester) async {
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    // Un día con evento que NUNCA es hoy (el día de hoy va seleccionado y su
+    // número se pinta en el color de selección, no en rojo).
+    final eventDay = now.day == 15 ? 16 : 15;
+    final freeDay = eventDay == 15 ? 16 : 15;
+
+    await _pumpAgendas(
+      tester,
+      const Size(1200, 900),
+      agendas: [
+        {
+          'id': 1,
+          'purchasedPackageId': 1,
+          'userId': 2,
+          'clientName': 'Cliente Test',
+          'packageName': 'Boda Premium',
+          'serviceId': 5,
+          'serviceName': 'Cobertura en evento',
+          'eventDate': '${now.year}-${two(now.month)}-${two(eventDay)}T10:00:00',
+          'description': 'Día ocupado',
+        },
+      ],
+    );
+
+    // Vista de mes.
+    await _tapPump(tester, find.byIcon(Icons.calendar_month_outlined));
+
+    final occupied = tester.widget<Text>(find.text('$eventDay').last);
+    expect(
+      occupied.style?.color,
+      const Color(0xFFDC2626),
+      reason: 'el número de un día con eventos va en ROJO',
+    );
+
+    final free = tester.widget<Text>(find.text('$freeDay').last);
+    expect(
+      free.style?.color,
+      isNot(const Color(0xFFDC2626)),
+      reason: 'un día sin eventos no se marca en rojo',
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -433,6 +494,112 @@ void main() {
     },
   );
 
+  testWidgets('nuevo evento: las ubicaciones se numeran 1, 2, 3 solas', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpAgendas(tester, const Size(1200, 900), posts: posts);
+
+    await _tapPump(tester, find.text('Nuevo evento'));
+
+    final add = find.byKey(const ValueKey('agenda-place-add'));
+    await tester.ensureVisible(find.text('UBICACIONES (OPCIONAL)'));
+    await tester.pump();
+    // Arranca con UN hueco, numerado 1.
+    expect(find.byKey(const ValueKey('agenda-place-0')), findsOneWidget);
+    expect(_placeNumber(tester, 0), '1');
+
+    await tester.ensureVisible(add);
+    await _tapPump(tester, add);
+    expect(find.byKey(const ValueKey('agenda-place-1')), findsOneWidget);
+    expect(_placeNumber(tester, 0), '1');
+    expect(_placeNumber(tester, 1), '2');
+    expect(find.text('Agregar ubicación 3'), findsOneWidget);
+
+    await _tapPump(tester, add);
+    expect(_placeNumber(tester, 2), '3');
+
+    // Quitar la primera renumera el resto: la que era 2 pasa a ser 1.
+    final removeFirst = find.byTooltip('Quitar ubicación 1');
+    await tester.ensureVisible(removeFirst);
+    await tester.pump();
+    await _tapPump(tester, removeFirst);
+    expect(find.byKey(const ValueKey('agenda-place-2')), findsNothing);
+    expect(_placeNumber(tester, 0), '1');
+    expect(_placeNumber(tester, 1), '2');
+
+    // Al crear sin elegir lugares viaja la lista vacía (el servidor no
+    // inventa ubicaciones).
+    await _tapPump(tester, find.byKey(const ValueKey('agenda-client')));
+    await _tapPump(tester, find.text('Ana Ruiz').last);
+    await _tapPump(tester, find.byKey(const ValueKey('agenda-package')));
+    await _tapPump(tester, find.text('Paquete Aniversario').last);
+    await _tapPump(tester, find.text('Crear evento'));
+
+    expect(posts, hasLength(1));
+    expect(posts.first['locations'], isEmpty);
+    expect(posts.first.containsKey('location'), isFalse);
+  });
+
+  testWidgets('detalle: varias ubicaciones se muestran numeradas', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final monday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    final day = '${monday.year}-${two(monday.month)}-${two(monday.day)}';
+
+    await _pumpAgendas(
+      tester,
+      const Size(1200, 900),
+      agendas: [
+        {
+          'id': 1,
+          'purchasedPackageId': 1,
+          'userId': 2,
+          'clientName': 'Cliente Test',
+          'packageName': 'Boda Premium',
+          'serviceId': 5,
+          'serviceName': 'Cobertura en evento',
+          'eventDate': '${day}T14:30:00',
+          'description': 'Ceremonia en el jardín',
+          // El servidor manda la lista numerada y, por compatibilidad, la
+          // primera también en los campos sueltos.
+          'location': 'Hacienda San José',
+          'lat': 4.711,
+          'lng': -74.0721,
+          'locations': [
+            {
+              'position': 1,
+              'location': 'Hacienda San José',
+              'lat': 4.711,
+              'lng': -74.0721,
+            },
+            {
+              'position': 2,
+              'location': 'Salón Real',
+              'lat': null,
+              'lng': null,
+            },
+          ],
+        },
+      ],
+    );
+
+    await tester.ensureVisible(_weekBlock());
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, _weekBlock());
+
+    expect(find.text('Detalle de la agenda'), findsOneWidget);
+    expect(find.text('Lugar 1 '), findsOneWidget);
+    expect(find.text('Lugar 2 '), findsOneWidget);
+    expect(find.text('Hacienda San José'), findsWidgets);
+    expect(find.text('Salón Real'), findsOneWidget);
+    // Un solo mapa (el de la primera ubicación con coordenadas).
+    expect(find.byType(HsPlaceMapPreview), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'widget nativo (Android/Windows): tocar un evento abre SU detalle',
     (tester) async {
@@ -486,6 +653,102 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.text('Detalle de la agenda'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cliente: sus eventos con detalle y los de OTROS solo como "Ocupado"',
+    (tester) async {
+      // Lo que el servidor manda a un CLIENTE: su evento completo y el de otro
+      // cliente enmascarado (`busy: true`, sin nombres ni servicio).
+      final now = DateTime.now();
+      String two(int n) => n.toString().padLeft(2, '0');
+      final monday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+      final day = '${monday.year}-${two(monday.month)}-${two(monday.day)}';
+
+      await _pumpAgendas(
+        tester,
+        const Size(1200, 900),
+        agendas: [
+          {
+            'id': 1,
+            'purchasedPackageId': 10,
+            'userId': 2,
+            'clientName': 'Ana Ruiz',
+            'packageName': 'Boda Premium',
+            'serviceId': 5,
+            'serviceName': 'Cobertura en evento',
+            'eventDate': '${day}T14:30:00',
+            'description': 'Ceremonia en el jardín',
+            'busy': false,
+          },
+          {
+            'id': 2,
+            'purchasedPackageId': null,
+            'userId': null,
+            'clientName': '',
+            'packageName': '',
+            'serviceId': null,
+            'serviceName': '',
+            'eventDate': '${day}T17:00:00',
+            'description': '',
+            'location': '',
+            'lat': null,
+            'lng': null,
+            'busy': true,
+          },
+        ],
+      );
+
+      final calendar = find.byKey(const ValueKey('agenda-calendar'));
+      final busyBlock = find.descendant(
+        of: calendar,
+        matching: find.text('Ocupado'),
+      );
+      // Su evento se ve con su nombre; el ajeno, solo como hueco ocupado.
+      expect(
+        find.descendant(of: calendar, matching: find.text('Ana Ruiz')),
+        findsOneWidget,
+      );
+      expect(busyBlock, findsOneWidget);
+
+      // El hueco ocupado abre un detalle que SOLO dice que está ocupado.
+      await tester.ensureVisible(busyBlock);
+      await tester.pump(const Duration(milliseconds: 300));
+      await _tapPump(tester, busyBlock);
+
+      final dialog = find.byType(FormDialog);
+      expect(find.text('Detalle de la agenda'), findsOneWidget);
+      expect(
+        find.descendant(of: dialog, matching: find.text('Ocupado')),
+        findsOneWidget,
+      );
+      expect(find.text('Horario reservado con otro cliente'), findsOneWidget);
+      expect(
+        find.descendant(of: dialog, matching: find.text('Paquete ')),
+        findsNothing,
+        reason: 'El paquete de otro cliente no se muestra',
+      );
+      expect(
+        find.descendant(of: dialog, matching: find.text('Servicio ')),
+        findsNothing,
+      );
+      expect(find.textContaining('Boda Premium'), findsNothing);
+      await _tapPump(tester, find.byTooltip('Cerrar'));
+
+      // Su PROPIO evento sigue abriendo con todos los detalles.
+      final ownBlock = find.descendant(
+        of: calendar,
+        matching: find.text('Ana Ruiz'),
+      );
+      await tester.ensureVisible(ownBlock);
+      await tester.pump(const Duration(milliseconds: 300));
+      await _tapPump(tester, ownBlock);
+
+      expect(find.textContaining('Boda Premium'), findsWidgets);
+      expect(find.textContaining('Cobertura en evento'), findsWidgets);
+      expect(find.text('Ceremonia en el jardín'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

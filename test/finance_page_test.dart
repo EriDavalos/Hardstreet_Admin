@@ -6,13 +6,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/finance_data.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/finance_page.dart';
 
-/// Finanzas falsas: 2 paquetes activos, 2 meses de serie y 3 movimientos.
-/// Totales: cobrado 18000, por cobrar 12000, ahorro 3000,
-/// gastos 2250 + inversiones 800 => salidas 3050.
-void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false}) {
+/// Finanzas falsas:
+///   totales: abonado 18000, gastos 2400, inversión 800, ahorro 3000,
+///            abono externo 500, pagos 4000, por cobrar 12000.
+///   DINERO ACTUAL = 18000 + 500 - 2400 - 800 - 3000 - 4000 = 8300.
+///
+/// Trae un paquete GRATIS sin movimientos ("Sesión gratis", debe ocultarse) y
+/// uno gratis CON un gasto ("Cortesía con gasto", debe verse).
+void _installMockClient({List<Map<String, dynamic>>? posts}) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -20,8 +25,11 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
     if (path.endsWith('/api/admin/finance')) {
       if (request.method == 'POST') {
         posts?.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
-        return http.Response(jsonEncode({'ok': true, 'id': 1}), 201,
-            headers: headers);
+        return http.Response(
+          jsonEncode({'ok': true, 'id': 1}),
+          201,
+          headers: headers,
+        );
       }
       return http.Response(
         jsonEncode({
@@ -30,40 +38,84 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
             'facturado': 30000,
             'ganancias': 18000,
             'porCobrar': 12000,
-            'disponible': 14950,
+            'disponible': 8300,
             'ahorro': 3000,
             'inversiones': 800,
-            'gastos': 2250,
+            'gastos': 2400,
             'abonoExterno': 500,
+            'pagos': 4000,
+            'gananciaEstimada': 14700,
+            'gananciaReal': 8300,
+          },
+          'general': {
+            'gastos': 900,
+            'inversiones': 0,
+            'salidas': 900,
+            'ahorro': 0,
+            'abonoExterno': 0,
+            'pagos': 0,
+            'neto': -900,
           },
           'packages': [
             {
               'id': 10,
-              'name': 'Boda - Premium',
+              'name': 'Boda Premium',
               'clientName': 'Ana Ruiz',
               'currency': 'MXN',
               'price': 12000,
               'paid': 6000,
               'balance': 6000,
-              'disponible': 5200,
+              'disponible': 2700,
               'ahorro': 0,
               'gastos': 300,
               'inversiones': 500,
               'abonoExterno': 0,
+              'pagos': 2500,
             },
             {
               'id': 11,
-              'name': 'XV Años - Gold',
+              'name': 'XV Años Gold',
               'clientName': 'Luis Gómez',
               'currency': 'MXN',
               'price': 18000,
               'paid': 12000,
               'balance': 6000,
-              'disponible': 9750,
+              'disponible': 5750,
               'ahorro': 3000,
               'gastos': 1950,
               'inversiones': 300,
               'abonoExterno': 500,
+              'pagos': 1500,
+            },
+            {
+              'id': 12,
+              'name': 'Sesión gratis',
+              'clientName': 'Pablo Sin Pago',
+              'currency': 'MXN',
+              'price': 0,
+              'paid': 0,
+              'balance': 0,
+              'disponible': 0,
+              'ahorro': 0,
+              'gastos': 0,
+              'inversiones': 0,
+              'abonoExterno': 0,
+              'pagos': 0,
+            },
+            {
+              'id': 13,
+              'name': 'Cortesía con gasto',
+              'clientName': 'Marta Cortés',
+              'currency': 'MXN',
+              'price': 0,
+              'paid': 0,
+              'balance': 0,
+              'disponible': -150,
+              'ahorro': 0,
+              'gastos': 150,
+              'inversiones': 0,
+              'abonoExterno': 0,
+              'pagos': 0,
             },
           ],
           'months': [
@@ -80,37 +132,63 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
               'month': '2026-10',
               'label': 'oct',
               'ganancias': 13000,
-              'gastos': 1850,
+              'gastos': 2000,
               'inversiones': 800,
               'ahorro': 3000,
               'abonoExterno': 500,
             },
           ],
-          if (general)
-            'general': {
-              'gastos': 900,
-              'inversiones': 0,
-              'salidas': 900,
-              'ahorro': 0,
-              'abonoExterno': 0,
-              'neto': -900,
+          'payees': [
+            {
+              'userId': 7,
+              'name': 'Carla Méndez',
+              'roleName': 'Colaboradora',
+              'total': 2500,
+              'count': 1,
+              'packageCount': 1,
+              'lastPaid': '2026-10-09T10:00:00',
             },
+            {
+              'userId': 8,
+              'name': 'Jorge Ruiz',
+              'roleName': 'Empleado',
+              'total': 1500,
+              'count': 1,
+              'packageCount': 1,
+              'lastPaid': '2026-10-08T12:00:00',
+            },
+          ],
+          'payments': [
+            {
+              'id': 20,
+              'userId': 7,
+              'userName': 'Carla Méndez',
+              'roleName': 'Colaboradora',
+              'packageId': 10,
+              'packageName': 'Boda Premium',
+              'clientName': 'Ana Ruiz',
+              'amount': 2500,
+              'description': 'Pago a Carla Méndez',
+              'created': '2026-10-09T10:00:00',
+            },
+            {
+              'id': 21,
+              'userId': 8,
+              'userName': 'Jorge Ruiz',
+              'roleName': 'Empleado',
+              'packageId': 11,
+              'packageName': 'XV Años Gold',
+              'clientName': 'Luis Gómez',
+              'amount': 1500,
+              'description': 'Pago a Jorge Ruiz',
+              'created': '2026-10-08T12:00:00',
+            },
+          ],
           'movements': [
-            if (general)
-              {
-                'id': 9,
-                'packageId': 0,
-                'packageName': '',
-                'clientName': '',
-                'kind': 'gasto',
-                'amount': 900,
-                'description': 'Renta del estudio',
-                'created': '2026-10-05T09:00:00',
-              },
             {
               'id': 1,
               'packageId': 10,
-              'packageName': 'Boda - Premium',
+              'packageName': 'Boda Premium',
               'clientName': 'Ana Ruiz',
               'kind': 'abono',
               'amount': 6000,
@@ -120,7 +198,7 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
             {
               'id': 2,
               'packageId': 11,
-              'packageName': 'XV Años - Gold',
+              'packageName': 'XV Años Gold',
               'clientName': 'Luis Gómez',
               'kind': 'ahorro',
               'amount': 3000,
@@ -130,12 +208,36 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
             {
               'id': 3,
               'packageId': 10,
-              'packageName': 'Boda - Premium',
+              'packageName': 'Boda Premium',
               'clientName': 'Ana Ruiz',
               'kind': 'gasto',
               'amount': 300,
               'description': 'Transporte',
               'created': '2026-10-04T12:00:00',
+            },
+            {
+              'id': 20,
+              'packageId': 10,
+              'packageName': 'Boda Premium',
+              'clientName': 'Ana Ruiz',
+              'kind': 'pago',
+              'amount': 2500,
+              'description': 'Pago a Carla Méndez',
+              'created': '2026-10-09T10:00:00',
+              'userId': 7,
+              'userName': 'Carla Méndez',
+            },
+            {
+              'id': 21,
+              'packageId': 11,
+              'packageName': 'XV Años Gold',
+              'clientName': 'Luis Gómez',
+              'kind': 'pago',
+              'amount': 1500,
+              'description': 'Pago a Jorge Ruiz',
+              'created': '2026-10-08T12:00:00',
+              'userId': 8,
+              'userName': 'Jorge Ruiz',
             },
           ],
         }),
@@ -147,8 +249,11 @@ void _installMockClient({List<Map<String, dynamic>>? posts, bool general = false
   });
 }
 
-Future<void> _pumpFinance(WidgetTester tester, Size size,
-    {List<Map<String, dynamic>>? posts, bool general = false}) async {
+Future<void> _pumpFinance(
+  WidgetTester tester,
+  Size size, {
+  List<Map<String, dynamic>>? posts,
+}) async {
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
@@ -156,7 +261,7 @@ Future<void> _pumpFinance(WidgetTester tester, Size size,
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
-  _installMockClient(posts: posts, general: general);
+  _installMockClient(posts: posts);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -174,15 +279,11 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// Botón del diálogo (evita los de la página, detrás).
-Finder _inDialog(String text) => find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.text(text),
-    );
+Future<void> _openTab(WidgetTester tester, int index) =>
+    _tap(tester, find.byKey(ValueKey('finance-tab-$index')));
 
 /// Textos de UNA línea dentro de [wanted] que NO caben en su celda (se
-/// dibujarían con puntos suspensivos). Los de varias líneas envuelven y no
-/// se consideran recortados.
+/// dibujarían con puntos suspensivos).
 List<String> _clippedOneLineTexts(WidgetTester tester, Set<String> wanted) {
   final out = <String>{};
   for (final p in tester.allRenderObjects.whereType<RenderParagraph>()) {
@@ -197,384 +298,323 @@ List<String> _clippedOneLineTexts(WidgetTester tester, Set<String> wanted) {
 }
 
 void main() {
-  testWidgets('Finanzas: totales, tabla de paquetes/movimientos y gráfica',
-      (tester) async {
-    await _pumpFinance(tester, const Size(1280, 1000));
+  group('FinanceData', () {
+    test('oculta los paquetes gratis SIN movimientos', () {
+      final data = FinanceData.fromJson({
+        'packages': [
+          {'id': 1, 'name': 'Gratis vacío', 'price': 0},
+          {
+            'id': 2,
+            'name': 'Gratis con gasto',
+            'price': 0,
+            'gastos': 150,
+          },
+          {'id': 3, 'name': 'De pago', 'price': 9000, 'paid': 0},
+        ],
+      });
+      expect(data.packages.map((p) => p.id), [2, 3]);
+    });
 
-    // El módulo con su resumen AGRUPADO: cuatro grupos, cada uno con sus
-    // cuadros (antes eran 10 cuadros sueltos en una rejilla pareja y todo se
-    // veía junto, sin distinguir lo que entra de lo que sale).
+    test('calcula el dinero actual con los pagos incluidos', () {
+      final totals = FinanceTotals.fromJson({
+        'ganancias': 1000,
+        'gastos': 100,
+        'inversiones': 50,
+        'ahorro': 200,
+        'abonoExterno': 40,
+        'pagos': 300,
+      });
+      // 1000 + 40 - 50 - 200 = 790 estimada; 790 - 100 - 300 = 390 actual.
+      expect(totals.gananciaEstimada, 790);
+      expect(totals.gananciaReal, 390);
+      expect(totals.dineroActual, 390);
+    });
+
+    test('deriva los pagos por persona de un backend viejo', () {
+      final data = FinanceData.fromJson({
+        'movements': [
+          {
+            'id': 1,
+            'kind': 'pago',
+            'amount': 500,
+            'userId': 4,
+            'userName': 'Ana',
+            'packageId': 9,
+            'packageName': 'Boda',
+            'created': '2026-10-01T09:00:00',
+          },
+          {
+            'id': 2,
+            'kind': 'pago',
+            'amount': 300,
+            'userId': 4,
+            'userName': 'Ana',
+            'packageId': 8,
+            'packageName': 'XV',
+            'created': '2026-10-02T09:00:00',
+          },
+        ],
+      });
+      expect(data.payments, hasLength(2));
+      expect(data.payees, hasLength(1));
+      expect(data.payees.first.name, 'Ana');
+      expect(data.payees.first.total, 800);
+      expect(data.payees.first.packageCount, 2);
+      expect(data.totalPagos, 800);
+    });
+  });
+
+  testWidgets('Resumen: dinero actual, tabla de conceptos y gráfica', (
+    tester,
+  ) async {
+    await _pumpFinance(tester, const Size(1280, 1100));
+
     expect(find.text('Finanzas'), findsOneWidget);
-    for (final group in [
-      'LO QUE GANAS',
-      'COBROS',
-      'SALIDAS',
-      'APARTADO Y PAGOS',
-    ]) {
-      // 'SALIDAS' también es una columna de la tabla.
-      expect(find.text(group), findsWidgets, reason: 'grupo $group');
+    for (final tab in ['Resumen', 'Por paquete', 'Pagos']) {
+      expect(find.text(tab), findsWidgets, reason: 'pestaña $tab');
     }
+
+    // DINERO ACTUAL con la fórmula de la petición (incluye pagos).
+    expect(find.text('DINERO ACTUAL'), findsWidgets);
+    expect(find.text(r'MXN $8,300'), findsWidgets);
+    expect(
+      find.text(
+        'Abonado + abono externo − gastos − inversión − ahorro − pagos',
+      ),
+      findsOneWidget,
+    );
+
+    // La tabla con TODOS los conceptos pedidos.
+    expect(find.text('Movimiento del dinero'), findsOneWidget);
     for (final label in [
-      'GANADO',
-      'COBRADO',
-      'POR COBRAR',
-      'AHORRO',
-      'GASTOS',
-      'INVERSIÓN',
-      'ABONO EXTERNO',
-    ]) {
-      // 'AHORRO' también es una columna de la tabla.
-      expect(find.text(label), findsWidgets, reason: 'cuadro $label');
-    }
-    // "Ganado" es el DISPONIBLE de los datos.
-    expect(find.text(r'MXN $14,950'), findsWidgets);
-    expect(find.text('= Disponible'), findsOneWidget);
-
-    // Los cuadros van TODOS juntos en UNA lista VERTICAL, sin un recuadro por
-    // grupo: se leen de arriba abajo en el orden en que se ganan → entran →
-    // salen → se apartan.
-    final ganas = tester.getRect(find.text('LO QUE GANAS'));
-    final cobros = tester.getRect(find.text('COBROS'));
-    final salidas = tester.getRect(find.text('SALIDAS').first);
-    final apartado = tester.getRect(find.text('APARTADO Y PAGOS'));
-    expect(ganas.left, cobros.left,
-        reason: 'las secciones arrancan en la misma columna (vertical)');
-    expect(cobros.left, salidas.left);
-    expect(salidas.left, apartado.left);
-    expect(ganas.top, lessThan(cobros.top));
-    expect(cobros.top, lessThan(salidas.top));
-    expect(salidas.top, lessThan(apartado.top));
-
-    // La TABLA: encabezado de columnas y de grupos.
-    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
-    // 'SALIDAS' es columna de la tabla Y grupo del resumen.
-    for (final col in ['CONCEPTO', 'MONTO']) {
-      expect(find.text(col), findsOneWidget, reason: 'columna $col');
-    }
-    expect(find.text('SALIDAS'), findsNWidgets(2));
-    // 'AHORRO' es columna de la tabla Y cuadro de totales.
-    expect(find.text('AHORRO'), findsNWidgets(2));
-    expect(find.text('PAQUETES'), findsOneWidget);
-    expect(find.text('MOVIMIENTOS'), findsOneWidget);
-
-    // Sus paquetes, con su cliente y su disponible (el "ganado").
-    expect(find.text('Boda - Premium'), findsWidgets);
-    expect(find.text('Ana Ruiz'), findsWidgets);
-    expect(find.text('XV Años - Gold'), findsWidgets);
-    expect(find.text('Luis Gómez'), findsWidgets);
-    expect(find.text(r'MXN $5,200'), findsWidgets);
-    expect(find.text(r'MXN $9,750'), findsWidgets);
-
-    // Y las filas de cada tipo de movimiento.
-    for (final kind in [
-      'Abonos',
+      'Abonado',
+      'Abono externo',
       'Gastos',
-      'Inversiones',
+      'Inversión',
       'Ahorro',
-      'Abonos externos',
+      'Pagos',
+      'Por cobrar',
     ]) {
-      expect(find.text(kind), findsWidgets, reason: 'fila $kind');
+      expect(find.text(label), findsWidgets, reason: 'concepto $label');
+    }
+    // Montos de cada concepto.
+    for (final amount in [
+      r'MXN $18,000', // abonado
+      r'MXN $500', // abono externo
+      r'MXN $2,400', // gastos
+      r'MXN $800', // inversión
+      r'MXN $3,000', // ahorro
+      r'MXN $4,000', // pagos
+      r'MXN $12,000', // por cobrar
+    ]) {
+      expect(find.text(amount), findsWidgets, reason: 'monto $amount');
     }
 
-    // La gráfica de los últimos meses, con su leyenda.
+    // Gráfica y movimientos recientes.
     expect(find.text('Últimos 6 meses'), findsOneWidget);
     expect(find.text('sep'), findsOneWidget);
     expect(find.text('oct'), findsOneWidget);
+    expect(find.text('Movimientos recientes'), findsOneWidget);
+    expect(find.textContaining('Pago a Carla Méndez'), findsWidgets);
 
-    // Las acciones viven en la cabecera.
-    expect(find.text('Abonar al ahorro'), findsOneWidget);
-    expect(find.text('Agregar movimiento'), findsOneWidget);
+    // El título viejo del "ahorro apartado" ya NO existe como separador.
+    expect(find.text('Ahorro apartado'), findsNothing);
+    expect(find.text('APARTADO Y PAGOS'), findsNothing);
+    expect(find.text('Abonar al ahorro'), findsNothing);
 
+    // La acción de la cabecera.
+    expect(find.text('Registrar movimiento'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Finanzas: la fila de un paquete se EXPANDE con su desglose',
-      (tester) async {
-    await _pumpFinance(tester, const Size(1280, 1000));
+  testWidgets('Por paquete: oculta los gratis vacíos y desglosa cada uno', (
+    tester,
+  ) async {
+    await _pumpFinance(tester, const Size(1280, 1100));
 
-    // Cerrada: el desglose y sus movimientos no están.
-    expect(find.textContaining('Ganado (disponible)'), findsNothing);
-    expect(find.textContaining('Anticipo'), findsNothing);
+    await _openTab(tester, 1);
 
-    await _tap(tester, find.text('Boda - Premium').first);
+    // Columnas de la tabla por paquete.
+    for (final col in [
+      'PAQUETE',
+      'ABONADO',
+      'GASTOS',
+      'INVERSIÓN',
+      'AHORRO',
+      'POR COBRAR',
+      'EXTERNO',
+      'PAGOS',
+      'ACTUAL',
+    ]) {
+      expect(find.text(col), findsOneWidget, reason: 'columna $col');
+    }
 
-    // Abierta: los conceptos del paquete…
-    expect(find.textContaining('Ganado (disponible)'), findsOneWidget);
-    expect(find.textContaining('Cobrado'), findsOneWidget);
-    // ('Abono externo' también es la leyenda de la gráfica.)
-    expect(find.textContaining('Abono externo'), findsWidgets);
-    // …sus movimientos (abono y gasto del paquete)…
-    expect(find.textContaining('Anticipo'), findsOneWidget);
-    expect(find.textContaining('Transporte'), findsOneWidget);
-    // …y sus acciones.
+    // El paquete de pago y el gratis CON gasto se ven…
+    expect(find.text('Boda Premium'), findsWidgets);
+    expect(find.text('XV Años Gold'), findsWidgets);
+    expect(find.text('Cortesía con gasto'), findsWidgets);
+    // …y el gratis SIN movimientos no.
+    expect(find.text('Sesión gratis'), findsNothing);
+
+    // Se expande un paquete: su desglose, sus movimientos y sus acciones.
+    expect(find.text('MOVIMIENTOS DEL PAQUETE'), findsNothing);
+    await _tap(tester, find.text('Boda Premium').first);
     expect(find.text('MOVIMIENTOS DEL PAQUETE'), findsOneWidget);
-    expect(find.text('Abonar al ahorro'), findsNWidgets(2));
+    expect(find.textContaining('Anticipo'), findsOneWidget);
+    expect(find.textContaining('Pago a Carla Méndez'), findsWidgets);
+    expect(find.text('Abonar al ahorro'), findsOneWidget);
 
-    // Se vuelve a cerrar.
-    await _tap(tester, find.text('Boda - Premium').first);
-    expect(find.textContaining('Ganado (disponible)'), findsNothing);
-
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Finanzas: cada TIPO de movimiento se desglosa al expandir',
-      (tester) async {
-    await _pumpFinance(tester, const Size(1280, 1000));
-
-    expect(find.textContaining('Transporte'), findsNothing);
-
-    // La fila "Gastos" lista los gastos registrados.
-    await _tap(tester, find.text('Gastos').first);
-    expect(find.textContaining('Transporte'), findsOneWidget);
-    expect(find.textContaining('Boda - Premium'), findsWidgets);
-
-    // La fila "Ahorro" lista el ahorro apartado.
-    await _tap(tester, find.text('Ahorro').first);
-    expect(find.textContaining('Ahorro del mes'), findsOneWidget);
-    expect(find.textContaining('XV Años - Gold'), findsWidgets);
-
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Finanzas: el ahorro por PORCENTAJE se calcula sobre el '
-      'disponible del paquete', (tester) async {
-    final posts = <Map<String, dynamic>>[];
-    await _pumpFinance(tester, const Size(1280, 1000), posts: posts);
-
-    await _tap(tester, find.text('Abonar al ahorro'));
-    expect(find.text('Abonar al ahorro'), findsWidgets); // también el título
-    // Por DEFECTO el movimiento es general (ya no obliga a elegir paquete).
-    expect(find.textContaining('Disponible general del negocio'), findsOneWidget);
-    expect(_inDialog('Abonar'), findsOneWidget);
-
-    // Se elige el paquete en el selector (es opcional).
-    await _tap(tester, find.byType(DropdownButton<int>));
-    await _tap(tester, find.text('Boda - Premium · Ana Ruiz').last);
-    expect(find.textContaining('Disponible del paquete'), findsOneWidget);
-
-    // Porcentaje: 25 % del disponible del paquete elegido (5200) = 1300.
-    await _tap(tester, find.text('Porcentaje'));
+    // La búsqueda filtra la tabla.
     await tester.enterText(
-        find.widgetWithText(TextField, 'Porcentaje'), '25');
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.text('Se ahorrarán'), findsOneWidget);
-    expect(find.text(r'MXN $1,300'), findsWidgets);
+      find.widgetWithText(TextField, 'Buscar paquete o cliente…'),
+      'XV',
+    );
+    await tester.pump();
+    expect(find.text('XV Años Gold'), findsWidgets);
+    expect(find.text('Cortesía con gasto'), findsNothing);
 
-    await _tap(tester, _inDialog('Abonar'));
-
-    final saves = posts
-        .where((p) => p['purchasedPackageId'] == 10)
-        .toList();
-    expect(saves, hasLength(1));
-    expect(saves.first['kind'], 'ahorro');
-    expect(saves.first['amount'], 1300);
-    expect(saves.first['description'], '25 % del disponible');
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Finanzas: "Agregar movimiento" registra un movimiento '
-      'GENERAL (sin pedir paquete)', (tester) async {
+  testWidgets('Pagos: total por persona y desglose de cada pago', (
+    tester,
+  ) async {
+    await _pumpFinance(tester, const Size(1280, 1100));
+
+    await _openTab(tester, 2);
+
+    expect(find.text('TOTAL PAGADO A PERSONAS'), findsOneWidget);
+    expect(find.text(r'MXN $4,000'), findsWidgets);
+    expect(find.text('En 2 personas'), findsOneWidget);
+
+    // Cada persona con su rol, su total y su conteo.
+    expect(find.text('Carla Méndez'), findsWidgets);
+    expect(find.text('Jorge Ruiz'), findsWidgets);
+    expect(find.textContaining('Colaboradora'), findsOneWidget);
+    expect(find.textContaining('Empleado'), findsOneWidget);
+    expect(find.text(r'MXN $2,500'), findsWidgets);
+    expect(find.text(r'MXN $1,500'), findsWidgets);
+
+    // Se desglosa una persona: sus pagos individuales.
+    expect(find.text('PAGOS RECIBIDOS'), findsNothing);
+    await _tap(tester, find.text('Carla Méndez').first);
+    expect(find.text('PAGOS RECIBIDOS'), findsOneWidget);
+    expect(find.textContaining('Boda Premium · Ana Ruiz'), findsOneWidget);
+    expect(find.textContaining('09/10/2026'), findsWidgets);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Registrar movimiento: general, con Gastos por defecto', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
-    await _pumpFinance(tester, const Size(1280, 1000), posts: posts);
+    await _pumpFinance(tester, const Size(1280, 1100), posts: posts);
 
-    await _tap(tester, find.text('Agregar movimiento'));
-    // El diálogo NO obliga a elegir paquete: viene en "General".
-    expect(find.textContaining('Disponible general del negocio'), findsOneWidget);
-    expect(_inDialog('General (todo el negocio)'), findsOneWidget);
+    await _tap(tester, find.text('Registrar movimiento'));
+    final dialog = find.byType(AlertDialog);
+    expect(dialog, findsOneWidget);
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('Movimiento GENERAL'),
+      ),
+      findsOneWidget,
+    );
 
-    // Se elige GASTOS y se captura un monto.
-    await _tap(tester, _inDialog('Gastos'));
-    await tester.enterText(find.widgetWithText(TextField, 'Monto'), '450');
+    await tester.enterText(
+      find.descendant(of: dialog, matching: find.widgetWithText(TextField, 'Monto')),
+      '450',
+    );
     await tester.pump();
-    await _tap(tester, _inDialog('Registrar'));
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Registrar')),
+    );
 
     expect(posts, hasLength(1));
     expect(posts.first['kind'], 'gasto');
     expect(posts.first['amount'], 450);
-    expect(posts.first.containsKey('purchasedPackageId'), isFalse,
-        reason: 'un movimiento general no manda paquete');
+    expect(
+      posts.first.containsKey('purchasedPackageId'),
+      isFalse,
+      reason: 'un movimiento general no manda paquete',
+    );
   });
 
-  testWidgets('Finanzas: el dinero SIN paquete aparece como grupo "General"',
-      (tester) async {
-    await _pumpFinance(tester, const Size(1280, 1000), general: true);
+  testWidgets('Ahorro por porcentaje: se calcula sobre el DINERO ACTUAL', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpFinance(tester, const Size(1280, 1100), posts: posts);
 
-    // La fila general, con su dinero y su indicador.
-    expect(find.text('General (sin paquete)'), findsOneWidget);
-    expect(find.textContaining('movimiento'), findsWidgets);
+    await _tap(tester, find.text('Registrar movimiento'));
+    final dialog = find.byType(AlertDialog);
 
-    await _tap(tester, find.text('General (sin paquete)'));
-    // Su desglose y sus registros (el que NO pertenece a ningún paquete).
-    expect(find.textContaining('Renta del estudio'), findsOneWidget);
-    expect(find.text('Agregar movimiento general'), findsOneWidget);
+    // Se elige AHORRO y el modo porcentaje.
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Ahorro')),
+    );
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Porcentaje')),
+    );
+    await tester.enterText(
+      find.descendant(
+        of: dialog,
+        matching: find.widgetWithText(TextField, 'Porcentaje'),
+      ),
+      '25',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
 
-    expect(tester.takeException(), isNull);
+    // 25 % de 8300 = 2075. Sin paquete, la base es el negocio entero.
+    expect(find.text('Se ahorrarán del negocio'), findsOneWidget);
+    expect(find.text(r'MXN $2,075'), findsWidgets);
+
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Abonar')),
+    );
+    expect(posts, hasLength(1));
+    expect(posts.first['kind'], 'ahorro');
+    expect(posts.first['amount'], 2075);
   });
 
-  testWidgets('Finanzas: en una ventana BAJA nada se desborda', (tester) async {
-    // El resumen del dinero es un bloque de ALTO FIJO: con una ventana baja
-    // (1366x620, típica de una laptop) se comía el espacio de la tabla y el
-    // RenderFlex desbordaba la pantalla. En ese caso la tabla y la gráfica
-    // bajan a una zona con scroll en vez de recortarse.
-    await _pumpFinance(tester, const Size(1366, 620));
-
-    expect(find.text('LO QUE GANAS'), findsOneWidget);
-    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
-    // La tabla sigue COMPLETA (grupos, paquetes y filas de movimiento).
-    expect(find.text('PAQUETES'), findsOneWidget);
-    expect(find.text('Boda - Premium'), findsWidgets);
-    expect(find.text('Abonos'), findsWidgets);
-    expect(tester.takeException(), isNull);
-
-    // Y con la ventana todavía más baja tampoco.
-    await _pumpFinance(tester, const Size(1100, 560));
-    expect(find.text('SALIDAS'), findsWidgets);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-      'Finanzas (escritorio): el resumen del dinero se puede MINIMIZAR '
-      'para dejarle la pantalla a la tabla', (tester) async {
-    await _pumpFinance(tester, const Size(1280, 1000));
-
-    // Abierto por defecto: los cuatro grupos a la vista.
-    expect(find.text('LO QUE GANAS'), findsOneWidget);
-    expect(find.text('COBROS'), findsOneWidget);
-    final tablaAbierta = tester.getRect(find.text('Dinero por paquete y movimiento'));
-
-    // Se minimiza: los grupos desaparecen y la tabla SUBE (gana el espacio
-    // que ocupaba el resumen).
-    await _tap(tester, find.byTooltip('Minimizar los cuadros'));
-    expect(find.text('LO QUE GANAS'), findsNothing);
-    expect(find.text('COBROS'), findsNothing);
-    // El encabezado del bloque sigue ahí, en una línea.
-    expect(find.text('Resumen del dinero'), findsOneWidget);
-    final tablaMin = tester.getRect(find.text('Dinero por paquete y movimiento'));
-    expect(tablaMin.top, lessThan(tablaAbierta.top),
-        reason: 'la tabla arranca más arriba cuando el resumen está minimizado');
-    // La tabla sigue COMPLETA.
-    expect(find.text('PAQUETES'), findsOneWidget);
-    expect(find.text('Abonos'), findsWidgets);
-
-    // Y se vuelve a mostrar.
-    await _tap(tester, find.byTooltip('Mostrar los cuadros'));
-    expect(find.text('LO QUE GANAS'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Finanzas (móvil): la tabla se ve ordenada y sin desbordes',
-      (tester) async {
+  testWidgets('Móvil: pestañas, tabla y pagos sin desbordes ni recortes', (
+    tester,
+  ) async {
     await _pumpFinance(tester, const Size(390, 844));
 
     expect(find.text('Finanzas'), findsOneWidget);
-    expect(find.text('GANADO'), findsOneWidget);
-    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
-    expect(find.text('PAQUETES'), findsOneWidget);
-    expect(find.text('Boda - Premium'), findsWidgets);
-    expect(find.text('Abonos'), findsWidgets);
+    await _tap(tester, find.byKey(const ValueKey('finance-tab-0')));
+    expect(find.text('DINERO ACTUAL'), findsWidgets);
+    expect(find.text('Movimiento del dinero'), findsOneWidget);
 
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Finanzas (móvil): los nombres, montos y cuadros caben ENTEROS',
-      (tester) async {
-    await _pumpFinance(tester, const Size(390, 844));
-
-    // Nada recortado: los textos de UNA línea deben caber en su celda
-    // (los que envuelven varias líneas no cuentan como recortados).
     final clipped = _clippedOneLineTexts(tester, {
-      'Boda - Premium',
-      'Ana Ruiz',
-      'XV Años - Gold',
-      'Luis Gómez',
-      'GANADO',
-      'GANANCIA REAL',
-      'GANANCIA ESTIMADA',
-      'COBRADO',
-      'POR COBRAR',
-      'GASTOS',
-      'INVERSIÓN',
-      'ABONO EXTERNO',
-      'PAGOS',
-      'Abonos externos',
-      'Ahorro apartado',
-      // Los títulos de los grupos del resumen.
-      'LO QUE GANAS',
-      'COBROS',
-      'SALIDAS',
-      'APARTADO Y PAGOS',
+      'DINERO ACTUAL',
+      'Abonado',
+      'Abono externo',
+      'Gastos',
+      'Inversión',
+      'Ahorro',
+      'Pagos',
+      'Por cobrar',
+      'Resumen',
+      'Por paquete',
     });
     expect(clipped, isEmpty, reason: 'textos cortados en el teléfono: $clipped');
 
-    // En el teléfono las acciones son de IMAGEN (solo el icono, con el texto
-    // como tooltip): así no compiten por el ancho con la información.
-    expect(find.byTooltip('Nuevo movimiento'), findsOneWidget);
-    expect(find.byTooltip('Abonar al ahorro'), findsOneWidget);
-    expect(find.text('Nuevo movimiento'), findsNothing);
-    expect(find.text('Abonar al ahorro'), findsNothing);
-
-    // Las columnas de la tabla se alinean con su encabezado.
-    final head = tester.getRect(find.text('CONCEPTO'));
-    final monto = tester.getRect(find.text('MONTO'));
-    final paquete = tester.getRect(find.text('Boda - Premium').first);
-    expect(paquete.left, greaterThanOrEqualTo(head.left - 1),
-        reason: 'el concepto arranca bajo su encabezado');
-    expect(monto.left, greaterThan(head.left),
-        reason: 'MONTO va a la derecha del concepto');
-
+    // Pestaña por paquete: tarjetas (no tabla ancha) y sin desbordes.
+    await _openTab(tester, 1);
+    expect(find.text('Boda Premium'), findsWidgets);
+    expect(find.text('Sesión gratis'), findsNothing);
     expect(tester.takeException(), isNull);
-  });
 
-  testWidgets(
-      'Finanzas (móvil): los totales van juntos en una lista VERTICAL y se '
-      'pueden MINIMIZAR',
-      (tester) async {
-    await _pumpFinance(tester, const Size(390, 844));
-
-    // Ya NO hay carrusel: los cuadros se ven varios a la vez y bajan con el
-    // MISMO scroll que la tabla (así se consulta más información sin tanto
-    // deslizamiento).
-    expect(find.byType(PageView), findsNothing);
-    expect(find.text('GANADO'), findsOneWidget);
-    expect(find.text('COBRADO'), findsOneWidget);
-    expect(find.text('POR COBRAR'), findsOneWidget);
-
-    // Nada recortado en la rejilla compacta.
-    final clipped =
-        _clippedOneLineTexts(tester, {'GANADO', 'COBRADO', 'POR COBRAR'});
-    expect(clipped, isEmpty, reason: 'etiqueta recortada: $clipped');
-
-    // El bloque se puede MINIMIZAR para dejarle la pantalla a la tabla…
-    expect(find.text('Resumen del dinero'), findsOneWidget);
-    await _tap(tester, find.byTooltip('Minimizar los cuadros'));
-    expect(find.text('GANADO'), findsNothing);
-    expect(find.text('Dinero por paquete y movimiento'), findsOneWidget);
-
-    // …y volver a mostrar cuando se quieren los números.
-    await _tap(tester, find.byTooltip('Mostrar los cuadros'));
-    expect(find.text('GANADO'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Finanzas (móvil): desglose y acciones en UNA fila horizontal',
-      (tester) async {
-    await _pumpFinance(tester, const Size(390, 844));
-
-    // Las acciones de la página comparten renglón (no una por línea). En el
-    // teléfono son botones de imagen, así que se miden por su tooltip.
-    final nuevo = tester.getRect(find.byTooltip('Nuevo movimiento'));
-    final abonar = tester.getRect(find.byTooltip('Abonar al ahorro'));
-    expect((nuevo.top - abonar.top).abs(), lessThan(1),
-        reason: 'las acciones de la página van en el mismo renglón');
-
-    // Al expandir un paquete, sus píldoras de desglose también van en fila.
-    await _tap(tester, find.text('Boda - Premium').first);
-    final cobrado = tester.getRect(find.text('Cobrado '));
-    final porCobrar = tester.getRect(find.text('Por cobrar '));
-    final ganado = tester.getRect(find.text('Ganado (disponible) '));
-    expect((cobrado.top - porCobrar.top).abs(), lessThan(1));
-    expect((ganado.top - porCobrar.top).abs(), lessThan(1));
-    expect(cobrado.left, lessThan(porCobrar.left));
-    expect(porCobrar.left, lessThan(ganado.left));
+    // Pestaña de pagos.
+    await _openTab(tester, 2);
+    expect(find.text('Carla Méndez'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

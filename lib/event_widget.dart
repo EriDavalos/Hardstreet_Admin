@@ -241,9 +241,12 @@ class UpcomingEventsWidget {
     for (final a in agendas) {
       final at = hsParseDate(a['eventDate']);
       if (at == null) continue;
-      final title = _clean(a['packageName']);
-      final client = _clean(a['clientName']);
-      final service = _clean(a['serviceName']);
+      // Un cliente recibe los eventos de los DEMÁS enmascarados (`busy`): en el
+      // widget se ven como "Ocupado", sin nombres ni servicio.
+      final busy = a['busy'] == true;
+      final title = busy ? 'Ocupado' : _clean(a['packageName']);
+      final client = busy ? '' : _clean(a['clientName']);
+      final service = busy ? '' : _clean(a['serviceName']);
       final subtitle = [
         if (client.isNotEmpty) client,
         if (service.isNotEmpty) service,

@@ -10,6 +10,7 @@
 //   hsShowPlacePicker()  abre el selector y devuelve PlaceChoice
 //                        (null = cerró sin cambios, place null = quitar lugar).
 //   HsPlaceField          la tarjeta del formulario ("Agregar lugar").
+//   HsPlacesField        una o VARIAS ubicaciones, numeradas 1, 2, 3…
 //   HsPlaceMapPreview    el mini mapa del detalle de la agenda.
 //   hsOpenPlace()        abre el lugar en la app de mapas del equipo.
 // ==================================================================
@@ -19,10 +20,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_place.dart';
 import '../theme.dart';
 import 'hs_modal.dart';
+import 'hs_toast.dart';
 
 /// Centro de partida cuando la agenda todavía no tiene lugar (Colombia).
 const LatLng _kFallbackCenter = LatLng(4.7110, -74.0721);
@@ -76,6 +79,14 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
   bool _locating = false;
   bool _nameTouched = false;
 
+  /// UBICACIONES GUARDADAS del estudio (se reutilizan al agendar).
+  List<Map<String, dynamic>> _saved = const [];
+
+  /// ¿Se pueden quitar las ubicaciones guardadas?
+  bool get _canDeleteSaved =>
+      HsAccess.instance.degraded ||
+      HsAccess.instance.can('schedules', 'delete');
+
   @override
   void initState() {
     super.initState();
@@ -86,6 +97,81 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
         ? LatLng(widget.initial!.lat!, widget.initial!.lng!)
         : _kFallbackCenter;
     _zoom = hasPoint ? _kPlaceZoom : _kFallbackZoom;
+    _loadSaved();
+  }
+
+  /// Trae las ubicaciones guardadas (si el backend aún no las tiene, la
+  /// lista queda vacía y el selector funciona igual).
+  Future<void> _loadSaved() async {
+    try {
+      final list = await HsApi.savedLocations();
+      if (!mounted) return;
+      setState(() => _saved = list);
+    } catch (_) {
+      // Sin conexión o migración pendiente: sin sugerencias guardadas.
+    }
+  }
+
+  /// Elige una ubicación GUARDADA (nombre + punto).
+  void _useSaved(Map<String, dynamic> place) {
+    final name = (place['name'] ?? '').toString();
+    final lat = _coord(place['lat']);
+    final lng = _coord(place['lng']);
+    setState(() {
+      _selected = HsPlace(name: name, lat: lat, lng: lng);
+      _name.text = name;
+      _nameTouched = false;
+      _results = const [];
+      _searchError = null;
+      if (lat != null && lng != null) {
+        _center = LatLng(lat, lng);
+        _zoom = _kPlaceZoom;
+      }
+    });
+    if (lat != null && lng != null) {
+      _search.clear();
+      _searchFocus.unfocus();
+      _map.move(LatLng(lat, lng), _kPlaceZoom);
+    }
+  }
+
+  /// Guarda el lugar actual para volver a usarlo al agendar otro evento.
+  Future<void> _saveCurrentAsLocation() async {
+    final name = _name.text.trim();
+    final sel = _selected;
+    if (name.isEmpty || !(sel?.hasCoords ?? false)) {
+      setState(
+        () => _searchError =
+            'Para guardar la ubicación escribe su nombre y marca el punto.',
+      );
+      return;
+    }
+    try {
+      final list = await HsApi.saveSavedLocation(
+        name: name,
+        lat: sel!.lat!,
+        lng: sel.lng!,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = list;
+        _searchError = null;
+      });
+      HsToast.success('Ubicación guardada para próximas agendas');
+    } catch (_) {
+      // La API ya mostró el error.
+    }
+  }
+
+  /// Quita una ubicación guardada (no borra las agendas que la usaron).
+  Future<void> _deleteSaved(int id) async {
+    try {
+      final list = await HsApi.deleteSavedLocation(id);
+      if (!mounted) return;
+      setState(() => _saved = list);
+    } catch (_) {
+      // La API ya avisó.
+    }
   }
 
   @override
@@ -343,6 +429,104 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
             ),
           ),
         ),
+        // MIS UBICACIONES: los lugares que el estudio ya guardó (haciendas,
+        // salones, oficinas…). Se eligen con un toque en vez de buscarlos en
+        // el mapa otra vez; el chip se puede quitar.
+        if (_saved.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              phone ? 12 : 18,
+              0,
+              phone ? 12 : 18,
+              8,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.bookmarks_outlined,
+                      size: 13,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      'MIS UBICACIONES',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                SizedBox(
+                  height: 36,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _saved.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 6),
+                    itemBuilder: (_, i) {
+                      final p = _saved[i];
+                      final id = (p['id'] as num?)?.toInt() ?? 0;
+                      return InputChip(
+                        key: ValueKey('place-saved-${p['id']}'),
+                        avatar: const Icon(Icons.place_outlined, size: 15),
+                        label: Text(
+                          (p['name'] ?? '').toString(),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onPressed: () => _useSaved(p),
+                        onDeleted: _canDeleteSaved && id > 0
+                            ? () => _deleteSaved(id)
+                            : null,
+                        deleteIcon: const Icon(Icons.close, size: 14),
+                        visualDensity: VisualDensity.compact,
+                        labelStyle: const TextStyle(fontSize: 11.5),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        // Sin lugares guardados todavía: se explica cómo AGREGAR el primero
+        // (basta con ponerle nombre y punto al lugar y guardarlo abajo).
+        if (_saved.isEmpty)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              phone ? 12 : 18,
+              0,
+              phone ? 12 : 18,
+              8,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.bookmark_add_outlined,
+                  size: 14,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Aún no tienes ubicaciones guardadas: elige un lugar en el '
+                    'mapa y toca «Guardar ubicación» para reusarlo en las '
+                    'próximas agendas.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.3,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         if (_searchError != null && _results.isEmpty)
           Padding(
             padding: EdgeInsets.fromLTRB(
@@ -667,6 +851,8 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
 
   Widget _footer(ColorScheme scheme, bool phone) {
     final canClear = (widget.initial != null) || _selected != null;
+    final hasPoint = _selected?.hasCoords ?? false;
+    final canSave = hasPoint && _name.text.trim().isNotEmpty;
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -685,6 +871,20 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
         spacing: 10,
         runSpacing: 8,
         children: [
+          // Guardar el lugar se ofrece SIEMPRE (aunque falte el punto) para
+          // que la opción de agregar ubicaciones se vea; deshabilitado hasta
+          // que haya nombre y punto, con la pista en el tooltip.
+          Tooltip(
+            message: canSave
+                ? 'Guardar este lugar en «Mis ubicaciones»'
+                : 'Escribe el nombre y marca el punto para guardarlo',
+            child: OutlinedButton.icon(
+              key: const ValueKey('place-save-location'),
+              onPressed: canSave ? _saveCurrentAsLocation : null,
+              icon: const Icon(Icons.bookmark_add_outlined, size: 17),
+              label: const Text('Guardar ubicación'),
+            ),
+          ),
           if (canClear)
             TextButton.icon(
               onPressed: () =>
@@ -859,6 +1059,112 @@ class HsPlaceField extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Varias ubicaciones en un formulario (una agenda puede tener 1, 2, 3…).
+///
+/// Cada una lleva su NÚMERO (el orden de la lista: al quitar una, las demás
+/// se renumeran solas) y un botón para sumar otra. Las vacías se descartan al
+/// guardar ([HsPlace.listBody]).
+class HsPlacesField extends StatelessWidget {
+  const HsPlacesField({
+    super.key,
+    required this.places,
+    required this.onChanged,
+    required this.onAdd,
+    required this.onRemove,
+    this.enabled = true,
+    this.numberKeyPrefix = 'agenda-place',
+  });
+
+  final List<HsPlace?> places;
+  final void Function(int index, HsPlace? place) onChanged;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+  final bool enabled;
+
+  /// Prefijo de las llaves: `<prefijo>-<i>` (fila), `<prefijo>-number-<i>`
+  /// (número) y `<prefijo>-add` (agregar otra).
+  final String numberKeyPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < places.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          Row(
+            key: ValueKey('$numberKeyPrefix-$i'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                key: ValueKey('$numberKeyPrefix-number-$i'),
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(top: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.brand.withValues(alpha: .12),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${i + 1}',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.brand,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: HsPlaceField(
+                  place: places[i],
+                  enabled: enabled,
+                  onChanged: (place) => onChanged(i, place),
+                ),
+              ),
+              if (places.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, left: 2),
+                  child: IconButton(
+                    tooltip: 'Quitar ubicación ${i + 1}',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: enabled ? () => onRemove(i) : null,
+                    icon: Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: ValueKey('$numberKeyPrefix-add'),
+            onPressed: enabled ? onAdd : null,
+            icon: const Icon(Icons.add_location_alt_outlined, size: 17),
+            label: Text(
+              places.length == 1
+                  ? 'Agregar otra ubicación'
+                  : 'Agregar ubicación ${places.length + 1}',
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Se numeran solas: 1, 2, 3… en el orden en que las agregas.',
+          style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }

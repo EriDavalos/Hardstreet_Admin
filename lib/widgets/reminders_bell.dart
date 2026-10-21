@@ -10,7 +10,11 @@ import '../theme.dart' show AppColors;
 ///
 /// Se suscribe a [RemindersService.instance] y se repinta sola.
 class RemindersBell extends StatefulWidget {
-  const RemindersBell({super.key});
+  const RemindersBell({super.key, this.onOpen});
+
+  /// Abre el módulo al que lleva un aviso (`target`). Si es null, el aviso
+  /// solo se marca como leído.
+  final void Function(String target)? onOpen;
 
   @override
   State<RemindersBell> createState() => _RemindersBellState();
@@ -49,7 +53,7 @@ class _RemindersBellState extends State<RemindersBell> {
       // campanita), sin tapar el contenido de la pantalla.
       builder: (_) => _BellOverlay(
         onDismiss: _close,
-        child: _RemindersPanel(onClose: _close),
+        child: _RemindersPanel(onClose: _close, onOpen: widget.onOpen),
       ),
     );
     _entry = entry;
@@ -150,9 +154,10 @@ class _BellOverlay extends StatelessWidget {
 /// Panel FIJO de avisos: se expande/plega bajo la campanita con la misma
 /// anatomía que los demás paneles del panel (cabecera + lista scrollable).
 class _RemindersPanel extends StatelessWidget {
-  const _RemindersPanel({required this.onClose});
+  const _RemindersPanel({required this.onClose, this.onOpen});
 
   final VoidCallback onClose;
+  final void Function(String target)? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -247,7 +252,8 @@ class _RemindersPanel extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               'Aquí llegan los eventos que se acercan (una semana y un día '
-              'antes) y los envíos a impresión de los clientes.',
+              'antes), los envíos a impresión de los clientes y los avisos '
+              'del módulo Notificaciones. Toca uno para abrir su módulo.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 11.5,
@@ -263,8 +269,12 @@ class _RemindersPanel extends StatelessWidget {
       shrinkWrap: true,
       itemCount: list.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, i) =>
-          _ReminderTile(reminder: list[i], service: service),
+      itemBuilder: (context, i) => _ReminderTile(
+        reminder: list[i],
+        service: service,
+        onOpen: onOpen,
+        onClose: onClose,
+      ),
     );
   }
 }
@@ -367,10 +377,19 @@ class _PanelHeader extends StatelessWidget {
 }
 
 class _ReminderTile extends StatelessWidget {
-  const _ReminderTile({required this.reminder, required this.service});
+  const _ReminderTile({
+    required this.reminder,
+    required this.service,
+    this.onOpen,
+    this.onClose,
+  });
 
   final Map<String, dynamic> reminder;
   final RemindersService service;
+
+  /// Abre el módulo del aviso (`target` del backend).
+  final void Function(String target)? onOpen;
+  final VoidCallback? onClose;
 
   int? get _id => reminder['id'] is int
       ? reminder['id'] as int
@@ -395,13 +414,19 @@ class _ReminderTile extends StatelessWidget {
     // distintas, así que el origen viaja con el aviso.
     final source = (reminder['source'] ?? 'event').toString();
     final isPrint = source == 'print';
+    // Aviso del módulo Notificaciones (manual o de otro evento): llega con
+    // `target` y al tocarlo abre ese módulo.
+    final isNotice = source == 'notification';
     final kindLabel = isPrint
         ? 'Impresión'
+        : isNotice
+        ? 'Aviso'
         : kind == '1d'
         ? 'Mañana'
         : kind == '7d'
         ? 'Falta 1 semana'
         : 'Próximo evento';
+    final target = (reminder['target'] ?? '').toString().trim();
     final eventDate = DateTime.tryParse(
       '${reminder['eventDate'] ?? reminder['created'] ?? ''}',
     );
@@ -417,6 +442,12 @@ class _ReminderTile extends StatelessWidget {
         onTap: () {
           final id = _id;
           if (id != null) service.markRead(id, source: source);
+          // Clic = ir a la información: el aviso ABRE su módulo y la
+          // campanita se cierra (no deja el panel encima de la pantalla).
+          if (target.isNotEmpty && onOpen != null) {
+            onOpen!(target);
+            onClose?.call();
+          }
         },
         child: Container(
           padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
@@ -448,6 +479,8 @@ class _ReminderTile extends StatelessWidget {
                     child: Icon(
                       isPrint
                           ? Icons.print_outlined
+                          : isNotice
+                          ? Icons.notifications_none_rounded
                           : kind == '1d'
                           ? Icons.event_available_rounded
                           : Icons.event_note_rounded,
@@ -503,6 +536,8 @@ class _ReminderTile extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: isPrint
                                 ? AppColors.brand.withValues(alpha: .14)
+                                : isNotice
+                                ? const Color(0xFF2F6BFF).withValues(alpha: .14)
                                 : kind == '1d'
                                 ? const Color(0xFFF59E0B).withValues(alpha: .15)
                                 : scheme.primary.withValues(alpha: .10),
@@ -515,6 +550,8 @@ class _ReminderTile extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                               color: isPrint
                                   ? AppColors.brand
+                                  : isNotice
+                                  ? const Color(0xFF2F6BFF)
                                   : kind == '1d'
                                   ? const Color(0xFFB45309)
                                   : scheme.primary,

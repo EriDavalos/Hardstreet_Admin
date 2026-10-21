@@ -7,8 +7,8 @@
     <!-- Avisos de eventos (falta 1 semana / falta 1 día). Android 13+ exige
          que el usuario conceda este permiso: la app lo pide al iniciar. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- Avisos del paquete con la app CERRADA: una alarma despierta al
-         receptor cada 15 min. Al reiniciar el teléfono hay que volver a
+    <!-- Avisos con la app CERRADA (eventos y paquete): una alarma despierta
+         al receptor cada minuto. Al reiniciar el teléfono hay que volver a
          pedirla, de ahí este permiso. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <!-- Descargas del Drive (Android 9 y anteriores): escribir en la carpeta
@@ -63,8 +63,9 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/event_widget_info" />
         </receiver>
-        <!-- Avisos del paquete con la app cerrada: consulta los avisos
-             pendientes y publica una notificación (canal `paquete`). -->
+        <!-- Avisos con la app cerrada: consulta `/api/reminders` (eventos,
+             canal `reminders`) y `/api/my/notifications` (paquete, canal
+             `paquete`) y publica una notificación por cada aviso nuevo. -->
         <receiver
             android:name=".PackageNotificationsReceiver"
             android:exported="false">

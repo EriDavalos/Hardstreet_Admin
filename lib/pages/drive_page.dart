@@ -3021,8 +3021,11 @@ class _FileCard extends StatelessWidget {
                         big: true,
                         // Si la miniatura no llega (el servidor no tiene
                         // ffmpeg, o el vídeo no se deja abrir) se ve el icono
-                        // de su tipo, nunca un recuadro roto.
+                        // de su tipo, nunca un recuadro roto. Un vídeo sin
+                        // fotograma no se reintenta tres veces: se cae al
+                        // icono en el acto.
                         fallback: _FileTile(item: item),
+                        retries: item.kind == DriveItemKind.video ? 1 : null,
                       )
                     else
                       _FileTile(item: item),
@@ -3520,6 +3523,7 @@ class _ListRow extends StatelessWidget {
                         localPreview: localPreview,
                         size: 40,
                         fallback: _FileTile(item: item, big: false),
+                        retries: item.kind == DriveItemKind.video ? 1 : null,
                       ),
                     )
                   // Un PDF o un ZIP no tienen miniatura: su icono dice de un
@@ -3704,10 +3708,16 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     setState(() {
       _index = next < 0 ? next + widget.images.length : next;
       _previewReady = false;
+      // El original de la foto ANTERIOR no puede quedarse encima: se limpia
+      // ya (sin esperar a que arranque la descarga de la nueva).
+      _fullFile = null;
+      _fullUrl = '';
+      _fullKey = '';
+      _fullLoading = false;
+      _fullProgress = 0;
     });
     _zoom.value = Matrix4.identity();
     _preloadNeighbors();
-    _loadFull();
   }
 
   /// Acerca o aleja la imagen (mantiene el centro).
@@ -3721,10 +3731,14 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     // Flechas/Esc SIN depender del foco: igual que los atajos de la propia
     // página del Drive (así funciona aunque el foco esté en un botón).
     HardwareKeyboard.instance.addHandler(_onKey);
+    // El ORIGINAL solo se pide cuando el usuario ACERCA (ver [_onZoomChanged]):
+    // al abrir se ve el preview de 2048px, que ya llena la pantalla. Antes se
+    // bajaba el archivo entero en cuanto abría —10-25 MB— y la foto cambiaba
+    // de "baja" a "alta" calidad unos segundos después.
+    _zoom.addListener(_onZoomChanged);
     // Precarga las fotos vecinas para navegar sin esperas.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _preloadNeighbors();
-      _loadFull();
     });
   }
 
@@ -3749,6 +3763,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _zoom.removeListener(_onZoomChanged);
     _zoom.dispose();
     // Al cerrar el visor: fuera el original de RAM (queda en caché de disco).
     if (widget.drive.isRemote) {
@@ -3771,6 +3786,18 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   /// La miniatura rápida ya se ve: desde aquí se puede pedir la original.
   bool _previewReady = false;
 
+  /// ¿La foto está ampliada? Ahí sí hace falta el archivo ORIGINAL.
+  bool get _zoomed => _zoom.value.getMaxScaleOnAxis() > 1.05;
+
+  /// Al ACERCAR se pide el original (detalle real al 100%). A tamaño de
+  /// pantalla el preview basta, así que no se baja el archivo entero.
+  void _onZoomChanged() {
+    if (!_zoomed || !_previewReady) return;
+    if (_fullLoading) return;
+    if (_fullFile != null || _fullUrl.isNotEmpty) return;
+    _loadFull();
+  }
+
   Future<void> _loadFull() async {
     final item = widget.images[_index];
     if (item.isFolder) return;
@@ -3779,6 +3806,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     if (_fullKey == key && (_fullFile != null || _fullUrl.isNotEmpty)) {
       return; // ya está
     }
+    if (_fullLoading && _fullKey == key) return; // ya se está bajando
     _fullKey = key;
     // RAW/TIFF/HEIC: el original NO se puede pintar en la app. La vista
     // previa del servidor (`/thumb`, ya en JPEG) se queda como imagen buena;
@@ -3860,7 +3888,7 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
         NetworkImage(
           drive.fullSource(
             item,
-            previewWidth: item.needsServerPreview ? 2048 : 1600,
+            previewWidth: item.needsServerPreview ? 2560 : 2048,
           ),
         ),
         context,
@@ -3873,12 +3901,13 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   Widget build(BuildContext context) {
     final item = widget.images[_index];
     final isRemote = widget.drive.isRemote;
-    // Preview 1600px: baja ~0.5 MB en vez de los 10 MB del original. Los RAW
-    // y formatos que la app no decodifica se piden un poco más grandes (siguen
-    // siendo una vista previa, no el archivo de la cámara).
+    // Preview 2048px: nítido a pantalla completa y baja ~0.6 MB en vez de los
+    // 10-25 MB del original. Los RAW y formatos que la app no decodifica se
+    // piden un poco más grandes (siguen siendo una vista previa, no el archivo
+    // de la cámara). El original llega solo al ACERCAR.
     final src = widget.drive.fullSource(
       item,
-      previewWidth: item.needsServerPreview ? 2048 : 1600,
+      previewWidth: item.needsServerPreview ? 2560 : 2048,
     );
     final total = widget.images.length;
     // Pantalla COMPLETA y sin bordes curvos: el visor es una superficie
@@ -3907,6 +3936,8 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
                     onReady: () {
                       if (!mounted || _previewReady) return;
                       setState(() => _previewReady = true);
+                      // Si ya estaba acercado, el original se pide ahora.
+                      _onZoomChanged();
                     },
                   ),
                   // 2) Original por chunks: aparece encima (nítido) al

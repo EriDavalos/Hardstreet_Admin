@@ -230,7 +230,8 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
     return out;
   }
 
-  /// Baja lo marcado (1 archivo suelto; varios en ZIP), desde SU carpeta.
+  /// Baja lo marcado desde SU carpeta: en la computadora un archivo suelto o
+  /// un ZIP de la selección; en el celular, una foto por archivo (sin ZIP).
   Future<void> _download() async {
     final groups = _downloadable;
     if (groups.isEmpty) return;

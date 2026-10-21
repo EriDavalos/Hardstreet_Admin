@@ -32,9 +32,10 @@ class PackageNotificationsService extends ChangeNotifier
   static final PackageNotificationsService instance =
       PackageNotificationsService._();
 
-  /// Cada minuto es suficiente: el cliente ve el aviso al abrir «Mi paquete»
-  /// y en segundo plano llega como notificación nativa.
-  static const Duration pollInterval = Duration(seconds: 60);
+  /// 20 segundos: el aviso del estudio llega casi al instante mientras la app
+  /// está abierta (o en la bandeja de Windows). Con la app cerrada en el
+  /// teléfono lo consulta el worker nativo cada minuto.
+  static const Duration pollInterval = Duration(seconds: 20);
 
   Timer? _timer;
   bool _started = false;

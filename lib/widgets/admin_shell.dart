@@ -21,6 +21,8 @@ class AdminShell extends StatelessWidget {
     required this.sidebarOpen,
     required this.userMenu,
     this.isCompact = false,
+    this.companySelector,
+    this.onOpenNotification,
   });
 
   final String title;
@@ -37,8 +39,16 @@ class AdminShell extends StatelessWidget {
   final bool sidebarOpen;
   final Widget? userMenu;
 
+  /// Selector de empresa activa (solo Superadministrador). Si es null no se
+  /// dibuja nada: el resto de los roles trabaja siempre en SU empresa.
+  final Widget? companySelector;
+
   /// En pantallas angostas (celular) se usan controles compactos.
   final bool isCompact;
+
+  /// Abre el módulo al que lleva un aviso de la campanita (`target` del
+  /// backend). Si es null, el aviso solo se marca como leído.
+  final void Function(String target)? onOpenNotification;
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +72,8 @@ class AdminShell extends StatelessWidget {
                 onToggleTheme: onToggleTheme,
                 onToggleSidebar: onToggleSidebar,
                 userMenu: userMenu,
+                companySelector: companySelector,
+                onOpenNotification: onOpenNotification,
               ),
               Divider(height: 1, color: Theme.of(context).dividerTheme.color),
               ?updateBanner,
@@ -320,6 +332,8 @@ class _TopBar extends StatelessWidget {
     required this.onToggleTheme,
     required this.onToggleSidebar,
     this.userMenu,
+    this.companySelector,
+    this.onOpenNotification,
   });
 
   final bool dark;
@@ -327,6 +341,10 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onToggleTheme;
   final VoidCallback onToggleSidebar;
   final Widget? userMenu;
+  final void Function(String target)? onOpenNotification;
+
+  /// Selector de la empresa activa (Superadministrador).
+  final Widget? companySelector;
 
   @override
   Widget build(BuildContext context) {
@@ -341,8 +359,10 @@ class _TopBar extends StatelessWidget {
             icon: const Icon(Icons.menu),
           ),
           const Spacer(),
-          // Avisos de eventos próximos (falta 1 semana / falta 1 día).
-          const RemindersBell(),
+          ?companySelector,
+          // Avisos de eventos próximos y del equipo. Al tocar uno, abre el
+          // módulo que le corresponde.
+          RemindersBell(onOpen: onOpenNotification),
           IconButton(
             tooltip: dark ? 'Modo claro' : 'Modo oscuro',
             onPressed: onToggleTheme,

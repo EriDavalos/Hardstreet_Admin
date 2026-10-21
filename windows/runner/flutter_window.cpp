@@ -1,12 +1,22 @@
 #include "flutter_window.h"
 
+#include <cwchar>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "resource.h"
 
 namespace {
+
+// ---- Bandeja del sistema ----
+//
+// Mensaje con el que el icono avisa de los clics (bandeja -> ventana).
+constexpr UINT kTrayCallbackMessage = WM_APP + 42;
+constexpr UINT kTrayMenuOpen = 1;
+constexpr UINT kTrayMenuExit = 2;
+constexpr UINT kTrayIconId = 1;
 
 // std::string (UTF-8, lo que manda el codec de Flutter) a std::wstring.
 std::wstring WideFromUtf8(const std::string& utf8) {
@@ -92,6 +102,9 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // El icono de la bandeja se va con la ventana (si se queda, Windows deja un
+  // icono fantasma hasta que se pasa el ratón por encima).
+  RemoveTrayIcon();
   // El panel de eventos es una ventana propia: se destruye antes que la app.
   event_widget_.reset();
   events_channel_.reset();
@@ -172,6 +185,13 @@ void FlutterWindow::SetUpEventsChannel() {
           result->Success(flutter::EncodableValue(visible));
           return;
         }
+        // La app pide volver a mostrarse (p. ej. al tocar una notificación
+        // con la ventana cerrada en la bandeja).
+        if (method == "showWindow") {
+          ShowFromTray();
+          result->Success(flutter::EncodableValue(true));
+          return;
+        }
         result->NotImplemented();
       });
 }
@@ -198,6 +218,22 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Clics en el icono de la bandeja: abrir la ventana o su menú.
+  if (message == kTrayCallbackMessage) {
+    switch (LOWORD(lparam)) {
+      case WM_LBUTTONUP:
+      case WM_LBUTTONDBLCLK:
+        ShowFromTray();
+        return 0;
+      case WM_RBUTTONUP:
+      case WM_CONTEXTMENU:
+        ShowTrayMenu();
+        return 0;
+      default:
+        return 0;
+    }
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
@@ -209,10 +245,111 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_CLOSE:
+      // Cerrar la ventana NO apaga la app: queda en la bandeja consultando
+      // avisos (recordatorios y avisos del paquete) y avisa con el toast del
+      // sistema. Si la bandeja no está disponible, se cierra como siempre.
+      if (HideToTray()) return 0;
+      break;
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+// ===================== Bandeja del sistema =====================
+
+bool FlutterWindow::HideToTray() {
+  HWND hwnd = GetHandle();
+  if (hwnd == nullptr) return false;
+
+  if (!tray_icon_added_) {
+    NOTIFYICONDATAW icon{};
+    icon.cbSize = sizeof(NOTIFYICONDATAW);
+    icon.hWnd = hwnd;
+    icon.uID = kTrayIconId;
+    icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    icon.uCallbackMessage = kTrayCallbackMessage;
+    icon.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+    lstrcpynW(icon.szTip, L"Hardstreet Platform - avisos en segundo plano",
+              ARRAYSIZE(icon.szTip));
+    if (!Shell_NotifyIconW(NIM_ADD, &icon)) {
+      // Sin bandeja (explorador caído, sesión rara): se cierra normal antes
+      // que desaparecer sin forma de volver.
+      return false;
+    }
+    tray_icon_ = icon;
+    tray_icon_added_ = true;
+  }
+
+  ShowWindow(hwnd, SW_HIDE);
+  ShowBackgroundHint();
+  return true;
+}
+
+void FlutterWindow::ShowFromTray() {
+  HWND hwnd = GetHandle();
+  if (hwnd == nullptr) return;
+  ShowWindow(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW);
+  SetForegroundWindow(hwnd);
+}
+
+void FlutterWindow::ShowTrayMenu() {
+  HWND hwnd = GetHandle();
+  if (hwnd == nullptr) return;
+
+  HMENU menu = CreatePopupMenu();
+  if (menu == nullptr) return;
+  AppendMenuW(menu, MF_STRING, kTrayMenuOpen, L"Abrir Hardstreet");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, kTrayMenuExit, L"Salir");
+
+  POINT cursor{};
+  GetCursorPos(&cursor);
+  // Regla de la bandeja: sin traer la ventana al frente el menú no se cierra
+  // al hacer clic fuera.
+  SetForegroundWindow(hwnd);
+  const UINT command = TrackPopupMenu(
+      menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, cursor.x, cursor.y, 0, hwnd,
+      nullptr);
+  DestroyMenu(menu);
+  PostMessage(hwnd, WM_NULL, 0, 0);
+
+  if (command == kTrayMenuOpen) ShowFromTray();
+  if (command == kTrayMenuExit) QuitFromTray();
+}
+
+void FlutterWindow::QuitFromTray() {
+  RemoveTrayIcon();
+  HWND hwnd = GetHandle();
+  if (hwnd != nullptr) {
+    // WM_DESTROY -> Win32Window::MessageHandler cierra el bucle de mensajes.
+    DestroyWindow(hwnd);
+  }
+}
+
+void FlutterWindow::RemoveTrayIcon() {
+  if (!tray_icon_added_) return;
+  Shell_NotifyIconW(NIM_DELETE, &tray_icon_);
+  tray_icon_added_ = false;
+}
+
+void FlutterWindow::ShowBackgroundHint() {
+  if (tray_hint_shown_ || !tray_icon_added_) return;
+  tray_hint_shown_ = true;
+
+  NOTIFYICONDATAW hint = tray_icon_;
+  hint.uFlags = NIF_INFO;
+  hint.dwInfoFlags = NIIF_INFO;
+  lstrcpynW(hint.szInfoTitle, L"Hardstreet sigue activo",
+            ARRAYSIZE(hint.szInfoTitle));
+  lstrcpynW(hint.szInfo,
+            L"Cerraste la ventana, pero seguimos en la bandeja para avisarte "
+            L"de tus eventos. Clic derecho en el icono > Salir.",
+            ARRAYSIZE(hint.szInfo));
+  Shell_NotifyIconW(NIM_MODIFY, &hint);
 }

@@ -299,6 +299,30 @@ void main() {
     expect(events.first['when'], '22 oct · 19:00');
   });
 
+  test('un evento ajeno enmascarado se ve como "Ocupado" (sin nombres)', () {
+    final events = UpcomingEventsWidget.buildEvents(
+      [
+        {
+          ..._agenda(date: '2026-10-18 12:00:00'),
+          // Lo que manda el servidor a un CLIENTE para los eventos de OTROS.
+          'busy': true,
+          'clientName': '',
+          'packageName': '',
+          'serviceName': '',
+          'serviceId': null,
+        },
+      ],
+      now: now,
+    );
+    expect(events.single['title'], 'Ocupado');
+    expect(
+      events.single['subtitle'],
+      '',
+      reason: 'Nada del otro cliente (ni nombre ni servicio) llega al widget',
+    );
+    expect(events.single['time'], '12:00');
+  });
+
   test('sin eventos devuelve una lista vacía (el widget dice "sin eventos")',
       () {
     expect(UpcomingEventsWidget.buildEvents(const [], now: now), isEmpty);

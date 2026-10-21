@@ -49,7 +49,68 @@ class _FakeApiDrive extends DriveApiService {
   }
 }
 
+/// Drive remoto FALSO con un árbol de carpetas: sirve para comprobar cómo
+/// se expande una selección a archivos sueltos en el celular.
+class _TreeApiDrive extends DriveApiService {
+  _TreeApiDrive(this.tree) : super(baseUrl: 'http://drive.local');
+
+  /// clave = carpeta ("Boda/ceremonia"), valor = su contenido.
+  final Map<String, List<DriveItem>> tree;
+
+  @override
+  Future<void> refresh() async {}
+
+  @override
+  Future<List<DriveItem>> listFolderItems(List<String> rel) async =>
+      tree[rel.join('/')] ?? const [];
+}
+
 void main() {
+  group('descargas en el CELULAR: una por una, sin ZIP', () {
+    test('las carpetas se expanden: una descarga por ARCHIVO', () async {
+      final drive = _TreeApiDrive({
+        'Clientes/Boda': const [
+          DriveItem(name: 'ceremonia', isFolder: true),
+          DriveItem(name: 'portada.jpg', isFolder: false),
+        ],
+        'Clientes/Boda/ceremonia': const [
+          DriveItem(name: 'beso.jpg', isFolder: false),
+        ],
+      });
+
+      final files = await collectIndividualFiles(
+        drive,
+        const [
+          DriveItem(name: 'Boda', isFolder: true),
+          DriveItem(name: 'suelta.jpg', isFolder: false),
+        ],
+        const ['Clientes'],
+      );
+
+      expect(files.map((f) => f.item.name),
+          ['beso.jpg', 'portada.jpg', 'suelta.jpg']);
+      // Cada archivo sabe DE QUÉ carpeta sale (si no, bajaría el homónimo
+      // de la carpeta que el drive tuviera abierta).
+      expect(files.first.folder, ['Clientes', 'Boda', 'ceremonia']);
+      expect(files.last.folder, ['Clientes']);
+    });
+
+    test('no sobrescribe: agrega " (1)" cuando el nombre ya existe',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('hs_dl_names');
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+
+      final first = await availableDownloadPath(dir.path, 'foto.jpg');
+      expect(first, endsWith('foto.jpg'));
+      File(first).writeAsBytesSync(_png);
+
+      final second = await availableDownloadPath(dir.path, 'foto.jpg');
+      expect(second, endsWith('foto (1).jpg'));
+    });
+  });
+
   group('descarga individual: el ZIP del backend no debe guardarse tal cual',
       () {
     test('extrae el archivo cuando el ZIP trae UNA sola entrada', () {

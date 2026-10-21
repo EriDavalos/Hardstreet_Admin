@@ -169,4 +169,79 @@ void main() {
     expect(find.byKey(const ValueKey('user-role-2')), findsOneWidget);
     expect(find.text('Sin rol'), findsWidgets);
   });
+
+  testWidgets('la cuenta Superadmin se DESTACA y su rol aparece al editar', (
+    tester,
+  ) async {
+    HsSession.token = 't';
+    HsSession.user = {
+      'email': 'super@hardstreet.com',
+      'role': 'Superadmin',
+      'isSuperAdmin': true,
+    };
+    HsApi.client = MockClient((request) async {
+      const headers = {'content-type': 'application/json'};
+      final path = request.url.path;
+      if (path.endsWith('/api/admin/users')) {
+        return http.Response(
+          jsonEncode({
+            'users': [
+              {
+                'id': 1,
+                'name': 'Super',
+                'lastname': 'Administrador',
+                'email': 'super@hardstreet.com',
+                'role': 'Superadmin',
+                'roleId': 5,
+              },
+              {
+                'id': 2,
+                'name': 'Leo',
+                'lastname': 'Empleado',
+                'email': 'leo@hardstreet.com',
+                'role': 'Empleado',
+                'roleId': 2,
+              },
+            ],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      if (path.endsWith('/api/admin/roles')) {
+        return http.Response(
+          jsonEncode({
+            'roles': [
+              {
+                'id': 2,
+                'name': 'Empleado',
+                'permissions': [
+                  {'moduleId': 1, 'permissionId': 2},
+                ],
+              },
+              {'id': 5, 'name': 'Superadmin', 'permissions': []},
+            ],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+    });
+    await _pump(tester);
+
+    // La fila existe y lleva el escudo del rol más alto.
+    expect(find.text('Super Administrador'), findsOneWidget);
+    expect(find.byIcon(Icons.shield_rounded), findsWidgets);
+
+    // Al editar SU cuenta, el combo ofrece el rol del sistema (antes salía
+    // como "Sin rol" porque el backend no mandaba el rol sin empresa).
+    await tester.tap(find.byIcon(Icons.edit_outlined).first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Rol del sistema'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('user-role-select')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('user-role-5')), findsWidgets);
+  });
 }

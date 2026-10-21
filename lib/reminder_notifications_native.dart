@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'app_constants.dart';
@@ -80,7 +83,13 @@ class NativeReminderPlugin implements ReminderNotifier, PackageNotifier {
         macOS: DarwinInitializationSettings(),
         windows: _windowsSettings,
       );
-      await _plugin.initialize(settings);
+      await _plugin.initialize(
+        settings,
+        // Tocar el aviso trae la ventana al frente: en Windows el panel puede
+        // estar cerrado (vive en la bandeja) y el toast tiene que servir para
+        // volver a él.
+        onDidReceiveNotificationResponse: _onNotificationTap,
+      );
       if (defaultTargetPlatform == TargetPlatform.android) {
         // Android 13+ (API 33): sin este permiso el sistema DESCARTA la
         // notificación. Si el usuario lo niega, la campanita sigue avisando.
@@ -100,6 +109,21 @@ class NativeReminderPlugin implements ReminderNotifier, PackageNotifier {
     } catch (_) {
       _ready = false;
     }
+  }
+
+  /// Canal del runner de Windows que vuelve a mostrar la ventana.
+  static const MethodChannel _windowChannel =
+      MethodChannel('hardstreet/events_widget');
+
+  /// Al tocar una notificación se pide al sistema que muestre el panel.
+  static void _onNotificationTap(NotificationResponse response) {
+    if (kIsWeb) return;
+    if (defaultTargetPlatform != TargetPlatform.windows) return;
+    unawaited(
+      _windowChannel
+          .invokeMethod<bool>('showWindow')
+          .catchError((Object _) => false),
+    );
   }
 
   /// Notifica cada aviso nuevo. No lanza nunca.

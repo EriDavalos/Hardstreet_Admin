@@ -361,12 +361,14 @@ String get driveImageToken => HsSession.token ?? '';
 ///
 ///   * foto del Drive interno → la versión REDIMENSIONADA del servidor
 ///     (`<servidor>/thumb/<ruta>?w=N`): pesa unos KB en vez de varios MB, así
-///     las miniaturas del panel aparecen al instante. NO lleva token: el
-///     endpoint `/thumb` es público (son las imágenes del catálogo y de la
-///     web). Antes se mandaba `?apikey=` y un rol sin permiso de Drive veía un
-///     403 en las portadas de categorías y paquetes;
+///     las miniaturas del panel aparecen al instante;
 ///   * cualquier otro enlace (una foto de otro sitio, una ruta del propio
 ///     sitio como `images/…`) → se devuelve TAL CUAL.
+///
+/// LLEVA el token de la sesión (`?apikey=`): `/thumb` no exige permisos, pero
+/// SÍ usa la sesión para saber en qué CARPETA DE EMPRESA vive la foto. Sin el
+/// token, la ruta de un usuario de empresa se buscaba en la raíz del disco y
+/// daba 404: la portada elegida en Categorías o Paquetes se veía en blanco.
 ///
 /// El token se sigue agregando a las URLs de ARCHIVO (`/files/...`), que sí
 /// exigen sesión.
@@ -381,15 +383,17 @@ String driveImagePreview(String url, {int width = 320, String? token}) {
   // acentos o `#` (y `uri.path` los entrega ya decodificados).
   final path = segments.sublist(i + 1).map(Uri.encodeComponent).join('/');
   final w = width.clamp(32, 2048);
-  // Sin token: `/thumb` es público (ver el comentario de arriba). El parámetro
-  // [token] se conserva por compatibilidad con quien lo pase, pero no viaja.
+  // El token va en la query (Image.network no puede mandar cabeceras) y es lo
+  // que le dice al servidor de qué EMPRESA es la foto.
+  final t = (token ?? driveImageToken).trim();
   // Si la sesión usa un respaldo (IP local / HTTP directo), la miniatura se
   // pide a ESA dirección: la URL guardada puede apuntar al nombre público que
   // el teléfono no puede abrir.
   final server = (DriveHost.usingFallback || DriveHost.isCustom)
       ? AppConstants.apiBase
       : '${uri.scheme}://${uri.authority}';
-  return '$server/thumb/$path?w=$w';
+  final base = '$server/thumb/$path?w=$w';
+  return t.isEmpty ? base : '$base&apikey=${Uri.encodeQueryComponent(t)}';
 }
 
 /// El mismo criterio para la URL ORIGINAL de una foto del drive
@@ -812,6 +816,33 @@ abstract class DriveBase extends ChangeNotifier {
   /// Carpeta de la que proviene el listado que está en pantalla. La fija cada
   /// refresco EXITOSO ("" = raíz).
   String? loadedPath;
+
+  /// La SESIÓN cambió (login, logout, empresa activa): el Drive vuelve a su
+  /// RAÍZ.
+  ///
+  /// Sin esto, la carpeta en la que estaba el usuario anterior se quedaba en
+  /// [path] y el panel abría con la empresa nueva en ESA carpeta: se pedía una
+  /// ruta que para el usuario nuevo no existe (o que es de otra empresa) y el
+  /// módulo Archivos se quedaba en una carpeta ajena —vacía y sin permiso—
+  /// enseñando la raíz del anterior. La raíz siempre es la de la cuenta que
+  /// acaba de entrar (y, si es Superadmin, la de la empresa activa).
+  ///
+  /// También tira los listados en memoria y las respuestas EN VUELO (el
+  /// contador de refrescos las descarta), y limpia la búsqueda y el error.
+  void resetSession() {
+    _refreshSeq++;
+    path = [];
+    loadedPath = null;
+    _listingCache.clear();
+    _rawListing = const [];
+    _sharedCounts = const {};
+    _search = null;
+    error = null;
+    loading = false;
+    conn = DriveConn.checking;
+    updateItems(const []);
+    notifyListeners();
+  }
 
   /// Etiqueta de la carpeta actual, tal como la usa [loadedPath].
   String get pathLabel => path.join('/');

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:http/http.dart' as http;
 
@@ -10,7 +9,8 @@ import 'app_constants.dart';
 import 'app_platform.dart';
 import 'download_stub.dart' if (dart.library.html) 'download_web.dart';
 import 'drive_base.dart';
-import 'drive_downloader.dart' show needsSaveDialog, saveToAndroidDownloads;
+import 'drive_downloader.dart'
+    show availableDownloadPath, desktopDownloadsDirectory, saveToAndroidDownloads;
 import 'hs_api.dart';
 import 'share_permissions.dart';
 
@@ -314,7 +314,7 @@ class LocalShareService {
   }
 
   /// Descarga una imagen con el MISMO comportamiento que el resto de la app:
-  /// diálogo Guardar en escritorio y carpeta Descargas en Android.
+  /// carpeta Descargas en la computadora y en Android.
   /// Devuelve el destino (o null si el usuario canceló).
   ///
   /// El tope es MAYOR que el del servidor (4 minutos): si la carpeta vive en la
@@ -329,7 +329,8 @@ class LocalShareService {
   ///
   /// El servidor del drive sirve las carpetas compartidas archivo por archivo
   /// (`/api/local/file`), así que el ZIP se arma aquí: se recorre la carpeta
-  /// (y sus subcarpetas) y se guarda con el mismo diálogo/navegador/Descargas
+  /// (y sus subcarpetas) y se guarda igual que todo lo demás (Descargas o el
+  /// navegador)
   /// que el resto de la app. Devuelve el destino (null si el usuario canceló).
   Future<String?> downloadFolderZip(
     int shareId,
@@ -547,25 +548,23 @@ List<int> encodeSharedZip(List<SharedZipEntry> entries) {
   return ZipEncoder().encode(archive);
 }
 
-/// Guarda bytes con el MISMO comportamiento que el resto de la app: diálogo
-/// Guardar en escritorio, carpeta Descargas en Android y el navegador en web.
+/// Guarda bytes con el MISMO comportamiento que el resto de la app: en la
+/// computadora va a la carpeta de Descargas (sin diálogo), en Android a
+/// Descargas y en web lo baja el navegador.
 Future<String?> saveSharedBytes(List<int> bytes, String name) async {
   if (kIsWeb) {
     triggerBrowserDownload(bytes, name);
     return null;
-  }
-  if (needsSaveDialog) {
-    final loc = await getSaveLocation(suggestedName: name);
-    if (loc == null) return null;
-    await File(loc.path).writeAsBytes(bytes);
-    return loc.path;
   }
   if (isAndroidPlatform) {
     final saved = await saveToAndroidDownloads(bytes, name);
     if (saved == null) throw 'No se pudo guardar en Descargas';
     return saved;
   }
-  throw 'No se pudo determinar el destino de la descarga';
+  final dir = await desktopDownloadsDirectory();
+  final path = await availableDownloadPath(dir.path, name);
+  await File(path).writeAsBytes(bytes);
+  return 'Descargas: $name';
 }
 
 /// Adaptador de una carpeta LOCAL compartida al contrato [DriveBase].

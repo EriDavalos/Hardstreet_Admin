@@ -107,13 +107,16 @@ class DriveApiService extends DriveBase {
 
   /// Versión PREVIEW para el visor: 1600px (~400-800 KB en vez de 10 MB).
   ///
-  /// `/thumb` es PÚBLICO (son las imágenes del catálogo), así que aquí no se
-  /// manda el token: una URL de imagen no debe llevar la sesión encima.
+  /// `/thumb` no exige permiso, pero SÍ necesita saber de quién es la ruta: el
+  /// servidor antepone la carpeta de la EMPRESA cuando la petición trae sesión
+  /// (ver `scopeForRequest` en el servidor del drive). Sin el token, una foto
+  /// de un usuario de empresa se busca en la raíz del disco y da 404.
   @override
   String fullSource(DriveItem item, {int? previewWidth}) {
     if (previewWidth == null) return absolutePathOf(item);
+    final q = _apikeyQuery;
     return '$base/thumb/${[...path, item.name].join('/')}'
-        '?w=$previewWidth&q=80';
+        '?w=$previewWidth&q=80${q.isEmpty ? '' : '&$q'}';
   }
 
   /// REPRODUCCIÓN en el visor: un vídeo de más de 50 MB se pide en CALIDAD
@@ -127,9 +130,16 @@ class DriveApiService extends DriveBase {
   }
 
   /// Miniatura liviana generada por el servidor (JPEG pequeño, con caché).
+  ///
+  /// Lleva `?apikey=` como las URLs de `/files`: el servidor resuelve la ruta
+  /// DENTRO de la carpeta de la empresa del usuario. Sin él, el Drive de una
+  /// empresa enseñaba el listado pero NINGUNA miniatura (404), porque la foto
+  /// se buscaba en la raíz del disco.
   @override
   String thumbSource(DriveItem item, {int width = 320}) {
-    return '$base/thumb/${[...path, item.name].join('/')}?w=$width';
+    final q = _apikeyQuery;
+    return '$base/thumb/${[...path, item.name].join('/')}?w=$width'
+        '${q.isEmpty ? '' : '&$q'}';
   }
 
   /// El servidor del drive saca el PRIMER FOTOGRAMA de un vídeo (`/thumb` con

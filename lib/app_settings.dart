@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding, Brightness;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_constants.dart';
@@ -48,7 +49,10 @@ class AppSettings extends ChangeNotifier {
 
   /// Apariencia: claro/oscuro/sistema y color de acento. Se aplica en TODO el
   /// panel (botones, selección, acentos) y se guarda al instante.
-  HsThemeMode _themeMode = HsThemeMode.light;
+  ///
+  /// De fábrica manda el **modo del sistema**: la app se ve como el teléfono o
+  /// la computadora hasta que el usuario elija claro u oscuro a mano.
+  HsThemeMode _themeMode = HsThemeMode.system;
   String _accent = AppColors.defaultAccent;
 
   // ---- Servicio de compartir (switch de "Archivos compartidos") ----
@@ -73,8 +77,19 @@ class AppSettings extends ChangeNotifier {
   /// Clave del color de acento elegido ("azul", "violeta"…).
   String get accent => _accent;
 
-  /// ¿Modo oscuro FIJADO a mano? (el menú rápido lo usa para el icono)
-  bool get dark => _themeMode == HsThemeMode.dark;
+  /// ¿La app se ve OSCURA ahora? (el menú rápido lo usa para el icono y el
+  /// widget nativo para su paleta). Con el modo "sistema" sigue al equipo.
+  bool get dark {
+    if (_themeMode == HsThemeMode.dark) return true;
+    if (_themeMode == HsThemeMode.light) return false;
+    try {
+      return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+          Brightness.dark;
+    } catch (_) {
+      // Sin binding (arranque muy temprano): se asume claro.
+      return false;
+    }
+  }
 
   /// ¿El usuario encendió el SERVICIO DE COMPARTIR? (persistente)
   ///
@@ -97,7 +112,9 @@ class AppSettings extends ChangeNotifier {
   void restoreSession() {
     if (!hasSavedSession) return;
     HsSession.token = _savedToken;
-    HsSession.user = _savedUser;
+    // Pasa por setUser: de ahí salen la empresa de la sesión y si es
+    // Superadministrador (una sesión restaurada tiene que saberlo).
+    HsSession.setUser(_savedUser);
   }
 
   /// Guarda (o borra) la sesión según el valor de [remember].
@@ -171,9 +188,13 @@ class AppSettings extends ChangeNotifier {
         'system' => HsThemeMode.system,
         'dark' => HsThemeMode.dark,
         'light' => HsThemeMode.light,
-        // Sin preferencia nueva: el antiguo "modo oscuro" manda.
-        _ =>
-          (sp.getBool(_kDark) ?? false) ? HsThemeMode.dark : HsThemeMode.light,
+        // Sin preferencia nueva: el MODO DEL SISTEMA es el de fábrica. Solo
+        // las instalaciones viejas —que únicamente tienen el interruptor de
+        // modo oscuro— conservan su elección.
+        _ => switch (sp.getBool(_kDark)) {
+          null => HsThemeMode.system,
+          final d => d ? HsThemeMode.dark : HsThemeMode.light,
+        },
       };
       final savedAccent = sp.getString(_kAccent);
       if (savedAccent != null && AppColors.accents.containsKey(savedAccent)) {

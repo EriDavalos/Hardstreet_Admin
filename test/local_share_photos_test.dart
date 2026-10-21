@@ -171,7 +171,9 @@ void main() {
       reason: 'sin esto la foto del visor no se pedía nunca',
     );
     expect(thumb.source, contains('/api/local/thumb'));
-    expect(thumb.source, contains('w=1600'));
+    // Vista previa de 2048px (nítida a pantalla completa): el ORIGINAL solo se
+    // pide al acercar, así que abrir la foto no baja el archivo entero.
+    expect(thumb.source, contains('w=2048'));
 
     await tester.pump(const Duration(milliseconds: 300));
     expect(tester.takeException(), isNull);

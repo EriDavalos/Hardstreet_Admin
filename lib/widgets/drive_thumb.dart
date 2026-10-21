@@ -29,6 +29,7 @@ class DriveThumb extends StatefulWidget {
     this.rounded = true,
     this.onReady,
     this.fallback,
+    this.retries,
   });
 
   /// URL (drive remoto) o ruta absoluta (drive local) de la miniatura.
@@ -61,6 +62,13 @@ class DriveThumb extends StatefulWidget {
   /// ffmpeg), en vez de un recuadro con "reintentar" se ve el icono de su
   /// tipo, como antes.
   final Widget? fallback;
+
+  /// Reintentos de ESTA miniatura (null = [DriveThumb.maxRetries]).
+  ///
+  /// Un vídeo sin fotograma en el servidor contesta 404 siempre: reintentar
+  /// tres veces solo deja la tarjeta girando. Con 1 reintento se cae al icono
+  /// casi en el acto, que es lo que se quiere ver.
+  final int? retries;
 
   /// Reintentos automáticos de descarga antes de darla por fallida.
   static const int maxRetries = 3;
@@ -127,7 +135,8 @@ class _DriveThumbState extends State<DriveThumb> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _errorScheduled = false;
-      if (_retries >= DriveThumb.maxRetries) {
+      final limit = widget.retries ?? DriveThumb.maxRetries;
+      if (_retries >= limit) {
         setState(() => _failed = true);
         return;
       }

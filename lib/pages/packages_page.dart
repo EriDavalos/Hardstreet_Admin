@@ -352,14 +352,15 @@ class _PackagesPageState extends State<PackagesPage> {
         design = (await HsApi.siteDesign()).design;
       } catch (_) {}
       // La WEB no tiene sesión: se le publican en el servidor del drive las
-      // fotos de los paquetes (las que están en el Drive) para que pueda
-      // abrirlas. Va sin esperar: si el servidor es viejo o no hay red, el
-      // catálogo se ve igual en el panel.
+      // fotos de los paquetes y TAMBIÉN las de las categorías (la portada de
+      // "Boda", "XV Años"… se ve en el catálogo igual que la de un paquete).
+      // Va sin esperar: si el servidor es viejo o no hay red, el catálogo se
+      // ve igual en el panel.
       unawaited(
-        DriveApiService.publishPublicPhotos(
-          'paquetes',
-          packages.map((p) => p['urlImage']),
-        ),
+        DriveApiService.publishPublicPhotos('paquetes', [
+          ...packages.map((p) => p['urlImage']),
+          ...categories.map((c) => c['urlImage']),
+        ]),
       );
       if (!mounted) return;
       setState(() {

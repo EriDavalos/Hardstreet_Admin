@@ -195,4 +195,58 @@ void main() {
     expect(bodies.first, contains('"source":"print"'));
     expect(service.unread, 0);
   });
+
+  testWidgets('un aviso del módulo Notificaciones ABRE su módulo al tocarlo',
+      (tester) async {
+    final service = RemindersService.instance;
+    final bodies = <String>[];
+    final previousClient = HsApi.client;
+    HsApi.client = MockClient((request) async {
+      if (request.method == 'PUT') bodies.add(request.body);
+      return http.Response('{"ok":true,"unread":0}', 200,
+          headers: {'content-type': 'application/json'});
+    });
+    addTearDown(() => HsApi.client = previousClient);
+
+    service.seedForTest([
+      {
+        'id': 12,
+        'scheduleId': null,
+        'kind': 'manual',
+        'source': 'notification',
+        'target': 'schedules',
+        'title': 'Entrega de fotos el viernes',
+        'body': 'Llega a las 10',
+        'eventDate': '2026-10-20T10:00:00',
+        'isRead': 0,
+      },
+    ]);
+
+    String? opened;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topRight,
+            child: RemindersBell(onOpen: (target) => opened = target),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(RemindersBell));
+    await tester.pumpAndSettle();
+    expect(find.text('Aviso'), findsOneWidget);
+
+    await tester.tap(find.text('Entrega de fotos el viernes'));
+    await tester.pumpAndSettle();
+
+    // Lleva al módulo que el backend indicó…
+    expect(opened, 'schedules');
+    // …y lo marca leído en la tabla correcta.
+    expect(bodies.single, contains('"source":"notification"'));
+    // El panel se cierra para dejar ver el módulo.
+    expect(find.text('Avisos de eventos'), findsNothing);
+  });
 }

@@ -189,8 +189,16 @@ class _UsersPageState extends State<UsersPage> {
         if (r.isNotEmpty) names.add(r);
       }
     }
+    // El rol Admin solo lo ve un Admin; el Superadmin solo lo ve el propio
+    // Superadministrador (el backend tampoco se lo manda a nadie más).
     final out =
-        names.where((r) => _iAmAdmin || r.toLowerCase() != 'admin').toList()
+        names
+            .where(
+              (r) =>
+                  (_iAmAdmin || r.toLowerCase() != 'admin') &&
+                  (HsSession.isSuperAdmin || r.toLowerCase() != 'superadmin'),
+            )
+            .toList()
           ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return out;
   }
@@ -211,8 +219,10 @@ class _UsersPageState extends State<UsersPage> {
     final q = _query.trim().toLowerCase();
     final role = _roleFilter.trim().toLowerCase();
     return _users.where((u) {
-      // Los Admin no se listan a quien no es Admin.
+      // Los Admin no se listan a quien no es Admin; el Superadmin, a nadie
+      // que no sea el propio Superadministrador.
       if (!_iAmAdmin && _roleOf(u) == 'admin') return false;
+      if (!HsSession.isSuperAdmin && _roleOf(u) == 'superadmin') return false;
       if (role.isNotEmpty && _roleOf(u) != role) return false;
       if (q.isEmpty) return true;
       final hay =
@@ -414,18 +424,53 @@ class _UserTile extends StatelessWidget {
         .trim();
     final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : '?';
     final role = (user['role'] ?? '').toString();
+    // El SUPERADMINISTRADOR se DESTACA: es la cuenta más alta del sistema y
+    // no pertenece a ninguna empresa. Va con fondo degradado, avatar lleno y
+    // el chip del rol marcado, para no confundirla con un Admin normal.
+    final isSuper = role.trim().toLowerCase() == 'superadmin';
+    final isAdmin = isSuper || role.trim().toLowerCase() == 'admin';
 
-    return Padding(
+    return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: isSuper
+          ? BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  scheme.primary.withValues(alpha: .13),
+                  scheme.primary.withValues(alpha: .03),
+                ],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              border: Border(
+                left: BorderSide(color: scheme.primary, width: 3),
+              ),
+            )
+          : null,
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: scheme.primary.withValues(alpha: .12),
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: isSuper
+                  ? const LinearGradient(
+                      colors: [Color(0xFF2F6BFF), Color(0xFF1D4ED8)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : null,
+              color: isSuper ? null : scheme.primary.withValues(alpha: .12),
+              border: isSuper
+                  ? Border.all(color: scheme.primary.withValues(alpha: .5))
+                  : null,
+            ),
             child: Text(
               initial,
               style: TextStyle(
-                color: scheme.primary,
+                color: isSuper ? Colors.white : scheme.primary,
                 fontWeight: FontWeight.w800,
                 fontSize: 15,
               ),
@@ -457,22 +502,39 @@ class _UserTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: EdgeInsets.fromLTRB(isSuper ? 8 : 10, 5, 10, 5),
             decoration: BoxDecoration(
-              color: role.toLowerCase() == 'admin'
+              color: isSuper
+                  ? scheme.primary
+                  : isAdmin
                   ? scheme.primary.withValues(alpha: .12)
                   : scheme.surfaceContainerHighest.withValues(alpha: .7),
               borderRadius: BorderRadius.circular(999),
             ),
-            child: Text(
-              role.isEmpty ? 'Sin rol' : role,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: role.toLowerCase() == 'admin'
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isSuper) ...[
+                  const Icon(
+                    Icons.shield_rounded,
+                    size: 13,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  role.isEmpty ? 'Sin rol' : role,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isSuper
+                        ? Colors.white
+                        : isAdmin
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 8),
@@ -956,20 +1018,22 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   /// Roles que se pueden asignar desde aquí.
   ///
-  /// El rol Admin es el más alto: solo un Admin puede darlo (el backend
-  /// devuelve 403 si otro rol lo intenta).
-  List<Map<String, dynamic>> get _assignableRoles => widget.roles
-      .where(
-        (r) =>
-            HsSession.isAdmin ||
-            (r['name'] ?? '').toString().toLowerCase() != 'admin',
-      )
-      .toList();
+  /// El rol Admin solo lo da un Admin y el Superadmin solo lo da el propio
+  /// Superadministrador (el backend devuelve 403 si otro lo intenta).
+  List<Map<String, dynamic>> get _assignableRoles => widget.roles.where((r) {
+    final name = (r['name'] ?? '').toString().toLowerCase().trim();
+    if (name == 'superadmin') return HsSession.isSuperAdmin;
+    if (name == 'admin') return HsSession.isAdmin;
+    return true;
+  }).toList();
 
   int _rolePermCount(Map<String, dynamic> r) =>
       ((r['permissions'] as List?) ?? const []).length;
 
   String _roleSubtitle(Map<String, dynamic> r) {
+    if ((r['name'] ?? '').toString().toLowerCase().trim() == 'superadmin') {
+      return 'Rol del sistema · todas las empresas';
+    }
     final n = _rolePermCount(r);
     if (n == 0) return 'Sin permisos';
     final modules = ((r['permissions'] as List?) ?? const [])
@@ -982,6 +1046,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   IconData _roleIcon(Map<String, dynamic> r) {
     final name = (r['name'] ?? '').toString().toLowerCase();
+    if (name.contains('superadmin')) return Icons.workspace_premium_rounded;
     if (name.contains('admin')) return Icons.shield_rounded;
     if (name.contains('client')) return Icons.people_alt_rounded;
     if (name.contains('emple')) return Icons.badge_rounded;

@@ -14,6 +14,7 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/hs_pickers.dart';
 import '../widgets/confirm_dialog.dart';
+import '../widgets/drive_folder_picker.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_pager.dart';
@@ -21,16 +22,32 @@ import '../widgets/hs_place_picker.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/service_items_gallery.dart';
+import '../widgets/service_photos_sheet.dart';
 
 /// Estilo COMPACTO de las acciones de un servicio (dentro del administrador
 /// de paquetes): en el celular los tres botones tienen que caber en UNA fila
 /// horizontal, así que el aire se reduce al mínimo (solo su padding interno).
-final ButtonStyle _kServiceAction = TextButton.styleFrom(
+/// Botón PRINCIPAL de la tarjeta (relleno con el color de la acción):
+/// «Ver fotos» y «Reabrir envío» tienen que verse de un vistazo.
+ButtonStyle _kProminent(Color color) => FilledButton.styleFrom(
+  backgroundColor: color,
+  foregroundColor: Colors.white,
   visualDensity: VisualDensity.compact,
-  padding: const EdgeInsets.symmetric(horizontal: 8),
-  minimumSize: const Size(0, 32),
   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+  minimumSize: const Size(0, 36),
+  padding: const EdgeInsets.symmetric(horizontal: 13),
+  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+);
+
+/// Acción secundaria pero VISIBLE (tono del color, sin relleno duro).
+ButtonStyle _kTonal(Color color) => FilledButton.styleFrom(
+  backgroundColor: color.withValues(alpha: .13),
+  foregroundColor: color,
+  visualDensity: VisualDensity.compact,
+  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  minimumSize: const Size(0, 34),
+  padding: const EdgeInsets.symmetric(horizontal: 11),
+  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
 );
 
 /// Módulo CLIENTES: usuarios con rol fijo "Client" (no se asigna rol).
@@ -940,6 +957,631 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
 // Abonar paquete: monto + concepto del abono
 // ==================================================================
 
+// ==================================================================
+// ASIGNAR PAQUETE DEL CATÁLOGO
+// ==================================================================
+// Vista compacta para dar de alta un paquete a un cliente:
+//
+//   * Tarjetas PEQUEÑAS y seleccionables (dos columnas) con el nombre, el
+//     subtítulo y el precio del catálogo.
+//   * Antes de asignar se pregunta «¿Quieres mantener el precio?»:
+//       - Aceptar → se asigna con el precio del catálogo.
+//       - Cambiar → se escribe un precio especial SOLO para esa asignación;
+//         si se escribe 0, el paquete queda como GRATUITO.
+// ==================================================================
+
+/// Lo que respondió el estudio a «¿Quieres mantener el precio?».
+enum _PriceChoice { keep, change }
+
+class _AssignPackageDialog extends StatefulWidget {
+  const _AssignPackageDialog({
+    required this.userId,
+    required this.clientName,
+    required this.catalog,
+  });
+
+  final int userId;
+  final String clientName;
+  final List<Map<String, dynamic>> catalog;
+
+  @override
+  State<_AssignPackageDialog> createState() => _AssignPackageDialogState();
+}
+
+class _AssignPackageDialogState extends State<_AssignPackageDialog> {
+  /// Paquete elegido (0 = todavía ninguno).
+  int _pickedId = 0;
+
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Con un solo paquete en el catálogo no hay nada que elegir.
+    if (widget.catalog.length == 1) {
+      _pickedId = (widget.catalog.first['id'] as num?)?.toInt() ?? 0;
+    }
+  }
+
+  Map<String, dynamic>? get _picked {
+    for (final p in widget.catalog) {
+      if ((p['id'] as num?)?.toInt() == _pickedId) return p;
+    }
+    return null;
+  }
+
+  String get _currency => (_picked?['currency'] ?? 'MXN').toString();
+
+  num get _catalogPrice => (_picked?['price'] as num?) ?? 0;
+
+  void _pick(int id) {
+    if (_saving || id == _pickedId) return;
+    setState(() {
+      _pickedId = id;
+      _error = null;
+    });
+  }
+
+  /// PRIMER PASO al asignar: preguntar si se respeta el precio del catálogo.
+  ///
+  /// Devuelve null si se canceló; si no, qué hacer con el precio.
+  Future<_PriceChoice?> _askKeepPrice() {
+    final picked = _picked!;
+    final name = (picked['name'] ?? '').toString();
+    return showDialog<_PriceChoice>(
+      context: context,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 16, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+          title: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.brand, AppColors.brandDark],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.sell_outlined,
+                  size: 19,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Text(
+                  '¿Quieres mantener el precio?',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
+                decoration: BoxDecoration(
+                  color: AppColors.brand.withValues(alpha: .06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.brand.withValues(alpha: .22),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      hsMoney(_catalogPrice, _currency),
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.brand,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Aceptar asigna el paquete con el precio del catálogo. '
+                'Cambiar te deja escribir un precio especial para este '
+                'cliente; si escribes 0, queda como gratuito.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.35,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('assign-price-cancel'),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              key: const ValueKey('assign-price-change'),
+              onPressed: () => Navigator.of(ctx).pop(_PriceChoice.change),
+              child: const Text('Cambiar'),
+            ),
+            FilledButton(
+              key: const ValueKey('assign-price-keep'),
+              onPressed: () => Navigator.of(ctx).pop(_PriceChoice.keep),
+              child: const Text('Aceptar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// SEGUNDO PASO (solo al cambiar el precio): el campo para escribirlo.
+  Future<num?> _askPrice() {
+    final picked = _picked!;
+    return showHsModal<num>(
+      context: context,
+      builder: (_) => _AssignPriceDialog(
+        packageName: (picked['name'] ?? '').toString(),
+        catalogPrice: _catalogPrice,
+        currency: _currency,
+      ),
+    );
+  }
+
+  /// Flujo completo del alta: paquete → ¿mantener precio? → (precio) → API.
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_picked == null) {
+      setState(() => _error = 'Elige el paquete que vas a asignar');
+      return;
+    }
+    final choice = await _askKeepPrice();
+    if (choice == null || !mounted) return;
+
+    num? price;
+    if (choice == _PriceChoice.change) {
+      final typed = await _askPrice();
+      if (typed == null || !mounted) return;
+      // Igual al del catálogo: no hace falta guardar un precio especial.
+      price = typed == _catalogPrice ? null : typed;
+    }
+    await _assign(price: price);
+  }
+
+  /// Llama a la API. `price` null = precio del catálogo; 0 = gratuito.
+  Future<void> _assign({num? price}) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await HsApi.addPackageFromCatalog(
+        widget.userId,
+        _pickedId,
+        price: price,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo asignar el paquete';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final picked = _picked;
+    return FormDialog(
+      icon: Icons.library_add_outlined,
+      title: 'Asignar paquete',
+      subtitle: widget.clientName.isEmpty
+          ? 'Elige un paquete del catálogo'
+          : 'Para ${widget.clientName}',
+      saving: _saving,
+      error: _error,
+      saveLabel: 'Asignar paquete',
+      maxWidth: 520,
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        if (widget.catalog.isEmpty)
+          Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 17,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'El catálogo está vacío: crea un paquete en el módulo '
+                  'Paquetes para poder asignarlo.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          )
+        else
+          FormSection(
+            label: 'Paquete del catálogo',
+            child: LayoutBuilder(
+              builder: (context, box) {
+                // Dos columnas de tarjetas PEQUEÑAS; en pantallas muy
+                // angostas una sola.
+                final cols = box.maxWidth < 300 ? 1 : 2;
+                const gap = 8.0;
+                final width =
+                    (box.maxWidth - gap * (cols - 1)) / cols;
+                return Wrap(
+                  spacing: gap,
+                  runSpacing: gap,
+                  children: [
+                    for (final p in widget.catalog)
+                      SizedBox(
+                        width: width,
+                        child: _catalogCard(scheme, p),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 14),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.sell_outlined, size: 15, color: AppColors.brand),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                picked == null
+                    ? 'Elige la tarjeta del paquete que vas a asignar.'
+                    : 'Precio del catálogo: '
+                          '${hsMoney(_catalogPrice, _currency)}. Al asignar '
+                          'te preguntaremos si lo mantienes.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.35,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Tarjeta COMPACTA y seleccionable de un paquete del catálogo.
+  Widget _catalogCard(ColorScheme scheme, Map<String, dynamic> p) {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    final selected = id == _pickedId;
+    final name = (p['name'] ?? '').toString();
+    final subtitle = (p['subtitle'] ?? '').toString().trim();
+    final price = (p['price'] as num?) ?? 0;
+    final currency = (p['currency'] ?? 'MXN').toString();
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: ValueKey('assign-pkg-$id'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: _saving ? null : () => _pick(id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 170),
+          curve: Curves.easeOutCubic,
+          height: 104,
+          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.brand.withValues(alpha: .07)
+                : scheme.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? AppColors.brand
+                  : scheme.outlineVariant.withValues(alpha: .55),
+              width: selected ? 1.6 : 1,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.brand.withValues(alpha: .14),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 26,
+                    height: 26,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      gradient: selected
+                          ? LinearGradient(
+                              colors: [
+                                AppColors.brand,
+                                AppColors.brandDark,
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            )
+                          : null,
+                      color: selected
+                          ? null
+                          : scheme.surfaceContainerHighest.withValues(
+                              alpha: .55,
+                            ),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(
+                      Icons.inventory_2_outlined,
+                      size: 14,
+                      color:
+                          selected ? Colors.white : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked,
+                    size: 17,
+                    color:
+                        selected ? AppColors.brand : scheme.outlineVariant,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 7),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (subtitle.isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    height: 1.25,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              const Spacer(),
+              Text(
+                hsMoney(price, currency),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: selected ? AppColors.brand : scheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Campo del PRECIO ESPECIAL: llega con el precio del catálogo y se puede
+/// cambiar; 0 = paquete gratuito.
+class _AssignPriceDialog extends StatefulWidget {
+  const _AssignPriceDialog({
+    required this.packageName,
+    required this.catalogPrice,
+    required this.currency,
+  });
+
+  final String packageName;
+  final num catalogPrice;
+  final String currency;
+
+  @override
+  State<_AssignPriceDialog> createState() => _AssignPriceDialogState();
+}
+
+class _AssignPriceDialogState extends State<_AssignPriceDialog> {
+  late final TextEditingController _price = TextEditingController(
+    text: _seed(widget.catalogPrice),
+  );
+  String? _error;
+
+  static String _seed(num p) =>
+      p == p.roundToDouble() ? p.toStringAsFixed(0) : p.toStringAsFixed(2);
+
+  @override
+  void dispose() {
+    _price.dispose();
+    super.dispose();
+  }
+
+  /// Precio escrito a mano (null si está vacío o no es un número).
+  num? get _typed {
+    final clean = _price.text.replaceAll(',', '').trim();
+    if (clean.isEmpty) return null;
+    final n = num.tryParse(clean);
+    return n != null && n.isFinite ? n : null;
+  }
+
+  void _submit() {
+    final price = _typed;
+    if (price == null) {
+      setState(() => _error = 'Escribe el precio (0 = gratuito)');
+      return;
+    }
+    if (price < 0) {
+      setState(() => _error = 'El precio no puede ser negativo');
+      return;
+    }
+    Navigator.of(context).pop(price);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final price = _typed;
+    final free = price == 0;
+    final diff = (price ?? 0) - widget.catalogPrice;
+    return FormDialog(
+      icon: Icons.sell_outlined,
+      title: 'Precio especial',
+      subtitle: widget.packageName,
+      saving: false,
+      error: _error,
+      saveLabel: 'Asignar',
+      maxWidth: 420,
+      onCancel: () => Navigator.of(context).pop(),
+      onSave: _submit,
+      children: [
+        TextField(
+          key: const ValueKey('assign-price-field'),
+          controller: _price,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (_) => setState(() => _error = null),
+          decoration: InputDecoration(
+            labelText: 'Precio a cobrar',
+            hintText: _seed(widget.catalogPrice),
+            prefixIcon: const Icon(Icons.attach_money, size: 20),
+            suffixText: widget.currency,
+            helperText: 'Escribe 0 para asignarlo gratis.',
+            helperMaxLines: 2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: .35),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: .5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.receipt_long_outlined,
+                size: 18,
+                color: AppColors.brand,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'PRECIO A COBRAR',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        letterSpacing: .9,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    Text(
+                      free
+                          ? 'Gratuito'
+                          : hsMoney(price ?? 0, widget.currency),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: free ? _kDone : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (free)
+                _priceBadge('GRATIS', _kDone)
+              else if (diff != 0)
+                _priceBadge(
+                  '${diff < 0 ? '−' : '+'}'
+                  '${hsMoney(diff.abs(), widget.currency)} vs catálogo',
+                  diff < 0 ? _kDone : _kAmber,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _priceBadge(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: 10.5,
+        fontWeight: FontWeight.w700,
+        color: color,
+      ),
+    ),
+  );
+}
+
 class _AbonarDialog extends StatefulWidget {
   const _AbonarDialog({required this.package});
 
@@ -1103,11 +1745,21 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
   final TextEditingController _desc = TextEditingController();
   late DateTime _dateTime;
   int _serviceId = 0;
-  HsPlace? _place;
+
+  /// UBICACIONES del evento: una agenda puede tener varias y se numeran
+  /// solas (1, 2, 3…).
+  final List<HsPlace?> _places = [null];
+
   bool _saving = false;
   String? _error;
 
   bool get _editing => widget.agenda != null;
+
+  /// Las ubicaciones ya capturadas, en orden (sin huecos vacíos).
+  List<HsPlace> get _filledPlaces => [
+    for (final p in _places)
+      if (p != null && !p.isEmpty) p,
+  ];
 
   @override
   void initState() {
@@ -1119,7 +1771,10 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
     _dateTime = parsed ?? DateTime(now.year, now.month, now.day, now.hour + 1);
     final sid = (a['serviceId'] as num?)?.toInt() ?? 0;
     _serviceId = sid;
-    _place = HsPlace.of(a);
+    final places = HsPlace.allOf(a);
+    _places
+      ..clear()
+      ..addAll(places.isEmpty ? <HsPlace?>[null] : places);
   }
 
   @override
@@ -1170,9 +1825,13 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
       'serviceId': _serviceId == 0 ? null : _serviceId,
       'eventDate': hsDateTimeValue(_dateTime),
       'description': _desc.text.trim(),
-      // El lugar viaja SIEMPRE (vacío = se quitó): así editar una agenda
-      // puede borrar la ubicación, no solo cambiarla.
-      ...(_place?.toBody() ?? const {'location': '', 'lat': null, 'lng': null}),
+      // Las ubicaciones viajan SIEMPRE (lista vacía = se quitaron): así
+      // editar una agenda puede borrarlas, no solo cambiarlas. La primera va
+      // también suelta por compatibilidad con el calendario.
+      ...HsPlace.listBody(_places),
+      ...(_filledPlaces.isEmpty
+          ? const {'location': '', 'lat': null, 'lng': null}
+          : _filledPlaces.first.toBody()),
     };
     try {
       if (_editing) {
@@ -1285,11 +1944,19 @@ class _AgendaFormDialogState extends State<_AgendaFormDialog> {
         ),
         const SizedBox(height: 16),
         FormSection(
-          label: 'Lugar (opcional)',
-          child: HsPlaceField(
-            place: _place,
+          label: 'Ubicaciones (opcional)',
+          child: HsPlacesField(
+            numberKeyPrefix: 'client-agenda-place',
+            places: _places,
             enabled: !_saving,
-            onChanged: (place) => setState(() => _place = place),
+            onChanged: (index, place) => setState(() {
+              _places[index] = place;
+            }),
+            onAdd: () => setState(() => _places.add(null)),
+            onRemove: (index) => setState(() {
+              _places.removeAt(index);
+              if (_places.isEmpty) _places.add(null);
+            }),
           ),
         ),
         const SizedBox(height: 16),
@@ -1417,6 +2084,11 @@ class _PickerField extends StatelessWidget {
 
 /// Colores de los movimientos y estados (se usan en todo el modal).
 const Color _kGreen = Color(0xFF2F6BFF);
+
+/// VERDE de lo CUMPLIDO (servicio terminado). `_kGreen` es el azul de la
+/// marca y se usa para dinero y acentos; los servicios completados llevan este
+/// verde para distinguirse de un vistazo de los que siguen pendientes.
+const Color _kDone = Color(0xFF16A34A);
 const Color _kAmber = Color(0xFFF59E0B);
 const Color _kBlue = Color(0xFF3B82F6);
 const Color _kRed = Color(0xFFEF4444);
@@ -1696,15 +2368,15 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   Map<String, dynamic> get _totals =>
       ((_progress?['totals'] as Map?) ?? const {}).cast<String, dynamic>();
 
-  /// Dinero LIBRE del paquete: abonado menos gastado (gasto + inversión).
-  /// Es la base con la que se calcula el ahorro en porcentaje.
+  /// DINERO ACTUAL del paquete: abonado + abono externo - gastado (gasto +
+  /// inversión) - ahorro - pagos. Es la base del ahorro en porcentaje y
+  /// coincide con el módulo Finanzas.
   num get _disponible {
     final fromBackend = _totals['disponible'];
     if (fromBackend is num) return fromBackend;
-    final abonado = (_totals['abonado'] as num?) ?? 0;
-    final gastado = (_totals['gastado'] as num?) ?? 0;
-    final saldo = abonado - gastado;
-    return saldo < 0 ? 0 : saldo;
+    num n(String key) => (_totals[key] as num?) ?? 0;
+    return n('abonado') + n('abonoExterno') - n('gastado') - n('ahorrado') -
+        n('pagos');
   }
 
   List<String> get _blockers =>
@@ -1763,53 +2435,26 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     setState(() => _stage = 0);
   }
 
+  /// Asigna un paquete del catálogo al cliente.
+  ///
+  /// El diálogo hace el alta con el precio elegido (el del catálogo o uno
+  /// especial) y aquí solo se recarga el cliente para abrir el paquete recién
+  /// asignado, como si se hubiera tocado su tarjeta.
   Future<void> _addFromCatalog() async {
     if (_catalog.isEmpty) {
       _snack('No hay paquetes en el catálogo');
       return;
     }
-    final picked = await showHsModal<Map<String, dynamic>>(
+    final assigned = await showHsModal<bool>(
       context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Asignar paquete del catálogo'),
-        children: [
-          for (final p in _catalog)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, p),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    const Icon(Icons.inventory_2_outlined, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        (p['name'] ?? '').toString(),
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    Text(
-                      hsMoney(
-                        (p['price'] as num?) ?? 0,
-                        (p['currency'] ?? 'MXN').toString(),
-                      ),
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
+      builder: (_) => _AssignPackageDialog(
+        userId: _userId,
+        clientName: _name,
+        catalog: _catalog,
       ),
     );
-    if (picked == null) return;
-    final id = (picked['id'] as num).toInt();
-    await _run(() => HsApi.addPackageFromCatalog(_userId, id));
-    // El paquete recién asignado pasa a ser el vigente: se abre solo, directo
-    // al detalle (como si se hubiera tocado su tarjeta).
+    if (assigned != true) return;
+    await _reload(silent: true);
     final vigente = _vigenteId;
     if (vigente != null && mounted) {
       setState(() {
@@ -1998,6 +2643,104 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       folder: (svc['shareFolder'] ?? '').toString(),
       paths: paths,
     );
+  }
+
+  /// El ESTUDIO elige o cambia las fotos de un servicio por si el cliente no
+  /// puede (o lo pide): abre el MISMO módulo de selección del cliente, pero
+  /// con el Drive del panel y dentro de la carpeta compartida del servicio.
+  ///
+  /// Si la selección ya se envió a impresión está bloqueada: primero hay que
+  /// reabrir el envío (botón «Reabrir envío» de la tarjeta).
+  Future<void> _pickServicePhotos(Map<String, dynamic> svc) async {
+    final serviceId = (svc['id'] as num?)?.toInt() ?? 0;
+    if (serviceId == 0) {
+      _snack('No se pudo identificar el servicio');
+      return;
+    }
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) {
+      _snack('El Drive no está disponible en esta pantalla');
+      return;
+    }
+    var folder = (svc['shareFolder'] ?? '').toString().trim();
+    var max =
+        (svc['photosMax'] as num?)?.toInt() ??
+        (((svc['service'] is Map)
+                ? (svc['service'] as Map)['photosMax']
+                : null) as num?)
+            ?.toInt() ??
+        0;
+    var current = ((svc['itemPaths'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .where((p) => p.trim().isNotEmpty)
+        .toList();
+    var sent =
+        svc['sentToPrint'] == true ||
+        (svc['printStatus'] ?? '').toString().trim().isNotEmpty;
+    try {
+      final info = await HsApi.myServiceItemsInfo(serviceId);
+      if (info.folder.isNotEmpty) folder = info.folder;
+      if (info.max > 0) max = info.max;
+      current = info.items;
+      sent = sent || info.sent;
+    } catch (_) {
+      // Backend viejo: se usan los datos del paquete.
+    }
+    if (!mounted) return;
+    if (folder.isEmpty) {
+      HsToast.info(
+        'Este servicio todavía no tiene carpeta compartida',
+        details: 'Comparte la carpeta del Drive en «Editar lo compartido».',
+      );
+      return;
+    }
+    if (sent) {
+      HsToast.info(
+        'Estas fotos ya se enviaron a impresión',
+        details: 'Usa «Reabrir envío» para poder cambiarlas.',
+      );
+      return;
+    }
+    final saved = await showServicePhotosSheet(
+      context,
+      drive: drive,
+      serviceId: serviceId,
+      serviceName: (svc['name'] ?? 'Servicio').toString(),
+      folder: folder,
+      max: max,
+      initial: current,
+    );
+    if (saved == null) return;
+    await _loadProgress();
+  }
+
+  /// REABRE el envío a impresión del servicio: se desbloquea la selección de
+  /// fotos y el cliente vuelve a poder cambiarla (y enviarla otra vez).
+  Future<void> _reopenServicePrint(Map<String, dynamic> svc) async {
+    final serviceId = (svc['id'] as num?)?.toInt() ?? 0;
+    var requestId = (svc['printRequestId'] as num?)?.toInt() ?? 0;
+    if (requestId == 0 && serviceId > 0) {
+      try {
+        final info = await HsApi.myServiceItemsInfo(serviceId);
+        requestId = info.printRequestId ?? 0;
+      } catch (_) {
+        // Se intenta con el id que trae la tarjeta.
+      }
+    }
+    if (requestId == 0) {
+      _snack('No se encontró el envío a impresión');
+      return;
+    }
+    if (!await _confirm(
+      '¿Reabrir el envío?',
+      'Las fotos de “${svc['name'] ?? 'este servicio'}” volverán a poder '
+          'cambiarse y enviarse de nuevo.',
+      confirmLabel: 'Reabrir envío',
+    )) {
+      return;
+    }
+    final ok = await _run(() => HsApi.reopenPrintRequest(requestId));
+    if (ok) await _loadProgress();
   }
 
   /// Avisa al cliente de que YA puede elegir sus fotos.
@@ -3325,7 +4068,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return out;
   }
 
-  /// Selector de carpeta del Drive: abre [_DriveFolderPicker] y devuelve los
+  /// Selector de carpeta del Drive: abre [DriveFolderPicker] y devuelve los
   /// segmentos de la carpeta elegida (null si se cancela la elección).
   ///
   /// [insideShared] = true: se elige DENTRO de lo que el cliente ya tiene
@@ -3353,9 +4096,14 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     }
     return showHsModal<List<String>>(
       context: context,
-      builder: (_) => _DriveFolderPicker(
+      builder: (_) => DriveFolderPicker(
         base: insideShared ? roots.first : '',
-        initial: insideShared ? const <String>[] : drive.path,
+        // SIEMPRE desde la raíz (o desde la carpeta compartida del cliente).
+        // Antes se abría en [drive.path], que es la carpeta en la que se quedó
+        // el módulo Archivos: al compartir desde Paquetes el selector
+        // aparecía en mitad del Drive, lejos de la raíz, y si esa carpeta
+        // estaba vacía no había forma de volver.
+        initial: const <String>[],
         roots: roots,
         load: drive.listChildFolders,
         // Dentro del drive del cliente NO hay solapamiento que valga: TODO lo
@@ -3718,6 +4466,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         onCopy: _copyServiceUrl,
         onPhotos: _viewServicePhotos,
         onNotify: _notifyPhotos,
+        onPickPhotos: _pickServicePhotos,
+        onReopenPrint: _reopenServicePrint,
       ),
     );
   }
@@ -4165,6 +4915,8 @@ class _ServiceTile extends StatefulWidget {
     required this.onCopy,
     required this.onPhotos,
     required this.onNotify,
+    required this.onPickPhotos,
+    required this.onReopenPrint,
   });
 
   final Map<String, dynamic> service;
@@ -4178,6 +4930,12 @@ class _ServiceTile extends StatefulWidget {
   final ValueChanged<String> onCopy;
   final ValueChanged<Map<String, dynamic>> onPhotos;
   final ValueChanged<Map<String, dynamic>> onNotify;
+
+  /// El ESTUDIO abre la selección de fotos del servicio.
+  final ValueChanged<Map<String, dynamic>> onPickPhotos;
+
+  /// Reabre el envío a impresión (desbloquea la selección).
+  final ValueChanged<Map<String, dynamic>> onReopenPrint;
 
   @override
   State<_ServiceTile> createState() => _ServiceTileState();
@@ -4193,12 +4951,15 @@ class _ServiceTileState extends State<_ServiceTile> {
     final done = s['done'] == true;
     final when = hsParseDate(s['finishedAt']);
     final phone = MediaQuery.sizeOf(context).width < 560;
-    final color = done ? _kGreen : _kTeal;
+    final color = done ? _kDone : _kTeal;
     final desc = (s['description'] ?? '').toString().trim();
     final url = (s['url'] ?? '').toString().trim();
     final shareFolder = (s['shareFolder'] ?? '').toString().trim();
     final shareLink = (s['shareLink'] ?? '').toString().trim();
     final items = (s['items'] as num?)?.toInt() ?? 0;
+    // Envío a impresión ACTIVO: la selección queda bloqueada hasta reabrirla.
+    final printStatus = (s['printStatus'] ?? '').toString().trim();
+    final sentToPrint = s['sentToPrint'] == true || printStatus.isNotEmpty;
     // OPCIONES que le salen al CLIENTE para este servicio (las enciende el
     // estudio al compartir): antes «elegir fotos» salía en todos.
     final pickPhotos = s['pickPhotos'] == true;
@@ -4228,12 +4989,12 @@ class _ServiceTileState extends State<_ServiceTile> {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: done
-            ? _kGreen.withValues(alpha: .07)
+            ? _kDone.withValues(alpha: .07)
             : scheme.surfaceContainerHighest.withValues(alpha: .30),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: done
-              ? _kGreen.withValues(alpha: .35)
+              ? _kDone.withValues(alpha: .35)
               : scheme.outlineVariant.withValues(alpha: .5),
         ),
       ),
@@ -4282,7 +5043,7 @@ class _ServiceTileState extends State<_ServiceTile> {
                               ? Icons.check_circle_outline
                               : Icons.timelapse,
                           label: (s['status'] ?? 'Pendiente').toString(),
-                          color: done ? _kGreen : _kAmber,
+                          color: done ? _kDone : _kAmber,
                         ),
                       ],
                     ),
@@ -4291,20 +5052,42 @@ class _ServiceTileState extends State<_ServiceTile> {
                   // desplegar nada.
                   if (widget.canAdminister)
                     done
-                        ? Tooltip(
-                            message: 'Reabrir el servicio',
-                            child: IconButton(
-                              visualDensity: VisualDensity.compact,
-                              onPressed: widget.busy
-                                  ? null
-                                  : () => widget.onReopen(s),
-                              icon: const Icon(
-                                Icons.undo,
-                                size: 18,
-                                color: _kAmber,
-                              ),
-                            ),
-                          )
+                        ? (phone
+                              ? Tooltip(
+                                  message: 'Reabrir el servicio',
+                                  child: IconButton.outlined(
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: widget.busy
+                                        ? null
+                                        : () => widget.onReopen(s),
+                                    icon: const Icon(
+                                      Icons.undo,
+                                      size: 18,
+                                      color: _kAmber,
+                                    ),
+                                  ),
+                                )
+                              : OutlinedButton.icon(
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => widget.onReopen(s),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _kAmber,
+                                    side: BorderSide(
+                                      color: _kAmber.withValues(alpha: .55),
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.undo, size: 16),
+                                  label: const Text('Reabrir'),
+                                ))
                         // Completar NO es la acción principal de la tarjeta (lo
                         // importante es ver y llenar el servicio): va como
                         // botón discreto, del mismo peso que "Asignar del
@@ -4429,47 +5212,19 @@ class _ServiceTileState extends State<_ServiceTile> {
                             ],
                           ),
                         ],
-                        if (items > 0) ...[
-                          const SizedBox(height: 7),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.photo_library_outlined,
-                                size: 13,
-                                color: _kTeal,
-                              ),
-                              const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(
-                                  '$items ${items == 1 ? 'foto elegida' : 'fotos elegidas'} por el cliente',
-                                  style: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: _kTeal,
-                                  ),
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed: widget.busy
-                                    ? null
-                                    : () => widget.onPhotos(s),
-                                style: TextButton.styleFrom(
-                                  visualDensity: VisualDensity.compact,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.visibility_outlined,
-                                  size: 15,
-                                ),
-                                label: const Text('Ver fotos'),
-                              ),
-                            ],
+                        // FOTOS DEL SERVICIO: es lo que de verdad se usa,
+                        // así que va DESTACADO (botones rellenos) y con el
+                        // estado del envío a impresión a la vista.
+                        if (items > 0 ||
+                            (widget.canAdminister &&
+                                (pickPhotos || sentToPrint))) ...[
+                          const SizedBox(height: 9),
+                          _photosPanel(
+                            s,
+                            items: items,
+                            sentToPrint: sentToPrint,
+                            printStatus: printStatus,
+                            pickPhotos: pickPhotos,
                           ),
                         ],
                         if (when != null) ...[
@@ -4479,7 +5234,7 @@ class _ServiceTileState extends State<_ServiceTile> {
                               const Icon(
                                 Icons.event_available,
                                 size: 13,
-                                color: _kGreen,
+                                color: _kDone,
                               ),
                               const SizedBox(width: 5),
                               Expanded(
@@ -4488,7 +5243,7 @@ class _ServiceTileState extends State<_ServiceTile> {
                                   style: const TextStyle(
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w600,
-                                    color: _kGreen,
+                                    color: _kDone,
                                   ),
                                 ),
                               ),
@@ -4508,6 +5263,121 @@ class _ServiceTileState extends State<_ServiceTile> {
     );
   }
 
+  /// Bloque de FOTOS del servicio: ver lo elegido, elegir/cambiar (el
+  /// estudio también puede), avisar al cliente y reabrir el envío.
+  Widget _photosPanel(
+    Map<String, dynamic> s, {
+    required int items,
+    required bool sentToPrint,
+    required String printStatus,
+    required bool pickPhotos,
+  }) {
+    final tint = sentToPrint ? _kAmber : _kTeal;
+    final mine = widget.canAdminister;
+    final finished = printStatus == 'finished';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tint.withValues(alpha: .28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.photo_library_outlined, size: 14, color: tint),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  items > 0
+                      ? '$items ${items == 1 ? 'foto elegida' : 'fotos elegidas'} por el cliente'
+                      : pickPhotos
+                      ? 'El cliente puede elegir sus fotos'
+                      : 'Fotos del servicio',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: tint,
+                  ),
+                ),
+              ),
+              if (sentToPrint)
+                _MiniPill(
+                  icon: finished
+                      ? Icons.local_printshop_outlined
+                      : Icons.mark_email_read_outlined,
+                  label: finished ? 'Impresión lista' : 'Enviadas',
+                  color: _kAmber,
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (items > 0)
+                FilledButton.icon(
+                  key: const ValueKey('service-view-photos'),
+                  onPressed: widget.busy ? null : () => widget.onPhotos(s),
+                  style: _kProminent(tint),
+                  icon: const Icon(Icons.visibility_outlined, size: 16),
+                  label: Text('Ver fotos ($items)'),
+                ),
+              if (mine && sentToPrint)
+                FilledButton.icon(
+                  key: const ValueKey('service-reopen-print'),
+                  onPressed: widget.busy
+                      ? null
+                      : () => widget.onReopenPrint(s),
+                  style: _kProminent(_kAmber),
+                  icon: const Icon(Icons.lock_open_rounded, size: 16),
+                  label: const Text('Reabrir envío'),
+                ),
+              if (mine && !sentToPrint)
+                FilledButton.tonalIcon(
+                  key: const ValueKey('service-pick-photos'),
+                  onPressed: widget.busy
+                      ? null
+                      : () => widget.onPickPhotos(s),
+                  style: _kTonal(tint),
+                  icon: const Icon(Icons.photo_library_outlined, size: 16),
+                  label: Text(items > 0 ? 'Cambiar fotos' : 'Elegir fotos'),
+                ),
+              if (mine && pickPhotos && !sentToPrint)
+                FilledButton.tonalIcon(
+                  key: const ValueKey('service-notify-client'),
+                  onPressed: widget.busy ? null : () => widget.onNotify(s),
+                  style: _kTonal(AppColors.brand),
+                  icon: const Icon(
+                    Icons.notifications_active_outlined,
+                    size: 16,
+                  ),
+                  label: const Text('Avisar al cliente'),
+                ),
+            ],
+          ),
+          if (sentToPrint) ...[
+            const SizedBox(height: 6),
+            Text(
+              finished
+                  ? 'La impresión ya terminó. Reabre el envío para cambiar las '
+                        'fotos.'
+                  : 'La selección está bloqueada hasta reabrir el envío.',
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.3,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Las opciones del servicio: en el celular se deslizan de lado (UNA fila),
   /// en escritorio caben en la tarjeta.
   Widget _serviceActions(Map<String, dynamic> s) {
@@ -4520,31 +5390,28 @@ class _ServiceTileState extends State<_ServiceTile> {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          TextButton.icon(
+          FilledButton.tonalIcon(
             onPressed: widget.busy ? null : () => widget.onNote(s),
-            style: _kServiceAction,
+            style: _kTonal(AppColors.brand),
             icon: const Icon(Icons.edit_note, size: 16),
             label: Text(hasNote ? 'Editar nota' : 'Añadir nota'),
           ),
-          TextButton.icon(
+          const SizedBox(width: 6),
+          FilledButton.tonalIcon(
             onPressed: widget.busy ? null : () => widget.onUrl(s),
-            style: _kServiceAction,
+            style: _kTonal(AppColors.brand),
             icon: const Icon(Icons.link, size: 15),
             label: Text(hasUrl ? 'Editar enlace' : 'Agregar enlace'),
           ),
-          TextButton.icon(
+          const SizedBox(width: 6),
+          FilledButton.tonalIcon(
             onPressed: widget.busy ? null : () => widget.onShare(s),
-            style: _kServiceAction,
+            style: _kTonal(AppColors.brand),
             icon: const Icon(Icons.folder_shared_outlined, size: 15),
             label: Text(hasShare ? 'Editar lo compartido' : 'Compartir'),
           ),
-          if (s['pickPhotos'] == true)
-            TextButton.icon(
-              onPressed: widget.busy ? null : () => widget.onNotify(s),
-              style: _kServiceAction,
-              icon: const Icon(Icons.notifications_active_outlined, size: 15),
-              label: const Text('Avisar al cliente'),
-            ),
+          // «Avisar al cliente» NO va aquí: está en el bloque de fotos, que es
+          // donde se ve y se usa (aquí salía duplicado y escondido).
         ],
       ),
     );
@@ -4922,7 +5789,8 @@ class _AgendaEventCard extends StatelessWidget {
     final date = hsParseDate(agenda['eventDate']);
     final service = (agenda['serviceName'] ?? '').toString();
     final desc = (agenda['description'] ?? '').toString();
-    final place = HsPlace.of(agenda);
+    // TODAS las ubicaciones, numeradas 1, 2, 3…
+    final places = HsPlace.allOf(agenda);
     final monthAbbr = date == null
         ? ''
         : kHsMonths[date.month - 1].substring(0, 3);
@@ -5003,11 +5871,10 @@ class _AgendaEventCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                // LUGAR: solo si la agenda lo tiene agregado. Tocar abre el
-                // mapa del equipo.
-                if (place != null)
+                // UBICACIONES: cada una con su número; tocar abre el mapa.
+                for (var i = 0; i < places.length; i++)
                   InkWell(
-                    onTap: () => hsOpenPlace(place),
+                    onTap: () => hsOpenPlace(places[i]),
                     borderRadius: BorderRadius.circular(6),
                     child: Padding(
                       padding: const EdgeInsets.only(top: 2),
@@ -5017,7 +5884,9 @@ class _AgendaEventCard extends StatelessWidget {
                           const SizedBox(width: 3),
                           Expanded(
                             child: Text(
-                              place.label,
+                              places.length > 1
+                                  ? '${i + 1}. ${places[i].label}'
+                                  : places[i].label,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -6464,527 +7333,6 @@ class _NoteDialogState extends State<_NoteDialog> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Selector de carpeta del Drive con el diseño del panel: cabecera con el
-/// icono, migas de pan, carpetas como tarjetas y las acciones abajo.
-///
-/// Devuelve los segmentos ABSOLUTOS de la carpeta elegida (null al cancelar).
-///
-/// Con [roots] NO vacío el selector trabaja DENTRO del drive del cliente: la
-/// carpeta compartida es la RAÍZ —no hay nada antes de ella y no se puede
-/// subir más arriba—, se puede cambiar entre las carpetas compartidas y las
-/// que se solapan con lo ya compartido salen bloqueadas.
-class _DriveFolderPicker extends StatefulWidget {
-  const _DriveFolderPicker({
-    required this.base,
-    required this.initial,
-    required this.load,
-    required this.conflict,
-    this.roots = const <String>[],
-  });
-
-  /// Carpeta que hace de RAÍZ ('' = el Drive completo desde su raíz).
-  final String base;
-
-  /// Ruta relativa a [base] donde se abre el selector.
-  final List<String> initial;
-
-  /// Lista las SUBcarpetas de una ruta (en segmentos ABSOLUTOS del Drive).
-  final Future<List<String>> Function(List<String> path) load;
-
-  /// ¿[absolutePath] se solapa con algo ya compartido? Devuelve con cuál.
-  final String? Function(String absolutePath) conflict;
-
-  /// Carpetas compartidas con el cliente (vacío = todo el Drive).
-  final List<String> roots;
-
-  @override
-  State<_DriveFolderPicker> createState() => _DriveFolderPickerState();
-}
-
-class _DriveFolderPickerState extends State<_DriveFolderPicker> {
-  late String _base = widget.base;
-  late List<String> _rel = List<String>.of(widget.initial);
-  List<String> _folders = const [];
-  bool _loading = true;
-  String? _error;
-
-  /// ¿Se está eligiendo dentro del drive del cliente?
-  bool get _scoped => widget.roots.isNotEmpty;
-
-  /// Segmentos de una ruta ('ReynaCoot/Fiesta' → ['ReynaCoot', 'Fiesta']).
-  List<String> _segments(String path) => path.isEmpty
-      ? const <String>[]
-      : drivePathNormalize(path).split('/').where((s) => s.isNotEmpty).toList();
-
-  /// Ruta ABSOLUTA de la carpeta abierta ([extra] mira una subcarpeta suya).
-  List<String> _absolute([List<String>? extra]) => [
-    ..._segments(_base),
-    ...(extra ?? _rel),
-  ];
-
-  /// Ruta absoluta de la carpeta abierta, como texto (para el solapamiento).
-  String get _here => _absolute().join('/');
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final list = await widget.load(_absolute());
-      if (!mounted) return;
-      setState(() {
-        _folders = list;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _folders = const [];
-        _error = '$e';
-        _loading = false;
-      });
-    }
-  }
-
-  void _enter(String name) {
-    setState(() => _rel = [..._rel, name]);
-    _load();
-  }
-
-  void _up() {
-    if (_rel.isEmpty) return;
-    setState(() => _rel = _rel.sublist(0, _rel.length - 1));
-    _load();
-  }
-
-  /// Cambia de carpeta compartida ("drive del cliente"): se vuelve a su raíz.
-  void _switchTo(String root) {
-    if (root == _base) return;
-    setState(() {
-      _base = root;
-      _rel = <String>[];
-      _folders = const [];
-    });
-    _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final phone = hsIsPhone(context);
-    final conflict = widget.conflict(_here);
-    // Migas: la carpeta compartida es la RAÍZ y en el Drive completo se navega
-    // desde Mi Drive.
-    final crumbs = <String>[
-      if (_base.isEmpty) 'Mi Drive' else _segments(_base).last,
-      ..._rel,
-    ];
-    // La raíz del Drive completo NO se comparte (sería todo el drive).
-    final canPick = (_scoped || _rel.isNotEmpty) && conflict == null;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      titlePadding: const EdgeInsets.fromLTRB(20, 18, 14, 0),
-      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-      actionsPadding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
-      title: _header(scheme),
-      content: SizedBox(
-        width: phone ? double.infinity : 430,
-        height: phone ? double.infinity : 400,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.roots.length > 1) ...[
-              _rootPicker(scheme),
-              const SizedBox(height: 10),
-            ],
-            _crumbBar(scheme, crumbs),
-            if (conflict != null) ...[
-              const SizedBox(height: 8),
-              _conflictNotice(scheme, conflict),
-            ],
-            const SizedBox(height: 10),
-            Expanded(child: _body(scheme)),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton.icon(
-          onPressed: canPick ? () => Navigator.pop(context, _absolute()) : null,
-          icon: const Icon(Icons.check_rounded, size: 18),
-          label: const Text('Compartir esta carpeta'),
-        ),
-      ],
-    );
-  }
-
-  /// Cabecera: icono degradado + título y aclaración de qué se puede elegir.
-  Widget _header(ColorScheme scheme) {
-    return Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.brand, AppColors.brandDark],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.brand.withValues(alpha: .30),
-                blurRadius: 14,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.folder_open_outlined,
-            color: Colors.white,
-            size: 22,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Carpeta del Drive',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-              ),
-              Text(
-                _scoped
-                    ? 'Solo lo que está dentro del Drive del cliente'
-                    : 'Elige cualquier carpeta del Drive',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                  height: 1.25,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Cambio de carpeta compartida: solo con más de una (si hay una, esa es el
-  /// drive del cliente y no hace falta elegir).
-  Widget _rootPicker(ColorScheme scheme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'DRIVE DEL CLIENTE',
-          style: TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .9,
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 6),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final r in widget.roots)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    selected: r == _base,
-                    showCheckmark: false,
-                    selectedColor: AppColors.brand,
-                    side: BorderSide(
-                      color: r == _base
-                          ? AppColors.brand
-                          : scheme.outlineVariant.withValues(alpha: .6),
-                    ),
-                    avatar: Icon(
-                      Icons.folder_rounded,
-                      size: 16,
-                      color: r == _base ? Colors.white : AppColors.brand,
-                    ),
-                    label: Text(
-                      drivePathNormalize(r).split('/').last,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: r == _base ? Colors.white : scheme.onSurface,
-                      ),
-                    ),
-                    onSelected: (_) => _switchTo(r),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Migas de pan: la carpeta compartida primero y lo abierto dentro de ella.
-  Widget _crumbBar(ColorScheme scheme, List<String> crumbs) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.brand.withValues(alpha: .07),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.brand.withValues(alpha: .22)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            _scoped ? Icons.folder_shared_outlined : Icons.home_outlined,
-            size: 16,
-            color: AppColors.brand,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              // La carpeta actual (la última miga) siempre a la vista.
-              reverse: true,
-              child: Row(
-                children: [
-                  for (var i = 0; i < crumbs.length; i++) ...[
-                    if (i > 0)
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 15,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    Text(
-                      crumbs[i],
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: i == crumbs.length - 1
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                        color: i == crumbs.length - 1
-                            ? scheme.onSurface
-                            : scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Aviso de solapamiento: la carpeta está dentro de (o contiene a) algo ya
-  /// compartido y por eso no se puede elegir.
-  Widget _conflictNotice(ColorScheme scheme, String conflict) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: scheme.error.withValues(alpha: .08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: scheme.error.withValues(alpha: .35)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.lock_outline, size: 16, color: scheme.error),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '«$conflict» ya está compartida con este cliente y esta carpeta '
-              'está dentro de aquella (o la contiene). Elige otra para no '
-              'compartir dos veces lo mismo.',
-              style: TextStyle(
-                fontSize: 11.5,
-                height: 1.3,
-                color: scheme.error,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _body(ColorScheme scheme) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Text(
-          _error!,
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 12.5, color: scheme.error),
-        ),
-      );
-    }
-    if (_folders.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: .5),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.folder_off_outlined,
-                  color: scheme.onSurfaceVariant,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Esta carpeta no tiene subcarpetas.\nPuedes compartirla '
-                'tal cual con el botón de abajo.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.35,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return ListView(
-      children: [
-        if (_rel.isNotEmpty) _upTile(scheme),
-        for (final f in _folders) _folderTile(scheme, f),
-      ],
-    );
-  }
-
-  /// Subir un nivel (nunca por encima de la carpeta compartida).
-  Widget _upTile(ColorScheme scheme) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: _up,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        child: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest.withValues(alpha: .6),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Icon(
-                Icons.arrow_upward,
-                size: 16,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text(
-                'Subir un nivel',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Una carpeta: tarjeta con su icono. Las que se solapan con lo ya
-  /// compartido salen bloqueadas y dicen por qué.
-  Widget _folderTile(ColorScheme scheme, String name) {
-    final clash = widget.conflict(_absolute([..._rel, name]).join('/'));
-    final locked = clash != null;
-    final tint = locked ? scheme.error : AppColors.brand;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: locked ? null : () => _enter(name),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest.withValues(alpha: .30),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: locked
-                ? scheme.error.withValues(alpha: .35)
-                : scheme.outlineVariant.withValues(alpha: .45),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                locked ? Icons.lock_outline : Icons.folder_rounded,
-                size: 18,
-                color: tint,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (locked)
-                    Text(
-                      'Ya compartida en «$clash»',
-                      maxLines: 2,
-                      style: TextStyle(fontSize: 11, color: scheme.error),
-                    ),
-                ],
-              ),
-            ),
-            if (!locked)
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: scheme.onSurfaceVariant,
-              ),
-          ],
-        ),
-      ),
     );
   }
 }

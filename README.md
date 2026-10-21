@@ -10,11 +10,12 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Paquetes** | ✅ DOS NIVELES en el mismo módulo: abre en la **galería de categorías** (portadas con su foto, cuántos paquetes y desde qué precio, más la de "Todo el catálogo" y el botón **Nueva categoría**) y al abrir una se ven SUS paquetes, editables, sin salir ni abrir un modal. Ya dentro, el catálogo estilo flyer (tier, categoría, servicios, imagen) con cards o filas; el formulario tiene pestañas Datos / Servicios, vista previa en vivo y permite AGREGAR servicios sin salir |
 | **Servicios** | ✅ Catálogo con icono, nombre, descripción y liga del Drive (opcional) |
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
-| **Finanzas** | ✅ Tabla con el dinero de cada paquete y de cada tipo de movimiento (se expande), gráfica por mes y registro de movimientos |
+| **Finanzas** | ✅ Vista con pestañas: **Resumen** (DINERO ACTUAL con su tabla de conceptos y gráfica), **Por paquete** y **Pagos** a colaboradores/empleados |
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
-| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete → servicio y **lugar en el mapa** (búsqueda o punto marcado) |
+| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete → servicio y **lugar en el mapa** (búsqueda o punto marcado). En el mes, los **días ocupados** se marcan en rojo |
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
+| **Notificaciones** | ✅ Módulo nuevo: **qué roles reciben cada aviso** (agenda próxima, fotos disponibles, envío de fotos, servicio/paquete terminado, impresión lista) y **envío de avisos manuales** a los roles elegidos. Cada aviso lleva su MÓDULO: al tocarlo en la campanita, el panel abre esa pantalla. Requiere la migración `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` |
 | Conexión, Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
@@ -39,6 +40,24 @@ pantallas angostas esas acciones se guardan en el menú **⋮** de la tarjeta.
 En ventanas angostas (menos de 1020 px de ancho, p. ej. un teléfono) la ficha
 queda arriba y las pestañas abajo; la ficha, el precio y el pie del modal se
 reacomodan en vez de recortar contenido.
+
+### Asignar un paquete del catálogo
+
+El botón **Asignar del catálogo** abre una vista con los paquetes en
+tarjetas pequeños de dos columnas (nombre, subtítulo y precio). Se elige el
+paquete y, al pulsar **Asignar paquete**, aparece la pregunta
+**¿Quieres mantener el precio?** con el precio del catálogo a la vista:
+
+- **Aceptar** — asigna con el precio del catálogo, sin tocar nada más.
+- **Cambiar** — abre el campo del precio especial, precargado con el del
+  catálogo; el resumen **PRECIO A COBRAR** avisa cuánto sube o baja. Ese
+  precio aplica SOLO a esa asignación: el catálogo no se modifica.
+- **Precio 0** — el paquete queda **gratuito** (se guarda en cero y el resumen
+  lo rotula «Gratuito»).
+
+Si el precio especial coincide con el del catálogo se manda sin precio (se
+usa el del catálogo). El backend (`/api/admin/client-packages`) acepta
+`price` desde antes; el panel solo empezó a usarlo con esta vista.
 
 ### Carpetas compartidas (pestaña Drive)
 
@@ -95,34 +114,33 @@ pantallas angostas se mantiene el acomodo en una columna con scroll.
 
 ## Módulo Finanzas
 
-Todo lo monetario del negocio en una sola vista (`/api/admin/finance`,
-permiso sobre el módulo "Finanzas"), pensada para NO bajar con el scroll:
+Todo lo monetario del negocio en una vista moderna con **tres pestañas**
+(`/api/admin/finance`, permiso sobre el módulo "Finanzas"):
 
-- Arriba, la tira de **totales** en cuadros horizontales. El primero es
-  **Ganado**, que es el **Disponible** de los datos (abonado − gastado −
-  ahorro + abono externo): el dinero que de verdad queda.
-- Debajo, **una TABLA** ("Dinero por paquete y movimiento") con las columnas
-  Concepto · Monto · Ahorro · Salidas:
-  - **Fila por PAQUETE**: al expandirla muestra su desglose (cobrado, por
-    cobrar, ganado/disponible, ahorro, gastos, inversión y abono externo),
-    sus movimientos y sus acciones (**Abonar al ahorro** / **Agregar
-    movimiento**).
-  - **Fila por TIPO de movimiento** (Abonos, Gastos, Inversiones, Ahorro,
-    Abonos externos): al expandirla se desglosa registro por registro, con su
-    concepto, paquete/cliente, fecha y monto.
-  - **Fila GENERAL (sin paquete)**: el dinero del NEGOCIO que no pertenece a
-    ningún paquete, con su desglose y sus movimientos.
-- **Agregar movimiento** y **Abonar al ahorro** son DOS acciones separadas en
-  la cabecera (la segunda lleva el verde del ahorro).
-- **Agregar movimiento**: registra gasto, inversión, ahorro o abono externo
-  sin salir de Finanzas. El paquete es **opcional** — viene en "General (todo
-  el negocio)", así que ya no hay que elegir paquete; solo se elige si quieres
-  atribuir el movimiento a un paquete del cliente. El ahorro admite porcentaje
-  del disponible (del paquete elegido o, en general, del negocio).
-- **Gráfica de los últimos 6 meses**: lo que ENTRÓ contra lo que SALIÓ, en la
-  columna lateral.
-- En escritorio la tabla y la gráfica van lado a lado (solo la tabla scrollea
-  por dentro); en pantallas angostas todo vive en una sola zona con scroll.
+- **Resumen**:
+  - Arriba, el **DINERO ACTUAL**: abonado + abono externo − gastos −
+    inversión − ahorro − **pagos**. Los pagos a colaboradores/empleados SÍ
+    salen del dinero (antes se trataban como un "gasto invisible").
+  - La tabla **Movimiento del dinero**: Abonado, Abono externo, Gastos,
+    Inversión, Ahorro, Pagos y Por cobrar. Cada concepto lleva su monto y una
+    barra proporcional animada, para ver de un vistazo qué pesa más.
+  - La **gráfica de los últimos 6 meses** y los **movimientos recientes**.
+- **Por paquete**: la misma información separada por paquete (abonado,
+  gastos, inversión, ahorro, por cobrar, abono externo, pagos y dinero
+  actual), con búsqueda, desglose y acciones al tocar cada paquete. Los
+  **paquetes gratis SIN movimiento se omiten**; si un paquete de precio 0
+  tiene un abono, gasto, inversión, ahorro, abono externo o un pago, sí
+  aparece.
+- **Pagos**: todo lo pagado a **cada colaborador y empleado**: total
+  histórico, número de pagos, paquetes y último pago. Al tocar a una persona
+  se desglosa cada pago (paquete, cliente, concepto y fecha).
+- **Registrar movimiento**: gasto, inversión, ahorro (cantidad o porcentaje
+  del dinero actual) o abono externo. El paquete es **opcional** — viene en
+  "General (todo el negocio)". Los abonos se capturan en el paquete y los
+  pagos se reparten desde el administrador del paquete (Movimientos →
+  Repartir pago).
+- Ya **no hay un separador de "Ahorro apartado"**: el ahorro aparece como un
+  concepto de la tabla.
 
 El **Dashboard** añade esa misma información en versión compacta (cuadros +
 gráfica) y un acceso rápido al módulo. Todo es *best effort*: si el usuario no
@@ -146,6 +164,18 @@ conoce el módulo, se muestra igual).
   de ese cliente** y el **servicio del paquete** (opcional), más fecha, hora
   y nota. Sin cliente no se pueden elegir paquetes: el formulario avisa si el
   cliente no tiene paquetes comprados.
+- **Varias ubicaciones por evento** (opcional): el alta y la edición de una
+  agenda permiten sumar **una o VARIAS ubicaciones** con **Agregar otra
+  ubicación**; se **numeran solas** (1, 2, 3…) en el orden en que se capturan
+  y al quitar una las demás se renumeran. Se guardan en la tabla
+  `schedule_locations` (una fila por lugar, con su `position`), así que el
+  detalle de la agenda y las tarjetas del paquete las muestran numeradas. La
+  PRIMERA se copia también en `schedules.location`/`lat`/`lng` para el
+  calendario, el widget y los clientes. Requiere la migración
+  `Hardstreet-DB/2026-10-20_agenda_ubicaciones.sql` (idempotente y con traspaso
+  de los lugares ya guardados); sin ella la agenda sigue guardando su lugar
+  único como antes. La API acepta `locations: [{ location, lat, lng }]` en
+  `POST`/`PUT` de `/api/admin/agendas`.
 - **Lugar del evento** (opcional): el alta y la edición de una agenda abren un
   **mapa** (flutter_map + OpenStreetMap, igual en celular, computadora y web)
   donde se BUSCA el lugar por nombre o se TOCA el punto; el nombre se puede
@@ -157,6 +187,22 @@ conoce el módulo, se muestra igual).
   migración `Hardstreet-DB/2026-10-19_ubicacion_agendas.sql` (`location`,
   `lat`, `lng` en `schedules`); sin ella las agendas se guardan igual, sin
   lugar.
+- **Ubicaciones guardadas**: el selector de lugar trae "MIS UBICACIONES" con
+  los lugares ya usados (se eligen con un toque y se quitan con el chip) y el
+  botón **Guardar ubicación** para agregar el lugar actual a la lista. Se
+  administran en `/api/admin/locations` (tabla `locations`, por empresa, con
+  los permisos del módulo Agendas): así se pueden tener tantas ubicaciones
+  como sedes/salones/haciendas haga falta.
+- **Qué ve un CLIENTE en el calendario**: sus propios eventos completos
+  (cliente, paquete, servicio, nota y lugar) y los de los DEMÁS como huecos
+  **Ocupado** — solo la fecha y la hora, sin nombres ni detalles —, así sabe
+  cuándo el estudio está tomado sin enterarse de los eventos de otros.
+  El recorte lo hace el **servidor** (`lib/agenda-visibility.ts` del backend):
+  el panel, el widget de próximos eventos y cualquier llamada a la API reciben
+  ya las agendas ajenas como `{ busy: true }`. Se considera cliente al rol
+  **Cliente** y a cualquier usuario con paquetes comprados; el Admin y el
+  personal que puede crear/editar/borrar agendas ven todo. Los **avisos**
+  (campanita) de un cliente también se limitan a SUS eventos.
 
 ## Opciones de compartir por SERVICIO (Mi paquete)
 
@@ -187,11 +233,41 @@ cada una solo si su opción está encendida. El estudio ve lo compartido,
 cuántos elementos eligió el cliente y qué opciones tiene encendidas cada
 servicio en la pestaña Servicios del paquete.
 
+El **estudio** también puede marcar la selección (botón **Elegir/Cambiar
+fotos** y **Avisar al cliente** en el bloque de fotos del servicio), por si el
+cliente no puede hacerlo. Si la selección **ya se envió a impresión**, esos
+botones se cambian por **Reabrir envío** —la selección queda bloqueada hasta
+reabrirla— y **Ver fotos** sigue disponible para consultarla.
+
 Requiere las tablas `purchased_packages_services_shares` (con las columnas
 `pick_photos` y `show_folder`: migración
 `Hardstreet-DB/2026-10-16_opciones_por_servicio.sql`) y
 `purchased_packages_services_items` (dump `Hardstreet-DB/hardstreet.sql`); sin
 ellas todo cae a "sin opciones" en vez de fallar.
+
+## Notificaciones: quién recibe cada aviso
+
+El módulo **Notificaciones** (`/api/admin/notifications`) tiene una tarjeta por
+evento: **interruptor** para encenderlo/apagarlo y **Elegir roles** para decir
+quién lo recibe. Sin configuración se usan los roles recomendados:
+
+| Aviso | Roles por defecto | Abre |
+|---|---|---|
+| Avisar a fechas próximas a agenda | Cliente y Colaborador | Agendas |
+| Avisar cuando se puedan seleccionar las fotos | Cliente | Mi paquete |
+| Avisar el envío de fotos seleccionadas | Colaborador | Impresiones |
+| Avisar cuando se termina un servicio | Cliente | Mi paquete |
+| Avisar cuando se termina el paquete | Cliente | Mi paquete |
+| Avisar cuando la impresión está lista | Cliente | Mi paquete |
+| Avisos manuales del estudio | (se elige al enviar) | el módulo elegido |
+
+Los avisos llegan a la **campanita** (`/api/reminders`) y, al tocarlos, abren su
+módulo (`target`). El botón **Enviar aviso** escribe un aviso manual para los
+roles marcados y elige a qué módulo lleva. El historial muestra lo ya enviado
+con sus destinatarios. Migración:
+`Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` (crea
+`notification_rules`, `package_notifications`, `admin_notifications` con
+`target`, `locations` y registra el módulo con sus permisos).
 
 ## Móvil: el encabezado no se come la pantalla
 
@@ -452,6 +528,18 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
 - **Alcance del CLIENTE**: si el usuario es un cliente, el módulo muestra solo
   las carpetas que se le comparten en sus paquetes (ver "Carpeta compartida");
   el equipo del estudio ve el Drive completo.
+- **Cambiar de cuenta o de empresa vuelve a la RAÍZ.** Cerrar sesión y entrar
+  con otra cuenta (o el Superadministrador cambiando de empresa) reinicia el
+  Drive: antes se quedaba en la carpeta de la sesión anterior, que para el
+  usuario nuevo no existe, y el módulo abría ahí (vacío y sin permiso) en vez
+  de en su propia raíz. Ver `DriveBase.resetSession()`.
+- **La foto se ve nítida al abrirla**: el visor pide una vista de 2048px y el
+  archivo ORIGINAL solo cuando ACERCAS (zoom > 1x). Antes bajaba el original
+  entero en cuanto abría, así que la imagen cambiaba de "baja" a "alta"
+  calidad un rato después.
+- **Miniaturas**: se piden al servidor con caché en disco y límite de
+  simultáneas (ver el README de `hardstreet-drive`); por eso aparecen de forma
+  continua en vez de llegar todas de golpe.
 - Sube varias imágenes a la vez desde el selector nativo del sistema.
 - **También desde el navegador**: ahí el archivo elegido no tiene ruta en el
   disco (es un Blob), así que la subida va por BYTES — antes se intentaba
@@ -477,11 +565,21 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   docx, psd…) lo dice y ofrece **Descargar** o **Abrir con el sistema** (el
   programa por defecto de la computadora). La subida desde el panel sigue
   aceptando solo imágenes: los demás archivos se ven si están en la carpeta.
-- **Descargas**: en escritorio se elige el destino con el diálogo del sistema;
-  en **Android** no existe ese diálogo (`file_selector` no implementa
-  `getSavePath()`, de ahí el `UnimplementedError`), así que el archivo (o el
-  ZIP de una selección/carpeta) se deja en la carpeta **Descargas** del
-  dispositivo con `MediaStore` y la app avisa dónde quedó.
+- **Adelantar un vídeo NO lo reinicia**: los vídeos grandes se ven en *calidad
+  ligera* (el servidor los reencoda al vuelo) y ese reencodado no admite saltos
+  por bytes; mover la barra vuelve a pedir el vídeo **desde ese segundo**
+  (`&t=`), así que sigue donde lo dejaste y el tiempo de la barra es el de
+  verdad (no el del tramo). En un archivo normal el salto lo hace el navegador.
+- **Descargas**: en la **computadora** ya NO se pregunta el destino — el
+  diálogo "Guardar como" siempre terminaba en Descargas—; el archivo (o el
+  **ZIP** de una selección/carpeta) se guarda directo en la carpeta
+  **Descargas** del sistema y se avisa dónde quedó (si ya existía, se guarda
+  como `foto (1).ext` sin sobrescribir nada). En el **celular** —la app de
+  Android/iOS y también la **web abierta en el navegador del teléfono**— NUNCA
+  se arma un ZIP: se bajan **una por una** las fotos marcadas (una carpeta se
+  expande a sus archivos), cada una a **Descargas** (`MediaStore` en Android).
+  La descarga sigue en segundo plano si sales de la pantalla: vive en el panel
+  de transferencias, con su progreso y su cancelar, y no bloquea la app.
 - Si un refresco de fondo falla (servidor ocupado mientras subes fotos), el
   listado se queda a la vista y solo aparece el aviso “Sin conexión ·
   reintentar”: el directorio no se vacía ni cambia por un fallo pasajero.
@@ -529,6 +627,34 @@ consulta la API por su cuenta).
   temporizador del panel. Antes, al pasar la medianoche con la app cerrada, un
   evento del día anterior seguía diciendo "HOY".
 
+## Avisos en tiempo real (aunque cierres la app)
+
+Los avisos de EVENTOS (falta 1 semana / falta 1 día), los del PAQUETE («ya
+puedes elegir tus fotos», «servicio terminado») y los de IMPRESIÓN salen como
+notificación NATIVA del sistema, no solo en la campanita:
+
+- **Con la app abierta** se consulta cada **15 s** los avisos y cada **20 s** los
+del paquete (el widget de próximos eventos se actualiza una vez por minuto, que
+es lo que cuesta pedir las agendas completas). Además se refresca al volver a
+la app.
+- **Computadora (Windows)**: cerrar la ventana ya NO cierra la app. Se queda en
+la **bandeja del sistema** (el icono de Hardstreet junto al reloj) y sigue
+consultando, así el toast aparece aunque el panel no esté abierto. Clic en el
+icono = abrir; clic derecho = **Salir** (esa es la única forma de cerrarla de
+verdad). Tocar una notificación trae la ventana al frente.
+- **Teléfono**: con la app cerrada la consulta la hace un worker nativo
+(`PackageNotificationsReceiver`) cada minuto con el token guardado —una alarma
+`setAndAllowWhileIdle` que se re-agenda sola y sobrevive al reinicio— y publica
+los avisos nuevos en los canales `reminders` y `paquete`. En Doze el sistema lo
+espacia para no gastar batería; al despertar el teléfono vuelve a consultar.
+Requiere el permiso de notificaciones (Android 13+).
+- Los ids ya mostrados se comparten entre la app y el worker
+(`app.notified.reminders` y `app.notified.package`), así un aviso no se repite
+ni al reabrir ni entre los dos.
+- **Límite conocido**: sin un servicio de push no hay entrega al segundo; en
+**iOS** con la app cerrada no llega nada (no hay worker) y en la **web móvil**
+las descargas dependen del navegador (si suspende la pestaña, se cortan).
+
 ## Archivos compartidos (entre usuarios)
 
 Módulo **independiente** del Drive de los paquetes: aquí las personas comparten
@@ -567,7 +693,7 @@ junto a la carpeta: antes salía dentro de la carpeta abierta y tapaba justo lo
 que se venía a ver. El menú "⋮" de cada tarjeta es el mismo del Drive: **Ver** el
 contenido, **Descargar** (la carpeta entera, en ZIP —el servidor solo entrega
 archivo por archivo, así que el ZIP se arma en la app, con sus subcarpetas y
-respetando el diálogo Guardar/Descargas del sistema—) y, en una carpeta propia,
+guardándose en Descargas—) y, en una carpeta propia,
 **Editar destinatarios** y **Eliminar el compartido**. En una carpeta que te
 comparten solo se ofrecen Ver y Descargar: ahí el servidor no da escritura y no
 se finge que se puede.

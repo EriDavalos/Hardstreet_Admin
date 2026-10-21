@@ -19,10 +19,12 @@ import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
 import 'pages/clients_page.dart';
 import 'pages/client_dashboard_page.dart';
+import 'pages/companies_page.dart';
 import 'pages/connection_page.dart';
 import 'pages/drive_page.dart';
 import 'pages/finance_page.dart';
 import 'pages/login_page.dart';
+import 'pages/notifications_page.dart';
 import 'pages/packages_page.dart';
 import 'pages/roles_page.dart';
 import 'pages/services_page.dart';
@@ -38,6 +40,7 @@ import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
+import 'widgets/company_selector.dart';
 import 'widgets/brand_badge.dart';
 import 'widgets/force_update_dialog.dart';
 import 'widgets/hs_toast.dart';
@@ -144,6 +147,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // Sesión expirada (401 con "Recordarme"): regresar al login.
     HsApi.onUnauthorized = () {
       if (!mounted) return;
+      // Sesión caída: el Drive tampoco puede seguir mostrando la carpeta de la
+      // cuenta anterior.
+      (_injectedDrive ?? _ownedDrive).resetSession();
       setState(() {
         _loggedIn = false;
         _sessionRestored = false;
@@ -316,6 +322,10 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     await _checkVersion();
     if (!mounted || _forceUpdateShown) return; // NO entra al panel
     if (_versionError) return; // la ventana de reintento ya está visible
+    // Otra cuenta = otro Drive. Sin esto, el módulo Archivos abría en la
+    // carpeta de la sesión anterior (que para este usuario no existe) y se
+    // veía su raíz sin poder entrar. Siempre se empieza en la raíz propia.
+    _resetDriveForSession();
     setState(() => _loggedIn = true);
     // Avisos de eventos próximos + widget: empiezan a consultarse en segundo
     // plano (el widget también se alimenta desde ahí).
@@ -327,11 +337,27 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     unawaited(LocalShareAgent.instance.syncWithShares());
   }
 
+  /// Deja el Drive como recién abierto: raíz de la cuenta (y empresa) nueva.
+  ///
+  /// La carpeta que estaba viendo la sesión anterior NO se hereda: para la
+  /// nueva cuenta esa ruta no existe (o es de otra empresa) y el módulo
+  /// Archivos aparecía en una carpeta ajena, vacía y sin permiso.
+  void _resetDriveForSession({bool refresh = true}) {
+    final drive = _injectedDrive ?? _ownedDrive;
+    drive.resetSession();
+    // Las imágenes en RAM se indexan por URL, y la misma ruta relativa puede
+    // ser una foto distinta en cada empresa: se tiran para no enseñar la de
+    // antes durante un instante.
+    ImageMemory.clearRam();
+    if (refresh) unawaited(drive.refresh());
+  }
+
   /// Cerrar sesión: descarta el token en el servidor y borra lo persistido
   /// ("Recordarme"). Al volver, siempre pasa por el login.
   Future<void> _onLogout() async {
     await HsApi.logout(); // cortesía en el servidor
     await AppSettings.instance.clearSession();
+    _resetDriveForSession(refresh: false); // sin token no hay nada que pedir
     HsAccess.reset(); // el siguiente login recarga permisos desde cero
     _sessionRestored = false;
     RemindersService.instance.reset(); // la campanita no recuerda avisos viejos
@@ -643,6 +669,8 @@ const Map<_Section, String> _kSectionModules = {
   _Section.site: kSiteModuleName,
   _Section.settings: 'Configuraciones',
   _Section.reports: 'Reportes',
+  _Section.companies: 'Empresas',
+  _Section.notifications: 'Notificaciones',
 };
 
 /// CLAVE de módulo (`modules.module`) de cada sección. Es la identidad que
@@ -667,12 +695,15 @@ const Map<_Section, String> _kSectionKeys = {
   _Section.site: 'web',
   _Section.settings: 'settings',
   _Section.reports: 'reports',
+  _Section.companies: 'companies',
+  _Section.notifications: 'notifications',
 };
 
 /// Índices de las secciones del panel.
 enum _Section {
   dashboard,
   clientDashboard,
+  companies,
   drive,
   sharedFiles,
   agendas,
@@ -689,6 +720,7 @@ enum _Section {
   settings,
   reports,
   site,
+  notifications,
 }
 
 class AdminHome extends StatefulWidget {
@@ -726,6 +758,25 @@ class _AdminHomeState extends State<AdminHome> {
   List<_Section?> _menuOrder = const [];
 
   bool _sidebarOpen = false;
+
+  /// Sube cada vez que el Superadministrador cambia de empresa: fuerza a
+  /// remontar la página actual para que pida los datos de la nueva.
+  int _companyEpoch = 0;
+
+  void _onCompanyChanged() {
+    if (!mounted) return;
+    // El Superadministrador cambia de empresa: el Drive vuelve a la RAÍZ de la
+    // empresa nueva (antes se quedaba en la carpeta de la anterior, que para
+    // esta empresa no existe) y se recargan sus carpetas compartidas.
+    final drive = _drive;
+    drive.resetSession();
+    ImageMemory.clearRam();
+    unawaited(() async {
+      await _loadDriveScope();
+      await drive.refresh();
+    }());
+    setState(() => _companyEpoch++);
+  }
 
   /// El alcance compartido del drive se pide UNA vez (necesita el contexto
   /// para llegar al DriveScope, así que no puede correr en initState).
@@ -797,6 +848,7 @@ class _AdminHomeState extends State<AdminHome> {
         _Section.connection => _canSee('connection'),
         _Section.settings => _canSee('settings'),
         _Section.reports => _canSee('reports'),
+        _Section.companies => _canSee('companies'),
         _ => true,
       };
       if (!canSee) {
@@ -873,6 +925,30 @@ class _AdminHomeState extends State<AdminHome> {
     _section = _firstAllowedSection();
   }
 
+  /// Abre el MÓDULO al que lleva un aviso de la campanita.
+  ///
+  /// El backend manda `target` con la clave del módulo (`print`, `schedules`,
+  /// `my_package`, `clients`…). Si el rol no puede verlo, no se mueve nada:
+  /// el aviso ya quedó marcado como leído.
+  void _openNotificationTarget(String target) {
+    final map = <String, _Section>{
+      'notifications': _Section.notifications,
+      'schedules': _Section.agendas,
+      'my_package': _Section.clientDashboard,
+      'print': _Section.prints,
+      'clients': _Section.clients,
+      'packages': _Section.packages,
+      'finance': _Section.finance,
+      'drive': _Section.drive,
+      'shared_files': _Section.sharedFiles,
+      'settings': _Section.settings,
+    };
+    final section = map[target.trim().toLowerCase()];
+    if (section == null || section == _section) return;
+    if (!_canSee(_kSectionKeys[section] ?? '')) return;
+    setState(() => _section = section);
+  }
+
   /// ¿Se muestra el módulo [name]? Exige "Ver" (read) según la BD, TAMBIÉN
   /// para Admin (si su rol no tiene "Ver" en un módulo, desaparece).
   /// Sin datos (backend viejo / sin conexión) el menú queda completo.
@@ -891,7 +967,15 @@ class _AdminHomeState extends State<AdminHome> {
   /// tiene "Ver" de verdad, para no ofrecer una pantalla que el backend va a
   /// rechazar.
   bool _visibleModule(String module) =>
-      (module == 'activity' || module == 'shared_files' || module == 'print')
+      (module == 'activity' ||
+          module == 'shared_files' ||
+          module == 'print' ||
+          // Notificaciones exige su permiso real: sin la migración aplicada
+          // no se ofrece una pantalla que el backend va a rechazar.
+          module == 'notifications' ||
+          // Empresas es SOLO del Superadministrador: no se ofrece "por si la
+          // migración falta".
+          module == 'companies')
       ? _canSee(module)
       : _showModule(module);
 
@@ -926,6 +1010,17 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.dashboard,
         'Dashboard',
+      ),
+      // EMPRESAS: solo el Superadministrador. Cada empresa encierra sus
+      // agendas, finanzas, archivos, paquetes, usuarios y sitio web.
+      (
+        const AdminDestination(
+          icon: Icons.apartment_outlined,
+          label: 'Empresas',
+          header: 'Administración',
+        ),
+        _Section.companies,
+        'Empresas',
       ),
       (
         const AdminDestination(
@@ -1016,6 +1111,16 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.roles,
         'Roles',
+      ),
+      // AVISOS: qué roles reciben cada notificación y envío manual de avisos.
+      (
+        const AdminDestination(
+          icon: Icons.notifications_active_outlined,
+          label: 'Notificaciones',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.notifications,
+        'Notificaciones',
       ),
       (
         const AdminDestination(
@@ -1215,6 +1320,9 @@ class _AdminHomeState extends State<AdminHome> {
       case _Section.roles:
         body = const RolesPage();
         break;
+      case _Section.notifications:
+        body = const NotificationsPage();
+        break;
       case _Section.packages:
         body = const PackagesPage();
         break;
@@ -1246,6 +1354,9 @@ class _AdminHomeState extends State<AdminHome> {
         // APARIENCIA (tema y color) + lo que el panel necesita a mano.
         body = const SettingsPage();
         break;
+      case _Section.companies:
+        body = CompaniesPage(onCompanyChanged: _onCompanyChanged);
+        break;
       case _Section.reports:
         body = ComingSoonPage(
           module: 'reports',
@@ -1275,7 +1386,14 @@ class _AdminHomeState extends State<AdminHome> {
         });
         if (_sidebarOpen) _sidebarOpen = false;
       },
-      body: body,
+      // La empresa activa del Superadministrador cambia el CONTEXTO de todos
+      // los módulos: la llave remonta la página para que vuelva a pedir sus
+      // datos con la empresa nueva.
+      body: KeyedSubtree(
+        key: ValueKey('company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch'),
+        child: body,
+      ),
+      companySelector: CompanySelector(onChanged: _onCompanyChanged),
       updateBanner: widget.updateBanner,
       dark: widget.dark,
       onToggleTheme: widget.onToggleTheme,
@@ -1283,6 +1401,7 @@ class _AdminHomeState extends State<AdminHome> {
       sidebarOpen: _sidebarOpen,
       isCompact: compact,
       userMenu: _UserMenu(onLogout: widget.onLogout),
+      onOpenNotification: _openNotificationTarget,
     );
   }
 }

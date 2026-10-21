@@ -3,7 +3,6 @@ import 'dart:io' if (dart.library.io) 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,17 +20,67 @@ import 'download_stub.dart' if (dart.library.html) 'download_web.dart';
 /// guarda en Descargas y avisa dónde quedó.
 const MethodChannel _downloadsChannel = MethodChannel('hardstreet/downloads');
 
-/// ¿Hay que preguntar el destino con el diálogo del sistema?
-/// En Android NO: se guarda directo en Descargas (y así lo espera el usuario).
-bool get needsSaveDialog => !kIsWeb && !isAndroidPlatform;
+/// ¿Se descarga UNO POR UNO (sin ZIP)?
+///
+/// En el CELULAR —la app de Android/iOS o la web en el navegador del teléfono—
+/// el usuario quiere SUS fotos sueltas: al marcar 12 fotos se bajan 12
+/// archivos. Un ZIP no le sirve: los navegadores móviles no lo abren bien y la
+/// galería no lo muestra.
+bool get downloadsOneByOne =>
+    isAndroidPlatform || isIOSPlatform || (kIsWeb && isMobileBrowser());
+
+/// Carpeta de DESCARGAS del sistema (computadora).
+///
+/// Antes cada descarga abría el diálogo "Guardar como" y el usuario siempre
+/// elegía Descargas. Ahora se guarda ahí directo y solo se avisa dónde quedó.
+Future<Directory> desktopDownloadsDirectory() async {
+  try {
+    final dir = await getDownloadsDirectory();
+    if (dir != null) {
+      await dir.create(recursive: true);
+      return dir;
+    }
+  } catch (_) {
+    // Sin carpeta del sistema: se intenta la ruta de siempre.
+  }
+  final home =
+      platformEnvironment['USERPROFILE'] ?? platformEnvironment['HOME'];
+  if (home != null && home.isNotEmpty) {
+    final dir = Directory('$home${Platform.pathSeparator}Downloads');
+    try {
+      await dir.create(recursive: true);
+      return dir;
+    } catch (_) {
+      // Sin permiso: se cae al temporal.
+    }
+  }
+  return getTemporaryDirectory();
+}
+
+/// Ruta LIBRE dentro de [directory] para [name] ("foto.png", "foto (1).png"…).
+/// Pública para poder verificarla en test/.
+Future<String> availableDownloadPath(String directory, String name) async {
+  final sep = Platform.pathSeparator;
+  final safe = name.trim().isEmpty ? 'descarga' : name.trim();
+  final dot = safe.lastIndexOf('.');
+  final stem = dot > 0 ? safe.substring(0, dot) : safe;
+  final ext = dot > 0 ? safe.substring(dot) : '';
+  var path = '$directory$sep$safe';
+  var i = 1;
+  while (await File(path).exists() && i <= 500) {
+    path = '$directory$sep$stem ($i)$ext';
+    i++;
+  }
+  return path;
+}
 
 /// Descarga la selección EN SEGUNDO PLANO.
 ///
-/// * 1 archivo → se guarda tal cual; varios (o carpetas) → un ZIP.
-/// * En nativo se pregunta ANTES el destino (diálogo Guardar) y luego la
-///   descarga sigue en segundo plano: el panel de transferencias muestra el
-///   progreso al lado de las subidas, sin bloquear la pantalla.
-/// * En web no hay diálogo: el navegador guarda al terminar.
+/// * COMPUTADORA: 1 archivo → se guarda tal cual; varios (o carpetas) → un
+///   ZIP. Siempre en la carpeta de Descargas, sin diálogo "Guardar como".
+/// * CELULAR (app o web): cada archivo se baja POR SEPARADO, sin ZIP.
+/// * La descarga sigue aunque el usuario salga de la pantalla: el panel de
+///   transferencias muestra el progreso al lado de las subidas.
 Future<void> downloadDriveSelection(
   BuildContext context, {
   required DriveBase drive,
@@ -40,21 +89,30 @@ Future<void> downloadDriveSelection(
 }) async {
   if (items.isEmpty) return;
   final messenger = ScaffoldMessenger.of(context);
+
+  // CELULAR: uno por uno (las carpetas se expanden a sus archivos).
+  if (downloadsOneByOne) {
+    unawaited(_downloadOneByOne(drive, items, from, messenger));
+    return;
+  }
+
   final single = items.length == 1 && !items.first.isFolder;
   final suggested = single
       ? items.first.name
       : zipSuggestedName(drive.locationLabel);
 
-  // 1. Destino (solo escritorio; en web decide el navegador y en Android la
-  //    carpeta de Descargas del sistema).
+  // Destino: la carpeta de Descargas del sistema. En web decide el navegador.
   String? targetPath;
-  if (needsSaveDialog) {
-    final location = await getSaveLocation(suggestedName: suggested);
-    if (location == null) return; // el usuario canceló
-    targetPath = location.path;
+  if (!kIsWeb) {
+    try {
+      final dir = await desktopDownloadsDirectory();
+      targetPath = await availableDownloadPath(dir.path, suggested);
+    } catch (_) {
+      targetPath = null; // sin destino conocido: el trabajo lo reporta
+    }
   }
 
-  // 2. El trabajo vive en el panel: la espera ya no bloquea la interfaz.
+  // El trabajo vive en el panel: la espera no bloquea la interfaz.
   final job = drive.startDownload(
     suggested,
     items: List<DriveItem>.of(items),
@@ -62,6 +120,102 @@ Future<void> downloadDriveSelection(
     from: from,
   );
   unawaited(_runDownloadJob(drive, job, messenger));
+}
+
+/// Un archivo suelto de la selección, con la carpeta DE DONDE sale.
+class IndividualDownload {
+  const IndividualDownload(this.folder, this.item);
+
+  final List<String> folder;
+  final DriveItem item;
+}
+
+/// Expande la selección a ARCHIVOS sueltos (las carpetas, recursivamente).
+/// Pública para poder verificarla en test/.
+Future<List<IndividualDownload>> collectIndividualFiles(
+  DriveBase drive,
+  List<DriveItem> items,
+  List<String> folder, {
+  int depth = 0,
+}) async {
+  final out = <IndividualDownload>[];
+  for (final item in items) {
+    if (!item.isFolder) {
+      out.add(IndividualDownload(folder, item));
+      continue;
+    }
+    if (depth >= 6) continue; // carpetas absurdamente anidadas: no nos colgamos
+    final sub = [...folder, item.name];
+    final children = await drive.listFolderItems(sub);
+    out.addAll(await collectIndividualFiles(drive, children, sub,
+        depth: depth + 1));
+  }
+  return out;
+}
+
+/// Baja la selección ARCHIVO POR ARCHIVO (celular), en un trabajo por archivo
+/// para que el panel muestre el avance de cada uno y se pueda reintentar.
+Future<void> _downloadOneByOne(
+  DriveBase drive,
+  List<DriveItem> items,
+  List<String>? from,
+  ScaffoldMessengerState messenger,
+) async {
+  final folder = (from ?? drive.path)
+      .where((s) => s.isNotEmpty)
+      .toList(growable: false);
+  List<IndividualDownload> files;
+  try {
+    files = await collectIndividualFiles(drive, items, folder);
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('No se pudo leer la carpeta: $e')),
+    );
+    return;
+  }
+  if (files.isEmpty) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('No hay archivos que descargar')),
+    );
+    return;
+  }
+
+  var done = 0;
+  var cancelled = false;
+  String? firstError;
+  for (final file in files) {
+    final job = drive.startDownload(
+      file.item.name,
+      items: <DriveItem>[file.item],
+      from: file.folder,
+    );
+    await _runDownloadJob(drive, job, messenger, quiet: true);
+    if (job.status == 'done') {
+      done++;
+    } else {
+      firstError ??= job.error;
+      if (job.cancelled) {
+        cancelled = true;
+        break;
+      }
+    }
+  }
+
+  if (cancelled) return;
+  final String text;
+  if (done == files.length) {
+    text = done == 1
+        ? (isAndroidPlatform
+              ? 'Descargado en Descargas: ${files.first.item.name}'
+              : 'Descargado: ${files.first.item.name}')
+        : '$done descargas en la carpeta de Descargas';
+  } else if (done == 0) {
+    text = 'No se pudo descargar: ${firstError ?? 'error desconocido'}';
+  } else {
+    text = '$done de ${files.length} descargas completadas'
+        '${firstError == null ? '' : ' · $firstError'}';
+  }
+  messenger.showSnackBar(SnackBar(content: Text(text)));
 }
 
 /// Reintenta una descarga fallida desde el panel (mismo destino).
@@ -76,11 +230,15 @@ Future<void> retryDriveDownload(
 }
 
 /// Hace el trabajo real de un [DriveDownloadJob] y lo cierra en el panel.
+///
+/// [quiet] = no avisar archivo por archivo: lo usa la descarga del celular, que
+/// baja varias fotos seguidas y resume al final.
 Future<void> _runDownloadJob(
   DriveBase drive,
   DriveDownloadJob job,
-  ScaffoldMessengerState messenger,
-) async {
+  ScaffoldMessengerState messenger, {
+  bool quiet = false,
+}) async {
   try {
     void progress(int received, int total) {
       if (job.cancelled) throw 'Cancelado';
@@ -122,16 +280,18 @@ Future<void> _runDownloadJob(
         if (savedTo == null) throw 'No se pudo guardar en Descargas';
       }
       drive.finishDownloadJob(job);
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            savedTo == null
-                ? 'Descargado: ${job.name} '
-                      '(${(job.received / 1024).toStringAsFixed(0)} KB)'
-                : 'Descargado en $savedTo',
+      if (!quiet) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              savedTo == null
+                  ? 'Descargado en Descargas: ${job.name} '
+                        '(${(job.received / 1024).toStringAsFixed(0)} KB)'
+                  : 'Descargado en $savedTo',
+            ),
           ),
-        ),
-      );
+        );
+      }
       return;
     }
 
@@ -157,23 +317,28 @@ Future<void> _runDownloadJob(
       throw 'No se pudo determinar el destino de la descarga';
     }
     drive.finishDownloadJob(job);
-    if (!kIsWeb) {
+    if (!kIsWeb && !quiet) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            savedTo == null
-                ? 'Descargado: ${job.name} '
+            savedTo != null
+                ? 'Descargado en $savedTo'
+                : job.targetPath != null
+                ? 'Descargado en Descargas: ${job.name} '
                       '(${(bytes.length / 1024).toStringAsFixed(0)} KB)'
-                : 'Descargado en $savedTo',
+                : 'Descargado: ${job.name} '
+                      '(${(bytes.length / 1024).toStringAsFixed(0)} KB)',
           ),
         ),
       );
     }
   } catch (e) {
     drive.finishDownloadJob(job, error: '$e');
-    messenger.showSnackBar(
-      SnackBar(content: Text('No se pudo descargar "${job.name}": $e')),
-    );
+    if (!quiet) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('No se pudo descargar "${job.name}": $e')),
+      );
+    }
   }
 }
 

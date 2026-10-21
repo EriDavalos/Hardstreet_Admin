@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/drive_api_service.dart';
 import 'package:hardstreet_admin/hs_access.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/packages_page.dart';
@@ -36,6 +37,11 @@ import 'package:hardstreet_admin/widgets/form_dialog.dart';
 
 const _photoA =
     'https://oriongo.ddns.net/files/Boda/Ana/Fiesta/IMG_3196 Mejorado.jpg';
+
+/// La portada de la categoría (otra foto DISTINTA: así se ve si de verdad se
+/// publica la de la categoría y no solo la del paquete).
+const _photoCat =
+    'https://oriongo.ddns.net/files/ReynaCoot/Categoria/portada.jpg';
 
 /// El botón "Personalizar" DENTRO de las cards (la barra de diseño también se
 /// llama así: aquí interesa el de cada tarjeta de paquete).
@@ -137,7 +143,7 @@ void _installMock() {
         jsonEncode({
           'categories': [
             {'id': 1, 'name': 'Boda', 'icon': ''},
-            {'id': 2, 'name': 'XV Años', 'icon': '', 'urlImage': _photoA},
+            {'id': 2, 'name': 'XV Años', 'icon': '', 'urlImage': _photoCat},
             {'id': 3, 'name': 'Bautizo', 'icon': ''},
           ],
         }),
@@ -227,13 +233,54 @@ void main() {
       reason: 'la portada de la categoría se quedó sin foto',
     );
     // La foto es la del paquete que la tiene, pedida al servidor del drive en
-    // tamaño de portada. La miniatura es PÚBLICA: no lleva el token.
+    // tamaño de portada. Lleva el token: `/thumb` no exige permisos, pero lo
+    // usa para saber en qué CARPETA DE EMPRESA está la foto (sin él, 404 y la
+    // portada en blanco para cualquier usuario de empresa).
     expect(
       thumbs.first.source,
       contains('/thumb/Boda/Ana/Fiesta/IMG_3196%20Mejorado.jpg'),
     );
     expect(thumbs.first.source, contains('w=640'));
-    expect(thumbs.first.source, isNot(contains('apikey')));
+    expect(thumbs.first.source, contains('apikey=token-de-prueba'));
+  });
+
+  // La WEB no tiene sesión: sus fotos del Drive tienen que estar PUBLICADAS en
+  // el servidor del drive. La portada de una CATEGORÍA se ve en el catálogo
+  // igual que la de un paquete, así que también se publica (si no, la web la
+  // pide y el servidor la niega: la imagen sale rota).
+  testWidgets('publica en el drive las fotos de paquetes Y de categorías', (
+    tester,
+  ) async {
+    final previous = DriveApiService.client;
+    final published = <List<String>>[];
+    DriveApiService.client = MockClient((request) async {
+      if (request.url.path.endsWith('/api/public-photos')) {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        published.add((body['paths'] as List).cast<String>());
+        return http.Response(
+          jsonEncode({'ok': true, 'count': 1}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+    addTearDown(() => DriveApiService.client = previous);
+
+    await _pump(tester);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(published, isNotEmpty, reason: 'no se publicó ninguna foto');
+    expect(
+      published.first,
+      contains('Boda/Ana/Fiesta/IMG_3196 Mejorado.jpg'),
+      reason: 'la foto del paquete',
+    );
+    expect(
+      published.first,
+      contains('ReynaCoot/Categoria/portada.jpg'),
+      reason: 'la portada de la categoría también la abre la web sin sesión',
+    );
   });
 
   testWidgets('abrir una categoría muestra SUS paquetes en el mismo módulo', (

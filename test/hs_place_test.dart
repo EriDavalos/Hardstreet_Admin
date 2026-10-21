@@ -47,6 +47,53 @@ void main() {
       const place = HsPlace(name: '  Hacienda  ', lat: 1.5, lng: 2.5);
       expect(place.toBody(), {'location': 'Hacienda', 'lat': 1.5, 'lng': 2.5});
     });
+
+    test('lee TODAS las ubicaciones de la agenda, en orden', () {
+      final places = HsPlace.allOf({
+        'location': 'Hacienda San José',
+        'lat': 4.711,
+        'lng': -74.072,
+        'locations': [
+          {
+            'position': 1,
+            'location': 'Hacienda San José',
+            'lat': 4.711,
+            'lng': -74.072,
+          },
+          {
+            'position': 2,
+            'location': 'Salón Real',
+            'lat': 4.8,
+            'lng': -74.1,
+          },
+        ],
+      });
+      expect(places.map((p) => p.name), ['Hacienda San José', 'Salón Real']);
+      expect(places[1].coordsLabel, '4.80000, -74.10000');
+    });
+
+    test('sin lista de ubicaciones cae al lugar único de la agenda', () {
+      final places = HsPlace.allOf({'location': 'Salón Real'});
+      expect(places, hasLength(1));
+      expect(places.first.name, 'Salón Real');
+      expect(HsPlace.allOf(null), isEmpty);
+      expect(HsPlace.allOf(const <String, dynamic>{}), isEmpty);
+    });
+
+    test('el cuerpo de VARIAS ubicaciones descarta las vacías y conserva el '
+        'orden', () {
+      final body = HsPlace.listBody([
+        const HsPlace(name: 'Hacienda', lat: 1, lng: 2),
+        null,
+        const HsPlace(name: '   '),
+        const HsPlace(name: 'Salón', lat: 3, lng: 4),
+      ]);
+      expect(body['locations'], [
+        {'location': 'Hacienda', 'lat': 1, 'lng': 2},
+        {'location': 'Salón', 'lat': 3, 'lng': 4},
+      ]);
+      expect(HsPlace.listBody([null])['locations'], isEmpty);
+    });
   });
 
   testWidgets('HsPlaceField muestra el lugar y permite quitarlo', (

@@ -52,12 +52,45 @@ class HsPlace {
   /// fila del lugar cuando de verdad hay algo que enseñar.
   static HsPlace? of(Object? raw) {
     if (raw is! Map) return null;
-    final name = (raw['location'] ?? raw['place'] ?? '').toString().trim();
+    final name = (raw['location'] ?? raw['name'] ?? raw['place'] ?? '')
+        .toString()
+        .trim();
     final lat = _coord(raw['lat'] ?? raw['latitude']);
     final lng = _coord(raw['lng'] ?? raw['lon'] ?? raw['longitude']);
     if (name.isEmpty && (lat == null || lng == null)) return null;
     return HsPlace(name: name, lat: lat, lng: lng);
   }
+
+  /// TODAS las ubicaciones de una agenda, en el orden del servidor
+  /// (1, 2, 3…). Si la agenda es de antes de las ubicaciones múltiples, cae a
+  /// su lugar único (`location`/`lat`/`lng`).
+  static List<HsPlace> allOf(Object? raw) {
+    if (raw is! Map) return const [];
+    final list = <HsPlace>[];
+    final many = raw['locations'];
+    if (many is List) {
+      for (final item in many) {
+        final place = of(item);
+        if (place != null) list.add(place);
+      }
+    }
+    if (list.isEmpty) {
+      final one = of(raw);
+      if (one != null) list.add(one);
+    }
+    return list;
+  }
+
+  /// Cuerpo que espera la API para VARIAS ubicaciones: `locations` en orden
+  /// (el servidor las numera). Las vacías se descartan, así la numeración
+  /// queda 1, 2, 3 sin huecos.
+  static Map<String, dynamic> listBody(Iterable<HsPlace?> places) => {
+    'locations': [
+      for (final p in places)
+        if (p != null && !p.isEmpty)
+          {'location': p.name.trim(), 'lat': p.lat, 'lng': p.lng},
+    ],
+  };
 
   static double? _coord(Object? raw) {
     if (raw == null) return null;

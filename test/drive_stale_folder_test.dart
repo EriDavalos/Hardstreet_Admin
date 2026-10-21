@@ -138,6 +138,50 @@ void main() {
     },
   );
 
+  test(
+    'al cambiar de CUENTA el drive vuelve a la RAÍZ, no a la carpeta anterior',
+    () async {
+      // Bug reportado: se veían las carpetas de una empresa, se cerraba sesión
+      // y al entrar con el Superadministrador el módulo Archivos abría en la
+      // carpeta de la cuenta ANTERIOR (que para él no existe).
+      final asked = <String>[];
+      DriveApiService.client = MockClient((request) async {
+        final p = request.url.queryParameters['path'] ?? '';
+        asked.add(p);
+        return http.Response(
+          jsonEncode({
+            'folders': [
+              {'name': 'Empresa', 'isFolder': true},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      await drive.refresh();
+      await drive.openFolder('Empresa');
+      expect(drive.path, ['Empresa']);
+
+      // Nueva sesión (otra cuenta u otra empresa activa).
+      HsSession.clear();
+      HsSession.token = 'otro-token';
+      drive.resetSession();
+
+      expect(drive.path, isEmpty);
+      expect(drive.loadedPath, isNull);
+      expect(drive.items, isEmpty);
+
+      await drive.refresh();
+      expect(
+        asked.last,
+        '',
+        reason: 'la primera petición de la sesión nueva va a SU raíz',
+      );
+      expect(drive.path, isEmpty);
+    },
+  );
+
   testWidgets('al cambiar de carpeta se ve el cargador, no lo de la anterior', (
     tester,
   ) async {

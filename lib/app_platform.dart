@@ -21,6 +21,16 @@ bool get skipVersionCheck => kWeb || isTestEnvironment;
 /// ¿Esta build corre en Android? (false en web)
 bool get isAndroidPlatform => !kWeb && Platform.isAndroid;
 
+/// ¿Esta build corre en iOS? (false en web)
+bool get isIOSPlatform {
+  if (kWeb) return false;
+  try {
+    return Platform.isIOS;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// ¿Esta build corre en Windows? (false en web)
 bool get isWindowsPlatform => !kWeb && Platform.isWindows;
 
