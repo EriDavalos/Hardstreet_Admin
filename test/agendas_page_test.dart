@@ -42,47 +42,49 @@ void _installMockClient({
         jsonEncode({
           // [agendas] permite simular lo que manda el servidor a un CLIENTE
           // (sus eventos + los ajenos enmascarados con `busy: true`).
-          'agendas': agendas ?? [
-            {
-              'id': 1,
-              'purchasedPackageId': 1,
-              'userId': 2,
-              'clientName': 'Cliente Test',
-              'packageName': 'Boda Premium',
-              'serviceId': 5,
-              'serviceName': 'Cobertura en evento',
-              'eventDate': '${dayOf(monday)}T14:30:00',
-              'description': 'Ceremonia en el jardín',
-              // Lugar CON coordenadas: el detalle pinta el mini mapa (aquí se
-              // comprobaba el crash de los intrínsecos con FlutterMap dentro
-              // del AlertDialog).
-              'location': 'Hacienda San José',
-              'lat': 4.711,
-              'lng': -74.0721,
-            },
-            {
-              'id': 2,
-              'purchasedPackageId': 1,
-              'userId': 3,
-              'clientName': 'Otra Clienta',
-              'packageName': 'Sesión Familiar',
-              'serviceId': 6,
-              'serviceName': 'Sesión de fotos',
-              'eventDate': '${now.year}-${two(now.month)}-20T16:00:00',
-              'description': 'Fotos en el parque',
-            },
-            {
-              'id': 3,
-              'purchasedPackageId': 2,
-              'userId': 4,
-              'clientName': 'Entrega Álbum',
-              'packageName': 'Álbum de lujo',
-              'serviceId': 7,
-              'serviceName': 'Entrega de álbum',
-              'eventDate': '${now.year}-${two(now.month)}-22T00:00:00',
-              'description': 'Sin hora fija',
-            },
-          ],
+          'agendas':
+              agendas ??
+              [
+                {
+                  'id': 1,
+                  'purchasedPackageId': 1,
+                  'userId': 2,
+                  'clientName': 'Cliente Test',
+                  'packageName': 'Boda Premium',
+                  'serviceId': 5,
+                  'serviceName': 'Cobertura en evento',
+                  'eventDate': '${dayOf(monday)}T14:30:00',
+                  'description': 'Ceremonia en el jardín',
+                  // Lugar CON coordenadas: el detalle pinta el mini mapa (aquí se
+                  // comprobaba el crash de los intrínsecos con FlutterMap dentro
+                  // del AlertDialog).
+                  'location': 'Hacienda San José',
+                  'lat': 4.711,
+                  'lng': -74.0721,
+                },
+                {
+                  'id': 2,
+                  'purchasedPackageId': 1,
+                  'userId': 3,
+                  'clientName': 'Otra Clienta',
+                  'packageName': 'Sesión Familiar',
+                  'serviceId': 6,
+                  'serviceName': 'Sesión de fotos',
+                  'eventDate': '${now.year}-${two(now.month)}-20T16:00:00',
+                  'description': 'Fotos en el parque',
+                },
+                {
+                  'id': 3,
+                  'purchasedPackageId': 2,
+                  'userId': 4,
+                  'clientName': 'Entrega Álbum',
+                  'packageName': 'Álbum de lujo',
+                  'serviceId': 7,
+                  'serviceName': 'Entrega de álbum',
+                  'eventDate': '${now.year}-${two(now.month)}-22T00:00:00',
+                  'description': 'Sin hora fija',
+                },
+              ],
         }),
         200,
         headers: headers,
@@ -322,50 +324,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Agendas: los días OCUPADOS se marcan en ROJO', (tester) async {
-    final now = DateTime.now();
-    String two(int n) => n.toString().padLeft(2, '0');
-    // Un día con evento que NUNCA es hoy (el día de hoy va seleccionado y su
-    // número se pinta en el color de selección, no en rojo).
-    final eventDay = now.day == 15 ? 16 : 15;
-    final freeDay = eventDay == 15 ? 16 : 15;
+  // El ROJO del calendario es SOLO para los CLIENTES: el servidor les manda
+  // los eventos de otros clientes sin detalle (`busy: true`) y esos días sí se
+  // marcan en rojo. El personal del estudio ve el detalle completo y su
+  // calendario NO se pinta de rojo (antes TODOS los días con eventos salían en
+  // rojo y tapaban el color del servicio, que es lo que se veía bien).
+  testWidgets(
+    'Agendas: el día con eventos NO va en rojo; el hueco ocupado ajeno sí',
+    (tester) async {
+      final now = DateTime.now();
+      String two(int n) => n.toString().padLeft(2, '0');
+      // Días que NUNCA son hoy (el de hoy va seleccionado y su número se pinta
+      // en el color de selección).
+      final eventDay = now.day == 15 ? 16 : 15;
+      final busyDay = now.day == 17 ? 18 : 17;
 
-    await _pumpAgendas(
-      tester,
-      const Size(1200, 900),
-      agendas: [
-        {
-          'id': 1,
-          'purchasedPackageId': 1,
-          'userId': 2,
-          'clientName': 'Cliente Test',
-          'packageName': 'Boda Premium',
-          'serviceId': 5,
-          'serviceName': 'Cobertura en evento',
-          'eventDate': '${now.year}-${two(now.month)}-${two(eventDay)}T10:00:00',
-          'description': 'Día ocupado',
-        },
-      ],
-    );
+      await _pumpAgendas(
+        tester,
+        const Size(1200, 900),
+        agendas: [
+          {
+            'id': 1,
+            'purchasedPackageId': 1,
+            'userId': 2,
+            'clientName': 'Cliente Test',
+            'packageName': 'Boda Premium',
+            'serviceId': 6,
+            'serviceName': 'Sesión de fotos',
+            'eventDate':
+                '${now.year}-${two(now.month)}-${two(eventDay)}T10:00:00',
+            'description': 'Evento con detalle',
+          },
+          {
+            // Hueco ocupado de OTRO cliente: el servidor manda `busy: true` y
+            // ningún dato del evento.
+            'id': 2,
+            'clientName': '',
+            'packageName': '',
+            'serviceId': null,
+            'serviceName': '',
+            'eventDate':
+                '${now.year}-${two(now.month)}-${two(busyDay)}T09:00:00',
+            'description': '',
+            'busy': true,
+          },
+        ],
+      );
 
-    // Vista de mes.
-    await _tapPump(tester, find.byIcon(Icons.calendar_month_outlined));
+      // Vista de mes.
+      await _tapPump(tester, find.byIcon(Icons.calendar_month_outlined));
 
-    final occupied = tester.widget<Text>(find.text('$eventDay').last);
-    expect(
-      occupied.style?.color,
-      const Color(0xFFDC2626),
-      reason: 'el número de un día con eventos va en ROJO',
-    );
+      final withDetail = tester.widget<Text>(find.text('$eventDay').last);
+      expect(
+        withDetail.style?.color,
+        isNot(const Color(0xFFDC2626)),
+        reason: 'un día con evento NO se marca en rojo para el estudio',
+      );
+      // Su badge sigue diciendo QUÉ hay agendado (icono del servicio).
+      expect(find.byIcon(Icons.photo_camera_rounded), findsOneWidget);
 
-    final free = tester.widget<Text>(find.text('$freeDay').last);
-    expect(
-      free.style?.color,
-      isNot(const Color(0xFFDC2626)),
-      reason: 'un día sin eventos no se marca en rojo',
-    );
-    expect(tester.takeException(), isNull);
-  });
+      final occupied = tester.widget<Text>(find.text('$busyDay').last);
+      expect(
+        occupied.style?.color,
+        const Color(0xFFDC2626),
+        reason: 'un hueco ocupado sin detalle (vista del cliente) va en ROJO',
+      );
+      // Sin detalle no hay servicio: el badge es un candado.
+      expect(find.byIcon(Icons.lock_outline_rounded), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'Agendas (móvil): calendario a pantalla completa y panel en hoja',
@@ -575,12 +603,7 @@ void main() {
               'lat': 4.711,
               'lng': -74.0721,
             },
-            {
-              'position': 2,
-              'location': 'Salón Real',
-              'lat': null,
-              'lng': null,
-            },
+            {'position': 2, 'location': 'Salón Real', 'lat': null, 'lng': null},
           ],
         },
       ],

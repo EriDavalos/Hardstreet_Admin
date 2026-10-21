@@ -35,13 +35,18 @@ Color _serviceColorOf(int? id) => id == null
     ? const Color(0xFF64748B)
     : _agendaPalette[id.abs() % _agendaPalette.length];
 
-/// ROJO de los días OCUPADOS del calendario: un día con eventos se marca en
-/// rojo (el badge conserva el color/icono del servicio).
+/// ROJO de un día COMPLETAMENTE OCUPADO por eventos de OTRO cliente.
+///
+/// Solo lo reciben los CLIENTES: el servidor les manda esos eventos sin
+/// detalle (`busy: true`), así que el rojo les dice "este día está tomado".
+/// El personal del estudio ve el detalle completo de cada evento y NO usa
+/// rojo: cada día conserva el color de su servicio.
 const Color _kOccupiedRed = Color(0xFFDC2626);
 
-/// Resumen visual de UN día con eventos: color e icono del servicio y cuántos
-/// eventos tiene agendados.
-typedef _DayEvent = ({Color color, IconData icon, int count});
+/// Resumen visual de UN día con eventos: color e icono del servicio, cuántos
+/// eventos tiene y si TODOS son huecos ocupados sin detalle (eventos ajenos
+/// que el servidor enmascaró para un cliente).
+typedef _DayEvent = ({Color color, IconData icon, int count, bool busy});
 
 /// Icono del badge del día a partir del NOMBRE del servicio: así el calendario
 /// dice QUÉ hay agendado (video, fotos, álbum, entrega…) y no solo que hay algo.
@@ -325,14 +330,23 @@ class _AgendasPageState extends State<AgendasPage> {
       }
       final key = hsDateKey(d);
       final prev = out[key];
+      final busy = isBusyAgenda(a);
       if (prev == null) {
         out[key] = (
           color: _serviceColorOf((a['serviceId'] as num?)?.toInt()),
           icon: _serviceIconOf((a['serviceName'] ?? '').toString()),
           count: 1,
+          busy: busy,
         );
       } else {
-        out[key] = (color: prev.color, icon: prev.icon, count: prev.count + 1);
+        out[key] = (
+          color: prev.color,
+          icon: prev.icon,
+          count: prev.count + 1,
+          // El día solo se pinta como OCUPADO si NINGÚN evento de ese día
+          // tiene detalle; si hay uno propio, manda su servicio.
+          busy: prev.busy && busy,
+        );
       }
     }
     return out;
@@ -2220,15 +2234,17 @@ class _DayCellState extends State<_DayCell> {
                 fg = Colors.white;
                 border = accent;
                 tint = Colors.transparent;
-              } else if (e != null) {
-                // DÍA OCUPADO: el número y el aro van en ROJO para ver de un
-                // vistazo qué días están tomados. El badge de abajo sigue
-                // mostrando el icono (y el color) del servicio agendado.
+              } else if (e != null && e.busy) {
+                // DÍA OCUPADO SIN DETALLE (eventos de otro cliente, solo para
+                // el rol Cliente): el número y el aro van en ROJO para ver de
+                // un vistazo qué días están tomados.
                 gradient = null;
                 fg = _kOccupiedRed;
                 border = _kOccupiedRed.withValues(alpha: _hover ? .9 : .5);
                 tint = _kOccupiedRed.withValues(alpha: _hover ? .22 : .10);
               } else {
+                // Día con eventos CON detalle (el caso del estudio): se pinta
+                // como cualquier día; el badge dice qué servicio hay agendado.
                 gradient = null;
                 fg = scheme.onSurface;
                 border = widget.today
@@ -2304,8 +2320,12 @@ class _DayCellState extends State<_DayCell> {
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                                 colors: [
-                                  e.color,
-                                  Color.lerp(e.color, Colors.white, .38) ??
+                                  e.busy ? _kOccupiedRed : e.color,
+                                  Color.lerp(
+                                        e.busy ? _kOccupiedRed : e.color,
+                                        Colors.white,
+                                        .38,
+                                      ) ??
                                       e.color,
                                 ],
                               ),
@@ -2315,14 +2335,18 @@ class _DayCellState extends State<_DayCell> {
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: e.color.withValues(alpha: .45),
+                                  color: (e.busy ? _kOccupiedRed : e.color)
+                                      .withValues(alpha: .45),
                                   blurRadius: 5,
                                   offset: const Offset(0, 1),
                                 ),
                               ],
                             ),
+                            // Hueco ocupado sin detalle: candado, porque no
+                            // hay servicio que mostrar. Con detalle, el icono
+                            // del servicio agendado.
                             child: Icon(
-                              e.icon,
+                              e.busy ? Icons.lock_outline_rounded : e.icon,
                               size: badge * .62,
                               color: Colors.white,
                             ),

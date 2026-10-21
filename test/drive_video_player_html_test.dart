@@ -55,6 +55,8 @@ globalThis.document = {
 };
 globalThis.window = globalThis;
 globalThis.setInterval = () => 0;
+// Los temporizadores no deben dejar vivo el proceso de node en las pruebas.
+globalThis.setTimeout = () => 0;
 const _fire = (e, n) => { for (const f of (e._h[n] || [])) f(); };
 const _ok = (c, msg) => {
   if (!c) {
@@ -106,6 +108,26 @@ _ok(
 console.log('OK');
 ''';
 
+// Si el reencodado (calidad ligera) NO se puede reproducir, el reproductor
+// prueba UNA vez el archivo ORIGINAL; solo si ese también falla, avisa.
+const _lightFailTail = r'''
+_fire(MEDIA, 'error');
+_ok(
+  MEDIA.src === 'https://drive.test/files/boda.mp4?view=1',
+  'cae al original sin play=low: ' + MEDIA.src
+);
+_ok(
+  _els.error.style.display !== 'flex',
+  'el primer fallo no enseña el aviso: ' + _els.error.style.display
+);
+_fire(MEDIA, 'error');
+_ok(
+  _els.error.style.display === 'flex',
+  'si el ORIGINAL tampoco abre, ahí sí se avisa'
+);
+console.log('OK');
+''';
+
 // Un archivo normal (no reencodado): salta con `currentTime`, sin recargar.
 const _plainTail = r'''
 window.hsSetDuration(120);
@@ -137,27 +159,22 @@ void main() {
   // "Cargando vídeo…" para siempre y ningún control responde (ni la pantalla
   // completa). Eso ya pasó una vez, así que aquí se compila de verdad.
   final node = _nodePath();
-  test(
-    'los scripts de vídeo y audio compilan sin errores de sintaxis',
-    () {
-      final dir = Directory.systemTemp.createTempSync('hs_player');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      for (final (label, html) in [
-        ('vídeo', debugDrivePlayerHtml(target('boda.mp4'))),
-        ('audio', debugDrivePlayerHtml(target('tema.mp3'))),
-      ]) {
-        final script = RegExp(
-          r'<script>([\s\S]*)</script>',
-        ).firstMatch(html)?.group(1);
-        expect(script, isNotNull, reason: 'falta el script del $label');
-        final js = File('${dir.path}/$label.js')
-          ..writeAsStringSync(script!);
-        final r = Process.runSync(node!, ['--check', js.path]);
-        expect(r.exitCode, 0, reason: 'script de $label: ${r.stderr}');
-      }
-    },
-    skip: node == null ? 'node no está instalado' : false,
-  );
+  test('los scripts de vídeo y audio compilan sin errores de sintaxis', () {
+    final dir = Directory.systemTemp.createTempSync('hs_player');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    for (final (label, html) in [
+      ('vídeo', debugDrivePlayerHtml(target('boda.mp4'))),
+      ('audio', debugDrivePlayerHtml(target('tema.mp3'))),
+    ]) {
+      final script = RegExp(r'<script>([\s\S]*)</script>')
+          .firstMatch(html)
+          ?.group(1);
+      expect(script, isNotNull, reason: 'falta el script del $label');
+      final js = File('${dir.path}/$label.js')..writeAsStringSync(script!);
+      final r = Process.runSync(node!, ['--check', js.path]);
+      expect(r.exitCode, 0, reason: 'script de $label: ${r.stderr}');
+    }
+  }, skip: node == null ? 'node no está instalado' : false);
 
   test('el vídeo lleva póster, controles y aviso de carga', () {
     final html = debugDrivePlayerHtml(
@@ -266,23 +283,60 @@ void main() {
         ('ligero', debugDrivePlayerHtml(ligero), _lightTail),
         ('normal', debugDrivePlayerHtml(target('boda.mp4')), _plainTail),
       ]) {
-        final script = RegExp(
-          r'<script>([\s\S]*)</script>',
-        ).firstMatch(html)?.group(1);
+        final script = RegExp(r'<script>([\s\S]*)</script>')
+            .firstMatch(html)
+            ?.group(1);
         expect(script, isNotNull, reason: 'falta el script del vídeo ($label)');
         final js = File('${dir.path}/$label.mjs')
           ..writeAsStringSync('$_harnessHead\n$script\n$tail');
         final r = Process.runSync(node!, [js.path]);
-        expect(
-          r.exitCode,
-          0,
-          reason: 'seek ($label): ${r.stdout}${r.stderr}',
-        );
+        expect(r.exitCode, 0, reason: 'seek ($label): ${r.stdout}${r.stderr}');
         expect('${r.stdout}', contains('OK'));
       }
     },
     skip: node == null ? 'node no está instalado' : false,
   );
+
+  test('ejecutado de verdad: un fallo del reencodado cae al original', () {
+    final dir = Directory.systemTemp.createTempSync('hs_fallback');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final html = debugDrivePlayerHtml(
+      DriveViewTarget(
+        item: const DriveItem(name: 'boda.mp4', isFolder: false),
+        source: 'https://drive.test/files/boda.mp4?view=1&play=low',
+        isRemote: true,
+      ),
+    );
+    final script = RegExp(r'<script>([\s\S]*)</script>')
+        .firstMatch(html)
+        ?.group(1);
+    expect(script, isNotNull);
+    final js = File('${dir.path}/fallback.mjs')
+      ..writeAsStringSync('$_harnessHead\n$script\n$_lightFailTail');
+    final r = Process.runSync(node!, [js.path]);
+    expect(r.exitCode, 0, reason: 'fallback: ${r.stdout}${r.stderr}');
+    expect('${r.stdout}', contains('OK'));
+  }, skip: node == null ? 'node no está instalado' : false);
+
+  // Un vídeo GRANDE se pide reencodado (`?play=low`). Si el servidor no puede
+  // reencodarlo (sin ffmpeg o con los reencodados ocupados) o el navegador no
+  // acepta el MP4 fragmentado, el visor se quedaba en negro con "No se pudo
+  // reproducir". Ahora reintenta con el archivo ORIGINAL una vez.
+  test('si la calidad ligera falla, prueba el vídeo ORIGINAL', () {
+    final html = debugDrivePlayerHtml(
+      DriveViewTarget(
+        item: const DriveItem(name: 'boda.mp4', isFolder: false),
+        source: 'https://drive.test/files/boda.mp4?view=1&play=low',
+        isRemote: true,
+      ),
+    );
+    expect(html, contains('retriedOriginal'));
+    expect(
+      html,
+      contains('fallbackSrc="https://drive.test/files/boda.mp4?view=1"'),
+      reason: 'el plan B es la URL sin play=low (con el token intacto)',
+    );
+  });
 
   test('el audio usa su tarjeta y el aviso correcto', () {
     final html = debugDrivePlayerHtml(target('tema.mp3'));

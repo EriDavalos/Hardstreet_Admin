@@ -46,6 +46,16 @@ import '../../widgets/hs_modal.dart';
 /// que en el resto del panel, para no dejar la sección inservible.
 bool _driveCan(DriveBase drive, String action) => drive.canDo(action);
 
+/// ¿Se pueden ARRASTRAR las tarjetas en esta pantalla?
+///
+/// En la WEB abierta en un TELÉFONO no: el dedo está para scrollear y
+/// arrastrar la carpeta en vez de bajar la lista era justo el problema. Mover
+/// y copiar se siguen haciendo desde las acciones de la selección.
+/// En la app móvil el arrastre existe (con presión larga) y en escritorio es
+/// inmediato.
+bool _driveDragAllowed(BuildContext context) =>
+    driveCardDragAllowed(web: kIsWeb, phone: hsIsPhone(context));
+
 // ============ Lecturas seguras del ScrollController compartido ============
 //
 // El AnimatedSwitcher del contenido mantiene un instante la carpeta/vista
@@ -107,6 +117,18 @@ class _PressMovePointerState extends MultiDragPointerState {
   /// (mover el dedo arrastra el grupo; soltar sin mover deja la selección).
   void _delayPassed() {
     _timer = null;
+    // El dedo YA se movió durante la espera: el usuario está SCROLLEANDO, no
+    // sosteniendo. Se rechaza el arrastre y la lista se desliza normal.
+    //
+    // Antes se aceptaba el arrastre a los 350 ms pasara lo que pasara, así que
+    // un scroll lento (el dedo se mueve pocos píxeles y luego acelera) se
+    // convertía en un ARRASTRE: la carpeta se despegaba y seguía al dedo, que
+    // es justo el "al scrollear las carpetas se mueven" del celular.
+    final moved = pendingDelta;
+    if (moved != null && moved.distance > 4) {
+      resolve(GestureDisposition.rejected);
+      return;
+    }
     onHoldSelect?.call();
     // Gana la arena AHORA: el tap del InkWell queda rechazado (no desmarca
     // lo recién seleccionado al soltar) y accepted() programa el arranque.
@@ -2534,8 +2556,13 @@ class _GridContent extends StatelessWidget {
             // Entrada al DESLIZAR: la tarjeta que aparece al bajar entra con
             // fade + deslizamiento; lo ya visible (y una foto recién subida)
             // se pinta directo.
+            //
+            // En WEB no se anima: al bajar con el scroll del celular cada fila
+            // nueva entraba desplazándose y daba la impresión de que las
+            // CARPETAS SE MOVÍAN solas mientras se deslizaba la lista.
             return ScrollReveal(
-              animate: _scrolledDown && !noEntrance.contains(item.name),
+              animate:
+                  !kIsWeb && _scrolledDown && !noEntrance.contains(item.name),
               child: _GridItem(
                 key: key,
                 item: item,
@@ -2606,9 +2633,13 @@ class _GridItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    // En MÓVIL el arrastre exige presión larga (~350ms): así el scroll no
-    // mueve carpetas por accidente. En escritorio sigue siendo inmediato.
-    final Widget Function(Widget child) buildDraggable = useLongPressDrag
+    // En un TELÉFONO con la versión WEB no se arrastra: el dedo scrollea (ver
+    // [_driveDragAllowed]). En la app móvil el arrastre exige presión larga
+    // (~350ms) y en escritorio es inmediato.
+    final Widget Function(Widget child) buildDraggable =
+        !_driveDragAllowed(context)
+        ? (child) => child
+        : useLongPressDrag
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
             onHoldSelect: onLongPress,
@@ -3354,7 +3385,13 @@ class _ListContent extends StatelessWidget {
                 );
                 // Igual que en la cuadrícula: anima solo lo que llega al bajar.
                 return ScrollReveal(
-                  animate: _scrolledDown && !noEntrance.contains(item.name),
+                  // En WEB no hay entrada animada (ver [_GridBody]): al
+                  // scrollear, las filas moviéndose parecen "carpetas que se
+                  // mueven".
+                  animate:
+                      !kIsWeb &&
+                      _scrolledDown &&
+                      !noEntrance.contains(item.name),
                   child: _ListRow(
                     key: key,
                     item: item,
@@ -3427,8 +3464,12 @@ class _ListRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    // En MÓVIL el arrastre exige presión larga (~350ms); en escritorio, inmediato.
-    final Widget Function(Widget child) buildDraggable = useLongPressDrag
+    // Igual que en la cuadrícula: en la web de un teléfono no se arrastra; en
+    // la app móvil, con presión larga; en escritorio, inmediato.
+    final Widget Function(Widget child) buildDraggable =
+        !_driveDragAllowed(context)
+        ? (child) => child
+        : useLongPressDrag
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
             onHoldSelect: onLongPress,

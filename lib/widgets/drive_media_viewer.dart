@@ -558,6 +558,13 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
     final lightJs = target.source.contains('play=low') ? 'true' : 'false';
     // La URL como literal de JS: la barra de avance la reusa al adelantar.
     final srcJson = jsonEncode(target.source).replaceAll('</', r'<\/');
+    // La URL ORIGINAL (la misma sin `play=low`). Es el plan B si el
+    // reencodado no se puede reproducir: sin esto, un vídeo GRANDE que el
+    // servidor no alcanzó a reencodar (sin ffmpeg, o con los reencodados
+    // ocupados) se quedaba en negro con el aviso de error, aunque el original
+    // sí se podía ver.
+    final fallbackJson = jsonEncode(_withoutLightPlayback(target.source))
+        .replaceAll('</', r'<\/');
     // PDF: el visor del navegador integrado (iframe), no un <video>.
     if (target.kind == DriveItemKind.pdf) {
       return '<!doctype html><html><head><meta charset="utf-8">'
@@ -757,7 +764,8 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'var nativeShell=$nativeFs;'
         // La calidad ligera NO se puede adelantar por bytes: se pide otra vez
         // el vídeo con `&t=<segundos>` y se lleva la cuenta en `baseOff`.
-        'var lightStream=$lightJs,baseSrc=$srcJson,baseOff=0;'
+        'var lightStream=$lightJs,baseSrc=$srcJson,baseOff=0,'
+        'fallbackSrc=$fallbackJson,retriedOriginal=false;'
         'var seeking=false,timer=null,bufferingNow=false;'
         // DURACIÓN DE VERDAD. La calidad ligera llega en MP4 FRAGMENTADO y el
         // navegador no sabe cuánto dura: `m.duration` es Infinity, la barra se
@@ -884,7 +892,18 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         'var d=total();'
         'if(d>0)seek.value=String(Math.min(1000,(baseOff+m.currentTime)/d*1000));'
         'paintBar()});'
-        'm.addEventListener("error",function(){ready();'
+        'm.addEventListener("error",function(){'
+        // PLAN B: si el reencodado (calidad ligera) no se puede reproducir —el
+        // servidor no tiene ffmpeg, está ocupado o el navegador no acepta el
+        // MP4 fragmentado— se pide el ORIGINAL UNA vez. Antes un vídeo grande
+        // se quedaba en el aviso de error aunque el archivo sí abriera.
+        'if(lightStream&&!retriedOriginal){'
+        'retriedOriginal=true;lightStream=false;baseOff=0;lastTime=-1;'
+        'm.src=fallbackSrc;'
+        'try{if(m.load)m.load();'
+        'var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}\n'
+        'return}'
+        'ready();'
         'spinner.style.display="none";err.style.display="flex"});'
         'seek.addEventListener("input",function(){seeking=true;'
         'seek.style.setProperty("--played",Number(seek.value)/10+"%");'
@@ -931,6 +950,18 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
         '.catch(function(){big.style.opacity="1";'
         'big.style.pointerEvents="auto";hide()});}catch(_){'
         'big.style.opacity="1";big.style.pointerEvents="auto";hide()}'
+        // RED DE SEGURIDAD: si el reencodado no entregó NI UN fotograma en
+        // 25 s (ffmpeg atascado o petición sin datos), no hay evento `error`
+        // que dispare el plan B: se prueba el ORIGINAL igual. Antes un vídeo
+        // grande podía quedarse girando para siempre.
+        'setTimeout(function(){'
+        'if(!retriedOriginal&&lightStream&&m.readyState<2){'
+        'retriedOriginal=true;lightStream=false;baseOff=0;lastTime=-1;'
+        'show("Probando el archivo original…");'
+        'm.src=fallbackSrc;'
+        'try{if(m.load)m.load();'
+        'var p=m.play();if(p&&p.catch)p.catch(function(){})}catch(_){}\n'
+        '}},25000);'
         '</script></body></html>';
   }
 
@@ -938,6 +969,21 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
   static String _hexColor(Color color) {
     final argb = color.toARGB32();
     return '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
+  }
+
+  /// Quita el `play=low` de una URL: deja la del ARCHIVO ORIGINAL.
+  ///
+  /// Se usa como plan B del reproductor cuando el reencodado al vuelo falla.
+  /// No se toca nada más de la query (el `apikey` de la sesión se conserva).
+  static String _withoutLightPlayback(String url) {
+    if (!url.contains('play=low')) return url;
+    var out = url.replaceAllMapped(
+      RegExp(r'([?&])play=low(&|$)'),
+      (m) => m[2] == '&' ? m[1]! : '',
+    );
+    // Si el parámetro iba al final queda un `?` o `&` colgando.
+    out = out.replaceAll(RegExp(r'[?&]+$'), '');
+    return out;
   }
 
   static String _htmlEscape(String value) => value

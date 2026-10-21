@@ -27,6 +27,13 @@ import 'print_models.dart';
 // ==================================================================
 
 /// URL de la miniatura grande de una foto (para la vista previa).
+///
+/// LLEVA el token de la sesión en la query (`&apikey=`), igual que las demás
+/// miniaturas del panel: `/thumb` no pide permisos, pero SÍ usa la sesión para
+/// saber en qué CARPETA DE EMPRESA vive la foto. Sin el token, la ruta de un
+/// usuario de empresa se buscaba en la raíz del disco y el servidor respondía
+/// 404 — por eso las fotos del módulo Impresiones no se veían (ni la
+/// cuadrícula de envíos ni la vista previa del editor de formatos).
 String printPreviewUrl(String path, {int width = 1600}) {
   final clean = path
       .split('/')
@@ -35,7 +42,12 @@ String printPreviewUrl(String path, {int width = 1600}) {
       .map(Uri.encodeComponent)
       .join('/');
   if (clean.isEmpty) return '';
-  return '${AppConstants.apiBase}/thumb/$clean?w=$width';
+  final w = width.clamp(32, 2048);
+  final base = '${AppConstants.apiBase}/thumb/$clean?w=$w';
+  final token = driveImageToken.trim();
+  return token.isEmpty
+      ? base
+      : '$base&apikey=${Uri.encodeQueryComponent(token)}';
 }
 
 /// URL de la ORIGINAL de una foto del drive (con el token de la sesión).

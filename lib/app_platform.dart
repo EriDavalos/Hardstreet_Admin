@@ -47,6 +47,16 @@ bool get useLongPressDrag {
   }
 }
 
+/// ¿Se pueden ARRASTRAR las tarjetas del Drive?
+///
+/// En la versión WEB abierta en un TELÉFONO, NO: el dedo está para scrollear,
+/// y arrastrar la carpeta en vez de bajar la lista era el problema. Mover y
+/// copiar siguen disponibles desde las acciones de la selección. En la app
+/// móvil (Android/iOS) se mantiene el arrastre con presión larga y en
+/// escritorio es inmediato.
+bool driveCardDragAllowed({required bool web, required bool phone}) =>
+    !(web && phone);
+
 /// Nombre legible de la plataforma actual (para diagnósticos).
 String get platformName {
   if (kWeb) return 'web';

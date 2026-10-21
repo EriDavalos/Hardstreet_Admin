@@ -84,6 +84,50 @@ void main() {
     expect(find.text('Seleccionar todo'), findsOneWidget);
   });
 
+  testWidgets('las fotos se piden con el token de la sesión', (tester) async {
+    // El servidor del Drive entrega la miniatura (`/thumb/...`) SIN permisos,
+    // pero usa el token para saber en qué CARPETA DE EMPRESA está la foto. Sin
+    // `apikey` la ruta se buscaba en la raíz y respondía 404: el módulo
+    // mostraba el icono de "imagen rota" en vez de las fotos.
+    HsSession.token = 'jwt-de-prueba';
+    addTearDown(HsSession.clear);
+
+    HsApi.client = MockClient((request) async {
+      if (request.url.path.contains('/api/admin/print-requests')) {
+        return http.Response(
+          jsonEncode({
+            'requests': [_request()],
+            'formats': const [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    await pump(tester);
+    // Abre el envío para ver la cuadrícula de fotos.
+    await tester.tap(find.text('Sesión Previa'));
+    await tester.pumpAndSettle();
+
+    final images = tester
+        .widgetList<Image>(find.byType(Image))
+        .map((i) => i.image)
+        .whereType<NetworkImage>()
+        .map((n) => n.url)
+        .toList();
+    expect(images, isNotEmpty, reason: 'las fotos del envío no se pintaron');
+    expect(images.first, contains('/thumb/XV/Reyna/foto1.jpg'));
+    expect(images.first, contains('w=480'));
+    expect(
+      images.first,
+      contains('apikey=jwt-de-prueba'),
+      reason: 'sin el token, /thumb no encuentra la foto de la empresa (404)',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('seleccionar todo marca las fotos y habilita los formatos', (
     tester,
   ) async {

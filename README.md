@@ -203,6 +203,11 @@ conoce el módulo, se muestra igual).
   **Cliente** y a cualquier usuario con paquetes comprados; el Admin y el
   personal que puede crear/editar/borrar agendas ven todo. Los **avisos**
   (campanita) de un cliente también se limitan a SUS eventos.
+  Esos huecos **Ocupado** son los ÚNICOS días que se pintan en **rojo** (con
+  candado en el badge): el rojo es la señal del cliente. Para el estudio un
+  día con eventos se ve como siempre — el número normal y el badge con el
+  color e icono de su servicio —, así el calendario no se vuelve una pared
+  de círculos rojos.
 
 ## Opciones de compartir por SERVICIO (Mi paquete)
 
@@ -570,6 +575,23 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   por bytes; mover la barra vuelve a pedir el vídeo **desde ese segundo**
   (`&t=`), así que sigue donde lo dejaste y el tiempo de la barra es el de
   verdad (no el del tramo). En un archivo normal el salto lo hace el navegador.
+- **Si la calidad ligera no se puede ver, se prueba el ORIGINAL**: sin ffmpeg,
+  con los reencodados ocupados o con un navegador que no acepta el MP4
+  fragmentado, el reproductor pedía el vídeo reencodado, fallaba y se quedaba
+  en "No se pudo reproducir" — justo lo que pasaba con los vídeos GRANDES.
+  Ahora, ante el primer error, vuelve a pedir la URL **sin `play=low`** una vez
+  y solo avisa si el original tampoco abre.
+- **En la WEB abierta en un TELÉFONO no se arrastran las tarjetas**: el dedo
+  está para scrollear y antes, al deslizar, la carpeta se despegaba y se movía
+  en vez de bajar la lista. Ahí el arrastre está **desactivado** (mover y
+  copiar siguen en las acciones de la selección: mantener presionada una
+  tarjeta entra en modo selección). Con **mouse de computadora** el arrastre
+  sigue siendo inmediato, y en la **app móvil** (Android/iOS) se mantiene con
+  presión larga.
+- El gesto de presión larga ya no se "acepta" a los 350 ms si el dedo venía
+  moviéndose: un scroll lento baja la lista en vez de levantar la tarjeta. En
+  web tampoco hay animación de entrada al bajar (las filas aparecían
+  deslizándose y parecía que las carpetas se movían solas).
 - **Descargas**: en la **computadora** ya NO se pregunta el destino — el
   diálogo "Guardar como" siempre terminaba en Descargas—; el archivo (o el
   **ZIP** de una selección/carpeta) se guarda directo en la carpeta
