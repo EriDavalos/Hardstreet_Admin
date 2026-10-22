@@ -16,6 +16,7 @@ import '../widgets/common.dart';
 import '../widgets/drive_thumb.dart';
 import '../widgets/hero_photo_banner.dart';
 import '../widgets/hs_search_filter.dart';
+import '../widgets/photo_backdrop.dart';
 import '../widgets/service_photos_sheet.dart';
 import '../widgets/hs_toast.dart';
 
@@ -66,6 +67,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   /// Clave de la última carga del banner (paquete + servicios): evita
   /// volver a listar carpetas en cada reconstrucción.
   String _bannerFor = '';
+
+  /// Foto que el banner está mostrando AHORA (la avisa él): es la que se pinta
+  /// desenfocada de fondo de la vista.
+  String _ambientPhoto = '';
 
   /// Búsqueda y filtro de SUS servicios.
   String _serviceQuery = '';
@@ -155,7 +160,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     _bannerFor = key;
     if (services.isEmpty) {
       if (_bannerPhotos.isNotEmpty) {
-        setState(() => _bannerPhotos = const []);
+        setState(() {
+          _bannerPhotos = const [];
+          _ambientPhoto = '';
+        });
       }
       return;
     }
@@ -185,7 +193,30 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final unique = found.toSet().toList()..shuffle();
     setState(() {
       _bannerPhotos = unique.take(10).toList(growable: false);
+      _ambientPhoto = '';
     });
+  }
+
+  /// Deja la foto lista ANTES de que el banner la funda: descargada y
+  /// decodificada. Si tarda, el banner sigue mostrando la anterior y el cambio
+  /// entra con su fundido, en vez de fundir a un hueco y enseñar la nueva de
+  /// golpe cuando por fin llega.
+  Future<void> _preloadBannerPhoto(String url) async {
+    if (!mounted) return;
+    final provider = _PackagePhoto.providerFor(url, big: true);
+    if (provider == null) return;
+    // Si la foto no baja, el banner cambia igual: aquí no hay nada que avisar
+    // (DriveThumb ya reintenta y tiene su respaldo).
+    await precacheImage(provider, context, onError: (_, _) {});
+  }
+
+  /// Foto del FONDO de la vista: la que muestra el banner o, si todavía no hay
+  /// fotos de la carpeta, la del paquete.
+  ImageProvider? get _ambientProvider {
+    final pkg = _selected['package'];
+    final own = pkg is Map ? (pkg['urlImage'] ?? '').toString() : '';
+    final url = _ambientPhoto.trim().isNotEmpty ? _ambientPhoto : own;
+    return _PackagePhoto.providerFor(url, big: true);
   }
 
   Map<String, dynamic> get _selected {
@@ -494,93 +525,104 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final price = ((_selected['price'] as num?) ?? 0).toDouble();
     final paid = ((_selected['paid'] as num?) ?? 0).toDouble();
 
-    return PageContainer(
-      module: 'my_package',
-      title: 'Mi paquete',
-      description:
-          'Avance de tus paquetes: lo que ya cumplimos y las carpetas del '
-          'Drive compartidas contigo.',
-      icon: Icons.workspace_premium_outlined,
-      onRefresh: _load,
-      stats: [
-        if (_packages.isNotEmpty)
-          StatPill(
-            icon: Icons.card_giftcard_outlined,
-            label:
-                '${_packages.length} '
-                '${_packages.length == 1 ? 'paquete' : 'paquetes'}',
-          ),
-        if (services.isNotEmpty)
-          StatPill(
-            icon: Icons.check_circle_outline,
-            label: '$done de ${services.length} servicios cumplidos',
-          ),
-      ],
-      // Sin botón de recargar: se recarga deslizando hacia abajo.
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_loading)
-            const ListSkeleton(lines: 3, cardHeight: 120)
-          else if (_error != null)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.cloud_off_outlined,
-                      size: 40,
-                      color: scheme.error,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(_error!, textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _load,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('Reintentar'),
-                    ),
-                  ],
-                ),
+    // La FOTO que se está viendo va de fondo de TODA la vista, desenfocada y
+    // con un velo encima. Antes se pintaba un halo de color alrededor de la
+    // portada: ensuciaba la vista y no dejaba ver la foto. Va detrás del
+    // contenido (el héroe del módulo y las tarjetas no se tocan) y cambia con
+    // el mismo fundido con el que el banner pasa de foto en foto (cada 6 s).
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PhotoBackdrop(image: _ambientProvider),
+        PageContainer(
+          module: 'my_package',
+          title: 'Mi paquete',
+          description:
+              'Avance de tus paquetes: lo que ya cumplimos y las carpetas del '
+              'Drive compartidas contigo.',
+          icon: Icons.workspace_premium_outlined,
+          onRefresh: _load,
+          stats: [
+            if (_packages.isNotEmpty)
+              StatPill(
+                icon: Icons.card_giftcard_outlined,
+                label:
+                    '${_packages.length} '
+                    '${_packages.length == 1 ? 'paquete' : 'paquetes'}',
               ),
-            )
-          else if (_packages.isEmpty)
-            const EmptyState(
-              icon: Icons.inventory_2_outlined,
-              title: 'Aún no tienes paquetes',
-              message:
-                  'Cuando tu fotógrafo te asigne un paquete, aparecerá aquí '
-                  'con su avance y el acceso a tu carpeta del Drive.',
-            )
-          else ...[
-            if (_packages.length > 1) ...[
-              _packagePicker(scheme),
-              const SizedBox(height: 14),
-            ],
-            FadeSlideIn(child: _heroCard(scheme, price, paid)),
-            if (_notifications.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _notificationsCard(scheme),
-            ],
-            if (services.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              _servicesSection(scheme, services),
-            ],
-            const SizedBox(height: 20),
-            _sectionTitle(
-              scheme,
-              Icons.folder_copy_outlined,
-              'Mi Drive compartido',
-              trailing:
-                  '${_sharedPaths.length} '
-                  '${_sharedPaths.length == 1 ? 'carpeta' : 'carpetas'}',
-            ),
-            const SizedBox(height: 10),
-            _driveCard(scheme),
+            if (services.isNotEmpty)
+              StatPill(
+                icon: Icons.check_circle_outline,
+                label: '$done de ${services.length} servicios cumplidos',
+              ),
           ],
-        ],
-      ),
+          // Sin botón de recargar: se recarga deslizando hacia abajo.
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_loading)
+                const ListSkeleton(lines: 3, cardHeight: 120)
+              else if (_error != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.cloud_off_outlined,
+                          size: 40,
+                          color: scheme.error,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_packages.isEmpty)
+                const EmptyState(
+                  icon: Icons.inventory_2_outlined,
+                  title: 'Aún no tienes paquetes',
+                  message:
+                      'Cuando tu fotógrafo te asigne un paquete, aparecerá aquí '
+                      'con su avance y el acceso a tu carpeta del Drive.',
+                )
+              else ...[
+                if (_packages.length > 1) ...[
+                  _packagePicker(scheme),
+                  const SizedBox(height: 14),
+                ],
+                FadeSlideIn(child: _heroCard(scheme, price, paid)),
+                if (_notifications.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _notificationsCard(scheme),
+                ],
+                if (services.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  _servicesSection(scheme, services),
+                ],
+                const SizedBox(height: 20),
+                _sectionTitle(
+                  scheme,
+                  Icons.folder_copy_outlined,
+                  'Mi Drive compartido',
+                  trailing:
+                      '${_sharedPaths.length} '
+                      '${_sharedPaths.length == 1 ? 'carpeta' : 'carpetas'}',
+                ),
+                const SizedBox(height: 10),
+                _driveCard(scheme),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -938,6 +980,16 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   // viendo ella, no un banner vacío.
                   HeroPhotoBanner(
                     photos: _bannerPhotos,
+                    // Sin la foto descargada NO se funde: el cambio se quedaba
+                    // sin transición y la foto aparecía de golpe.
+                    preload: _preloadBannerPhoto,
+                    // La portada pasa de foto cada 6 s (el fondo de la vista
+                    // cambia a la par, con el mismo fundido).
+                    every: const Duration(seconds: 6),
+                    onPhoto: (url) {
+                      if (!mounted || url == _ambientPhoto) return;
+                      setState(() => _ambientPhoto = url);
+                    },
                     background: _PackagePhoto(
                       url: photo,
                       tier: look,
@@ -2006,6 +2058,20 @@ class _PackagePhoto extends StatelessWidget {
   /// emoji sobre el degradado del tier.
   final Widget? waiting;
 
+  /// La MISMA imagen que pinta este widget, ya resuelta: el banner la deja
+  /// lista en la caché antes del fundido y de ella sale el fondo de la vista.
+  static ImageProvider? providerFor(String url, {bool big = false}) {
+    final clean = url.trim();
+    if (clean.isEmpty) return null;
+    return NetworkImage(_source(clean, big: big));
+  }
+
+  /// URL final de la foto: la vista previa del Drive o la liga tal cual.
+  static String _source(String clean, {required bool big}) =>
+      isDriveImageUrl(clean)
+      ? driveImagePreview(clean, width: big ? 1200 : 240)
+      : clean;
+
   @override
   Widget build(BuildContext context) {
     final fallback = _PackagePhotoFallback(tier: tier, emoji: emoji, big: big);
@@ -2014,7 +2080,7 @@ class _PackagePhoto extends StatelessWidget {
     if (clean.isEmpty) return fallback;
     if (isDriveImageUrl(clean)) {
       return DriveThumb(
-        source: driveImagePreview(clean, width: big ? 1200 : 240),
+        source: _source(clean, big: big),
         isRemote: true,
         big: big,
         rounded: false,

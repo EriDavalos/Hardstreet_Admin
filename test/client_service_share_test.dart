@@ -377,6 +377,10 @@ void main() {
     // del banner (el cambio de una a otra lo cubre hero_photo_banner_test).
     final banner = tester.widget<HeroPhotoBanner>(find.byType(HeroPhotoBanner));
     expect(banner.photos, hasLength(2));
+    // La portada deja la foto lista antes de fundirla y avisa cuál se ve (el
+    // fondo se tiñe con sus colores).
+    expect(banner.preload, isNotNull);
+    expect(banner.onPhoto, isNotNull);
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();
 

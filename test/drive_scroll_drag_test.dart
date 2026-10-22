@@ -14,8 +14,10 @@ import 'package:hardstreet_admin/pages/drive_page.dart';
 // la carpeta se despegaba y seguía al dedo en vez de bajar la lista. Eso es
 // el "al scrollear las carpetas se mueven".
 //
-// Además, en la WEB abierta en un TELÉFONO no se arrastra NADA: el dedo está
-// para scrollear. Mover/copiar se hacen desde las acciones de la selección.
+// Además, en el TELÉFONO (la app o la web abierta en él) el arrastre SOLO
+// MUEVE lo que YA estaba seleccionado. Sostener algo sin seleccionar y
+// deslizar es el BARRIDO de selección (se marcan todos los elementos hasta el
+// dedo y la lista se desplaza sola al llegar al borde).
 //
 // Aquí se ejercita el gesto sobre una lista de tarjetas de verdad (sin el
 // resto del panel): scrollear tiene que mover la LISTA y no arrastrar.
@@ -41,16 +43,16 @@ Widget _harness() {
 }
 
 void main() {
-  test('en la WEB de un teléfono las tarjetas NO se arrastran', () {
+  test('en el TELÉFONO solo arrastra lo que YA estaba seleccionado', () {
     expect(
-      driveCardDragAllowed(web: true, phone: true),
+      driveCardDragAllowed(phone: true, selected: false),
       isFalse,
-      reason: 'el dedo está para scrollear, no para mover carpetas',
+      reason: 'sostener algo sin seleccionar y deslizar es SELECCIONAR',
     );
-    // El mouse de la computadora sigue arrastrando con normalidad.
-    expect(driveCardDragAllowed(web: true, phone: false), isTrue);
-    // La app móvil conserva su arrastre (con presión larga).
-    expect(driveCardDragAllowed(web: false, phone: true), isTrue);
+    // Ya seleccionado: el arrastre mueve, como siempre.
+    expect(driveCardDragAllowed(phone: true, selected: true), isTrue);
+    // En la computadora el arrastre es inmediato y sin condiciones.
+    expect(driveCardDragAllowed(phone: false, selected: false), isTrue);
   });
 
   testWidgets('scrollear NO levanta la tarjeta', (tester) async {

@@ -46,15 +46,38 @@ import '../../widgets/hs_modal.dart';
 /// que en el resto del panel, para no dejar la sección inservible.
 bool _driveCan(DriveBase drive, String action) => drive.canDo(action);
 
-/// ¿Se pueden ARRASTRAR las tarjetas en esta pantalla?
+/// BARRIDO de selección con el dedo (teléfono).
 ///
-/// En la WEB abierta en un TELÉFONO no: el dedo está para scrollear y
-/// arrastrar la carpeta en vez de bajar la lista era justo el problema. Mover
-/// y copiar se siguen haciendo desde las acciones de la selección.
-/// En la app móvil el arrastre existe (con presión larga) y en escritorio es
-/// inmediato.
-bool _driveDragAllowed(BuildContext context) =>
-    driveCardDragAllowed(web: kIsWeb, phone: hsIsPhone(context));
+/// Se activa al SOSTENER un elemento que NO estaba seleccionado y mover el
+/// dedo: en vez de levantar la tarjeta, se van seleccionando todos los
+/// elementos que quedan entre el que se sostuvo y el dedo (y la lista se
+/// desplaza sola al llegar a un borde), que es lo que se espera del dedo en
+/// una galería. Si el elemento YA estaba seleccionado, el arrastre es el de
+/// siempre: MOVER la selección.
+class SelectSweep {
+  const SelectSweep({
+    required this.active,
+    required this.hold,
+    required this.to,
+    required this.end,
+  });
+
+  /// Hay un barrido en curso (la tarjeta no debe aceptar que se suelte nada).
+  final bool active;
+
+  /// Se cumplió la presión larga sobre [item]: se decide EN VIVO si el
+  /// arrastre que sigue es el barrido (no estaba seleccionado) o el de mover
+  /// (ya estaba seleccionado). El reconocedor del arrastre se crea una sola
+  /// vez, así que la decisión no puede tomarse al construir la tarjeta.
+  final ValueChanged<DriveItem> hold;
+
+  /// El dedo se movió a esta posición GLOBAL: marcar hasta ahí (si hay
+  /// barrido; si no, no hace nada).
+  final ValueChanged<Offset> to;
+
+  /// Se soltó el dedo.
+  final VoidCallback end;
+}
 
 // ============ Lecturas seguras del ScrollController compartido ============
 //
@@ -230,6 +253,8 @@ class PressMoveDraggable<T extends Object> extends Draggable<T> {
     this.onHoldSelect,
     super.childWhenDragging,
     super.dragAnchorStrategy,
+    super.onDragUpdate,
+    super.onDragEnd,
   });
 
   /// Duración de la presión antes de habilitar el arrastre.
@@ -317,6 +342,19 @@ class _DrivePageState extends State<DrivePage> {
   Rect? _marqueeRect;
   List<String> _lastPath = const [];
 
+  // ---- Barrido de selección con el dedo (teléfono) ----
+  /// Elemento que se sostuvo para empezar el barrido (null = no hay barrido).
+  String? _sweepFrom;
+
+  /// Selección que YA había al empezar: el barrido se suma a ella.
+  Set<String> _sweepBase = {};
+
+  /// Última posición del dedo (global) durante el barrido.
+  Offset? _sweepAt;
+
+  /// Desplaza la lista sola mientras el dedo está cerca de un borde.
+  Timer? _sweepTicker;
+
   // ---- "Suelta para subir": arrastre externo desde el explorador ----
   bool _externalDrag = false;
   final _scrollController = ScrollController();
@@ -354,6 +392,7 @@ class _DrivePageState extends State<DrivePage> {
 
   @override
   void dispose() {
+    _sweepTicker?.cancel();
     _scrollController.dispose();
     HardwareKeyboard.instance.removeHandler(_handleKey);
     widget.drive.removeListener(_onChange);
@@ -445,6 +484,7 @@ class _DrivePageState extends State<DrivePage> {
       _selected.clear();
       _selectMode = false;
       _anchorIndex = -1;
+      _resetSweep();
       _localPreviews.clear();
       _preUploadNames.clear();
       _seenNames.clear();
@@ -675,6 +715,10 @@ class _DrivePageState extends State<DrivePage> {
   }
 
   void _onContentPointerUp(PointerEvent event) {
+    // Red de seguridad: al levantar el dedo el barrido termina SIEMPRE (aunque
+    // el arrastre se haya cancelado y no llegara su `onDragEnd`); si no, la
+    // tarjeta se quedaría en modo barrido y el siguiente arrastre no movería.
+    if (_sweeping) _endSweep();
     if (_marqueeStart == null) return;
     final drewMarquee = _marqueeRect != null;
     setState(() {
@@ -688,6 +732,143 @@ class _DrivePageState extends State<DrivePage> {
         _anchorIndex = -1;
       }
     });
+  }
+
+  // ==================== Barrido de selección (dedo) ====================
+
+  bool get _sweeping => _sweepFrom != null;
+
+  /// El dedo sostuvo [item] (que NO estaba seleccionado): empieza el barrido.
+  /// El dedo sostuvo [item]: si YA estaba seleccionado, el arrastre que sigue
+  /// lo MUEVE (como siempre); si no, empieza el BARRIDO.
+  void _holdItem(DriveItem item) {
+    if (_selected.contains(item.name)) {
+      _enterSelectMode(item.name);
+      return;
+    }
+    _startSweep(item);
+  }
+
+  void _startSweep(DriveItem item) {
+    HapticFeedback.selectionClick();
+    _sweepTicker?.cancel();
+    setState(() {
+      _sweepFrom = item.name;
+      _sweepBase = {..._selected};
+      _sweepAt = null;
+      _selectMode = true;
+      _anchorIndex = _indexOf(item.name);
+      _selected.add(item.name);
+    });
+  }
+
+  /// El dedo se movió: se selecciona desde donde se sostuvo hasta ahí.
+  void _sweepTo(Offset globalPosition) {
+    if (!_sweeping) return;
+    _sweepAt = globalPosition;
+    _applySweep();
+    _startSweepTicker();
+  }
+
+  /// Se soltó el dedo: se queda lo seleccionado.
+  void _endSweep() {
+    _resetSweep();
+    if (mounted) setState(() {});
+  }
+
+  void _resetSweep() {
+    _sweepTicker?.cancel();
+    _sweepTicker = null;
+    _sweepFrom = null;
+    _sweepBase = {};
+    _sweepAt = null;
+  }
+
+  /// Marca el rango entre el elemento sostenido y el que está bajo el dedo.
+  void _applySweep() {
+    final from = _sweepFrom;
+    final at = _sweepAt;
+    if (from == null || at == null) return;
+    final names = widget.drive.visibleItems.map((i) => i.name).toList();
+    final a = names.indexOf(from);
+    if (a < 0) return;
+    final b = _indexNear(at);
+    if (b == null) return;
+    final lo = a <= b ? a : b;
+    final hi = a <= b ? b : a;
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(_sweepBase)
+        ..addAll(names.sublist(lo, hi + 1));
+      _selectMode = true;
+    });
+  }
+
+  /// Índice del elemento bajo [globalPosition]; si el dedo va por un hueco (o
+  /// fuera de la lista) se toma el MÁS CERCANO, así el barrido no se detiene.
+  int? _indexNear(Offset globalPosition) {
+    final items = widget.drive.visibleItems;
+    var best = -1;
+    var bestDistance = double.infinity;
+    for (var i = 0; i < items.length; i++) {
+      final box = _itemKeys[items[i].name]?.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+      final rect = box.localToGlobal(Offset.zero) & box.size;
+      if (rect.contains(globalPosition)) return i;
+      final dx = globalPosition.dx < rect.left
+          ? rect.left - globalPosition.dx
+          : globalPosition.dx > rect.right
+          ? globalPosition.dx - rect.right
+          : 0.0;
+      final dy = globalPosition.dy < rect.top
+          ? rect.top - globalPosition.dy
+          : globalPosition.dy > rect.bottom
+          ? globalPosition.dy - rect.bottom
+          : 0.0;
+      final d = dx * dx + dy * dy;
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = i;
+      }
+    }
+    return best >= 0 ? best : null;
+  }
+
+  /// Mientras el dedo está cerca de un borde, la lista se desplaza sola.
+  void _startSweepTicker() {
+    _sweepTicker ??= Timer.periodic(
+      const Duration(milliseconds: 50),
+      (_) => _sweepScrollStep(),
+    );
+  }
+
+  void _sweepScrollStep() {
+    if (!mounted || !_sweeping) {
+      _sweepTicker?.cancel();
+      _sweepTicker = null;
+      return;
+    }
+    final at = _sweepAt;
+    if (at == null) return;
+    final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return;
+    final local = box.globalToLocal(at);
+    const edge = 74.0;
+    var delta = 0.0;
+    if (local.dy > box.size.height - edge) {
+      delta = 16;
+    } else if (local.dy < edge) {
+      delta = -16;
+    }
+    if (delta == 0 || !_scrollController.isSafe) return;
+    final pos = _scrollController.positions.single;
+    final target = (pos.pixels + delta)
+        .clamp(pos.minScrollExtent, pos.maxScrollExtent)
+        .toDouble();
+    if (target == pos.pixels) return;
+    _scrollController.jumpTo(target);
+    _applySweep();
   }
 
   /// Ejecuta una acción reportando errores; devuelve null si falló.
@@ -1318,6 +1499,9 @@ class _DrivePageState extends State<DrivePage> {
 
   /// Soltó algo sobre un elemento (carpeta o imagen).
   void _onItemDrop(DriveItem target, DragTargetDetails<Object> details) {
+    // Barrido de selección: el "arrastre" solo está marcando elementos, no
+    // lleva nada que soltar.
+    if (_sweeping) return;
     final payload = details.data;
     List<String> names;
     if (payload is SelectionPayload) {
@@ -1423,6 +1607,16 @@ class _DrivePageState extends State<DrivePage> {
         stackBox.attached) {
       marqueeOffset = contentBox.localToGlobal(Offset.zero, ancestor: stackBox);
     }
+
+    // Barrido de selección con el dedo (teléfono): las tarjetas lo usan para
+    // decidir entre SELECCIONAR (sostener algo sin seleccionar y deslizar) y
+    // MOVER (sostener algo ya seleccionado).
+    final sweep = SelectSweep(
+      active: _sweeping,
+      hold: _holdItem,
+      to: _sweepTo,
+      end: _endSweep,
+    );
 
     // Botón "atrás" del SISTEMA (Android): mientras no estemos en la raíz del
     // drive, NO cierra la app — vuelve a la carpeta padre. En la raíz el
@@ -1854,6 +2048,7 @@ class _DrivePageState extends State<DrivePage> {
                                         localPreviews: _localPreviews,
                                         noEntrance: _noEntrance,
                                         scrollController: _scrollController,
+                                        sweep: sweep,
                                       )
                                     : _ListContent(
                                         drive: drive,
@@ -1875,6 +2070,7 @@ class _DrivePageState extends State<DrivePage> {
                                         localPreviews: _localPreviews,
                                         noEntrance: _noEntrance,
                                         scrollController: _scrollController,
+                                        sweep: sweep,
                                       )),
                               ),
                             ),
@@ -2182,6 +2378,7 @@ class _SelectionBar extends StatelessWidget {
                   ),
                   child: Text(
                     '$count',
+                    key: const ValueKey('selection-count'),
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w800,
@@ -2486,6 +2683,7 @@ class _GridContent extends StatelessWidget {
     required this.localPreviews,
     required this.noEntrance,
     required this.scrollController,
+    required this.sweep,
   });
 
   final DriveBase drive;
@@ -2513,6 +2711,9 @@ class _GridContent extends StatelessWidget {
   /// Nombres que NO deben animar su entrada (recién aparecidos por una subida).
   final Set<String> noEntrance;
   final ScrollController scrollController;
+
+  /// Barrido de selección con el dedo (ver [SelectSweep]).
+  final SelectSweep sweep;
 
   /// ¿El usuario ya bajó? Las tarjetas que se construyen al desplazarse nacen
   /// con animación; las que ya estaban a la vista al abrir la carpeta, no
@@ -2580,6 +2781,7 @@ class _GridContent extends StatelessWidget {
                 onDownload: () => onDownload(item),
                 localPreview: localPreviews[item.name],
                 selectedNames: selected.toList(growable: false),
+                sweep: sweep,
               ),
             );
           },
@@ -2608,6 +2810,7 @@ class _GridItem extends StatelessWidget {
     required this.onDownload,
     this.localPreview,
     required this.selectedNames,
+    required this.sweep,
   });
 
   final DriveItem item;
@@ -2628,32 +2831,50 @@ class _GridItem extends StatelessWidget {
   final String? localPreview;
   final List<String> selectedNames;
 
+  /// Barrido de selección con el dedo (ver [SelectSweep]).
+  final SelectSweep sweep;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    // En un TELÉFONO con la versión WEB no se arrastra: el dedo scrollea (ver
-    // [_driveDragAllowed]). En la app móvil el arrastre exige presión larga
-    // (~350ms) y en escritorio es inmediato.
-    final Widget Function(Widget child) buildDraggable =
-        !_driveDragAllowed(context)
-        ? (child) => child
-        : useLongPressDrag
+    // En el TELÉFONO (la app o la web) el arrastre SOLO mueve lo que YA estaba
+    // seleccionado. Sostener algo sin seleccionar y deslizar es el BARRIDO de
+    // selección: no se levanta la tarjeta, se van marcando los elementos hasta
+    // el dedo (ver [SelectSweep]). En la computadora todo sigue igual.
+    // Con el barrido EN CURSO la tarjeta sigue en modo barrido aunque el dedo
+    // ya la haya marcado: si no, al seleccionarse el arrastre pasaba a "mover"
+    // y el barrido se cortaba a medio camino.
+    final phone = hsIsPhone(context);
+    final sweepThis =
+        phone &&
+        (!driveCardDragAllowed(phone: phone, selected: isSelected) ||
+            sweep.active);
+    final Widget Function(Widget child) buildDraggable = phone
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
-            onHoldSelect: onLongPress,
+            // La decisión (barrer o mover) se toma al cumplirse la presión,
+            // no al construir la tarjeta: el reconocedor del arrastre se crea
+            // una sola vez y no se reconfigura.
+            onHoldSelect: () => sweep.hold(item),
+            onDragUpdate: (details) => sweep.to(details.globalPosition),
+            onDragEnd: (_) => sweep.end(),
             data: isSelected && selectedNames.length > 1
                 ? SelectionPayload(selectedNames)
                 : SelectionPayload([item.name]),
-            feedback: _DragFeedback(
-              label: item.name,
-              isFolder: item.isFolder,
-              count: isSelected && selectedNames.length > 1
-                  ? selectedNames.length
-                  : 1,
-            ),
-            childWhenDragging: Opacity(opacity: .45, child: child),
+            feedback: sweepThis
+                ? const SizedBox.shrink()
+                : _DragFeedback(
+                    label: item.name,
+                    isFolder: item.isFolder,
+                    count: isSelected && selectedNames.length > 1
+                        ? selectedNames.length
+                        : 1,
+                  ),
+            childWhenDragging: sweepThis
+                ? child
+                : Opacity(opacity: .45, child: child),
             dragAnchorStrategy: pointerDragAnchorStrategy,
             child: child,
           )
@@ -2678,8 +2899,10 @@ class _GridItem extends StatelessWidget {
           );
     return buildDraggable(
       DragTarget<Object>(
+        // Durante el barrido el "arrastre" solo marca elementos: nada que
+        // soltar (ni carpetas que se iluminen como destino).
         onWillAcceptWithDetails: (details) =>
-            canDrop && details.data is! DriveItem,
+            canDrop && !sweep.active && details.data is! DriveItem,
         onAcceptWithDetails: onDrop,
         builder: (context, candidate, rejected) {
           final hovering = candidate.isNotEmpty && canDrop;
@@ -3307,6 +3530,7 @@ class _ListContent extends StatelessWidget {
     required this.localPreviews,
     required this.noEntrance,
     required this.scrollController,
+    required this.sweep,
   });
 
   final DriveBase drive;
@@ -3327,6 +3551,9 @@ class _ListContent extends StatelessWidget {
   final Map<String, String> localPreviews;
   final Set<String> noEntrance;
   final ScrollController scrollController;
+
+  /// Barrido de selección con el dedo (ver [SelectSweep]).
+  final SelectSweep sweep;
 
   /// Ver [_GridBody._scrolledDown]: las filas que aparecen al bajar animan su
   /// entrada; las que ya estaban a la vista se pintan directas.
@@ -3410,6 +3637,7 @@ class _ListContent extends StatelessWidget {
                     onDownload: () => onDownload(item),
                     localPreview: localPreviews[item.name],
                     selectedNames: selected.toList(growable: false),
+                    sweep: sweep,
                   ),
                 );
               },
@@ -3440,6 +3668,7 @@ class _ListRow extends StatelessWidget {
     required this.onDownload,
     this.localPreview,
     required this.selectedNames,
+    required this.sweep,
   });
 
   final DriveItem item;
@@ -3459,31 +3688,51 @@ class _ListRow extends StatelessWidget {
   final String? localPreview;
   final List<String> selectedNames;
 
+  /// Barrido de selección con el dedo (ver [SelectSweep]).
+  final SelectSweep sweep;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final canDrop = item.isFolder;
 
-    // Igual que en la cuadrícula: en la web de un teléfono no se arrastra; en
-    // la app móvil, con presión larga; en escritorio, inmediato.
-    final Widget Function(Widget child) buildDraggable =
-        !_driveDragAllowed(context)
-        ? (child) => child
-        : useLongPressDrag
+    // Igual que en la cuadrícula.
+    // En el TELÉFONO (la app o la web) el arrastre SOLO mueve lo que YA estaba
+    // seleccionado. Sostener algo sin seleccionar y deslizar es el BARRIDO de
+    // selección: no se levanta la tarjeta, se van marcando los elementos hasta
+    // el dedo (ver [SelectSweep]). En la computadora todo sigue igual.
+    // Con el barrido EN CURSO la tarjeta sigue en modo barrido aunque el dedo
+    // ya la haya marcado: si no, al seleccionarse el arrastre pasaba a "mover"
+    // y el barrido se cortaba a medio camino.
+    final phone = hsIsPhone(context);
+    final sweepThis =
+        phone &&
+        (!driveCardDragAllowed(phone: phone, selected: isSelected) ||
+            sweep.active);
+    final Widget Function(Widget child) buildDraggable = phone
         ? (child) => PressMoveDraggable<Object>(
             delay: AppConstants.longPressDragDelay,
-            onHoldSelect: onLongPress,
+            // La decisión (barrer o mover) se toma al cumplirse la presión,
+            // no al construir la tarjeta: el reconocedor del arrastre se crea
+            // una sola vez y no se reconfigura.
+            onHoldSelect: () => sweep.hold(item),
+            onDragUpdate: (details) => sweep.to(details.globalPosition),
+            onDragEnd: (_) => sweep.end(),
             data: isSelected && selectedNames.length > 1
                 ? SelectionPayload(selectedNames)
                 : SelectionPayload([item.name]),
-            feedback: _DragFeedback(
-              label: item.name,
-              isFolder: item.isFolder,
-              count: isSelected && selectedNames.length > 1
-                  ? selectedNames.length
-                  : 1,
-            ),
-            childWhenDragging: Opacity(opacity: .45, child: child),
+            feedback: sweepThis
+                ? const SizedBox.shrink()
+                : _DragFeedback(
+                    label: item.name,
+                    isFolder: item.isFolder,
+                    count: isSelected && selectedNames.length > 1
+                        ? selectedNames.length
+                        : 1,
+                  ),
+            childWhenDragging: sweepThis
+                ? child
+                : Opacity(opacity: .45, child: child),
             dragAnchorStrategy: pointerDragAnchorStrategy,
             child: child,
           )
@@ -3491,21 +3740,27 @@ class _ListRow extends StatelessWidget {
             data: isSelected && selectedNames.length > 1
                 ? SelectionPayload(selectedNames)
                 : SelectionPayload([item.name]),
-            feedback: _DragFeedback(
-              label: item.name,
-              isFolder: item.isFolder,
-              count: isSelected && selectedNames.length > 1
-                  ? selectedNames.length
-                  : 1,
-            ),
-            childWhenDragging: Opacity(opacity: .45, child: child),
+            feedback: sweepThis
+                ? const SizedBox.shrink()
+                : _DragFeedback(
+                    label: item.name,
+                    isFolder: item.isFolder,
+                    count: isSelected && selectedNames.length > 1
+                        ? selectedNames.length
+                        : 1,
+                  ),
+            childWhenDragging: sweepThis
+                ? child
+                : Opacity(opacity: .45, child: child),
             dragAnchorStrategy: pointerDragAnchorStrategy,
             child: child,
           );
     return buildDraggable(
       DragTarget<Object>(
+        // Durante el barrido el "arrastre" solo marca elementos: nada que
+        // soltar (ni carpetas que se iluminen como destino).
         onWillAcceptWithDetails: (details) =>
-            canDrop && details.data is! DriveItem,
+            canDrop && !sweep.active && details.data is! DriveItem,
         onAcceptWithDetails: onDrop,
         builder: (context, candidate, rejected) {
           final hovering = candidate.isNotEmpty && canDrop;

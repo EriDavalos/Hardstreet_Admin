@@ -18,6 +18,12 @@ import 'package:flutter/material.dart';
 ///   la de arriba (ya opaca), así el cambio no se ve.
 /// * Si una foto tarda en cargar, la anterior sigue viéndose hasta que la nueva
 ///   aparece: el banner nunca queda en blanco.
+/// * Con [preload] el fundido NO empieza hasta que la foto ya está descargada
+///   (y decodificada) en la caché. Sin eso, el fundido corría a ciegas: si la
+///   foto tardaba, la capa que entraba estaba vacía, se veía un instante la
+///   foto del paquete y luego la nueva aparecía DE GOLPE, sin transición.
+///   La primera foto también entra con fundido (si no, el primer cambio era un
+///   salto).
 /// * [background] se pinta SIEMPRE debajo (la foto del paquete). Así, mientras
 ///   las fotos de la carpeta se están bajando, el banner sigue enseñando la
 ///   foto del paquete en vez de quedarse vacío.
@@ -29,6 +35,8 @@ class HeroPhotoBanner extends StatefulWidget {
     this.background,
     this.every = const Duration(seconds: 5),
     this.fade = const Duration(milliseconds: 1200),
+    this.preload,
+    this.onPhoto,
   });
 
   /// Fotos a rotar. Con una sola (o ninguna) no hay rotación.
@@ -46,6 +54,15 @@ class HeroPhotoBanner extends StatefulWidget {
   /// Lo que dura el fundido de entrada.
   final Duration fade;
 
+  /// Deja la foto lista (descargada y decodificada) ANTES de fundirla. Se le
+  /// pide la de la vuelta y además se adelanta la siguiente. Que falle no
+  /// rompe nada: el banner cambia igual (las capas ya tienen su respaldo).
+  final Future<void> Function(String url)? preload;
+
+  /// Avisa qué foto se está viendo, para que el padre pueda teñir el fondo
+  /// con sus colores.
+  final ValueChanged<String>? onPhoto;
+
   @override
   State<HeroPhotoBanner> createState() => _HeroPhotoBannerState();
 }
@@ -61,7 +78,16 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
   /// la imagen y no hay parpadeo).
   int _base = 0;
 
+  /// Ya se pidió la foto que va a entrar (evita dos esperas a la vez si el
+  /// temporizador vuelve a tocar mientras la imagen viaja).
+  bool _switching = false;
+
   List<String> get _photos => widget.photos;
+
+  /// Las dos capas del banner: abajo la foto que se ve, arriba la que entra.
+  /// Con una sola foto también son dos (la de arriba arranca invisible y entra
+  /// con el fundido cuando la imagen ya está lista).
+  bool get _fades => widget.preload != null;
 
   @override
   void initState() {
@@ -69,13 +95,58 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
     _fade = AnimationController(vsync: this, duration: widget.fade)
       ..addStatusListener(_onFadeStatus);
     _sync();
+    if (_fades) {
+      _fade.value = 0;
+      _startIntro();
+    } else {
+      _notifyLater();
+    }
+  }
+
+  /// La PRIMERA foto entra con el mismo fundido. Sin esto, mientras la foto de
+  /// la carpeta se descargaba se veía la del paquete y después la nueva
+  /// aparecía de golpe.
+  void _startIntro() {
+    final preload = widget.preload;
+    if (preload == null || _photos.isEmpty) return;
+    final url = _photos.first;
+    _fade.value = 0;
+    unawaited(() async {
+      try {
+        await preload(url);
+      } catch (_) {
+        // Sin foto: el banner se queda con la del paquete.
+      }
+      if (!mounted) return;
+      _fade.forward(from: 0);
+      // Ya se está viendo: ahora sí se avisa (el fondo no se tiñe con una foto
+      // que todavía no ha aparecido).
+      widget.onPhoto?.call(url);
+    }());
   }
 
   /// El fundido terminó: la foto nueva queda también abajo, ya tapada por la
   /// de arriba (que está opaca), así el siguiente cambio no descubre un hueco.
+  /// De paso se adelanta la descarga de la que sigue.
   void _onFadeStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed || !mounted) return;
     setState(() => _base = _index);
+    _ahead();
+  }
+
+  /// Adelanta la SIGUIENTE foto: cuando le toque, el fundido empieza al
+  /// instante en vez de esperar a que baje.
+  void _ahead() {
+    final preload = widget.preload;
+    if (preload == null || _photos.length < 2) return;
+    final url = _photos[(_index + 1) % _photos.length];
+    unawaited(() async {
+      try {
+        await preload(url);
+      } catch (_) {
+        // Se reintenta cuando toque el turno.
+      }
+    }());
   }
 
   @override
@@ -88,8 +159,14 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
     if (!_samePhotos(old.photos, widget.photos)) {
       _base = 0;
       _index = 0;
+      _switching = false;
       _fade.value = 0;
       _sync();
+      if (_fades) {
+        _startIntro();
+      } else {
+        _notifyLater();
+      }
     }
   }
 
@@ -112,13 +189,49 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
     });
   }
 
+  /// Avisa de la foto visible al terminar el frame (montar el banner no puede
+  /// disparar el setState del padre).
+  void _notifyLater() {
+    final notify = widget.onPhoto;
+    if (notify == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _photos.isEmpty) return;
+      notify(_photos[_index % _photos.length]);
+    });
+  }
+
   void _next() {
-    if (_photos.length < 2) return;
+    if (_photos.length < 2 || _switching) return;
+    final next = (_index + 1) % _photos.length;
+    final preload = widget.preload;
+    if (preload == null) {
+      _show(next);
+      return;
+    }
+    // Se espera a tener la foto lista: si tarda, la anterior sigue viéndose.
+    _switching = true;
+    final url = _photos[next];
+    unawaited(() async {
+      try {
+        await preload(url);
+      } catch (_) {
+        // Se cambia igual: la capa nueva enseñará su respaldo y la foto
+        // aparece cuando logre bajar.
+      }
+      if (!mounted) return;
+      _switching = false;
+      _show(next);
+    }());
+  }
+
+  void _show(int next) {
+    if (!mounted) return;
     setState(() {
       _base = _index;
-      _index = (_index + 1) % _photos.length;
+      _index = next;
     });
     _fade.forward(from: 0);
+    widget.onPhoto?.call(_photos[next % _photos.length]);
   }
 
   @override
@@ -139,8 +252,12 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
     // El respaldo va SIEMPRE abajo: mientras una foto carga, se ve él.
     Widget stack(List<Widget> layers) =>
         Stack(fit: StackFit.expand, children: [?background, ...layers]);
-    // Una sola foto: no hay nada que rotar (ni capas que montar).
-    if (photos.length < 2) return stack([layer(current)]);
+    // Una sola foto: no hay nada que rotar, pero sí que fundir la entrada.
+    if (photos.length < 2) {
+      final single = layer(current);
+      if (!_fades) return stack([single]);
+      return stack([FadeTransition(opacity: _fade, child: single)]);
+    }
     // Dos capas SIEMPRE (el árbol no cambia de forma): abajo la foto que se
     // está viendo, arriba la que entra con el fundido.
     return stack([

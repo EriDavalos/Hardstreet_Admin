@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +15,8 @@ Future<void> _pump(
   required List<String> photos,
   Duration every = const Duration(seconds: 1),
   Duration fade = const Duration(milliseconds: 100),
+  Future<void> Function(String url)? preload,
+  ValueChanged<String>? onPhoto,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -25,6 +29,8 @@ Future<void> _pump(
             builder: _photo,
             every: every,
             fade: fade,
+            preload: preload,
+            onPhoto: onPhoto,
           ),
         ),
       ),
@@ -148,5 +154,104 @@ void main() {
     expect(_fadeOpacities(tester), [0.0]);
 
     await tester.pumpWidget(const SizedBox());
+  });
+
+  // FUNDIDO SIN FOTO: si la imagen tarda en llegar (la red va lenta), el
+  // banner NO debe fundir a un hueco ni enseñar la foto de golpe. Espera a
+  // tenerla descargada y entonces la funde; si no llega, sigue la anterior.
+  group('con precarga de fotos', () {
+    testWidgets('la primera foto también entra con fundido, cuando ya llegó', (
+      tester,
+    ) async {
+      final pending = Completer<void>();
+      await _pump(
+        tester,
+        photos: const ['a.jpg', 'b.jpg'],
+        preload: (url) => pending.future,
+      );
+      // Aún bajando: no se funde nada (se ve la foto del paquete de abajo).
+      expect(_fadeOpacities(tester), [0.0]);
+
+      pending.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(_fadeOpacities(tester).single, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(_fadeOpacities(tester), [1.0]);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('el cambio espera a que la foto nueva esté lista', (
+      tester,
+    ) async {
+      final pending = <String, Completer<void>>{
+        'a.jpg': Completer<void>(),
+        'b.jpg': Completer<void>(),
+      };
+      await _pump(
+        tester,
+        photos: const ['a.jpg', 'b.jpg'],
+        preload: (url) => pending[url]!.future,
+      );
+      pending['a.jpg']!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(_fadeOpacities(tester), [1.0]);
+
+      // Toca el cambio, pero 'b' todavía no ha bajado: se sigue viendo 'a'.
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byKey(const ValueKey('photo-b.jpg')), findsNothing);
+      expect(_fadeOpacities(tester), [1.0]);
+
+      // Llega la foto: ahora sí entra con su fundido.
+      pending['b.jpg']!.complete();
+      await tester.pump(); // el banner cambia de foto
+      await tester.pump(); // arranca el fundido
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(find.byKey(const ValueKey('photo-b.jpg')), findsOneWidget);
+      final opacity = _fadeOpacities(tester).single;
+      expect(opacity, greaterThan(0));
+      expect(opacity, lessThan(1));
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('con una sola foto la entrada se funde (sin rotación)', (
+      tester,
+    ) async {
+      final pending = Completer<void>();
+      await _pump(
+        tester,
+        photos: const ['sola.jpg'],
+        preload: (url) => pending.future,
+      );
+      expect(_fadeOpacities(tester), [0.0]);
+      expect(find.byKey(const ValueKey('photo-sola.jpg')), findsOneWidget);
+
+      pending.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(_fadeOpacities(tester), [1.0]);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('avisa qué foto se está viendo (para teñir el fondo)', (
+      tester,
+    ) async {
+      final seen = <String>[];
+      await _pump(
+        tester,
+        photos: const ['a.jpg', 'b.jpg'],
+        preload: (url) async {},
+        onPhoto: seen.add,
+      );
+      await tester.pump();
+      expect(seen, ['a.jpg']);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(seen.last, 'b.jpg');
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 }

@@ -47,15 +47,15 @@ bool get useLongPressDrag {
   }
 }
 
-/// ¿Se pueden ARRASTRAR las tarjetas del Drive?
+/// ¿La tarjeta del Drive arrastra para MOVER en esta situación?
 ///
-/// En la versión WEB abierta en un TELÉFONO, NO: el dedo está para scrollear,
-/// y arrastrar la carpeta en vez de bajar la lista era el problema. Mover y
-/// copiar siguen disponibles desde las acciones de la selección. En la app
-/// móvil (Android/iOS) se mantiene el arrastre con presión larga y en
-/// escritorio es inmediato.
-bool driveCardDragAllowed({required bool web, required bool phone}) =>
-    !(web && phone);
+/// En la COMPUTADORA siempre. En un TELÉFONO (la app o la web abierta en el
+/// teléfono) solo si el elemento YA estaba seleccionado: si no, sostener y
+/// deslizar es el BARRIDO de selección (selecciona todo lo que queda hasta el
+/// dedo y la lista se desplaza sola). Así el dedo sigue sirviendo para bajar
+/// la lista, y para mover algo primero se toca (queda seleccionado).
+bool driveCardDragAllowed({required bool phone, required bool selected}) =>
+    !phone || selected;
 
 /// Nombre legible de la plataforma actual (para diagnósticos).
 String get platformName {

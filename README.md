@@ -253,13 +253,24 @@ carpeta el banner se apaga solo).
 Con la opción encendida, cuando el servicio está **cumplido** (Terminado o
 Entregado) la portada de "Mi paquete" deja de enseñar solo la foto del paquete
 y pasa a mostrar hasta **10 fotos al azar** de las carpetas compartidas de
-todos los servicios cumplidos que tengan la opción, cambiando cada 5 s con un
+todos los servicios cumplidos que tengan la opción, cambiando cada 6 s con un
 **fundido**. Cada foto llena TODO el banner (se recorta un poco HACIA ARRIBA,
 así las verticales y las horizontales ocupan lo mismo sin cortarle la cara a la
 persona en el banner ancho de la computadora) y el fundido entra ENCIMA de la
 anterior, que sigue visible: entre foto y foto no hay huecos ni destellos.
 Mientras las fotos se están bajando, debajo sigue la foto del paquete: el banner
-nunca queda vacío. Sin fotos (o sin servicios cumplidos) se queda la foto del
+nunca queda vacío. Y el fundido **espera a que la foto ya esté descargada**
+(`HeroPhotoBanner.preload`): si la red va lenta se sigue viendo la anterior y el
+cambio entra con su transición, en vez de fundir a un hueco y enseñar la foto de
+golpe al llegar (la primera foto también entra fundida).
+
+**El fondo de TODA la vista** (`PhotoBackdrop`) es la foto que se está viendo,
+estirada y **desenfocada**, con un velo del color del panel encima para que el
+héroe del módulo, las tarjetas y los textos sigan leyéndose. Va SIEMPRE detrás
+del contenido (no encima ni alrededor de la tarjeta: el halo de color anterior
+ensuciaba la portada) y cambia con el mismo fundido que el banner, o sea cada
+6 s. Si la foto falla o no hay fotos, el fondo desaparece y la vista queda
+como siempre. Sin fotos (o sin servicios cumplidos) se queda la foto del
 paquete. Requiere la migración `Hardstreet-DB/2026-10-22_banner_cliente.sql`
 (`services.show_banner`); sin ella el interruptor queda apagado y todo sigue
 como antes.
@@ -613,13 +624,15 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   en "No se pudo reproducir" — justo lo que pasaba con los vídeos GRANDES.
   Ahora, ante el primer error, vuelve a pedir la URL **sin `play=low`** una vez
   y solo avisa si el original tampoco abre.
-- **En la WEB abierta en un TELÉFONO no se arrastran las tarjetas**: el dedo
-  está para scrollear y antes, al deslizar, la carpeta se despegaba y se movía
-  en vez de bajar la lista. Ahí el arrastre está **desactivado** (mover y
-  copiar siguen en las acciones de la selección: mantener presionada una
-  tarjeta entra en modo selección). Con **mouse de computadora** el arrastre
-  sigue siendo inmediato, y en la **app móvil** (Android/iOS) se mantiene con
-  presión larga.
+- **En el TELÉFONO el dedo SELECCIONA y el arrastre solo MUEVE lo ya
+  seleccionado** (la app de Android/iOS y también la web abierta en el
+  navegador del teléfono). Sostener una tarjeta que **no** estaba seleccionada
+  y deslizar es el **barrido**: se marcan todos los elementos entre esa tarjeta
+  y el dedo, y al llegar al borde la lista **se desplaza sola** para seguir
+  marcando lo que queda más abajo (o más arriba). Si la tarjeta **ya** estaba
+  seleccionada, el arrastre es el de siempre: levanta la selección para
+  **moverla** (o copiarla) soltándola en una carpeta. En la **computadora** no
+  cambia nada: arrastre inmediato con el mouse y marquesina con el recuadro.
 - El gesto de presión larga ya no se "acepta" a los 350 ms si el dedo venía
   moviéndose: un scroll lento baja la lista en vez de levantar la tarjeta. En
   web tampoco hay animación de entrada al bajar (las filas aparecían
