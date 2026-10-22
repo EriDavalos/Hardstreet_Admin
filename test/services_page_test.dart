@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -25,6 +26,8 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
                 'description': 'Video y fotos del evento completo',
                 'icon': 'material:videocam',
                 'url': 'https://drive.google.com/drive/u/0/boda',
+                'allowFolder': true,
+                'showBanner': true,
               },
               {
                 'id': 2,
@@ -102,8 +105,38 @@ void main() {
       );
       expect(find.text('1 con enlace'), findsNothing);
       expect(find.textContaining('con enlace'), findsNothing);
+      // El servicio que muestra sus fotos en el banner de «Mi paquete» lo dice.
+      expect(find.text('Banner cliente'), findsOneWidget);
     },
   );
+
+  testWidgets('el catálogo va en UNA columna, como Clientes', (tester) async {
+    _installMock(posts: []);
+    await _pumpPage(tester);
+
+    final first = tester.getTopLeft(find.text('Cobertura en evento'));
+    final second = tester.getTopLeft(find.text('Álbum de fotos'));
+    expect(first.dx, second.dx, reason: 'los dos en la misma columna');
+    expect(second.dy, greaterThan(first.dy));
+  });
+
+  testWidgets('al pasar el ratón la fila NO se levanta', (tester) async {
+    _installMock(posts: []);
+    await _pumpPage(tester);
+    await tester.pumpAndSettle();
+
+    final finder = find.text('Cobertura en evento');
+    final before = tester.getTopLeft(finder);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(finder));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final after = tester.getTopLeft(finder);
+    expect(after.dx, closeTo(before.dx, .01));
+    expect(after.dy, closeTo(before.dy, .01));
+    await mouse.removePointer();
+  });
 
   testWidgets('crear servicio manda nombre, icono y descripción (sin url)', (
     tester,
@@ -205,5 +238,51 @@ void main() {
     expect(update, hasLength(1));
     expect(update.first['photosMax'], 0);
     expect(update.first['allowFolder'], isFalse);
+  });
+
+  testWidgets('«Mostrar banner cliente» se guarda con la carpeta activa', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    await _tap(tester, find.text('Álbum de fotos'));
+    await _reveal(tester, find.text('Mostrar banner cliente'));
+    // La opción existe y se puede encender: el servicio comparte carpeta.
+    await _tap(tester, find.text('Mostrar banner cliente'));
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final update = posts.where((p) => p['id'] == 2).toList();
+    expect(update, hasLength(1));
+    expect(update.first['showBanner'], isTrue);
+    expect(update.first['allowFolder'], isTrue);
+  });
+
+  testWidgets('sin «Abrir carpeta» el banner no se puede encender', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    _installMock(posts: posts);
+    await _pumpPage(tester);
+
+    await _tap(tester, find.text('Álbum de fotos'));
+    await _reveal(tester, find.text('Mostrar banner cliente'));
+    // El banner necesita la carpeta compartida: se enciende, y al apagar la
+    // carpeta se apaga SOLO y ya no deja encenderlo.
+    await _tap(tester, find.text('Mostrar banner cliente'));
+    await _tap(tester, find.text('Abrir carpeta'));
+    await _reveal(tester, find.text('Mostrar banner cliente'));
+    expect(
+      find.textContaining('Primero activa «Abrir carpeta»'),
+      findsOneWidget,
+    );
+    await _tap(tester, find.text('Mostrar banner cliente'));
+    await _tap(tester, find.text('Guardar cambios'));
+
+    final update = posts.where((p) => p['id'] == 2).toList();
+    expect(update, hasLength(1));
+    expect(update.first['allowFolder'], isFalse);
+    expect(update.first['showBanner'], isFalse);
   });
 }

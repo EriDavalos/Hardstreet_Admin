@@ -1,8 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../app_constants.dart';
-import '../drive_base.dart' show driveImagePreview, isDriveImageUrl;
+import '../drive_base.dart' show DriveItem, driveImagePreview, isDriveImageUrl;
 import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
@@ -12,6 +14,7 @@ import '../theme.dart' show AppColors;
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/drive_thumb.dart';
+import '../widgets/hero_photo_banner.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/service_photos_sheet.dart';
 import '../widgets/hs_toast.dart';
@@ -54,6 +57,15 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   /// Avisos del paquete (fotos disponibles, servicio terminado…).
   List<Map<String, dynamic>> _notifications = const [];
   int _unread = 0;
+
+  /// FOTOS DEL BANNER de la portada: hasta 10 al azar entre las carpetas
+  /// compartidas de los servicios CUMPLIDOS que tienen encendido «Mostrar
+  /// banner cliente» (lo enciende el estudio en el servicio del catálogo).
+  List<String> _bannerPhotos = const [];
+
+  /// Clave de la última carga del banner (paquete + servicios): evita
+  /// volver a listar carpetas en cada reconstrucción.
+  String _bannerFor = '';
 
   /// Búsqueda y filtro de SUS servicios.
   String _serviceQuery = '';
@@ -100,7 +112,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           _selectedId = (packages.first['id'] as num? ?? 0).toInt();
         }
         _loading = false;
+        // Al recargar se vuelven a sortear las fotos del banner.
+        _bannerFor = '';
       });
+      unawaited(_loadBannerPhotos());
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -114,6 +129,63 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         _loading = false;
       });
     }
+  }
+
+  /// Servicios CUMPLIDOS del paquete que pueden alimentar el banner: tienen
+  /// encendido «Mostrar banner cliente» y una carpeta compartida.
+  List<Map<String, dynamic>> get _bannerServices => [
+    for (final s in _services)
+      if (_isDone(s) &&
+          s['service'] is Map &&
+          (s['service'] as Map)['showBanner'] == true &&
+          (s['shareFolder'] ?? '').toString().trim().isNotEmpty)
+        s,
+  ];
+
+  /// Arma la ronda de fotos del banner: lista las carpetas compartidas de los
+  /// servicios cumplidos y se queda con 10 imágenes AL AZAR.
+  ///
+  /// Es "mejor esfuerzo": si el drive no está disponible o una carpeta falla,
+  /// el banner sigue con la foto del paquete (no se rompe nada).
+  Future<void> _loadBannerPhotos() async {
+    final services = _bannerServices;
+    final pkgId = (_selected['id'] as num? ?? 0).toInt();
+    final key = '$pkgId:${services.map((s) => s['id']).join(',')}';
+    if (key == _bannerFor) return;
+    _bannerFor = key;
+    if (services.isEmpty) {
+      if (_bannerPhotos.isNotEmpty) {
+        setState(() => _bannerPhotos = const []);
+      }
+      return;
+    }
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) return;
+    final found = <String>[];
+    for (final s in services) {
+      final rel = (s['shareFolder'] ?? '')
+          .toString()
+          .split('/')
+          .map((p) => p.trim())
+          .where((p) => p.isNotEmpty)
+          .toList();
+      if (rel.isEmpty) continue;
+      try {
+        final items = await drive.listFolderItems(rel);
+        for (final DriveItem item in items) {
+          if (item.isFolder || !item.isImage) continue;
+          final src = drive.thumbSourceIn(rel, item, width: 1400);
+          if (src.trim().isNotEmpty) found.add(src);
+        }
+      } catch (_) {
+        // Carpeta sin acceso o drive caído: se usan las demás.
+      }
+    }
+    if (!mounted || _bannerFor != key) return;
+    final unique = found.toSet().toList()..shuffle();
+    setState(() {
+      _bannerPhotos = unique.take(10).toList(growable: false);
+    });
   }
 
   Map<String, dynamic> get _selected {
@@ -579,7 +651,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           );
           return InkWell(
             borderRadius: BorderRadius.circular(15),
-            onTap: () => setState(() => _selectedId = id),
+            onTap: () {
+              setState(() => _selectedId = id);
+              unawaited(_loadBannerPhotos());
+            },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               width: phone ? 190 : 220,
@@ -856,25 +931,57 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _PackagePhoto(
-                    url: photo,
-                    tier: look,
-                    emoji: hsCategoryEmoji(category),
-                    big: true,
+                  // Banner: la foto del paquete o, cuando hay servicios
+                  // cumplidos con «Mostrar banner cliente», sus fotos al azar.
+                  // La foto del paquete queda SIEMPRE debajo: mientras las
+                  // fotos de la carpeta cargan (o si una falla) se sigue
+                  // viendo ella, no un banner vacío.
+                  HeroPhotoBanner(
+                    photos: _bannerPhotos,
+                    background: _PackagePhoto(
+                      url: photo,
+                      tier: look,
+                      emoji: hsCategoryEmoji(category),
+                      big: true,
+                    ),
+                    builder: (_, url) => _PackagePhoto(
+                      url: url,
+                      tier: look,
+                      emoji: hsCategoryEmoji(category),
+                      big: true,
+                      // En la portada el recorte tira hacia ARRIBA: en el
+                      // banner ancho de la computadora una foto vertical
+                      // recortada al centro le corta la cara a la persona.
+                      alignment: const Alignment(0, -0.35),
+                      // Mientras esta foto carga se ve la del paquete.
+                      waiting: const SizedBox.shrink(),
+                    ),
                   ),
                   // Velo: arriba para las píldoras, abajo para el título.
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x66000000),
-                          Color(0x00000000),
-                          Color(0x22000000),
-                          Color(0xE6000000),
-                        ],
-                        stops: [0, .28, .55, 1],
+                  //
+                  // Se pinta 1 px MÁS ALTO que el banner y el clip del Stack
+                  // corta el sobrante: con alturas en píxeles fraccionarios
+                  // (p. ej. 218 × 1.25 = 272.5) el velo y la foto redondeaban
+                  // distinto y quedaba una fina línea de foto sin oscurecer
+                  // justo en el borde de abajo, al cambiar de imagen.
+                  const Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: -1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x66000000),
+                            Color(0x00000000),
+                            Color(0x22000000),
+                            Color(0xE6000000),
+                          ],
+                          stops: [0, .28, .55, 1],
+                        ),
                       ),
                     ),
                   ),
@@ -1882,6 +1989,8 @@ class _PackagePhoto extends StatelessWidget {
     required this.tier,
     required this.emoji,
     this.big = false,
+    this.alignment = Alignment.center,
+    this.waiting,
   });
 
   final String url;
@@ -1889,9 +1998,18 @@ class _PackagePhoto extends StatelessWidget {
   final String emoji;
   final bool big;
 
+  /// Qué parte de la foto se ve cuando se recorta (la foto siempre llena el
+  /// espacio con `cover`). En el banner va un poco hacia arriba.
+  final Alignment alignment;
+
+  /// Qué enseñar MIENTRAS la foto carga o si falla. `null` = el hueco con el
+  /// emoji sobre el degradado del tier.
+  final Widget? waiting;
+
   @override
   Widget build(BuildContext context) {
     final fallback = _PackagePhotoFallback(tier: tier, emoji: emoji, big: big);
+    final wait = waiting ?? fallback;
     final clean = url.trim();
     if (clean.isEmpty) return fallback;
     if (isDriveImageUrl(clean)) {
@@ -1900,14 +2018,16 @@ class _PackagePhoto extends StatelessWidget {
         isRemote: true,
         big: big,
         rounded: false,
+        alignment: alignment,
       );
     }
     return Image.network(
       clean,
       fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => fallback,
+      alignment: alignment,
+      errorBuilder: (_, _, _) => wait,
       loadingBuilder: (context, child, progress) =>
-          progress == null ? child : fallback,
+          progress == null ? child : wait,
     );
   }
 }

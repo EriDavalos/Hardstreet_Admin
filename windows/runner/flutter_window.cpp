@@ -87,6 +87,7 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetUpEventsChannel();
+  SetUpFullscreenChannel();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -108,6 +109,7 @@ void FlutterWindow::OnDestroy() {
   // El panel de eventos es una ventana propia: se destruye antes que la app.
   event_widget_.reset();
   events_channel_.reset();
+  fullscreen_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -193,6 +195,66 @@ void FlutterWindow::SetUpEventsChannel() {
           return;
         }
         result->NotImplemented();
+      });
+}
+
+// Canal `hardstreet/window`: pantalla completa REAL de la ventana.
+//
+// El visor de vídeo vive dentro de un WebView2 y ahí `requestFullscreen` no
+// puede agrandar la VENTANA (el botón solo escondía la barra del panel). Aquí
+// se guarda el estilo y el tamaño actuales y la ventana se pone sin bordes
+// sobre el monitor; al salir se restaura exactamente como estaba.
+void FlutterWindow::SetUpFullscreenChannel() {
+  fullscreen_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "hardstreet/window",
+          &flutter::StandardMethodCodec::GetInstance());
+  fullscreen_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() != "setFullscreen") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* flag = std::get_if<bool>(call.arguments());
+        const bool enable = flag != nullptr && *flag;
+        HWND hwnd = GetHandle();
+        if (hwnd == nullptr) {
+          result->Success(flutter::EncodableValue(false));
+          return;
+        }
+        if (enable == is_fullscreen_) {
+          result->Success(flutter::EncodableValue(is_fullscreen_));
+          return;
+        }
+        if (enable) {
+          saved_style_ = GetWindowLongPtr(hwnd, GWL_STYLE);
+          GetWindowRect(hwnd, &saved_rect_);
+          MONITORINFO monitor = {};
+          monitor.cbSize = sizeof(MONITORINFO);
+          if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                             &monitor)) {
+            const RECT& area = monitor.rcMonitor;
+            SetWindowLongPtr(hwnd, GWL_STYLE,
+                             (saved_style_ &
+                              ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
+                                WS_MAXIMIZEBOX | WS_SYSMENU)) |
+                                 WS_POPUP | WS_VISIBLE);
+            SetWindowPos(hwnd, HWND_TOP, area.left, area.top,
+                         area.right - area.left, area.bottom - area.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            is_fullscreen_ = true;
+          }
+        } else {
+          SetWindowLongPtr(hwnd, GWL_STYLE, saved_style_);
+          SetWindowPos(hwnd, nullptr, saved_rect_.left, saved_rect_.top,
+                       saved_rect_.right - saved_rect_.left,
+                       saved_rect_.bottom - saved_rect_.top,
+                       SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+          is_fullscreen_ = false;
+        }
+        result->Success(flutter::EncodableValue(is_fullscreen_));
       });
 }
 

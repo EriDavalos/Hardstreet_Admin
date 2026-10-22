@@ -25,6 +25,8 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
+  # Sonido del aviso del paquete dentro de la app (Windows, Android, iOS y web).
+  audioplayers: ^6.8.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -37,6 +39,8 @@ flutter:
   # que el panel, el login y la pantalla de carga enseñan LA MISMA pieza.
   assets:
     - assets/hs_icon.png
+    # Campanita del aviso del paquete («Ya puedes elegir tus fotos»…).
+    - assets/sounds/
     # El SITIO REAL empaquetado (index.html, CSS, JS e imágenes): el editor
     # HTML del módulo "Sitio web" lo sirve en loopback para que la vista
     # previa sea EXACTAMENTE la web, no una maqueta de Flutter.

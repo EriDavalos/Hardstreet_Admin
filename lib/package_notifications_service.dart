@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'hs_api.dart';
+import 'notification_sound.dart';
 import 'reminder_notifications_native.dart';
 
 /// Avisos del PAQUETE del cliente (los manda el estudio desde el panel):
@@ -56,6 +57,9 @@ class PackageNotificationsService extends ChangeNotifier
 
   /// Backend de notificaciones nativas (sustituible en pruebas).
   PackageNotifier notifier = NativeReminderPlugin.instance;
+
+  /// Campanita DENTRO de la app (sustituible en pruebas: sin audio).
+  Future<void> Function() sound = NotificationSound.play;
 
   /// De dónde se leen los avisos (sustituible en pruebas).
   Future<({List<Map<String, dynamic>> items, int unread})> Function() fetch =
@@ -172,6 +176,13 @@ class PackageNotificationsService extends ChangeNotifier
       fresh.add(n);
     }
     if (fresh.isEmpty) return;
+    // Primero el sonido (si el equipo tiene audio), para que se note al
+    // instante aunque el toast del sistema tarde.
+    try {
+      await sound();
+    } catch (_) {
+      // Sin audio: el aviso se ve igual.
+    }
     try {
       await notifier.showPackageAll(fresh);
     } catch (_) {

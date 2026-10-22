@@ -9,6 +9,7 @@ import 'package:hardstreet_admin/drive_base.dart';
 import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/widgets/hero_photo_banner.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Drive de prueba: carpetas y ARCHIVOS fijos, sin red. El selector de fotos
@@ -98,6 +99,10 @@ class _FakeDrive extends DriveBase {
 List<Map<String, dynamic>> _packages({
   bool pickPhotos = true,
   bool showFolder = true,
+  // «Mostrar banner cliente»: el servicio del catálogo muestra sus fotos en
+  // la portada de «Mi paquete» cuando está cumplido.
+  bool showBanner = false,
+  bool done = false,
 }) => [
   {
     'id': 11,
@@ -119,13 +124,21 @@ List<Map<String, dynamic>> _packages({
       {
         'id': 101,
         'description': '',
-        'status': {'id': 2, 'name': 'En proceso'},
+        'status': done
+            ? {'id': 3, 'name': 'Entregado'}
+            : {'id': 2, 'name': 'En proceso'},
         'shareFolder': 'ReynaCoot',
         'shareLink': 'https://ejemplo.mx/album',
         'pickPhotos': pickPhotos,
         'showFolder': showFolder,
         'items': 1,
-        'service': {'id': 2, 'name': 'Álbum de fotos', 'icon': '', 'url': ''},
+        'service': {
+          'id': 2,
+          'name': 'Álbum de fotos',
+          'icon': '',
+          'url': '',
+          'showBanner': showBanner,
+        },
       },
     ],
   },
@@ -137,6 +150,8 @@ void _installMock({
   required List<Map<String, dynamic>> puts,
   bool pickPhotos = true,
   bool showFolder = true,
+  bool showBanner = false,
+  bool done = false,
   int max = 0,
 }) {
   var items = <String>['ReynaCoot/portada.jpg'];
@@ -148,6 +163,8 @@ void _installMock({
       final packages = _packages(
         pickPhotos: pickPhotos,
         showFolder: showFolder,
+        showBanner: showBanner,
+        done: done,
       );
       (packages.first['services'] as List).first['items'] = items.length;
       return http.Response(
@@ -345,6 +362,51 @@ void main() {
     expect(puts.single['paths'], isEmpty);
     expect(find.text('Selección borrada'), findsOneWidget);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  // BANNER DE LA PORTADA: cuando el servicio está CUMPLIDO y el estudio activó
+  // «Mostrar banner cliente», la foto del paquete se cambia por fotos de su
+  // carpeta compartida, con un fundido entre ellas.
+  testWidgets('el banner toma las fotos del servicio cumplido', (tester) async {
+    _installMock(puts: [], showBanner: true, done: true);
+    await _pump(tester);
+    await tester.pump();
+
+    // La carpeta compartida del servicio tiene DOS fotos: esas son la ronda
+    // del banner (el cambio de una a otra lo cubre hero_photo_banner_test).
+    final banner = tester.widget<HeroPhotoBanner>(find.byType(HeroPhotoBanner));
+    expect(banner.photos, hasLength(2));
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin «Mostrar banner cliente» sigue la foto del paquete', (
+    tester,
+  ) async {
+    _installMock(puts: [], done: true);
+    await _pump(tester);
+    await tester.pump();
+
+    // Sin fotos que rotar: queda la del paquete, que va de RESPALDO debajo.
+    final banner = tester.widget<HeroPhotoBanner>(find.byType(HeroPhotoBanner));
+    expect(banner.photos, isEmpty);
+    expect(banner.background, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('con el servicio en proceso tampoco usa sus fotos', (
+    tester,
+  ) async {
+    _installMock(puts: [], showBanner: true, done: false);
+    await _pump(tester);
+    await tester.pump();
+
+    final banner = tester.widget<HeroPhotoBanner>(find.byType(HeroPhotoBanner));
+    expect(banner.photos, isEmpty);
+    expect(banner.background, isNotNull);
     expect(tester.takeException(), isNull);
   });
 

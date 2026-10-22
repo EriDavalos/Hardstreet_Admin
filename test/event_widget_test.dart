@@ -299,7 +299,8 @@ void main() {
     expect(events.first['when'], '22 oct · 19:00');
   });
 
-  test('un evento ajeno enmascarado se ve como "Ocupado" (sin nombres)', () {
+  test('un hueco ajeno enmascarado NO llega al widget (nada de "Ocupado")',
+      () {
     final events = UpcomingEventsWidget.buildEvents(
       [
         {
@@ -314,13 +315,29 @@ void main() {
       ],
       now: now,
     );
-    expect(events.single['title'], 'Ocupado');
     expect(
-      events.single['subtitle'],
-      '',
-      reason: 'Nada del otro cliente (ni nombre ni servicio) llega al widget',
+      events,
+      isEmpty,
+      reason: 'El widget de la pantalla de inicio no enseña días solo '
+          '"ocupados": esas filas no dicen nada.',
     );
-    expect(events.single['time'], '12:00');
+  });
+
+  test('el hueco ajeno se descarta pero los eventos propios sí entran', () {
+    final events = UpcomingEventsWidget.buildEvents(
+      [
+        {
+          ..._agenda(date: '2026-10-18 12:00:00'),
+          'busy': true,
+          'clientName': '',
+          'packageName': '',
+        },
+        _agenda(date: '2026-10-19 15:00:00'),
+      ],
+      now: now,
+    );
+    expect(events, hasLength(1));
+    expect(events.single['time'], '15:00');
   });
 
   test('sin eventos devuelve una lista vacía (el widget dice "sin eventos")',

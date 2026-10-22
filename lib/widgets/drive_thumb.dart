@@ -26,6 +26,7 @@ class DriveThumb extends StatefulWidget {
     this.size = 40,
     this.big = false,
     this.contain = false,
+    this.alignment = Alignment.center,
     this.rounded = true,
     this.onReady,
     this.fallback,
@@ -48,6 +49,10 @@ class DriveThumb extends StatefulWidget {
 
   /// true = la imagen se ajusta sin recortar (visor).
   final bool contain;
+
+  /// Qué parte de la foto se ve cuando se recorta (`cover`). El banner de
+  /// «Mi paquete» tira un poco hacia arriba para no cortar caras.
+  final Alignment alignment;
 
   /// true = esquinas redondeadas (tarjetas). El VISOR la pone en false: la
   /// foto se ve a pantalla completa, sin bordes curvos.
@@ -200,6 +205,7 @@ class _DriveThumbState extends State<DriveThumb> {
         Image.file(
           File(widget.localPreview!),
           fit: fit,
+          alignment: widget.alignment,
           cacheWidth: px,
           // La copia local aparece de inmediato (sin fundido): es la foto que
           // el usuario acaba de subir y debe verse \"ahí mismo\".
@@ -217,6 +223,7 @@ class _DriveThumbState extends State<DriveThumb> {
           widget.source,
           key: ValueKey('thumb-${widget.source}#$_attempt'),
           fit: fit,
+          alignment: widget.alignment,
           cacheWidth: px,
           frameBuilder: (c, child, frame, sync) {
             // Ya venía de la caché (sincrónico): mostrar directo, sin animar.

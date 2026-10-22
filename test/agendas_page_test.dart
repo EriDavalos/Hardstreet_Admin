@@ -10,6 +10,7 @@ import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/agendas_page.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
 import 'package:hardstreet_admin/widgets/hs_place_picker.dart';
+import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Instala un cliente HTTP falso con TRES agendas:
 /// - el LUNES de la semana actual a las 14:30, "Cliente Test"
@@ -383,6 +384,24 @@ void main() {
       // Su badge sigue diciendo QUÉ hay agendado (icono del servicio).
       expect(find.byIcon(Icons.photo_camera_rounded), findsOneWidget);
 
+      // Y el CÍRCULO del día va resaltado con el color del servicio: antes solo
+      // se veía el iconito y el día parecía libre.
+      final circle = tester.widget<AnimatedContainer>(
+        find
+            .ancestor(
+              of: find.text('$eventDay').last,
+              matching: find.byType(AnimatedContainer),
+            )
+            .first,
+      );
+      final deco = circle.decoration! as BoxDecoration;
+      expect(
+        deco.color?.a ?? 0,
+        greaterThan(.05),
+        reason: 'el día agendado lleva relleno, no un círculo transparente',
+      );
+      expect(deco.border, isNotNull, reason: 'y un aro del color del servicio');
+
       final occupied = tester.widget<Text>(find.text('$busyDay').last);
       expect(
         occupied.style?.color,
@@ -680,11 +699,99 @@ void main() {
     },
   );
 
+  testWidgets('cliente: el hueco ocupado NO abre detalle; sus eventos sí', (
+    tester,
+  ) async {
+    // Lo que el servidor manda a un CLIENTE: su evento completo y el de otro
+    // cliente enmascarado (`busy: true`, sin nombres ni servicio).
+    HsSession.user = const {'role': 'cliente'};
+    addTearDown(HsSession.clear);
+    final events = <String>[];
+    final sub = HsToast.events.listen((e) => events.add(e.message));
+    addTearDown(sub.cancel);
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final monday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    final day = '${monday.year}-${two(monday.month)}-${two(monday.day)}';
+
+    await _pumpAgendas(
+      tester,
+      const Size(1200, 900),
+      agendas: [
+        {
+          'id': 1,
+          'purchasedPackageId': 10,
+          'userId': 2,
+          'clientName': 'Ana Ruiz',
+          'packageName': 'Boda Premium',
+          'serviceId': 5,
+          'serviceName': 'Cobertura en evento',
+          'eventDate': '${day}T14:30:00',
+          'description': 'Ceremonia en el jardín',
+          'busy': false,
+        },
+        {
+          'id': 2,
+          'purchasedPackageId': null,
+          'userId': null,
+          'clientName': '',
+          'packageName': '',
+          'serviceId': null,
+          'serviceName': '',
+          'eventDate': '${day}T17:00:00',
+          'description': '',
+          'location': '',
+          'lat': null,
+          'lng': null,
+          'busy': true,
+        },
+      ],
+    );
+
+    final calendar = find.byKey(const ValueKey('agenda-calendar'));
+    final busyBlock = find.descendant(
+      of: calendar,
+      matching: find.text('Ocupado'),
+    );
+    // Su evento se ve con su nombre; el ajeno, solo como hueco ocupado.
+    expect(
+      find.descendant(of: calendar, matching: find.text('Ana Ruiz')),
+      findsOneWidget,
+    );
+    expect(busyBlock, findsOneWidget);
+
+    // El hueco ocupado NO abre ningún modal: solo avisa que está tomado.
+    await tester.ensureVisible(busyBlock);
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, busyBlock);
+
+    expect(
+      find.text('Detalle de la agenda'),
+      findsNothing,
+      reason: 'A un cliente no se le abre el detalle de otro cliente',
+    );
+    expect(events, contains('Horario ocupado'));
+
+    // Su PROPIO evento sigue abriendo con todos los detalles.
+    final ownBlock = find.descendant(
+      of: calendar,
+      matching: find.text('Ana Ruiz'),
+    );
+    await tester.ensureVisible(ownBlock);
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, ownBlock);
+
+    expect(find.textContaining('Boda Premium'), findsWidgets);
+    expect(find.textContaining('Cobertura en evento'), findsWidgets);
+    expect(find.text('Ceremonia en el jardín'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'cliente: sus eventos con detalle y los de OTROS solo como "Ocupado"',
+    'estudio: el hueco ocupado SÍ abre su detalle (solo el cliente se bloquea)',
     (tester) async {
-      // Lo que el servidor manda a un CLIENTE: su evento completo y el de otro
-      // cliente enmascarado (`busy: true`, sin nombres ni servicio).
+      HsSession.user = const {'role': 'admin'};
+      addTearDown(HsSession.clear);
       final now = DateTime.now();
       String two(int n) => n.toString().padLeft(2, '0');
       final monday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
@@ -694,18 +801,6 @@ void main() {
         tester,
         const Size(1200, 900),
         agendas: [
-          {
-            'id': 1,
-            'purchasedPackageId': 10,
-            'userId': 2,
-            'clientName': 'Ana Ruiz',
-            'packageName': 'Boda Premium',
-            'serviceId': 5,
-            'serviceName': 'Cobertura en evento',
-            'eventDate': '${day}T14:30:00',
-            'description': 'Ceremonia en el jardín',
-            'busy': false,
-          },
           {
             'id': 2,
             'purchasedPackageId': null,
@@ -717,61 +812,22 @@ void main() {
             'eventDate': '${day}T17:00:00',
             'description': '',
             'location': '',
-            'lat': null,
-            'lng': null,
             'busy': true,
           },
         ],
       );
 
-      final calendar = find.byKey(const ValueKey('agenda-calendar'));
       final busyBlock = find.descendant(
-        of: calendar,
+        of: find.byKey(const ValueKey('agenda-calendar')),
         matching: find.text('Ocupado'),
       );
-      // Su evento se ve con su nombre; el ajeno, solo como hueco ocupado.
-      expect(
-        find.descendant(of: calendar, matching: find.text('Ana Ruiz')),
-        findsOneWidget,
-      );
-      expect(busyBlock, findsOneWidget);
-
-      // El hueco ocupado abre un detalle que SOLO dice que está ocupado.
       await tester.ensureVisible(busyBlock);
       await tester.pump(const Duration(milliseconds: 300));
       await _tapPump(tester, busyBlock);
 
-      final dialog = find.byType(FormDialog);
       expect(find.text('Detalle de la agenda'), findsOneWidget);
-      expect(
-        find.descendant(of: dialog, matching: find.text('Ocupado')),
-        findsOneWidget,
-      );
       expect(find.text('Horario reservado con otro cliente'), findsOneWidget);
-      expect(
-        find.descendant(of: dialog, matching: find.text('Paquete ')),
-        findsNothing,
-        reason: 'El paquete de otro cliente no se muestra',
-      );
-      expect(
-        find.descendant(of: dialog, matching: find.text('Servicio ')),
-        findsNothing,
-      );
-      expect(find.textContaining('Boda Premium'), findsNothing);
       await _tapPump(tester, find.byTooltip('Cerrar'));
-
-      // Su PROPIO evento sigue abriendo con todos los detalles.
-      final ownBlock = find.descendant(
-        of: calendar,
-        matching: find.text('Ana Ruiz'),
-      );
-      await tester.ensureVisible(ownBlock);
-      await tester.pump(const Duration(milliseconds: 300));
-      await _tapPump(tester, ownBlock);
-
-      expect(find.textContaining('Boda Premium'), findsWidgets);
-      expect(find.textContaining('Cobertura en evento'), findsWidgets);
-      expect(find.text('Ceremonia en el jardín'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

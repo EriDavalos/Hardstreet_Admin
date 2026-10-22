@@ -11,6 +11,10 @@
          al receptor cada minuto. Al reiniciar el teléfono hay que volver a
          pedirla, de ahí este permiso. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Evitar que el teléfono duerma la app: sin esta excepción las alarmas y
+         el trabajo periódico de avisos se aplazan y el cliente NO recibe el
+         aviso con la app cerrada. Se pide UNA vez al arrancar (MainActivity). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <!-- Descargas del Drive (Android 9 y anteriores): escribir en la carpeta
          pública de Descargas. En Android 10+ se usa MediaStore y este permiso
          NO se declara (maxSdkVersion lo limita a los sistemas que lo exigen). -->
@@ -75,6 +79,14 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
+        <!-- Avisos con la app cerrada: trabajo PERIÓDICO que programa el
+             sistema (JobScheduler). Sigue consultando aunque el teléfono mate
+             la app y tras reiniciar. La permission es la que exige Android:
+             solo el sistema puede enlazarlo. -->
+        <service
+            android:name=".PackageNotificationsJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- Lista del widget: RemoteViewsService que llena el listado de
              eventos (así se ven TODOS y el widget se puede desplazar). Solo el
              sistema (la appwidget host) puede enlazarlo: BIND_REMOTEVIEWS. -->

@@ -4,7 +4,10 @@ import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -73,7 +76,7 @@ class PackageNotificationsReceiver : BroadcastReceiver() {
                 val pending = goAsync()
                 Thread {
                     try {
-                        poll(context)
+                        pollNow(context)
                     } catch (_: Exception) {
                         // Mejor esfuerzo: los avisos también viven en el panel.
                     } finally {
@@ -103,6 +106,12 @@ class PackageNotificationsReceiver : BroadcastReceiver() {
         private const val FIRST_DELAY_MS = 45L * 1000L
 
         private const val REQ_POLL = 31
+
+        /** Id del trabajo periódico del sistema (ver [scheduleJob]). */
+        private const val JOB_ID = 41
+
+        /** Período del trabajo: 15 min es el MÍNIMO que acepta Android. */
+        private const val JOB_PERIOD_MS = 15L * 60L * 1000L
 
         private val PACKAGE_CHANNEL = Channel(
             "paquete",
@@ -150,8 +159,12 @@ class PackageNotificationsReceiver : BroadcastReceiver() {
         /**
          * Pide al sistema que nos despierte en [delayMs]. Se usa `set`/`setAndAllowWhileIdle`
          * (UNA vez) y se re-agenda tras cada consulta: es lo que sí corre en Doze.
+         *
+         * Además instala (una sola vez) el trabajo periódico de [scheduleJob],
+         * que es el que sigue avisando cuando el teléfono mata la app.
          */
         fun schedule(context: Context, delayMs: Long = FIRST_DELAY_MS) {
+            scheduleJob(context)
             try {
                 val alarm = context.getSystemService(Context.ALARM_SERVICE)
                     as? AlarmManager ?: return
@@ -179,6 +192,54 @@ class PackageNotificationsReceiver : BroadcastReceiver() {
                     .setAction(ACTION_POLL),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
+
+        /**
+         * Trabajo PERIÓDICO del sistema ([PackageNotificationsJobService]).
+         *
+         * Es la vía que no depende de que la app siga viva: `JobScheduler`
+         * vuelve a lanzarlo cada 15 minutos aunque el usuario haya cerrado la
+         * app, y tras reiniciar el teléfono si el trabajo es persistente.
+         */
+        fun scheduleJob(context: Context) {
+            try {
+                val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE)
+                    as? JobScheduler ?: return
+                // Ya programado: reprogramarlo reiniciaría la cuenta atrás.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                    scheduler.getPendingJob(JOB_ID) != null
+                ) {
+                    return
+                }
+                val component = ComponentName(
+                    context,
+                    PackageNotificationsJobService::class.java
+                )
+                val builder = JobInfo.Builder(JOB_ID, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    // Sobrevive al reinicio (RECEIVE_BOOT_COMPLETED ya declarado).
+                    .setPersisted(true)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    builder.setPeriodic(JOB_PERIOD_MS)
+                } else {
+                    @Suppress("DEPRECATION")
+                    builder.setPeriodic(JOB_PERIOD_MS, JOB_PERIOD_MS)
+                }
+                scheduler.schedule(builder.build())
+            } catch (_: Exception) {
+                // Sin job queda la alarma de siempre.
+            }
+        }
+
+        /**
+         * Consulta los DOS orígenes de avisos y notifica los nuevos.
+         *
+         * Público para que lo use el trabajo periódico del sistema
+         * ([PackageNotificationsJobService]). Se puede llamar desde cualquier
+         * hilo; nunca lanza excepciones hacia quien llama.
+         */
+        fun pollNow(context: Context) {
+            poll(context)
+        }
 
         /** Consulta los DOS orígenes de avisos y notifica los nuevos. */
         private fun poll(context: Context) {

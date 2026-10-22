@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hardstreet_admin/hs_place.dart';
@@ -137,5 +138,201 @@ void main() {
       find.text('Búscalo por nombre o márcalo en el mapa'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('el mapa del detalle pinta TODOS los puntos, numerados', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 700,
+              child: HsPlaceMapPreview(
+                places: const [
+                  HsPlace(
+                    name: 'Hacienda San José',
+                    lat: 4.711,
+                    lng: -74.0721,
+                  ),
+                  // Sin coordenadas: no se pinta (pero conserva su número 2).
+                  HsPlace(name: 'Salón Real'),
+                  HsPlace(name: 'Casa', lat: 4.75, lng: -74.03),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byTooltip('Lugar 1: Hacienda San José'), findsOneWidget);
+    expect(
+      find.byTooltip('Lugar 3: Casa'),
+      findsOneWidget,
+      reason: 'El número es el de la agenda, no el del orden en el mapa',
+    );
+
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    expect(
+      map.options.initialCameraFit,
+      isNotNull,
+      reason: 'Con varios puntos, el encuadre los abre todos',
+    );
+    expect(
+      map.options.interactionOptions.flags & InteractiveFlag.drag,
+      isNot(0),
+      reason: 'El mapa del detalle se puede mover',
+    );
+    expect(
+      map.options.interactionOptions.flags & InteractiveFlag.pinchZoom,
+      isNot(0),
+      reason: 'Se puede acercar',
+    );
+    expect(
+      tester.getSize(find.byType(HsPlaceMapPreview)).height,
+      190,
+      reason: 'Un poco más grande que el mini mapa anterior (132)',
+    );
+  });
+
+  testWidgets('sin coordenadas el mapa del detalle no se pinta', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: HsPlaceMapPreview(places: [HsPlace(name: 'Solo el nombre')]),
+        ),
+      ),
+    );
+    expect(find.byType(FlutterMap), findsNothing);
+  });
+
+  // En el celular el mapa "se movía solo": dos toques seguidos disparaban el
+  // zoom de doble toque y el encuadre saltaba. Con el dedo, tocar debe marcar
+  // (o no hacer nada) y arrastrar debe mover; acercar es con pinza o botones.
+  testWidgets('el doble toque NO mueve el mapa del detalle', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 700,
+              child: HsPlaceMapPreview(
+                places: const [
+                  HsPlace(
+                    name: 'Hacienda San José',
+                    lat: 4.711,
+                    lng: -74.0721,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    MapCamera camera() =>
+        MapCamera.of(tester.element(find.byType(MarkerLayer)));
+    final before = camera();
+
+    // El gesto completo, con la animación incluida (si el zoom de doble toque
+    // estuviera activo, el mismo gesto sube el zoom: ver el control de mapa).
+    final center = tester.getCenter(find.byType(FlutterMap));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(center);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(camera().zoom, before.zoom, reason: 'no se acerca de golpe');
+    expect(camera().center, before.center, reason: 'no se mueve solo');
+  });
+
+  testWidgets('el mapa del detalle se ARRASTRA con el dedo', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 700,
+              child: HsPlaceMapPreview(
+                places: const [
+                  HsPlace(
+                    name: 'Hacienda San José',
+                    lat: 4.711,
+                    lng: -74.0721,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    MapCamera camera() =>
+        MapCamera.of(tester.element(find.byType(MarkerLayer)));
+    final before = camera();
+
+    // Arrastrar hacia la izquierda desplaza el mapa al ESTE (sube la longitud).
+    await tester.drag(find.byType(FlutterMap), const Offset(-120, 0));
+    await tester.pump();
+
+    expect(camera().center.longitude, greaterThan(before.center.longitude));
+  });
+
+  testWidgets('al agregar otra ubicación el mapa muestra la ya marcada', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HsPlacesField(
+              places: const [
+                HsPlace(
+                  name: 'Hacienda San José',
+                  lat: 4.711,
+                  lng: -74.0721,
+                ),
+                // La segunda todavía está vacía: al abrirla se ve la primera.
+                null,
+              ],
+              onChanged: (_, _) {},
+              onAdd: () {},
+              onRemove: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Agregar lugar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Lugar del evento'), findsOneWidget);
+    expect(
+      find.byTooltip('Lugar 1: Hacienda San José'),
+      findsOneWidget,
+      reason: 'La ubicación ya marcada se ve en el mapa del selector',
+    );
+    expect(find.byType(FlutterMap), findsOneWidget);
   });
 }

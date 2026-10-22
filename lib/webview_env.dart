@@ -30,7 +30,14 @@ Future<WebViewEnvironment?> _create() async {
     // Un tope: si WebView2 no contesta, el visor no puede quedarse girando
     // para siempre (se intenta el entorno de fábrica).
     return await WebViewEnvironment.create(
-      settings: WebViewEnvironmentSettings(userDataFolder: folder.path),
+      settings: WebViewEnvironmentSettings(
+        userDataFolder: folder.path,
+        // Los vídeos del Drive tienen que arrancar SOLOS: sin esto WebView2
+        // aplica la misma política que Edge y bloquea el arranque con sonido
+        // hasta que el usuario toca el vídeo (se quedaba en el póster).
+        additionalBrowserArguments:
+            '--autoplay-policy=no-user-gesture-required',
+      ),
     ).timeout(const Duration(seconds: 6));
   } catch (_) {
     // Sin entorno propio se usa el de fábrica. En una instalación normal bajo

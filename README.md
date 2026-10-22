@@ -197,6 +197,11 @@ conoce el módulo, se muestra igual).
   (cliente, paquete, servicio, nota y lugar) y los de los DEMÁS como huecos
   **Ocupado** — solo la fecha y la hora, sin nombres ni detalles —, así sabe
   cuándo el estudio está tomado sin enterarse de los eventos de otros.
+  Al tocar un hueco **Ocupado** el cliente NO abre ningún detalle: solo le sale
+  el aviso "Horario ocupado" (antes el modal se abría para no decir nada más
+  que "Ocupado"). Si el día mezcla eventos suyos y ocupados, el detalle se abre
+  solo con los suyos. El **estudio** sí abre esos huecos: para él una agenda
+  ajena no está enmascarada.
   El recorte lo hace el **servidor** (`lib/agenda-visibility.ts` del backend):
   el panel, el widget de próximos eventos y cualquier llamada a la API reciben
   ya las agendas ajenas como `{ busy: true }`. Se considera cliente al rol
@@ -205,9 +210,9 @@ conoce el módulo, se muestra igual).
   (campanita) de un cliente también se limitan a SUS eventos.
   Esos huecos **Ocupado** son los ÚNICOS días que se pintan en **rojo** (con
   candado en el badge): el rojo es la señal del cliente. Para el estudio un
-  día con eventos se ve como siempre — el número normal y el badge con el
-  color e icono de su servicio —, así el calendario no se vuelve una pared
-  de círculos rojos.
+  día con eventos lleva el **círculo del día resaltado** con el color de su
+  servicio (y el badge con su icono), así se distingue de un día libre sin
+  llenar el calendario de rojo.
 
 ## Opciones de compartir por SERVICIO (Mi paquete)
 
@@ -238,6 +243,27 @@ cada una solo si su opción está encendida. El estudio ve lo compartido,
 cuántos elementos eligió el cliente y qué opciones tiene encendidas cada
 servicio en la pestaña Servicios del paquete.
 
+### Banner de la portada (Mostrar banner cliente)
+
+En **Personalizar servicio** (módulo Servicios) hay un interruptor nuevo,
+**Mostrar banner cliente**, que solo se puede encender si el servicio tiene
+**Abrir carpeta** activo (sin carpeta no hay fotos que mostrar; al apagar la
+carpeta el banner se apaga solo).
+
+Con la opción encendida, cuando el servicio está **cumplido** (Terminado o
+Entregado) la portada de "Mi paquete" deja de enseñar solo la foto del paquete
+y pasa a mostrar hasta **10 fotos al azar** de las carpetas compartidas de
+todos los servicios cumplidos que tengan la opción, cambiando cada 5 s con un
+**fundido**. Cada foto llena TODO el banner (se recorta un poco HACIA ARRIBA,
+así las verticales y las horizontales ocupan lo mismo sin cortarle la cara a la
+persona en el banner ancho de la computadora) y el fundido entra ENCIMA de la
+anterior, que sigue visible: entre foto y foto no hay huecos ni destellos.
+Mientras las fotos se están bajando, debajo sigue la foto del paquete: el banner
+nunca queda vacío. Sin fotos (o sin servicios cumplidos) se queda la foto del
+paquete. Requiere la migración `Hardstreet-DB/2026-10-22_banner_cliente.sql`
+(`services.show_banner`); sin ella el interruptor queda apagado y todo sigue
+como antes.
+
 El **estudio** también puede marcar la selección (botón **Elegir/Cambiar
 fotos** y **Avisar al cliente** en el bloque de fotos del servicio), por si el
 cliente no puede hacerlo. Si la selección **ya se envió a impresión**, esos
@@ -267,7 +293,10 @@ quién lo recibe. Sin configuración se usan los roles recomendados:
 | Avisos manuales del estudio | (se elige al enviar) | el módulo elegido |
 
 Los avisos llegan a la **campanita** (`/api/reminders`) y, al tocarlos, abren su
-módulo (`target`). El botón **Enviar aviso** escribe un aviso manual para los
+módulo (`target`). Los avisos del **paquete** al cliente ("Ya puedes elegir tus
+fotos", "Servicio terminado"…) además suenan dentro de la app: una campanita
+corta (`assets/sounds/aviso.wav`, reproducida con `audioplayers`) suena UNA vez
+por aviso nuevo, igual que el toast nativo (`PackageNotificationsService`). El botón **Enviar aviso** escribe un aviso manual para los
 roles marcados y elige a qué módulo lleva. El historial muestra lo ya enviado
 con sus destinatarios. Migración:
 `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` (crea
@@ -517,6 +546,9 @@ sobre el módulo "Servicios"):
   ```bash
   cd Hardstreet && node --test tests/site-design.test.mjs
   ```
+- El listado va en **UNA sola columna**, con el mismo patrón que Clientes y
+  Usuarios: una tarjeta con filas separadas por líneas y la fila entera como
+  área de clic (sin rejilla de dos columnas ni saltos al pasar el ratón).
 - La liga se administra aquí o directo desde la pestaña Servicios del
   paquete comprado del cliente.
 - Requiere la migración `Hardstreet-DB/2026-10-13_services_url.sql`.

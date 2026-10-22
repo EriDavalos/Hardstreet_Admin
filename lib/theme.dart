@@ -198,12 +198,16 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
       ),
+      // Tooltip SIEMPRE oscuro con texto BLANCO. En modo oscuro el fondo era
+      // blanco al 12 %: el texto blanco se perdía sobre él (los nombres de las
+      // ubicaciones del mapa no se leían al pasar el mouse).
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
           color: isDark
-              ? Colors.white.withValues(alpha: .12)
+              ? const Color(0xFF2B3140)
               : const Color(0xFF1F2937),
           borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white.withValues(alpha: .10)),
         ),
         textStyle: const TextStyle(color: Colors.white, fontSize: 12),
       ),

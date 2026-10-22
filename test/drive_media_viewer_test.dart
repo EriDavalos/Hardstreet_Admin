@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hardstreet_admin/app_platform.dart';
@@ -23,6 +24,25 @@ import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
 // ==================================================================
 
 void main() {
+  group('pantalla completa: hacia dónde gira el teléfono', () {
+    test('un vídeo HORIZONTAL se ve apaisado', () {
+      expect(
+        fullscreenOrientationsFor(horizontal: true),
+        [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
+      );
+    });
+
+    test('un vídeo VERTICAL se queda de pie', () {
+      expect(fullscreenOrientationsFor(horizontal: false), [
+        DeviceOrientation.portraitUp,
+      ]);
+    });
+
+    test('al salir (o sin medidas) se permiten todas las posturas', () {
+      expect(fullscreenOrientationsFor(horizontal: null), isNull);
+    });
+  });
+
   late Directory root;
   late DriveService drive;
 

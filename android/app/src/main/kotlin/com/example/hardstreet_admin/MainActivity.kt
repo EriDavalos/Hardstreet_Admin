@@ -3,12 +3,15 @@ package com.example.hardstreet_admin
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.MediaStore
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -45,6 +48,43 @@ class MainActivity : FlutterActivity() {
         // periódica en cada arranque (el sistema borra las alarmas al
         // reiniciar el teléfono; el receptor las repone en BOOT_COMPLETED).
         PackageNotificationsReceiver.schedule(this)
+        requestBatteryExemptionOnce()
+    }
+
+    /**
+     * Pide UNA VEZ «sin restricciones de batería» para que los avisos lleguen
+     * con la app cerrada.
+     *
+     * Android —y sobre todo las capas de fabricante (Xiaomi, Huawei, Samsung,
+     * Oppo…)— duerme o mata una app que no está abierta: las alarmas se
+     * aplazan y hasta el trabajo periódico del sistema deja de correr, así que
+     * el aviso no aparece hasta abrir la app otra vez. Con esta excepción el
+     * teléfono deja trabajar al aviso de fondo.
+     *
+     * Solo se pide cuando YA hay sesión (token guardado) y una sola vez: si el
+     * usuario dice que no, la app sigue funcionando igual.
+     */
+    private fun requestBatteryExemptionOnce() {
+        try {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            val token = prefs.getString("flutter.app.notify.token", null)
+            if (token.isNullOrEmpty()) return
+            if (prefs.getBoolean("flutter.app.notify.batteryAsked", false)) return
+            val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                ?: return
+            if (power.isIgnoringBatteryOptimizations(packageName)) return
+            prefs.edit()
+                .putBoolean("flutter.app.notify.batteryAsked", true)
+                .apply()
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (_: Exception) {
+            // Si el fabricante no ofrece ese ajuste, la app avisa cuando puede.
+        }
     }
 
     /**

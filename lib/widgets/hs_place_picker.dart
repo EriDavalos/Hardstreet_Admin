@@ -34,19 +34,47 @@ const LatLng _kFallbackCenter = LatLng(4.7110, -74.0721);
 const double _kFallbackZoom = 5.4;
 const double _kPlaceZoom = 16;
 
+/// Gestos de los mapas, pensados para DEDO (y válidos con mouse).
+///
+/// Se dejan arrastrar, pellizcar/acercar con la rueda y el impulso, pero SIN
+/// los dos gestos de DOBLE TOQUE: al marcar un punto se toca el mapa dos veces
+/// seguidas (o se toca un marcador y luego el mapa) y el mapa se acercaba de
+/// golpe "solo". Con esto un toque marca y un arrastre mueve; para acercar
+/// están la pinza y los botones + / −.
+const int _kMapTouchFlags =
+    InteractiveFlag.all &
+    ~InteractiveFlag.rotate &
+    ~InteractiveFlag.doubleTapZoom &
+    ~InteractiveFlag.doubleTapDragZoom;
+
 const String _kTileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+/// Una ubicación YA marcada en la agenda, con su NÚMERO (1, 2, 3…).
+///
+/// Se le pasa al selector para pintarla en el mapa: al agregar el segundo
+/// lugar se ve dónde quedó el primero, sin salir del mapa.
+@immutable
+class HsPlacePin {
+  const HsPlacePin({required this.place, required this.number});
+
+  final HsPlace place;
+  final int number;
+}
 
 /// Abre el selector de lugar.
 ///
 /// Devuelve `null` si el usuario cerró sin tocar nada y [PlaceChoice] con
-/// `place: null` si quitó la ubicación de la agenda.
+/// `place: null` si quitó la ubicación de la agenda. [others] son las OTRAS
+/// ubicaciones que ya tiene la agenda: se dibujan en el mapa para no repetir
+/// puntos y para ver el conjunto.
 Future<PlaceChoice?> hsShowPlacePicker(
   BuildContext context, {
   HsPlace? initial,
+  List<HsPlacePin> others = const <HsPlacePin>[],
 }) {
   return showHsModal<PlaceChoice>(
     context: context,
-    builder: (_) => _PlacePickerDialog(initial: initial),
+    builder: (_) => _PlacePickerDialog(initial: initial, others: others),
   );
 }
 
@@ -54,9 +82,12 @@ Future<PlaceChoice?> hsShowPlacePicker(
 // SELECTOR
 // ==================================================================
 class _PlacePickerDialog extends StatefulWidget {
-  const _PlacePickerDialog({this.initial});
+  const _PlacePickerDialog({this.initial, this.others = const <HsPlacePin>[]});
 
   final HsPlace? initial;
+
+  /// Las otras ubicaciones de la MISMA agenda (ya marcadas).
+  final List<HsPlacePin> others;
 
   @override
   State<_PlacePickerDialog> createState() => _PlacePickerDialogState();
@@ -93,10 +124,22 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
     _selected = widget.initial;
     _name.text = widget.initial?.name ?? '';
     final hasPoint = widget.initial?.hasCoords ?? false;
-    _center = hasPoint
-        ? LatLng(widget.initial!.lat!, widget.initial!.lng!)
-        : _kFallbackCenter;
-    _zoom = hasPoint ? _kPlaceZoom : _kFallbackZoom;
+    final marked = [
+      for (final pin in widget.others)
+        if (pin.place.hasCoords) LatLng(pin.place.lat!, pin.place.lng!),
+    ];
+    if (hasPoint) {
+      _center = LatLng(widget.initial!.lat!, widget.initial!.lng!);
+      _zoom = _kPlaceZoom;
+    } else if (marked.isNotEmpty) {
+      // Sin punto propio pero con OTROS lugares ya marcados: se abre sobre
+      // ellos (y no en el centro del país), así los puntos se ven de una.
+      _center = marked.first;
+      _zoom = marked.length > 1 ? 10.5 : 14;
+    } else {
+      _center = _kFallbackCenter;
+      _zoom = _kFallbackZoom;
+    }
     _loadSaved();
   }
 
@@ -369,6 +412,18 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
     return n != null && n.isFinite ? n : null;
   }
 
+  /// Punto del lugar (null si no tiene coordenadas válidas).
+  static LatLng? _pointOf(HsPlace place) => place.hasCoords
+      ? LatLng(place.lat!, place.lng!)
+      : null;
+
+  /// Punto de una ubicación GUARDADA, que llega como mapa del servidor.
+  static LatLng? _pointFromMap(Map<String, dynamic> place) {
+    final lat = _coord(place['lat']);
+    final lng = _coord(place['lng']);
+    return lat == null || lng == null ? null : LatLng(lat, lng);
+  }
+
   /// Nombre corto: el del lugar o, si el backend no lo dio, la primera parte
   /// de la dirección ("Hacienda San José, Cota, …" -> "Hacienda San José").
   static String _placeName(Map<String, dynamic> place) {
@@ -387,6 +442,103 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
     final size = MediaQuery.sizeOf(context);
     final surface = theme.dialogTheme.backgroundColor ?? theme.cardColor;
     final hasPoint = _selected?.hasCoords ?? false;
+
+    // PUNTOS A LA VISTA: la ubicación que se está eligiendo, las OTRAS de la
+    // agenda (numeradas 1, 2, 3…) y las guardadas del estudio (marcador de
+    // libro, se usan con un toque). Todo vive en el MISMO mapa, así al agregar
+    // la segunda ubicación se ve dónde quedó la primera.
+    final savedPins = <Marker>[];
+    for (final saved in _saved) {
+      final point = _pointFromMap(saved);
+      if (point == null) continue;
+      savedPins.add(
+        Marker(
+          point: point,
+          width: 30,
+          height: 30,
+          child: Tooltip(
+            message: (saved['name'] ?? 'Ubicación guardada').toString(),
+            child: GestureDetector(
+              onTap: () => _useSaved(saved),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppColors.brand.withValues(alpha: .5),
+                    width: 1.6,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 5,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.bookmark,
+                  size: 14,
+                  color: AppColors.brand.withValues(alpha: .85),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final otherPins = <Marker>[];
+    for (final pin in widget.others) {
+      final point = _pointOf(pin.place);
+      if (point == null) continue;
+      otherPins.add(
+        Marker(
+          point: point,
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: 'Lugar ${pin.number}: ${pin.place.label}',
+            child: Container(
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.brand, width: 2),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                '${pin.number}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.brand,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    // Encuadre inicial: si hay varios puntos (el propio + los de la agenda) se
+    // abren TODOS en pantalla en vez de caer sobre uno solo.
+    final fitPoints = <LatLng>[
+      if (hasPoint) LatLng(_selected!.lat!, _selected!.lng!),
+      for (final pin in widget.others)
+        if (pin.place.hasCoords) LatLng(pin.place.lat!, pin.place.lng!),
+    ];
+    final initialFit = fitPoints.length > 1
+        ? CameraFit.coordinates(
+            coordinates: fitPoints,
+            padding: const EdgeInsets.all(48),
+            maxZoom: 15.5,
+          )
+        : null;
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -557,13 +709,14 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
                     options: MapOptions(
                       initialCenter: _center,
                       initialZoom: _zoom,
+                      initialCameraFit: initialFit,
                       minZoom: 2,
                       maxZoom: 19,
                       onTap: (_, point) => _tapPoint(point),
                       interactionOptions: const InteractionOptions(
-                        // Gira con dos dedos en el celular, pero sin rotación
-                        // accidental (el norte siempre arriba).
-                        flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                        // Sin giro (el norte siempre arriba) y sin los gestos de
+                        // doble toque, que movían el mapa solos en el celular.
+                        flags: _kMapTouchFlags,
                       ),
                     ),
                     children: [
@@ -572,23 +725,34 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
                         userAgentPackageName: 'com.example.hardstreet_admin',
                         maxZoom: 19,
                       ),
-                      if (hasPoint)
+                      if (savedPins.isNotEmpty ||
+                          otherPins.isNotEmpty ||
+                          hasPoint)
                         MarkerLayer(
                           markers: [
-                            Marker(
-                              point: LatLng(_selected!.lat!, _selected!.lng!),
-                              width: 46,
-                              height: 46,
-                              alignment: Alignment.topCenter,
-                              child: Icon(
-                                Icons.location_on,
-                                size: 42,
-                                color: AppColors.brand,
-                                shadows: const [
-                                  Shadow(color: Colors.black38, blurRadius: 6),
-                                ],
+                            ...savedPins,
+                            ...otherPins,
+                            if (hasPoint)
+                              Marker(
+                                point: LatLng(
+                                  _selected!.lat!,
+                                  _selected!.lng!,
+                                ),
+                                width: 46,
+                                height: 46,
+                                alignment: Alignment.topCenter,
+                                child: Icon(
+                                  Icons.location_on,
+                                  size: 42,
+                                  color: AppColors.brand,
+                                  shadows: const [
+                                    Shadow(
+                                      color: Colors.black38,
+                                      blurRadius: 6,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
                           ],
                         ),
                     ],
@@ -777,10 +941,10 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
     }
     // En computadora el mapa es el protagonista: el modal ocupa CASI toda la
     // ventana (antes se quedaba en 780×660 y el mapa salía pequeño).
-    final width = mathMin(size.width - 48, 1080);
-    final height = mathMin(size.height - 48, 860);
+    final width = mathMin(size.width - 32, 1180);
+    final height = mathMin(size.height - 32, 960);
     return Dialog(
-      insetPadding: const EdgeInsets.all(20),
+      insetPadding: const EdgeInsets.all(12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       child: SizedBox(width: width, height: height, child: content),
     );
@@ -961,14 +1125,22 @@ class HsPlaceField extends StatelessWidget {
     required this.place,
     required this.onChanged,
     this.enabled = true,
+    this.otherPlaces = const <HsPlacePin>[],
   });
 
   final HsPlace? place;
   final ValueChanged<HsPlace?> onChanged;
   final bool enabled;
 
+  /// Las OTRAS ubicaciones de la agenda: se dibujan en el mapa del selector.
+  final List<HsPlacePin> otherPlaces;
+
   Future<void> _pick(BuildContext context) async {
-    final choice = await hsShowPlacePicker(context, initial: place);
+    final choice = await hsShowPlacePicker(
+      context,
+      initial: place,
+      others: otherPlaces,
+    );
     if (choice == null) return;
     onChanged(choice.place);
   }
@@ -1092,6 +1264,13 @@ class HsPlacesField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Las que ya tienen PUNTO, con su número: al abrir el mapa de una fila se
+    // ven las demás marcadas (y no se repite el mismo sitio por accidente).
+    final pins = <HsPlacePin>[
+      for (var i = 0; i < places.length; i++)
+        if (places[i]?.hasCoords ?? false)
+          HsPlacePin(place: places[i]!, number: i + 1),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1125,6 +1304,10 @@ class HsPlacesField extends StatelessWidget {
                 child: HsPlaceField(
                   place: places[i],
                   enabled: enabled,
+                  otherPlaces: [
+                    for (final pin in pins)
+                      if (pin.number != i + 1) pin,
+                  ],
                   onChanged: (place) => onChanged(i, place),
                 ),
               ),
@@ -1169,21 +1352,32 @@ class HsPlacesField extends StatelessWidget {
   }
 }
 
-/// Mini mapa (solo lectura) para el detalle de la agenda.
+/// Mapa de las ubicaciones de una agenda: se puede arrastrar y acercar.
 ///
-/// Si la agenda no tiene coordenadas no se pinta nada: quien llama decide si
-/// muestra el nombre solo. Tocar el mapa abre la app de mapas del equipo.
+/// Pinta TODOS los puntos que tengan coordenadas, numerados 1, 2, 3… (el mismo
+/// número de la fila «Lugar N») y abre el encuadre justo sobre ellos. Sin
+/// coordenadas no se pinta nada: quien llama decide si muestra el nombre solo.
 class HsPlaceMapPreview extends StatelessWidget {
-  const HsPlaceMapPreview({super.key, required this.place, this.height = 132});
+  const HsPlaceMapPreview({
+    super.key,
+    required this.places,
+    this.height = 190,
+  });
 
-  final HsPlace place;
+  final List<HsPlace> places;
   final double height;
 
   @override
   Widget build(BuildContext context) {
-    if (!place.hasCoords) return const SizedBox.shrink();
+    // Número de la agenda (1, 2, 3…) + su lugar, solo los que tienen punto.
+    final marked = <MapEntry<int, HsPlace>>[
+      for (var i = 0; i < places.length; i++)
+        if (places[i].hasCoords) MapEntry(i + 1, places[i]),
+    ];
+    if (marked.isEmpty) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
-    final point = LatLng(place.lat!, place.lng!);
+    final points = [for (final entry in marked) LatLng(entry.value.lat!, entry.value.lng!)];
+    final first = marked.first.value;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: SizedBox(
@@ -1192,10 +1386,20 @@ class HsPlaceMapPreview extends StatelessWidget {
           children: [
             FlutterMap(
               options: MapOptions(
-                initialCenter: point,
+                initialCenter: points.first,
                 initialZoom: 15.5,
+                // Con varios lugares se ven TODOS de una; con uno, se acerca.
+                initialCameraFit: CameraFit.coordinates(
+                  coordinates: points,
+                  padding: const EdgeInsets.all(42),
+                  maxZoom: 16,
+                ),
+                minZoom: 2,
+                maxZoom: 19,
                 interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.none,
+                  // Se mueve y se acerca con el mouse o con los dedos, pero sin
+                  // los gestos de doble toque (daban saltos en el celular).
+                  flags: _kMapTouchFlags,
                 ),
               ),
               children: [
@@ -1206,20 +1410,49 @@ class HsPlaceMapPreview extends StatelessWidget {
                 ),
                 MarkerLayer(
                   markers: [
-                    Marker(
-                      point: point,
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.topCenter,
-                      child: Icon(
-                        Icons.location_on,
-                        size: 36,
-                        color: AppColors.brand,
-                        shadows: const [
-                          Shadow(color: Colors.black38, blurRadius: 6),
-                        ],
+                    for (var i = 0; i < marked.length; i++)
+                      Marker(
+                        point: points[i],
+                        width: 34,
+                        height: 34,
+                        child: Tooltip(
+                          message: marked.length > 1
+                              ? 'Lugar ${marked[i].key}: ${marked[i].value.label}'
+                              : marked[i].value.label,
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: scheme.surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: AppColors.brand,
+                                width: 2.5,
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black26,
+                                  blurRadius: 6,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: marked.length > 1
+                                ? Text(
+                                    '${marked[i].key}',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.brand,
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.location_on,
+                                    size: 20,
+                                    color: AppColors.brand,
+                                  ),
+                          ),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -1250,7 +1483,7 @@ class HsPlaceMapPreview extends StatelessWidget {
                 color: scheme.surface.withValues(alpha: .95),
                 borderRadius: BorderRadius.circular(8),
                 child: InkWell(
-                  onTap: () => hsOpenPlace(place),
+                  onTap: () => hsOpenPlace(first),
                   borderRadius: BorderRadius.circular(8),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(

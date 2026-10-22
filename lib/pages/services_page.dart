@@ -335,59 +335,40 @@ class _ServicesPageState extends State<ServicesPage> {
                   'botón "Nuevo servicio".',
             )
           else
+            // UNA sola columna, con el mismo diseño que los demás módulos
+            // (Clientes, Usuarios…): una tarjeta con filas separadas por
+            // líneas. Nada de rejilla de dos columnas ni de saltar al pasar
+            // el ratón: la fila entera abre el servicio.
             Builder(
               builder: (context) {
                 final rows = _pageRows;
-                return LayoutBuilder(
-                  builder: (context, box) {
-                    final cols = box.maxWidth > 1100
-                        ? 2
-                        : box.maxWidth > 620
-                        ? 2
-                        : 1;
-                    return Column(
-                      children: [
-                        for (var i = 0; i < rows.length; i += cols)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (var j = 0; j < cols; j++) ...[
-                                  if (j > 0) const SizedBox(width: 12),
-                                  Expanded(
-                                    child: (i + j) < rows.length
-                                        ? StaggeredItem(
-                                            index: i + j,
-                                            child: _ServiceCard(
-                                              service: rows[i + j],
-                                              canEdit:
-                                                  HsAccess.instance.degraded ||
-                                                  HsAccess.instance.can(
-                                                    'Servicios',
-                                                    'update',
-                                                  ),
-                                              canDelete:
-                                                  HsAccess.instance.degraded ||
-                                                  HsAccess.instance.can(
-                                                    'Servicios',
-                                                    'delete',
-                                                  ),
-                                              onEdit: () =>
-                                                  _openForm(rows[i + j]),
-                                              onDelete: () =>
-                                                  _delete(rows[i + j]),
-                                            ),
-                                          )
-                                        : const SizedBox.shrink(),
-                                  ),
-                                ],
-                              ],
-                            ),
+                return Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            color: Theme.of(context).dividerColor,
                           ),
+                        StaggeredItem(
+                          index: i,
+                          child: _ServiceRow(
+                            service: rows[i],
+                            canEdit:
+                                HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Servicios', 'update'),
+                            canDelete:
+                                HsAccess.instance.degraded ||
+                                HsAccess.instance.can('Servicios', 'delete'),
+                            onEdit: () => _openForm(rows[i]),
+                            onDelete: () => _delete(rows[i]),
+                          ),
+                        ),
                       ],
-                    );
-                  },
+                    ],
+                  ),
                 );
               },
             ),
@@ -397,9 +378,13 @@ class _ServicesPageState extends State<ServicesPage> {
   }
 }
 
-/// Tarjeta de servicio: icono, nombre y descripción.
-class _ServiceCard extends StatefulWidget {
-  const _ServiceCard({
+/// Fila de servicio: icono, nombre, descripción y parámetros especiales.
+///
+/// Mismo patrón que la fila del módulo Clientes: la fila entera es el área de
+/// clic (sin saltos ni sombras al pasar el ratón) y las acciones van a la
+/// derecha (o al menú "⋮" cuando no caben).
+class _ServiceRow extends StatelessWidget {
+  const _ServiceRow({
     required this.service,
     required this.onEdit,
     required this.onDelete,
@@ -414,43 +399,23 @@ class _ServiceCard extends StatefulWidget {
   final bool canDelete;
 
   @override
-  State<_ServiceCard> createState() => _ServiceCardState();
-}
-
-class _ServiceCardState extends State<_ServiceCard> {
-  bool _hover = false;
-
-  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final s = widget.service;
+    final s = service;
     final name = (s['name'] ?? '').toString();
     final description = (s['description'] ?? '').toString();
     final photosMax = (s['photosMax'] as num?)?.toInt() ?? 0;
     final allowFolder = s['allowFolder'] != false;
+    final showBanner = s['showBanner'] == true && allowFolder;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.canEdit ? widget.onEdit : null,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          transform: Matrix4.translationValues(0, _hover ? -3 : 0, 0),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest.withValues(alpha: .28),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: _hover
-                  ? AppColors.brand.withValues(alpha: .45)
-                  : scheme.outlineVariant.withValues(alpha: .45),
-            ),
-          ),
+    return LayoutBuilder(
+      builder: (context, box) {
+        // En pantallas angostas los botones no caben junto al texto: se
+        // guardan en el menú "⋮" de la fila (mismo patrón que Clientes).
+        final compact = box.maxWidth < 560 || hsRowCompact(context);
+        final row = Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 42,
@@ -473,13 +438,15 @@ class _ServiceCardState extends State<_ServiceCard> {
                   children: [
                     Text(
                       name.isEmpty ? 'Servicio' : name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 14.5,
+                        fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     if (description.isNotEmpty) ...[
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
                         description,
                         maxLines: 2,
@@ -492,26 +459,33 @@ class _ServiceCardState extends State<_ServiceCard> {
                       ),
                     ],
                     // Parámetros especiales (los ve el estudio de un vistazo).
-                    const SizedBox(height: 7),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 5,
-                      children: [
-                        if (photosMax > 0)
-                          _CapabilityChip(
-                            icon: Icons.photo_library_outlined,
-                            label: photosMax == 1
-                                ? '1 foto'
-                                : 'Hasta $photosMax fotos',
-                          ),
-                        if (!allowFolder)
-                          const _CapabilityChip(
-                            icon: Icons.folder_off_outlined,
-                            label: 'Sin carpeta',
-                            muted: true,
-                          ),
-                      ],
-                    ),
+                    if (photosMax > 0 || showBanner || !allowFolder) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (photosMax > 0)
+                            _CapabilityChip(
+                              icon: Icons.photo_library_outlined,
+                              label: photosMax == 1
+                                  ? '1 foto'
+                                  : 'Hasta $photosMax fotos',
+                            ),
+                          if (showBanner)
+                            const _CapabilityChip(
+                              icon: Icons.wallpaper_rounded,
+                              label: 'Banner cliente',
+                            ),
+                          if (!allowFolder)
+                            const _CapabilityChip(
+                              icon: Icons.folder_off_outlined,
+                              label: 'Sin carpeta',
+                              muted: true,
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -519,49 +493,61 @@ class _ServiceCardState extends State<_ServiceCard> {
               // CELULAR: las acciones del servicio van en el menú "⋮" (en
               // escritorio se mantienen los dos botones de icono). Sin
               // permisos para ninguna, el menú NO se dibuja.
-              if (hsRowCompact(context))
+              if (compact)
                 HsRowMenu(
                   actions: [
                     HsMenuAction(
                       icon: Icons.tune_rounded,
                       label: 'Personalizar',
-                      onTap: widget.canEdit ? widget.onEdit : null,
+                      onTap: canEdit ? onEdit : null,
                     ),
                     HsMenuAction(
                       icon: Icons.delete_outline_rounded,
                       label: 'Eliminar',
-                      onTap: widget.canDelete ? widget.onDelete : null,
+                      onTap: canDelete ? onDelete : null,
                       destructive: true,
                     ),
                   ],
                 )
-              else
-                Column(
-                  children: [
-                    if (widget.canEdit)
-                      IconButton(
-                        tooltip: 'Personalizar',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: widget.onEdit,
-                        icon: const Icon(Icons.tune_rounded, size: 18),
-                      ),
-                    if (widget.canDelete)
-                      IconButton(
-                        tooltip: 'Eliminar',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: widget.onDelete,
-                        icon: Icon(
-                          Icons.delete_outline_rounded,
-                          size: 18,
-                          color: scheme.error,
-                        ),
-                      ),
-                  ],
-                ),
+              else ...[
+                if (canEdit)
+                  IconButton(
+                    tooltip: 'Personalizar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.tune_rounded, size: 20),
+                  ),
+                if (canDelete)
+                  IconButton(
+                    tooltip: 'Eliminar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onDelete,
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      size: 20,
+                      color: scheme.error.withValues(alpha: .8),
+                    ),
+                  ),
+                if (canEdit)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
+              ],
             ],
           ),
-        ),
-      ),
+        );
+
+        // Sin permiso de editar la fila NO es clickeable (solo se ven las
+        // acciones permitidas).
+        if (!canEdit) return row;
+        return Tooltip(
+          message: 'Personalizar servicio',
+          waitDuration: const Duration(milliseconds: 700),
+          child: InkWell(onTap: onEdit, child: row),
+        );
+      },
     );
   }
 }

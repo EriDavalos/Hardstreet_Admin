@@ -457,11 +457,36 @@ class _AgendasPageState extends State<AgendasPage> {
     }
   }
 
+  /// ¿La sesión es de un CLIENTE?
+  ///
+  /// Solo a él el servidor le manda los eventos de OTROS enmascarados
+  /// (`busy: true`, sin cliente ni servicio). El estudio ve todo completo.
+  static bool get _isClient => HsSession.role.toLowerCase().trim() == 'cliente';
+
   void _showDetail(DateTime day, List<Map<String, dynamic>> agendas) {
+    // A un CLIENTE no se le abre el detalle de un hueco OCUPADO: es el rato de
+    // otro cliente y no hay nada que contarle (antes el modal se abría para
+    // decir solo "Ocupado"). Si el día mezcla eventos suyos y ocupados, el
+    // modal se abre SOLO con los suyos. El estudio sí puede abrirlos: para él
+    // esa agenda no está enmascarada.
+    var list = agendas;
+    if (_isClient) {
+      list = [
+        for (final a in agendas)
+          if (!isBusyAgenda(a)) a,
+      ];
+      if (list.isEmpty) {
+        HsToast.info(
+          'Horario ocupado',
+          details: 'Ese rato ya está reservado con otro cliente.',
+        );
+        return;
+      }
+    }
     showDialog<void>(
       context: context,
       barrierColor: Colors.black45,
-      builder: (_) => _AgendaDetailDialog(date: day, agendas: agendas),
+      builder: (_) => _AgendaDetailDialog(date: day, agendas: list),
     );
   }
 
@@ -2242,9 +2267,16 @@ class _DayCellState extends State<_DayCell> {
                 fg = _kOccupiedRed;
                 border = _kOccupiedRed.withValues(alpha: _hover ? .9 : .5);
                 tint = _kOccupiedRed.withValues(alpha: _hover ? .22 : .10);
+              } else if (e != null) {
+                // DÍA AGENDADO (con detalle): el círculo del día se resalta con
+                // el color del servicio. Antes solo se veía el iconito de la
+                // esquina y el día se confundía con uno libre.
+                gradient = null;
+                fg = e.color;
+                border = e.color.withValues(alpha: _hover ? .9 : .5);
+                tint = e.color.withValues(alpha: _hover ? .22 : .11);
               } else {
-                // Día con eventos CON detalle (el caso del estudio): se pinta
-                // como cualquier día; el badge dice qué servicio hay agendado.
+                // Día libre: sin relleno; el de HOY lleva su aro tenue.
                 gradient = null;
                 fg = scheme.onSurface;
                 border = widget.today
@@ -2780,9 +2812,10 @@ class _AgendaDetailBlock extends StatelessWidget {
               places[i].label,
               tint: color,
             ),
-          if (places.isNotEmpty && places.first.hasCoords) ...[
+          // Mapa del evento con TODOS los puntos marcados (numerados 1, 2, 3…).
+          if (places.any((p) => p.hasCoords)) ...[
             const SizedBox(height: 8),
-            HsPlaceMapPreview(place: places.first),
+            HsPlaceMapPreview(places: places),
           ],
           if (desc.isNotEmpty) detailRow(Icons.notes_outlined, 'Nota', desc),
         ],

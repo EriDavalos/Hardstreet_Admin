@@ -1,3 +1,4 @@
+import 'dart:js_interop';
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/widgets.dart';
@@ -6,6 +7,26 @@ import 'package:web/web.dart' as web;
 /// iframes ya registrados: `registerViewFactory` no admite dos veces el mismo
 /// tipo de vista y el widget puede reconstruirse.
 final Set<String> _registered = <String>{};
+
+/// Pantalla completa REAL de la página (botón del visor de Flutter).
+///
+/// En Flutter Web el reproductor vive dentro de un iframe: si la pantalla
+/// completa se pide desde dentro, el navegador solo la aplica al recuadro del
+/// iframe y en pantalla no cambia nada. Aquí se pide a la página entera.
+Future<void> driveWebToggleFullscreen() async {
+  final doc = web.document;
+  try {
+    if (doc.fullscreenElement != null) {
+      await doc.exitFullscreen().toDart;
+      return;
+    }
+    final root = doc.documentElement;
+    if (root != null) await root.requestFullscreen().toDart;
+  } catch (_) {
+    // El navegador puede negarse (por ejemplo en iPhone): no hay nada más
+    // que hacer y el visor sigue funcionando a tamaño de pantalla.
+  }
+}
 
 /// Reproductor HTML5 para Flutter Web.
 ///
@@ -31,7 +52,10 @@ Widget driveWebPlayer(
           'allow',
           'autoplay; fullscreen; encrypted-media; picture-in-picture',
         )
-        ..setAttribute('allowfullscreen', 'true');
+        ..setAttribute('allowfullscreen', 'true')
+        // Sin esto un doble toque en el celular hace zoom sobre el iframe en
+        // vez de llegar al reproductor (salto de 10 s).
+        ..style.touchAction = 'manipulation';
       return frame;
     });
   }

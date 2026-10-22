@@ -29,6 +29,10 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
   late bool _photosOn;
   late bool _allowFolder;
 
+  /// ¿Sus fotos salen en el banner de «Mi paquete» cuando el servicio esté
+  /// cumplido? Solo se puede encender si el servicio comparte carpeta.
+  late bool _showBanner;
+
   /// Valor guardado del icono (`material:xxx` o la ruta heredada).
   late String _icon;
   bool _saving = false;
@@ -54,6 +58,7 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
     _photosOn = max > 0;
     _photosMax = TextEditingController(text: max > 0 ? '$max' : '');
     _allowFolder = s['allowFolder'] != false;
+    _showBanner = s['showBanner'] == true && _allowFolder;
   }
 
   @override
@@ -93,6 +98,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
       'icon': _icon.trim(),
       'photosMax': _photosOn ? photosMax : 0,
       'allowFolder': _allowFolder,
+      // El banner necesita la carpeta: sin ella se guarda apagado.
+      'showBanner': _allowFolder && _showBanner,
     };
     try {
       if (_editing) {
@@ -240,8 +247,62 @@ class _ServiceFormDialogState extends State<ServiceFormDialog> {
                 value: _allowFolder,
                 onChanged: (v) => setState(() {
                   _allowFolder = v;
-                  if (!v) _photosOn = false;
+                  // Sin carpeta no hay fotos que elegir NI banner que mostrar.
+                  if (!v) {
+                    _photosOn = false;
+                    _showBanner = false;
+                  }
                 }),
+              ),
+              const SizedBox(height: 4),
+              // BANNER DEL CLIENTE: usa las fotos de la carpeta compartida en
+              // la portada de «Mi paquete». Se enciende solo si el servicio
+              // puede compartir archivos (si no, queda deshabilitado).
+              SwitchListTile.adaptive(
+                key: const ValueKey('service-show-banner'),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _allowFolder && _showBanner,
+                onChanged: _allowFolder
+                    ? (v) => setState(() => _showBanner = v)
+                    : null,
+                secondary: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color:
+                        (_allowFolder && _showBanner
+                                ? AppColors.brand
+                                : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant)
+                            .withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.wallpaper_rounded,
+                    size: 18,
+                    color: _allowFolder && _showBanner
+                        ? AppColors.brand
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                title: const Text(
+                  'Mostrar banner cliente',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  !_allowFolder
+                      ? 'Primero activa «Abrir carpeta»: el banner toma las '
+                            'fotos de la carpeta compartida.'
+                      : 'Cuando el servicio esté cumplido, «Mi paquete» muestra '
+                            '10 fotos al azar de la carpeta compartida con '
+                            'transiciones de fundido.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.3,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             ],
           ),
