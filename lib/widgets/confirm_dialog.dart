@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_constants.dart';
+
 /// Confirmación MODERNA y compacta (estilo Drive): icono en círculo, título
 /// corto, una sola línea de advertencia y botones Redondeados.
 /// Con transición de entrada suave (fade + escala).
@@ -103,6 +105,92 @@ Future<bool> confirmDelete(
         child: child,
       ),
     ),
+  );
+  return res == true;
+}
+
+/// Pregunta antes de SALIR de la app (el atrás en el módulo de inicio).
+///
+/// Atrás ya no cierra nada por accidente: primero se sube de carpeta, se
+/// deselecciona, se vuelve al módulo de inicio y, si ya no queda nada, se
+/// pregunta. Mismo estilo que [confirmDelete], con el acento de la marca.
+Future<bool> confirmExitApp(BuildContext context) async {
+  final res = await showDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    builder: (ctx) {
+      final scheme = Theme.of(ctx).colorScheme;
+      return AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.logout_rounded,
+                color: scheme.primary,
+                size: 26,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              '¿Salir de la app?',
+              textAlign: TextAlign.center,
+              style: Theme.of(ctx).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Vas a cerrar ${AppConstants.appName}. Tu sesión queda guardada: '
+              'al volver entras directo a tu módulo de inicio.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: scheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Salir'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      );
+    },
   );
   return res == true;
 }

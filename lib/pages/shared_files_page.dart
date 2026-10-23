@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../app_platform.dart';
+import '../back_nav.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../local_share_agent.dart';
@@ -71,6 +72,9 @@ class SharedFilesPage extends StatefulWidget {
 }
 
 class _SharedFilesPageState extends State<SharedFilesPage> {
+  /// Paso de la cadena de ATRÁS mientras esta página está montada.
+  late final BackStep _backStep = _handleBack;
+
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _shared = const [];
@@ -139,14 +143,30 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
   @override
   void initState() {
     super.initState();
+    // Atrás dentro de este módulo: si hay una carpeta compartida abierta (o el
+    // motivo de que no abriera), primero se vuelve al LISTADO.
+    BackNav.add(_backStep);
     _load();
   }
 
   @override
   void dispose() {
+    BackNav.remove(_backStep);
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Atiende el atrás mientras esta página está montada.
+  ///
+  /// La carpeta abierta es un [DrivePage] HIJO: sus pasos se registran después
+  /// y por eso se atienden antes (subir de carpeta, deseleccionar); aquí solo
+  /// queda volver del "ventana" del módulo al listado.
+  bool _handleBack() {
+    if (!mounted) return false;
+    if (_open == null && _openProblem == null) return false;
+    _closeOpen();
+    return true;
   }
 
   // ---------------------------------------------------------------
@@ -1096,17 +1116,11 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       );
     }
     // ===== No se pudo abrir: el motivo, en pantalla =====
-    // ATRÁS vuelve al listado (no cierra el módulo): es una "ventana" más.
+    // ATRÁS vuelve al listado (no cierra el módulo): es una "ventana" más y
+    // la atiende el paso de esta página en la cadena ([BackNav]).
     final problem = _openProblem;
     if (problem != null) {
-      return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) return;
-          _closeOpen();
-        },
-        child: _openProblemView(scheme, isCompact, problem),
-      );
+      return _openProblemView(scheme, isCompact, problem);
     }
 
     final received = _receivedFolders;

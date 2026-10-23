@@ -13,11 +13,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hardstreet_admin/back_nav.dart';
 import 'package:hardstreet_admin/drive_api_service.dart';
 import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/drive_service.dart';
@@ -26,6 +28,7 @@ import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
 import 'package:hardstreet_admin/pages/admin_pages.dart';
 import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/pages/drive_page.dart';
 
 Map<String, dynamic> _mod(
   String key,
@@ -91,6 +94,17 @@ Future<Directory> _tempDir(WidgetTester tester) async {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
   return tmp;
+}
+
+/// El MISMO mensaje que mandan Android y el motor web al pulsar ATRÁS.
+Future<void> _pressBack(WidgetTester tester) async {
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    'flutter/navigation',
+    const JSONMethodCodec().encodeMethodCall(const MethodCall('popRoute')),
+    (_) {},
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 Future<void> _pumpPanel(WidgetTester tester, Directory tmp) async {
@@ -198,6 +212,50 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Falta la conexión'), findsNothing);
+    expect(find.byType(ClientDashboardPage), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el atrás vuelve al módulo de inicio y pregunta antes de salir', (
+    tester,
+  ) async {
+    final tmp = await _tempDir(tester);
+    final previous = HsApi.client;
+    HsApi.client = _mock();
+    addTearDown(() => HsApi.client = previous);
+    BackNav.resetForTest();
+
+    // Arranca en "Mi paquete" (su primer módulo permitido).
+    await _pumpPanel(tester, tmp);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(ClientDashboardPage), findsOneWidget);
+
+    // Se va a OTRO módulo desde el menú (el panel de navegación se abre con
+    // la hamburguesa; cerrado queda deslizado fuera de la vista).
+    await tester.tap(find.byTooltip('Menú'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Archivos').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(DrivePage), findsOneWidget);
+
+    // Atrás: vuelve al módulo de INICIO, no sale de la app.
+    await _pressBack(tester);
+    expect(find.byType(ClientDashboardPage), findsOneWidget);
+    expect(find.byType(DrivePage), findsNothing);
+
+    // Ya en el inicio: pregunta antes de salir.
+    await _pressBack(tester);
+    expect(find.text('¿Salir de la app?'), findsOneWidget);
+
+    // Cancelar = seguir dentro.
+    await tester.tap(find.text('Cancelar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('¿Salir de la app?'), findsNothing);
     expect(find.byType(ClientDashboardPage), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'app_constants.dart';
 import 'app_platform.dart';
 import 'app_settings.dart';
+import 'back_nav.dart';
 import 'drive_api_service.dart';
 import 'event_widget.dart';
 import 'hs_access.dart';
@@ -42,6 +43,7 @@ import 'version_checker.dart';
 import 'widgets/admin_shell.dart';
 import 'widgets/company_selector.dart';
 import 'widgets/brand_badge.dart';
+import 'widgets/confirm_dialog.dart';
 import 'widgets/force_update_dialog.dart';
 import 'widgets/hs_toast.dart';
 import 'widgets/startup_intro.dart';
@@ -749,6 +751,17 @@ class _AdminHomeState extends State<AdminHome> {
   // [_pickStartSection]): el Dashboard solo si es el primero permitido.
   _Section _section = _Section.dashboard;
 
+  /// MÓDULO DE INICIO: «el primer módulo que le sale a cada usuario» (por
+  /// permisos y orden del menú). Es a donde vuelve el atrás cuando ya no queda
+  /// nada más que deshacer —carpeta, selección o sub-vista—.
+  _Section _homeSection = _Section.dashboard;
+
+  /// Paso de ATRÁS del panel: el ÚLTIMO de la cadena (ver [BackNav]).
+  late final BackStep _backStep = _handleBack;
+
+  /// true mientras está abierto el aviso «¿Salir de la app?».
+  bool _askingExit = false;
+
   /// El arranque se decide UNA vez (si no, cada rebuild volvería a saltar).
   bool _startPicked = false;
 
@@ -820,6 +833,9 @@ class _AdminHomeState extends State<AdminHome> {
   @override
   void initState() {
     super.initState();
+    // El panel se apunta al FINAL de la cadena del atrás: las páginas de los
+    // módulos se registran después y por eso se atienden primero.
+    BackNav.add(_backStep);
     HsAccess.addListener(_onAccessChanged);
     _loadPermissions();
     // Toques del widget nativo: tocar un evento (o el botón "Agregar agenda")
@@ -863,6 +879,7 @@ class _AdminHomeState extends State<AdminHome> {
 
   @override
   void dispose() {
+    BackNav.remove(_backStep);
     HsApi.onPermissionsChanged = null;
     HsAccess.removeListener(_onAccessChanged);
     UpcomingEventsWidget.requested.removeListener(_onWidgetRequest);
@@ -923,6 +940,39 @@ class _AdminHomeState extends State<AdminHome> {
     if (degraded || !catalogReady || menu.isEmpty) return;
     _startPicked = true;
     _section = _firstAllowedSection();
+    // Este es el módulo de INICIO: a él vuelve el atrás desde cualquier otro.
+    _homeSection = _section;
+  }
+
+  /// Paso de ATRÁS del PANEL (el último de la cadena).
+  ///
+  /// En otro módulo, vuelve al módulo de inicio; ya en él, pregunta antes de
+  /// salir. Las carpetas, la selección y las sub-vistas las atienden antes las
+  /// propias pantallas (ver [BackNav]).
+  bool _handleBack() {
+    if (!mounted) return false;
+    if (_section != _homeSection) {
+      setState(() => _section = _homeSection);
+      return true;
+    }
+    unawaited(_askExit());
+    return true;
+  }
+
+  /// «¿Salir de la app?»: el atrás ya no cierra de golpe.
+  Future<void> _askExit() async {
+    if (_askingExit) return;
+    _askingExit = true;
+    try {
+      final leave = await confirmExitApp(context);
+      if (leave && mounted) {
+        // Android: manda la actividad atrás. Web: el motor retira sus entradas
+        // del historial y sale de la app (no deja una página en blanco).
+        await SystemNavigator.pop();
+      }
+    } finally {
+      _askingExit = false;
+    }
   }
 
   /// Abre el MÓDULO al que lleva un aviso de la campanita.
@@ -1366,7 +1416,7 @@ class _AdminHomeState extends State<AdminHome> {
         break;
     }
 
-    return AdminShell(
+    final shell = AdminShell(
       title: access.nameOf(
         _kSectionKeys[_section] ?? '',
         fallback: _kSectionModules[_section] ?? 'Dashboard',
@@ -1402,6 +1452,20 @@ class _AdminHomeState extends State<AdminHome> {
       isCompact: compact,
       userMenu: _UserMenu(onLogout: widget.onLogout),
       onOpenNotification: _openNotificationTarget,
+    );
+    // ATRÁS del sistema o del NAVEGADOR: se atiende SIEMPRE aquí (canPop
+    // false), nunca deja que el navegador cierre la app por su cuenta. La
+    // cadena decide: deseleccionar → carpeta padre → sub-vista → módulo de
+    // inicio → «¿Salir?». En la web el motor convierte el atrás del navegador
+    // en esta misma llamada (mantiene su entrada de historial), así que el
+    // gesto del celular y el botón del navegador se comportan igual.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        BackNav.handle();
+      },
+      child: shell,
     );
   }
 }

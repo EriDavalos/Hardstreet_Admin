@@ -26,6 +26,7 @@ import 'package:flutter/services.dart'
 
 import '../../app_constants.dart';
 import '../../app_platform.dart';
+import '../../back_nav.dart';
 import '../../drive_api_service.dart';
 import '../../drive_downloader.dart';
 import '../../image_memory.dart';
@@ -330,6 +331,9 @@ class _DrivePageState extends State<DrivePage>
   final Set<String> _selected = {};
   final _searchController = TextEditingController();
 
+  /// Paso de la cadena de ATRÁS mientras esta página está montada.
+  late final BackStep _backStep = _handleBack;
+
   // ---- Selección estilo explorador de escritorio ----
   int _anchorIndex = -1; // último clic simple, origen del rango con Shift
   PointerDeviceKind _lastPointerKind = PointerDeviceKind.mouse;
@@ -412,6 +416,9 @@ class _DrivePageState extends State<DrivePage>
     _sweepTicker = createTicker(_onSweepTick);
     widget.drive.addListener(_onChange);
     HardwareKeyboard.instance.addHandler(_handleKey);
+    // Esta página atiende el atrás MIENTRAS está montada (y antes que el
+    // panel, que se registró primero).
+    BackNav.add(_backStep);
   }
 
   @override
@@ -421,10 +428,32 @@ class _DrivePageState extends State<DrivePage>
     _stopSweepTicker();
     _sweepTicker?.dispose();
     _scrollController.dispose();
+    BackNav.remove(_backStep);
     HardwareKeyboard.instance.removeHandler(_handleKey);
     widget.drive.removeListener(_onChange);
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Atiende el atrás mientras esta página está montada.
+  /// `1)` deselecciona (si hay fotos marcadas), `2)` sube a la carpeta padre
+  /// y `3)` vuelve de la sub-vista (carpeta compartida abierta en su módulo).
+  /// En la raíz del módulo devuelve `false`: decide el panel.
+  bool _handleBack() {
+    if (!mounted) return false;
+    if (_selectMode || _selected.isNotEmpty) {
+      _clearSelection();
+      return true;
+    }
+    if (widget.drive.path.isNotEmpty) {
+      widget.drive.goUp();
+      return true;
+    }
+    if (widget.onBack != null) {
+      widget.onBack!();
+      return true;
+    }
+    return false;
   }
 
   /// Atajos de teclado (Esc / Supr / Ctrl+C / Ctrl+V).
@@ -2143,350 +2172,339 @@ class _DrivePageState extends State<DrivePage>
       end: _endSweep,
     );
 
-    // Botón "atrás" del SISTEMA (Android): mientras no estemos en la raíz del
-    // drive, NO cierra la app — vuelve a la carpeta padre. En la raíz el
-    // sistema procede con normalidad (minimiza la app), salvo cuando la página
-    // es parte de otra (una carpeta compartida abierta dentro del módulo
-    // Archivos compartidos): ahí [onBack] vuelve al listado.
-    return PopScope(
-      canPop: drive.path.isEmpty && widget.onBack == null,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (drive.path.isNotEmpty) {
-          widget.drive.goUp();
-        } else {
-          widget.onBack?.call();
+    // Botón "atrás" (sistema, gesto o navegador): NO cierra la app. Se
+    // registra en la cadena única ([BackNav]) y aquí se atiende, en orden:
+    // deseleccionar → subir a la carpeta padre → volver de la sub-vista. En la
+    // raíz del módulo el paso devuelve false y decide el panel (inicio o
+    // «¿Salir?»).
+    return DropTarget(
+      onDragEntered: (_) {
+        // Al arrastrar desde el explorador, sube la vista al inicio para
+        // que se vea la zona de destino de inmediato.
+        if (_scrollController.isSafe && _scrollController.safeOffset > 0) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOutCubic,
+          );
         }
+        setState(() => _externalDrag = true);
       },
-      child: DropTarget(
-        onDragEntered: (_) {
-          // Al arrastrar desde el explorador, sube la vista al inicio para
-          // que se vea la zona de destino de inmediato.
-          if (_scrollController.isSafe && _scrollController.safeOffset > 0) {
-            _scrollController.animateTo(
-              0,
-              duration: const Duration(milliseconds: 350),
-              curve: Curves.easeOutCubic,
-            );
-          }
-          setState(() => _externalDrag = true);
-        },
-        onDragExited: (_) => setState(() => _externalDrag = false),
-        onDragDone: _handleExternalDrop,
-        child: Stack(
-          children: [
-            // El Listener va DENTRO del Stack y envuelve SOLO el contenido: las
-            // ventanas flotantes (actividad, barra de selección) quedan por encima
-            // y sus clics ya no se cuelan al fondo —antes, tocar la ventanita de
-            // actividad también seleccionaba tarjetas y hasta abría carpetas de
-            // detrás, y arrastrar en ella dibujaba la marquesina.
-            Listener(
-              onPointerDown: _onContentPointerDown,
-              onPointerMove: _onContentPointerMove,
-              onPointerUp: _onContentPointerUp,
-              onPointerCancel: _onContentPointerUp,
-              child: Column(
-                children: [
-                  if (!isCompact) header,
-                  // ===== Contenido =====
-                  Expanded(
-                    // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
-                    // botón de recargar en el encabezado).
-                    child: RefreshIndicator(
-                      onRefresh: drive.refresh,
-                      // El giro de "recargar" nace debajo de la barra de ruta
-                      // pegajosa, no encima de ella.
-                      edgeOffset: stickyCrumbs == null
-                          ? 0
-                          : _CrumbsHeaderDelegate.height,
-                      child: drive.loading && drive.items.isEmpty
-                          ? _scrollWithHeader(
-                              scrollHeader,
-                              stickyCrumbs,
-                              const Center(child: CircularProgressIndicator()),
-                            )
-                          // El panel bloqueante solo cuando NO hay nada que mostrar:
-                          // si ya se ve una carpeta, se queda a la vista.
-                          : drive.error != null && drive.items.isEmpty
-                          ? _scrollWithHeader(
-                              scrollHeader,
-                              stickyCrumbs,
-                              EmptyState(
-                                icon: Icons.folder_off_outlined,
-                                title: 'Error',
-                                message: drive.error!,
-                                actionLabel: 'Reintentar',
-                                onAction: drive.refresh,
-                              ),
-                            )
-                          : drive.visibleItems.isEmpty
-                          ? _scrollWithHeader(
-                              scrollHeader,
-                              stickyCrumbs,
-                              EmptyState(
-                                icon: drive.scoped && drive.path.isEmpty
-                                    ? Icons.folder_off_outlined
-                                    : Icons.folder_open_rounded,
-                                title: drive.search != null
-                                    ? 'Sin resultados'
-                                    : drive.scoped && drive.path.isEmpty
-                                    ? 'Aún no se te comparte ninguna carpeta'
-                                    : 'Esta carpeta está vacía',
-                                message: drive.search != null
-                                    ? 'No hay coincidencias en esta carpeta.'
-                                    : drive.scoped && drive.path.isEmpty
-                                    ? 'Tu fotógrafo todavía no compartió carpetas '
-                                          'contigo. En cuanto las asigne a tus '
-                                          'paquetes, aparecerán aquí.'
-                                    : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
-                                // Sin permiso de crear, la tarjeta vacía invita
-                                // pero no ofrece el botón.
-                                actionLabel:
-                                    drive.scoped && drive.path.isEmpty ||
-                                        !_driveCan(widget.drive, 'create')
-                                    ? null
-                                    : 'Subir archivos',
-                                onAction:
-                                    drive.scoped && drive.path.isEmpty ||
-                                        !_driveCan(widget.drive, 'create')
-                                    ? null
-                                    : _upload,
-                              ),
-                            )
-                          : AnimatedSwitcher(
-                              // Transición suave al cambiar de carpeta (o de
-                              // vista): la anterior se desvanece mientras la
-                              // nueva entra — sin esperar "en blanco".
-                              // El GlobalKey vive AQUÍ (no en el contenido)
-                              // para no duplicarse durante la transición.
-                              key: _contentKey,
-                              duration: const Duration(milliseconds: 220),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeIn,
-                              child: KeyedSubtree(
-                                key: ValueKey(
-                                  'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}',
-                                ),
-                                child: (_grid
-                                    ? _GridContent(
-                                        drive: drive,
-                                        compact: isCompact,
-                                        selected: _selected,
-                                        selectMode: _selectMode,
-                                        onOpen: _onItemTap,
-                                        onLongPress: (item) =>
-                                            _enterSelectMode(item.name),
-                                        onToggleSelect: _toggleSelect,
-                                        onRename: _rename,
-                                        onDelete: _delete,
-                                        onDrop: _onItemDrop,
-                                        itemKeys: _itemKeys,
-                                        onTapSelect: _onCardTap,
-                                        onContextMenu: _openItemMenu,
-                                        onDownload: (item) =>
-                                            _downloadItems([item]),
-                                        localPreviews: _localPreviews,
-                                        noEntrance: _noEntrance,
-                                        scrollController: _scrollController,
-                                        sweep: sweep,
-                                        header: scrollHeader,
-                                        crumbs: stickyCrumbs,
-                                      )
-                                    : _ListContent(
-                                        drive: drive,
-                                        compact: isCompact,
-                                        selected: _selected,
-                                        selectMode: _selectMode,
-                                        onOpen: _onItemTap,
-                                        onLongPress: (item) =>
-                                            _enterSelectMode(item.name),
-                                        onToggleSelect: _toggleSelect,
-                                        onRename: _rename,
-                                        onDelete: _delete,
-                                        onDrop: _onItemDrop,
-                                        itemKeys: _rowKeys,
-                                        onTapSelect: _onCardTap,
-                                        onContextMenu: _openItemMenu,
-                                        onDownload: (item) =>
-                                            _downloadItems([item]),
-                                        localPreviews: _localPreviews,
-                                        noEntrance: _noEntrance,
-                                        scrollController: _scrollController,
-                                        sweep: sweep,
-                                        header: scrollHeader,
-                                        crumbs: stickyCrumbs,
-                                      )),
-                              ),
+      onDragExited: (_) => setState(() => _externalDrag = false),
+      onDragDone: _handleExternalDrop,
+      child: Stack(
+        children: [
+          // El Listener va DENTRO del Stack y envuelve SOLO el contenido: las
+          // ventanas flotantes (actividad, barra de selección) quedan por encima
+          // y sus clics ya no se cuelan al fondo —antes, tocar la ventanita de
+          // actividad también seleccionaba tarjetas y hasta abría carpetas de
+          // detrás, y arrastrar en ella dibujaba la marquesina.
+          Listener(
+            onPointerDown: _onContentPointerDown,
+            onPointerMove: _onContentPointerMove,
+            onPointerUp: _onContentPointerUp,
+            onPointerCancel: _onContentPointerUp,
+            child: Column(
+              children: [
+                if (!isCompact) header,
+                // ===== Contenido =====
+                Expanded(
+                  // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
+                  // botón de recargar en el encabezado).
+                  child: RefreshIndicator(
+                    onRefresh: drive.refresh,
+                    // El giro de "recargar" nace debajo de la barra de ruta
+                    // pegajosa, no encima de ella.
+                    edgeOffset: stickyCrumbs == null
+                        ? 0
+                        : _CrumbsHeaderDelegate.height,
+                    child: drive.loading && drive.items.isEmpty
+                        ? _scrollWithHeader(
+                            scrollHeader,
+                            stickyCrumbs,
+                            const Center(child: CircularProgressIndicator()),
+                          )
+                        // El panel bloqueante solo cuando NO hay nada que mostrar:
+                        // si ya se ve una carpeta, se queda a la vista.
+                        : drive.error != null && drive.items.isEmpty
+                        ? _scrollWithHeader(
+                            scrollHeader,
+                            stickyCrumbs,
+                            EmptyState(
+                              icon: Icons.folder_off_outlined,
+                              title: 'Error',
+                              message: drive.error!,
+                              actionLabel: 'Reintentar',
+                              onAction: drive.refresh,
                             ),
-                    ),
+                          )
+                        : drive.visibleItems.isEmpty
+                        ? _scrollWithHeader(
+                            scrollHeader,
+                            stickyCrumbs,
+                            EmptyState(
+                              icon: drive.scoped && drive.path.isEmpty
+                                  ? Icons.folder_off_outlined
+                                  : Icons.folder_open_rounded,
+                              title: drive.search != null
+                                  ? 'Sin resultados'
+                                  : drive.scoped && drive.path.isEmpty
+                                  ? 'Aún no se te comparte ninguna carpeta'
+                                  : 'Esta carpeta está vacía',
+                              message: drive.search != null
+                                  ? 'No hay coincidencias en esta carpeta.'
+                                  : drive.scoped && drive.path.isEmpty
+                                  ? 'Tu fotógrafo todavía no compartió carpetas '
+                                        'contigo. En cuanto las asigne a tus '
+                                        'paquetes, aparecerán aquí.'
+                                  : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
+                              // Sin permiso de crear, la tarjeta vacía invita
+                              // pero no ofrece el botón.
+                              actionLabel:
+                                  drive.scoped && drive.path.isEmpty ||
+                                      !_driveCan(widget.drive, 'create')
+                                  ? null
+                                  : 'Subir archivos',
+                              onAction:
+                                  drive.scoped && drive.path.isEmpty ||
+                                      !_driveCan(widget.drive, 'create')
+                                  ? null
+                                  : _upload,
+                            ),
+                          )
+                        : AnimatedSwitcher(
+                            // Transición suave al cambiar de carpeta (o de
+                            // vista): la anterior se desvanece mientras la
+                            // nueva entra — sin esperar "en blanco".
+                            // El GlobalKey vive AQUÍ (no en el contenido)
+                            // para no duplicarse durante la transición.
+                            key: _contentKey,
+                            duration: const Duration(milliseconds: 220),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeIn,
+                            child: KeyedSubtree(
+                              key: ValueKey(
+                                'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}',
+                              ),
+                              child: (_grid
+                                  ? _GridContent(
+                                      drive: drive,
+                                      compact: isCompact,
+                                      selected: _selected,
+                                      selectMode: _selectMode,
+                                      onOpen: _onItemTap,
+                                      onLongPress: (item) =>
+                                          _enterSelectMode(item.name),
+                                      onToggleSelect: _toggleSelect,
+                                      onRename: _rename,
+                                      onDelete: _delete,
+                                      onDrop: _onItemDrop,
+                                      itemKeys: _itemKeys,
+                                      onTapSelect: _onCardTap,
+                                      onContextMenu: _openItemMenu,
+                                      onDownload: (item) =>
+                                          _downloadItems([item]),
+                                      localPreviews: _localPreviews,
+                                      noEntrance: _noEntrance,
+                                      scrollController: _scrollController,
+                                      sweep: sweep,
+                                      header: scrollHeader,
+                                      crumbs: stickyCrumbs,
+                                    )
+                                  : _ListContent(
+                                      drive: drive,
+                                      compact: isCompact,
+                                      selected: _selected,
+                                      selectMode: _selectMode,
+                                      onOpen: _onItemTap,
+                                      onLongPress: (item) =>
+                                          _enterSelectMode(item.name),
+                                      onToggleSelect: _toggleSelect,
+                                      onRename: _rename,
+                                      onDelete: _delete,
+                                      onDrop: _onItemDrop,
+                                      itemKeys: _rowKeys,
+                                      onTapSelect: _onCardTap,
+                                      onContextMenu: _openItemMenu,
+                                      onDownload: (item) =>
+                                          _downloadItems([item]),
+                                      localPreviews: _localPreviews,
+                                      noEntrance: _noEntrance,
+                                      scrollController: _scrollController,
+                                      sweep: sweep,
+                                      header: scrollHeader,
+                                      crumbs: stickyCrumbs,
+                                    )),
+                            ),
+                          ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            // ===== Botón FIJO de creación (solo celular) =====
-            // El encabezado ya se desplaza con el contenido, así que crear
-            // carpeta o subir archivos se queda siempre a mano. Solo aparece
-            // con permiso de crear y nunca encima de la barra de selección.
-            if (isCompact &&
-                !_selectMode &&
-                _driveCan(widget.drive, 'create'))
-              Positioned(
-                right: 18,
-                bottom: 18 + MediaQuery.viewPaddingOf(context).bottom,
-                child: _CreateFab(onTap: _showCreateMenu),
-              ),
-            // ===== Recuadro de selección (marquesina) =====
-            if (_marqueeRect != null)
-              Positioned.fromRect(
-                rect: _marqueeRect!.shift(marqueeOffset),
-                child: IgnorePointer(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: .12),
-                      border: Border.all(
-                        color: scheme.primary.withValues(alpha: .8),
-                        width: 1.5,
-                      ),
-                      borderRadius: BorderRadius.circular(3),
+          ),
+          // ===== Botón FIJO de creación (solo celular) =====
+          // El encabezado ya se desplaza con el contenido, así que crear
+          // carpeta o subir archivos se queda siempre a mano. Solo aparece
+          // con permiso de crear y nunca encima de la barra de selección.
+          if (isCompact &&
+              !_selectMode &&
+              _driveCan(widget.drive, 'create'))
+            Positioned(
+              right: 18,
+              bottom: 18 + MediaQuery.viewPaddingOf(context).bottom,
+              child: _CreateFab(onTap: _showCreateMenu),
+            ),
+          // ===== Recuadro de selección (marquesina) =====
+          if (_marqueeRect != null)
+            Positioned.fromRect(
+              rect: _marqueeRect!.shift(marqueeOffset),
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .12),
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: .8),
+                      width: 1.5,
                     ),
+                    borderRadius: BorderRadius.circular(3),
                   ),
                 ),
               ),
-            // ===== Overlay "Suelta para subir" =====
-            if (_externalDrag)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Container(
-                    color: scheme.primary.withValues(alpha: .10),
-                    child: Center(
-                      child: AnimatedScale(
-                        scale: 1,
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOutBack,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 28,
-                            vertical: 20,
-                          ),
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(18),
-                            boxShadow: [
-                              BoxShadow(
-                                color: scheme.primary.withValues(alpha: .45),
-                                blurRadius: 30,
-                                offset: const Offset(0, 10),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.upload_rounded,
+            ),
+          // ===== Overlay "Suelta para subir" =====
+          if (_externalDrag)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  color: scheme.primary.withValues(alpha: .10),
+                  child: Center(
+                    child: AnimatedScale(
+                      scale: 1,
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutBack,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 20,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [
+                            BoxShadow(
+                              color: scheme.primary.withValues(alpha: .45),
+                              blurRadius: 30,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.upload_rounded,
+                              color: Colors.white,
+                              size: 34,
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Suelta para subir',
+                              style: TextStyle(
                                 color: Colors.white,
-                                size: 34,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
                               ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Suelta para subir',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w800,
-                                ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Se subirán a "${drive.locationLabel}"',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: .85),
+                                fontSize: 12.5,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Se subirán a "${drive.locationLabel}"',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: .85),
-                                  fontSize: 12.5,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-            // ===== Capa de fuera de la ventanita de actividad =====
-            // Con la ventanita ABIERTA se pone delante del contenido (la misma
-            // idea que el panel de la campanita de avisos): un clic de FUERA la
-            // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
-            // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
-            // la barra de selección para que esa barra siga funcionando.
-            if (_panelOpen &&
-                (drive.uploadJobs.isNotEmpty ||
-                    drive.downloadJobs.isNotEmpty ||
-                    _notices.isNotEmpty))
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _panelOpen = false),
-                ),
+            ),
+          // ===== Capa de fuera de la ventanita de actividad =====
+          // Con la ventanita ABIERTA se pone delante del contenido (la misma
+          // idea que el panel de la campanita de avisos): un clic de FUERA la
+          // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
+          // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
+          // la barra de selección para que esa barra siga funcionando.
+          if (_panelOpen &&
+              (drive.uploadJobs.isNotEmpty ||
+                  drive.downloadJobs.isNotEmpty ||
+                  _notices.isNotEmpty))
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _panelOpen = false),
               ),
-            // ===== Barra de acciones de selección =====
-            // Solo existe cuando hay selección: sin estado oculto que robe clics.
-            if (_selectMode && _selected.isNotEmpty)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: _SelectionBar(
-                  can: drive.canDo,
-                  count: _selected.length,
-                  compact: isCompact,
-                  onClear: _clearSelection,
-                  onSelectAll: _selectAll,
-                  onMove: () => _guarded(() async {
-                    final dest = await _pickDestination(move: true);
-                    if (dest != null) await _moveSelected(dest);
-                  }),
-                  onCopy: () => _guarded(() async {
-                    final dest = await _pickDestination(move: false);
-                    if (dest != null) await _copySelected(dest);
-                  }),
-                  onDownload: () => _downloadItems(_selectedItems()),
-                  onDelete: () =>
-                      _guarded(() => _deleteItems(_selected.toList())),
-                ),
+            ),
+          // ===== Barra de acciones de selección =====
+          // Solo existe cuando hay selección: sin estado oculto que robe clics.
+          if (_selectMode && _selected.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _SelectionBar(
+                can: drive.canDo,
+                count: _selected.length,
+                compact: isCompact,
+                onClear: _clearSelection,
+                onSelectAll: _selectAll,
+                onMove: () => _guarded(() async {
+                  final dest = await _pickDestination(move: true);
+                  if (dest != null) await _moveSelected(dest);
+                }),
+                onCopy: () => _guarded(() async {
+                  final dest = await _pickDestination(move: false);
+                  if (dest != null) await _copySelected(dest);
+                }),
+                onDownload: () => _downloadItems(_selectedItems()),
+                onDelete: () =>
+                    _guarded(() => _deleteItems(_selected.toList())),
               ),
-            // ===== Overlay de operación en curso (carga global) =====
-            // ===== Carga NO bloqueante: subidas estilo Drive =====
-            // (las subidas usan su propio panel con progreso por archivo;
-            //  las demás operaciones muestran un spinner discreto, sin velo)
-            if (drive.busy != DriveBusy.none &&
-                drive.busy != DriveBusy.uploading)
-              Positioned(
-                top: 6,
-                left: hPad,
-                child: _BusyChip(label: drive.busyLabel),
+            ),
+          // ===== Overlay de operación en curso (carga global) =====
+          // ===== Carga NO bloqueante: subidas estilo Drive =====
+          // (las subidas usan su propio panel con progreso por archivo;
+          //  las demás operaciones muestran un spinner discreto, sin velo)
+          if (drive.busy != DriveBusy.none &&
+              drive.busy != DriveBusy.uploading)
+            Positioned(
+              top: 6,
+              left: hPad,
+              child: _BusyChip(label: drive.busyLabel),
+            ),
+          // ===== Panel inferior de transferencias y avisos (ocultable) =====
+          // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
+          // una ventanita abajo a la derecha, con botón para minimizarla.
+          if (drive.uploadJobs.isNotEmpty ||
+              drive.downloadJobs.isNotEmpty ||
+              _notices.isNotEmpty)
+            Positioned(
+              right: hPad,
+              bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
+              child: _ActivityPanel(
+                open: _panelOpen,
+                drive: drive,
+                notices: _notices,
+                onToggle: () => setState(() => _panelOpen = !_panelOpen),
+                onClearNotices: () => setState(() => _notices.clear()),
+                onDismissNotice: (i) => setState(() {
+                  if (i >= 0 && i < _notices.length) _notices.removeAt(i);
+                }),
               ),
-            // ===== Panel inferior de transferencias y avisos (ocultable) =====
-            // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
-            // una ventanita abajo a la derecha, con botón para minimizarla.
-            if (drive.uploadJobs.isNotEmpty ||
-                drive.downloadJobs.isNotEmpty ||
-                _notices.isNotEmpty)
-              Positioned(
-                right: hPad,
-                bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
-                child: _ActivityPanel(
-                  open: _panelOpen,
-                  drive: drive,
-                  notices: _notices,
-                  onToggle: () => setState(() => _panelOpen = !_panelOpen),
-                  onClearNotices: () => setState(() => _notices.clear()),
-                  onDismissNotice: (i) => setState(() {
-                    if (i >= 0 && i < _notices.length) _notices.removeAt(i);
-                  }),
-                ),
-              ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

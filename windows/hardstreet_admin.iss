@@ -32,6 +32,15 @@ SetupIconFile=runner\resources\setup_icon.ico
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
+; ACTUALIZAR CON LA APP ABIERTA: al cerrar la ventana el panel NO se apaga,
+; se queda en la BANDEJA consultando avisos (WM_CLOSE solo la esconde). Por eso
+; Windows Restart Manager no lograba cerrarlo y el instalador mostraba
+; "El programa de instalación no pudo cerrar de forma automática todas las
+; aplicaciones" (Reintentar / Ignorar / Cancelar). Con `force` el setup lo
+; cierra a la fuerza cuando no se cierra solo; `RestartApplications=no` porque
+; la app se relanza con el [Run] de abajo —si no, abriría DOS instancias—.
+CloseApplications=force
+RestartApplications=no
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 

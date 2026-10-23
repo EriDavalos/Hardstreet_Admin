@@ -931,6 +931,46 @@ un servidor todavía sin actualizar, que contesta 404 con "La carpeta compartida
 no existe o ya no está activa": el módulo lo traduce a "Ya no está compartida"
 y explica qué hacer, en vez de mostrar el texto crudo.
 
+## Botón ATRÁS (móvil y navegador)
+
+Un solo sitio decide qué hace el atrás: la cadena de `BackNav`
+(`lib/back_nav.dart`) y el `PopScope` raíz que instala el panel (`AdminHome`,
+`canPop: false`). Antes cada pantalla tenía su propio `PopScope`; en la **web**
+eso no alcanzaba: al estar en la raíz de un módulo el gesto se escapaba, el
+motor llamaba a `SystemNavigator.pop()` y el navegador sacaba de la app. En la
+web el motor ya convierte el botón del navegador en ese mismo `popRoute`
+(mantiene su entrada de historial), así que ahora el gesto del celular y el
+botón del navegador recorren LA MISMA cadena, de lo más específico a lo más
+general:
+
+1. **Deseleccionar**: con fotos marcadas, el primer atrás quita la selección
+   (no se mueve de carpeta ni cierra nada).
+2. **Carpeta padre**: dentro de una carpeta vuelve un nivel —en Archivos y en
+   la carpeta compartida abierta desde su módulo—.
+3. **Sub-vista**: una carpeta compartida abierta vuelve al listado del módulo
+   Archivos compartidos.
+4. **Módulo de inicio**: desde cualquier otro módulo vuelve al PRIMER módulo
+   que el rol ve al entrar (`_homeSection`, el mismo que elige el arranque).
+5. **¿Salir?**: ya en el módulo de inicio pregunta «¿Salir de la app?» con
+   Cancelar / Salir; solo con **Salir** se cierra (en la web el motor retira
+   sus entradas del historial y sale, no deja una página en blanco).
+
+Cada página registra su paso en `initState` y lo quita en `dispose`; el orden
+del registro es el de montaje, así que lo abierto DENTRO de un módulo atiende
+antes que su listado y el panel siempre queda al final. Las pruebas
+(`test/back_nav_test.dart` y `test/panel_start_test.dart`) mandan el mismo
+mensaje `popRoute` que Android y el motor web.
+
+## Barra de estado de la PWA (instalada desde la web)
+
+Al instalar el panel desde el navegador, la barra de notificaciones de Android
+toma el `theme_color` del **manifest** (Chrome no lee el
+`meta[name=theme-color]` en la app instalada), que estaba en el azul de la
+marca (`#2F6BFF`): se veía una franja azul sobre una app oscura. Ahora es el
+fondo de la app (`#0C111C`), el mismo del arranque; `background_color` (la
+pantalla de arranque de la PWA) y el meta del `web/index.html` van igual. En el
+APK nativo no cambia nada: ahí manda `applySystemChromeStyle`.
+
 ## Arranque
 
 La app abre con una animación de marca (fondo del tema activo, la marca que
@@ -948,6 +988,27 @@ antes se usaba `Directory.systemTemp`, que en Android apunta a `code_cache` y
 provocaba *"Failed to find configured root that contains …"*. Además
 `MainActivity` copia el archivo al caché si llegara a quedar fuera de las
 rutas declaradas, así que la instalación ya no puede fallar por eso.
+
+## Actualizaciones internas (Windows) — la app en la bandeja
+
+El actualizador baja el setup y lo lanza con `/SILENT`; la app espera 1.5 s y
+sale (`exit(0)`) para liberar el `.exe` y las DLL, y el instalador la relanza
+al terminar (el `[Run]` silencioso del `.iss`).
+
+Pero al cerrar la ventana la app **no se apaga**: se queda en la bandeja (ver
+«Avisos en tiempo real»). Windows Restart Manager, que es lo que Inno Setup usa
+para detectar y cerrar lo que está en uso, solo le manda un `WM_CLOSE` y la app
+lo interpretaba como «esconde la ventana»; el proceso seguía vivo y el
+instalador mostraba *«El programa de instalación no pudo cerrar de forma
+automática todas las aplicaciones…»* (Reintentar / Ignorar / Cancelar). Pasaba
+en las computadoras donde la app llevaba días en la bandeja (o con más de una
+instancia abierta), no en las que se abrió y cerró desde el menú de la bandeja.
+
+El `.iss` ahora lleva `CloseApplications=force` (cierra a la fuerza lo que no
+se cierra solo, en vez de preguntar) y `RestartApplications=no` (la app se
+relanza con su propio `[Run]`; si no, abriría DOS instancias). Detalle menor: el
+icono de la bandeja de la instancia cerrada a la fuerza puede quedar visible
+hasta que el ratón pasa por encima.
 
 ## Marca: el mismo icono en todas las apps
 
