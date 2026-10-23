@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:hardstreet_admin/event_widget.dart';
+import 'package:hardstreet_admin/hs_access.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/agendas_page.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
@@ -19,6 +20,7 @@ import 'package:hardstreet_admin/widgets/hs_toast.dart';
 /// - día 22 SIN hora (medianoche) -> fila de "todo el día" de la semana.
 void _installMockClient({
   List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? puts,
   List<Map<String, dynamic>>? agendas,
 }) {
   final now = DateTime.now();
@@ -38,6 +40,10 @@ void _installMockClient({
           201,
           headers: headers,
         );
+      }
+      if (request.method == 'PUT' || request.method == 'PATCH') {
+        puts?.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
+        return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
       }
       return http.Response(
         jsonEncode({
@@ -176,6 +182,7 @@ Future<void> _pumpAgendas(
   WidgetTester tester,
   Size size, {
   List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? puts,
   List<Map<String, dynamic>>? agendas,
 }) async {
   await tester.binding.setSurfaceSize(size);
@@ -188,7 +195,7 @@ Future<void> _pumpAgendas(
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
-  _installMockClient(posts: posts, agendas: agendas);
+  _installMockClient(posts: posts, puts: puts, agendas: agendas);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -507,7 +514,7 @@ void main() {
 
       await _tapPump(tester, find.text('Nuevo evento'));
       expect(
-        find.text('Elige el cliente, su paquete y el servicio a agendar'),
+        find.text('Elige el cliente y la fecha · el paquete es opcional'),
         findsOneWidget,
       );
 
@@ -532,6 +539,7 @@ void main() {
 
       expect(posts, hasLength(1));
       expect(posts.first['purchasedPackageId'], 10);
+      expect(posts.first['userId'], 2, reason: 'el cliente viaja siempre');
       expect(posts.first['serviceId'], 5);
       expect(posts.first['description'], 'Prueba de evento');
       expect(
@@ -540,6 +548,93 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'nuevo evento: se puede agendar SOLO con el cliente (sin paquete)',
+    (tester) async {
+      final posts = <Map<String, dynamic>>[];
+      await _pumpAgendas(tester, const Size(1200, 900), posts: posts);
+
+      await _tapPump(tester, find.text('Nuevo evento'));
+
+      // Luis no tiene paquetes comprados: aun así se le puede agendar la fecha.
+      await _tapPump(tester, find.byKey(const ValueKey('agenda-client')));
+      await _tapPump(tester, find.text('Luis Gómez').last);
+      expect(
+        find.textContaining('no tiene paquetes comprados'),
+        findsOneWidget,
+      );
+
+      // Sin elegir paquete, la fecha ya se puede guardar.
+      await _tapPump(tester, find.text('Crear evento'));
+
+      expect(posts, hasLength(1));
+      expect(posts.first['purchasedPackageId'], isNull);
+      expect(posts.first['userId'], 3);
+      expect(posts.first['serviceId'], isNull);
+      expect(
+        posts.first['eventDate'],
+        matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('el detalle de una agenda permite EDITARLA', (tester) async {
+    final puts = <Map<String, dynamic>>[];
+    await _pumpAgendas(tester, const Size(1200, 900), puts: puts);
+
+    await tester.ensureVisible(_weekBlock());
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, _weekBlock());
+    expect(find.text('Detalle de la agenda'), findsOneWidget);
+
+    // El detalle trae el botón de editar (con permiso de actualizar).
+    await _tapPump(tester, find.byTooltip('Editar agenda'));
+    expect(find.text('Editar agenda'), findsOneWidget);
+    expect(find.text('Guardar cambios'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Descripción'),
+      'Nota corregida',
+    );
+    await _tapPump(tester, find.text('Guardar cambios'));
+
+    expect(puts, hasLength(1));
+    expect(puts.first['id'], 1);
+    expect(puts.first['description'], 'Nota corregida');
+    expect(
+      puts.first['serviceId'],
+      5,
+      reason: 'el servicio que tenía se conserva al guardar',
+    );
+    expect(
+      puts.first['eventDate'],
+      matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:00$')),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin permiso de actualizar, el detalle NO ofrece editar', (
+    tester,
+  ) async {
+    // El rol solo puede VER agendas.
+    HsAccess.seedForTest(
+      modules: {
+        'agendas': {'read'},
+      },
+    );
+    addTearDown(HsAccess.reset);
+    await _pumpAgendas(tester, const Size(1200, 900));
+
+    await tester.ensureVisible(_weekBlock());
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, _weekBlock());
+
+    expect(find.text('Detalle de la agenda'), findsOneWidget);
+    expect(find.byTooltip('Editar agenda'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('nuevo evento: las ubicaciones se numeran 1, 2, 3 solas', (
     tester,
@@ -676,7 +771,7 @@ void main() {
 
     expect(find.text('Crear evento'), findsOneWidget);
     expect(
-      find.text('Elige el cliente, su paquete y el servicio a agendar'),
+      find.text('Elige el cliente y la fecha · el paquete es opcional'),
       findsOneWidget,
     );
     expect(UpcomingEventsWidget.requested.value, isNull);

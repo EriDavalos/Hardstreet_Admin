@@ -248,6 +248,11 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     final fresh = <Map<String, dynamic>>[];
     for (final r in list) {
       if (!_isUnread(r)) continue;
+      // Los avisos del PAQUETE ya los empuja `PackageNotificationsService`
+      // (consulta su propio endpoint y avisa al instante). Aquí solo se
+      // LISTAN en la campanita: notificarlos otra vez daría dos toasts por el
+      // mismo aviso.
+      if (_sourceOf(r) == 'package') continue;
       final id = _int(r['id']);
       if (id == null) continue;
       // Los avisos de impresión y los del módulo Notificaciones viven en

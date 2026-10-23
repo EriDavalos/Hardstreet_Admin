@@ -15,6 +15,7 @@ import 'package:flutter/gestures.dart'
         computeHitSlop;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart'
     show
         HardwareKeyboard,
@@ -322,7 +323,8 @@ class DrivePage extends StatefulWidget {
   State<DrivePage> createState() => _DrivePageState();
 }
 
-class _DrivePageState extends State<DrivePage> {
+class _DrivePageState extends State<DrivePage>
+    with SingleTickerProviderStateMixin {
   bool _grid = true;
   bool _selectMode = false;
   final Set<String> _selected = {};
@@ -337,7 +339,22 @@ class _DrivePageState extends State<DrivePage> {
 
   // ---- Marquesina: recuadro de selección arrastrando con el ratón ----
   final _contentKey = GlobalKey();
-  final Map<String, GlobalKey> _itemKeys = {};
+  // La cuadrícula y el listado tienen su PROPIO mapa de llaves: al cambiar de
+  // vista el AnimatedSwitcher mantiene ambas vistas una fracción de segundo y,
+  // con un solo mapa, la misma GlobalKey vivía en dos widgets (error de llave
+  // duplicada). Para marquesina/barrido se consultan los dos.
+  //
+  // Al cambiar de carpeta se reemplazan por mapas NUEVOS (no se limpian): la
+  // vista anterior sigue viva durante la transición y, si se limpiara el mismo
+  // mapa, tambien reclamaría las llaves de la carpeta nueva.
+  Map<String, GlobalKey> _itemKeys = {};
+  Map<String, GlobalKey> _rowKeys = {};
+
+  /// Llaves de las tarjetas visibles (cuadrícula o listado).
+  Iterable<MapEntry<String, GlobalKey>> get _visibleKeys sync* {
+    yield* _itemKeys.entries;
+    yield* _rowKeys.entries;
+  }
   Offset? _marqueeStart;
   Rect? _marqueeRect;
   List<String> _lastPath = const [];
@@ -353,7 +370,11 @@ class _DrivePageState extends State<DrivePage> {
   Offset? _sweepAt;
 
   /// Desplaza la lista sola mientras el dedo está cerca de un borde.
-  Timer? _sweepTicker;
+  ///
+  /// Es un [Ticker] (un paso por FOTOGRAMA): con el viejo `Timer` de 50 ms que
+  /// saltaba 16 px de golpe el scroll se veía atorado.
+  Ticker? _sweepTicker;
+  Duration _sweepLast = Duration.zero;
 
   // ---- "Suelta para subir": arrastre externo desde el explorador ----
   bool _externalDrag = false;
@@ -386,13 +407,19 @@ class _DrivePageState extends State<DrivePage> {
     super.initState();
     _grid = widget.initialGrid;
     _lastPath = List.of(widget.drive.path);
+    // El auto-scroll del barrido va con el reloj de la app (un paso por
+    // fotograma), no con un `Timer`.
+    _sweepTicker = createTicker(_onSweepTick);
     widget.drive.addListener(_onChange);
     HardwareKeyboard.instance.addHandler(_handleKey);
   }
 
   @override
   void dispose() {
-    _sweepTicker?.cancel();
+    // Se detiene ANTES de disponerlo: un Ticker activo al soltar el estado
+    // dispara la aserción del TickerProvider.
+    _stopSweepTicker();
+    _sweepTicker?.dispose();
     _scrollController.dispose();
     HardwareKeyboard.instance.removeHandler(_handleKey);
     widget.drive.removeListener(_onChange);
@@ -480,7 +507,8 @@ class _DrivePageState extends State<DrivePage> {
         }
       }
       _lastPath = List.of(widget.drive.path);
-      _itemKeys.clear();
+      _itemKeys = {};
+      _rowKeys = {};
       _selected.clear();
       _selectMode = false;
       _anchorIndex = -1;
@@ -643,9 +671,14 @@ class _DrivePageState extends State<DrivePage> {
     final local = box.globalToLocal(event.position);
     final size = box.size;
     if (local.dx < 0 || local.dy < 0 || local.dx > size.width) return;
+    // El borde derecho es la BARRA DE SCROLL del escritorio: al agarrarla y
+    // arrastrarla (o dar clic en su carril) NO se selecciona nada. Antes ese
+    // pulsó caía en la zona vacía, arrancaba la marquesina y encendía el modo
+    // seleccionar mientras se desplazaba.
+    if (local.dx >= size.width - _scrollbarBand) return;
     // ¿El pulsó empezó sobre una tarjeta?
     String? hitName;
-    for (final entry in _itemKeys.entries) {
+    for (final entry in _visibleKeys) {
       final b = entry.value.currentContext?.findRenderObject() as RenderBox?;
       if (b == null || !b.attached) continue;
       if ((b.localToGlobal(Offset.zero) & b.size).contains(event.position)) {
@@ -699,7 +732,7 @@ class _DrivePageState extends State<DrivePage> {
 
     // ¿Qué tarjetas intersectan el recuadro?
     final hit = <String>{};
-    for (final entry in _itemKeys.entries) {
+    for (final entry in _visibleKeys) {
       final b = entry.value.currentContext?.findRenderObject() as RenderBox?;
       if (b == null || !b.attached) continue;
       final itemRect = box.globalToLocal(b.localToGlobal(Offset.zero)) & b.size;
@@ -751,7 +784,7 @@ class _DrivePageState extends State<DrivePage> {
 
   void _startSweep(DriveItem item) {
     HapticFeedback.selectionClick();
-    _sweepTicker?.cancel();
+    _stopSweepTicker();
     setState(() {
       _sweepFrom = item.name;
       _sweepBase = {..._selected};
@@ -777,8 +810,7 @@ class _DrivePageState extends State<DrivePage> {
   }
 
   void _resetSweep() {
-    _sweepTicker?.cancel();
-    _sweepTicker = null;
+    _stopSweepTicker();
     _sweepFrom = null;
     _sweepBase = {};
     _sweepAt = null;
@@ -812,7 +844,10 @@ class _DrivePageState extends State<DrivePage> {
     var best = -1;
     var bestDistance = double.infinity;
     for (var i = 0; i < items.length; i++) {
-      final box = _itemKeys[items[i].name]?.currentContext?.findRenderObject();
+      final name = items[i].name;
+      final box = (_itemKeys[name] ?? _rowKeys[name])
+          ?.currentContext
+          ?.findRenderObject();
       if (box is! RenderBox || !box.attached) continue;
       final rect = box.localToGlobal(Offset.zero) & box.size;
       if (rect.contains(globalPosition)) return i;
@@ -835,35 +870,51 @@ class _DrivePageState extends State<DrivePage> {
     return best >= 0 ? best : null;
   }
 
-  /// Mientras el dedo está cerca de un borde, la lista se desplaza sola.
+  /// Arranca el auto-scroll del barrido (si ya estaba corriendo, no hace nada).
   void _startSweepTicker() {
-    _sweepTicker ??= Timer.periodic(
-      const Duration(milliseconds: 50),
-      (_) => _sweepScrollStep(),
-    );
+    final ticker = _sweepTicker;
+    if (ticker == null || ticker.isActive) return;
+    _sweepLast = Duration.zero;
+    ticker.start();
   }
 
-  void _sweepScrollStep() {
+  void _stopSweepTicker() {
+    final ticker = _sweepTicker;
+    if (ticker != null && ticker.isActive) ticker.stop();
+    _sweepLast = Duration.zero;
+  }
+
+  /// Un fotograma del auto-scroll del barrido.
+  ///
+  /// Antes era un `Timer` de 50 ms que saltaba 16 px de golpe: se veía a
+  /// tirones ("atorado"), sobre todo al bajar. Ahora va con el [Ticker] —un
+  /// paso por fotograma, suave— y la VELOCIDAD crece según cuánto entra el
+  /// dedo en la zona del borde: justo al borde va despacio (para afinar) y
+  /// pegado abajo acelera hasta media pantalla por segundo.
+  void _onSweepTick(Duration elapsed) {
+    final dt = (elapsed - _sweepLast).inMicroseconds / 1e6;
+    _sweepLast = elapsed;
     if (!mounted || !_sweeping) {
-      _sweepTicker?.cancel();
-      _sweepTicker = null;
+      _stopSweepTicker();
       return;
     }
     final at = _sweepAt;
-    if (at == null) return;
+    if (at == null || dt <= 0) return;
     final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.attached) return;
     final local = box.globalToLocal(at);
-    const edge = 74.0;
-    var delta = 0.0;
+    const edge = 84.0;
+    var depth = 0.0;
     if (local.dy > box.size.height - edge) {
-      delta = 16;
+      depth = (local.dy - (box.size.height - edge)) / edge;
     } else if (local.dy < edge) {
-      delta = -16;
+      depth = -((edge - local.dy) / edge);
     }
-    if (delta == 0 || !_scrollController.isSafe) return;
+    if (depth == 0 || !_scrollController.isSafe) return;
+    // Hasta ~1500 px/s; con el dedo muy pasado del borde acelera un poco más.
+    final speed = 1500 * depth.clamp(-1.4, 1.4);
     final pos = _scrollController.positions.single;
-    final target = (pos.pixels + delta)
+    final target = (pos.pixels + speed * dt)
         .clamp(pos.minScrollExtent, pos.maxScrollExtent)
         .toDouble();
     if (target == pos.pixels) return;
@@ -1574,6 +1625,458 @@ class _DrivePageState extends State<DrivePage> {
     );
   }
 
+  /// Encabezado del MÓDULO: tarjeta con el título, la búsqueda, la ruta y el
+  /// estado de la carpeta.
+  ///
+  /// En el CELULAR se dibuja DENTRO del scroll del contenido (ver
+  /// `_scrollWithHeader`): al bajar, el encabezado se va con la lista y la
+  /// carpeta se queda con toda la pantalla. En escritorio sigue fijo arriba.
+  Widget _moduleHeader(
+    BuildContext context,
+    DriveBase drive,
+    ColorScheme scheme, {
+    required bool isCompact,
+    required double hPad,
+    required int foldersCount,
+    required int imagesCount,
+    // En el CELULAR la ruta ("Mi archivo > Carpeta") va en su PROPIA barra,
+    // dentro del scroll y pegajosa (ver [_crumbsBar] y
+    // [_CrumbsHeaderDelegate]): así viaja con el contenido y se queda fija
+    // arriba al bajar.
+    bool showCrumbs = true,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+    // ===== Header hero: tarjeta plana con degradado sutil y
+    // círculos geométricos (mismo lenguaje visual que los módulos) ==
+    Padding(
+      padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(
+            isCompact ? 18 : 22,
+          ),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.primary.withValues(alpha: .08),
+              scheme.primary.withValues(alpha: .015),
+            ],
+          ),
+          border: Border.all(
+            color: scheme.primary.withValues(alpha: .16),
+          ),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -40,
+              top: -52,
+              child: Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .05),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Positioned(
+              left: -46,
+              bottom: -64,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .035),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.all(isCompact ? 16 : 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      PopIn(
+                        child: Container(
+                          padding: const EdgeInsets.all(3.5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: scheme.primary.withValues(
+                                alpha: .28,
+                              ),
+                            ),
+                          ),
+                          child: Container(
+                            width: isCompact ? 48 : 54,
+                            height: isCompact ? 48 : 54,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                colors: [
+                                  AppColors.brand,
+                                  AppColors.brandDark,
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.folder_copy_outlined,
+                              color: Colors.white,
+                              size: isCompact ? 24 : 26,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                if (widget.onBack != null) ...[
+                                  IconButton(
+                                    tooltip: widget.backTooltip,
+                                    visualDensity:
+                                        VisualDensity.compact,
+                                    onPressed: widget.onBack,
+                                    icon: const Icon(
+                                      Icons.arrow_back_rounded,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 2),
+                                ],
+                                Flexible(
+                                  child: Text(
+                                    widget.title,
+                                    maxLines: 1,
+                                    overflow:
+                                        TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall
+                                        ?.copyWith(
+                                          fontWeight:
+                                              FontWeight.w800,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              drive.path.isEmpty ||
+                                      drive.locationLabel ==
+                                          'Mi Drive'
+                                  ? (widget.subtitle ??
+                                        'Raíz del almacenamiento')
+                                  : drive.locationLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color:
+                                        scheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Crear (carpeta/subir) solo con permiso: las
+                      // acciones que el rol no tiene NO se dibujan.
+                      if (!isCompact) ...[
+                        if (_driveCan(
+                          widget.drive,
+                          'create',
+                        )) ...[
+                          const SizedBox(width: 16),
+                          OutlinedButton.icon(
+                            onPressed: _newFolder,
+                            icon: const Icon(
+                              Icons.create_new_folder_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('Nueva carpeta'),
+                          ),
+                          const SizedBox(width: 10),
+                          FilledButton.icon(
+                            onPressed: _upload,
+                            icon: const Icon(
+                              Icons.upload_file,
+                              size: 18,
+                            ),
+                            label: const Text('Subir archivos'),
+                          ),
+                        ],
+                      ],
+                      // En el celular el título NO lleva botones de crear: eso
+                      // vive en el botón fijo de abajo (y así el encabezado se
+                      // puede ir con el scroll sin perder las acciones).
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: drive.setSearch,
+                          decoration: const InputDecoration(
+                            hintText: 'Buscar en esta carpeta',
+                            prefixIcon: Icon(
+                              Icons.search,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Tooltip(
+                        message: _grid
+                            ? 'Vista de lista'
+                            : 'Vista de cuadrícula',
+                        child: IconButton.filledTonal(
+                          onPressed: () =>
+                              setState(() => _grid = !_grid),
+                          icon: Icon(
+                            _grid
+                                ? Icons.view_list_rounded
+                                : Icons.grid_view_rounded,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+    const SizedBox(height: 10),
+    // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
+    // móvil, donde sirve para saltar a cualquier carpeta padre) =====
+    //
+    // En una carpeta COMPARTIDA la ruta se dibuja también en la raíz
+    // (`onRootTap != null`): la primera miga es el MÓDULO del que se
+    // abrió y, al tocarla, se vuelve a su listado.
+    if (showCrumbs && (drive.path.isNotEmpty || widget.onRootTap != null))
+      Padding(
+        padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: _Breadcrumbs(
+            key: const ValueKey('drive-crumbs'),
+            drive: drive,
+            onDropMove: _doMove,
+            onRootTap: widget.onRootTap,
+          ),
+        ),
+      ),
+    // ===== Barra de estado =====
+    // En el CELULAR estas pastillas no caben en una sola fila de 390 px (y
+    // con el aviso de "Sin conexión" menos todavía): se acomodan en varias
+    // líneas en vez de desbordar la tarjeta.
+    Padding(
+      padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
+      child: Builder(
+        builder: (context) {
+          final chips = <Widget>[
+            _CountPill(
+              icon: Icons.folder_rounded,
+              label: '$foldersCount carpetas',
+            ),
+            _CountPill(
+              icon: Icons.image_outlined,
+              label: '$imagesCount imágenes',
+            ),
+            if (drive.search != null)
+              _CountPill(
+                icon: Icons.filter_alt,
+                label: 'filtro: "${drive.search}"',
+              ),
+          ];
+          final actions = <Widget>[
+            // Aviso discreto: si un refresco falló se conserva el listado
+            // en pantalla, pero se dice que puede estar viejo (antes se
+            // reemplazaba el directorio entero por "Error").
+            if (drive.error != null)
+              _CountPill(
+                icon: Icons.cloud_off_outlined,
+                label: 'Sin conexión · reintentar',
+                color: scheme.error,
+                onTap: drive.refresh,
+              ),
+            if (!_selectMode && drive.visibleItems.isNotEmpty)
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _selectMode = true;
+                    if (_selected.isEmpty) {
+                      _selected.add(drive.visibleItems.first.name);
+                      _anchorIndex = 0;
+                    }
+                  });
+                },
+                icon: const Icon(Icons.checklist, size: 18),
+                label: const Text('Seleccionar'),
+              ),
+          ];
+          if (isCompact) {
+            return Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [...chips, ...actions],
+            );
+          }
+          return Row(
+            children: [
+              for (final chip in chips) ...[
+                chip,
+                const SizedBox(width: 8),
+              ],
+              const Spacer(),
+              for (final action in actions) ...[
+                action,
+                const SizedBox(width: 8),
+              ],
+            ],
+          );
+        },
+      ),
+    ),
+      ],
+    );
+  }
+
+  /// Barra con la ruta de la carpeta (solo celular).
+  ///
+  /// Viaja DENTRO del scroll, en su sitio de siempre (debajo de la tarjeta del
+  /// módulo) y, cuando está a punto de ocultarse, se PEGA arriba como fija:
+  /// así el camino queda a la vista sin quitarle alto a la carpeta.
+  ///
+  /// El DISEÑO es el de siempre (la ruta suelta sobre el fondo de la página,
+  /// sin caja ni línea): el fondo solo está para tapar lo que pasa por detrás
+  /// al pegarse.
+  ///
+  /// El color es EXACTAMENTE el de la página ([ThemeData.scaffoldBackgroundColor],
+  /// no `surface`, que es otro tono): así la barra no se ve como una franja y
+  /// no aparece ninguna línea de costura en su borde. Se pinta con un
+  /// [ColoredBox] y NO con el `Material`, para que la barra no aporte borde,
+  /// sombra ni tinte propios; el [Material] transparente sigue ahí solo porque
+  /// el resaltado del ratón (y el toque) de cada carpeta se pinta en el
+  /// Material más cercano —antes esa tinta caía debajo del fondo y al pasar el
+  /// ratón no se veía nada.
+  Widget _crumbsBar(BuildContext context, DriveBase drive, double hPad) {
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Material(
+        type: MaterialType.transparency,
+        child: Container(
+          height: _CrumbsHeaderDelegate.height,
+          width: double.infinity,
+          // SIN aire vertical: la barra mide justo el alto de las migas. Antes
+          // le sobraban 4 px arriba y 4 abajo que se veían como un hueco
+          // aparte entre la línea del encabezado y la ruta.
+          padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
+          alignment: Alignment.centerLeft,
+          child: _Breadcrumbs(
+            key: const ValueKey('drive-crumbs'),
+            drive: drive,
+            onDropMove: _doMove,
+            onRootTap: widget.onRootTap,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Envuelve un estado SIN scroll propio (cargando, vacío, error) para que el
+  /// encabezado y la ruta del CELULAR sigan dentro de la misma vista
+  /// desplazable.
+  Widget _scrollWithHeader(Widget? header, Widget? crumbs, Widget child) {
+    if (header == null) return child;
+    return CustomScrollView(
+      controller: _scrollController,
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        SliverToBoxAdapter(child: header),
+        if (crumbs != null) _stickyCrumbs(crumbs),
+        SliverFillRemaining(hasScrollBody: false, child: child),
+      ],
+    );
+  }
+
+  /// La franja del borde derecho donde vive la BARRA DE SCROLL en escritorio.
+  /// Agarrar la barra (o su carril) es desplazarse, no seleccionar: antes ese
+  /// clic iniciaba la marquesina y encendía el modo «Seleccionar».
+  static const double _scrollbarBand = 22;
+
+  /// Menú del botón FIJO del celular: crear carpeta o subir archivos. Antes
+  /// esas acciones vivían en el encabezado y, al desplazarse, se perdían.
+  Future<void> _showCreateMenu() async {
+    final scheme = Theme.of(context).colorScheme;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: scheme.surfaceContainerLow,
+      builder: (sheetCtx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                'Agregar a esta carpeta',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.create_new_folder_outlined,
+                color: scheme.primary,
+              ),
+              title: const Text('Nueva carpeta'),
+              onTap: () => Navigator.of(sheetCtx).pop('folder'),
+            ),
+            ListTile(
+              leading: Icon(Icons.upload_file_outlined, color: scheme.primary),
+              title: const Text('Subir archivos'),
+              onTap: () => Navigator.of(sheetCtx).pop('upload'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'folder') await _newFolder();
+    if (action == 'upload') await _upload();
+  }
+
   // ==================== Build ====================
 
   @override
@@ -1593,6 +2096,28 @@ class _DrivePageState extends State<DrivePage> {
 
     final imagesCount = drive.items.where((i) => !i.isFolder).length;
     final foldersCount = drive.items.where((i) => i.isFolder).length;
+
+    // En el CELULAR el encabezado (título, búsqueda, ruta…) viaja DENTRO del
+    // scroll del contenido: al bajar desaparece y la carpeta se queda con toda
+    // la pantalla. En escritorio se queda fijo arriba, como siempre.
+    final header = _moduleHeader(
+      context,
+      drive,
+      scheme,
+      isCompact: isCompact,
+      hPad: hPad,
+      foldersCount: foldersCount,
+      imagesCount: imagesCount,
+      // En el celular la ruta NO va dentro del encabezado: es su propia barra
+      // PEGAJOSA (se ve en su sitio y, al bajar, se queda fija arriba).
+      showCrumbs: !isCompact,
+    );
+    // En escritorio el encabezado se queda fuera del scroll (null); en el
+    // celular viaja dentro para que se desplace con la carpeta.
+    final scrollHeader = isCompact ? header : null;
+    // Barra de ruta del celular: viaja con el encabezado y se PEGA arriba en
+    // cuanto va a salir de la vista (ver [_CrumbsHeaderDelegate]).
+    final stickyCrumbs = isCompact ? _crumbsBar(context, drive, hPad) : null;
 
     // Desplazamiento del área de contenido dentro del Stack (header arriba):
     // la marquesina se dibuja en coords del Stack pero se calcula en coords
@@ -1662,356 +2187,71 @@ class _DrivePageState extends State<DrivePage> {
               onPointerCancel: _onContentPointerUp,
               child: Column(
                 children: [
-                  // ===== Header hero: tarjeta plana con degradado sutil y
-                  // círculos geométricos (mismo lenguaje visual que los módulos) ==
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
-                    child: Container(
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(
-                          isCompact ? 18 : 22,
-                        ),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            scheme.primary.withValues(alpha: .08),
-                            scheme.primary.withValues(alpha: .015),
-                          ],
-                        ),
-                        border: Border.all(
-                          color: scheme.primary.withValues(alpha: .16),
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            right: -40,
-                            top: -52,
-                            child: Container(
-                              width: 150,
-                              height: 150,
-                              decoration: BoxDecoration(
-                                color: scheme.primary.withValues(alpha: .05),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: -46,
-                            bottom: -64,
-                            child: Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                color: scheme.primary.withValues(alpha: .035),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: EdgeInsets.all(isCompact ? 16 : 20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    PopIn(
-                                      child: Container(
-                                        padding: const EdgeInsets.all(3.5),
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: scheme.primary.withValues(
-                                              alpha: .28,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Container(
-                                          width: isCompact ? 48 : 54,
-                                          height: isCompact ? 48 : 54,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            gradient: LinearGradient(
-                                              colors: [
-                                                AppColors.brand,
-                                                AppColors.brandDark,
-                                              ],
-                                              begin: Alignment.topLeft,
-                                              end: Alignment.bottomRight,
-                                            ),
-                                          ),
-                                          child: Icon(
-                                            Icons.folder_copy_outlined,
-                                            color: Colors.white,
-                                            size: isCompact ? 24 : 26,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 14),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              if (widget.onBack != null) ...[
-                                                IconButton(
-                                                  tooltip: widget.backTooltip,
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                  onPressed: widget.onBack,
-                                                  icon: const Icon(
-                                                    Icons.arrow_back_rounded,
-                                                    size: 20,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 2),
-                                              ],
-                                              Flexible(
-                                                child: Text(
-                                                  widget.title,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .headlineSmall
-                                                      ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.w800,
-                                                      ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            drive.path.isEmpty ||
-                                                    drive.locationLabel ==
-                                                        'Mi Drive'
-                                                ? (widget.subtitle ??
-                                                      'Raíz del almacenamiento')
-                                                : drive.locationLabel,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                  color:
-                                                      scheme.onSurfaceVariant,
-                                                ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    // Crear (carpeta/subir) solo con permiso: las
-                                    // acciones que el rol no tiene NO se dibujan.
-                                    if (!isCompact) ...[
-                                      if (_driveCan(
-                                        widget.drive,
-                                        'create',
-                                      )) ...[
-                                        const SizedBox(width: 16),
-                                        OutlinedButton.icon(
-                                          onPressed: _newFolder,
-                                          icon: const Icon(
-                                            Icons.create_new_folder_outlined,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Nueva carpeta'),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        FilledButton.icon(
-                                          onPressed: _upload,
-                                          icon: const Icon(
-                                            Icons.upload_file,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Subir archivos'),
-                                        ),
-                                      ],
-                                    ] else ...[
-                                      if (_driveCan(
-                                        widget.drive,
-                                        'create',
-                                      )) ...[
-                                        _RoundAction(
-                                          icon:
-                                              Icons.create_new_folder_outlined,
-                                          tooltip: 'Nueva carpeta',
-                                          onTap: _newFolder,
-                                        ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                      // Sin botón de recargar: en la app se
-                                      // recarga deslizando hacia abajo (en el
-                                      // escritorio, cada acción ya refresca).
-                                    ],
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _searchController,
-                                        onChanged: drive.setSearch,
-                                        decoration: const InputDecoration(
-                                          hintText: 'Buscar en esta carpeta',
-                                          prefixIcon: Icon(
-                                            Icons.search,
-                                            size: 20,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Tooltip(
-                                      message: _grid
-                                          ? 'Vista de lista'
-                                          : 'Vista de cuadrícula',
-                                      child: IconButton.filledTonal(
-                                        onPressed: () =>
-                                            setState(() => _grid = !_grid),
-                                        icon: Icon(
-                                          _grid
-                                              ? Icons.view_list_rounded
-                                              : Icons.grid_view_rounded,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  // ===== Ruta actual: "Mi Drive > PerlaMolina > ..." (también en
-                  // móvil, donde sirve para saltar a cualquier carpeta padre) =====
-                  //
-                  // En una carpeta COMPARTIDA la ruta se dibuja también en la raíz
-                  // (`onRootTap != null`): la primera miga es el MÓDULO del que se
-                  // abrió y, al tocarla, se vuelve a su listado.
-                  if (drive.path.isNotEmpty || widget.onRootTap != null)
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 0),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: _Breadcrumbs(
-                          drive: drive,
-                          onDropMove: _doMove,
-                          onRootTap: widget.onRootTap,
-                        ),
-                      ),
-                    ),
-                  // ===== Barra de estado =====
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 6),
-                    child: Row(
-                      children: [
-                        _CountPill(
-                          icon: Icons.folder_rounded,
-                          label: '$foldersCount carpetas',
-                        ),
-                        const SizedBox(width: 8),
-                        _CountPill(
-                          icon: Icons.image_outlined,
-                          label: '$imagesCount imágenes',
-                        ),
-                        if (drive.search != null) ...[
-                          const SizedBox(width: 8),
-                          _CountPill(
-                            icon: Icons.filter_alt,
-                            label: 'filtro: "${drive.search}"',
-                          ),
-                        ],
-                        const Spacer(),
-                        // Aviso discreto: si un refresco falló se conserva el listado
-                        // en pantalla, pero se dice que puede estar viejo (antes se
-                        // reemplazaba el directorio entero por "Error").
-                        if (drive.error != null) ...[
-                          _CountPill(
-                            icon: Icons.cloud_off_outlined,
-                            label: 'Sin conexión · reintentar',
-                            color: scheme.error,
-                            onTap: drive.refresh,
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        if (!_selectMode && drive.visibleItems.isNotEmpty)
-                          TextButton.icon(
-                            onPressed: () {
-                              setState(() {
-                                _selectMode = true;
-                                if (_selected.isEmpty) {
-                                  _selected.add(drive.visibleItems.first.name);
-                                  _anchorIndex = 0;
-                                }
-                              });
-                            },
-                            icon: const Icon(Icons.checklist, size: 18),
-                            label: const Text('Seleccionar'),
-                          ),
-                      ],
-                    ),
-                  ),
+                  if (!isCompact) header,
                   // ===== Contenido =====
                   Expanded(
                     // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
                     // botón de recargar en el encabezado).
                     child: RefreshIndicator(
                       onRefresh: drive.refresh,
+                      // El giro de "recargar" nace debajo de la barra de ruta
+                      // pegajosa, no encima de ella.
+                      edgeOffset: stickyCrumbs == null
+                          ? 0
+                          : _CrumbsHeaderDelegate.height,
                       child: drive.loading && drive.items.isEmpty
-                          ? const Center(child: CircularProgressIndicator())
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              const Center(child: CircularProgressIndicator()),
+                            )
                           // El panel bloqueante solo cuando NO hay nada que mostrar:
                           // si ya se ve una carpeta, se queda a la vista.
                           : drive.error != null && drive.items.isEmpty
-                          ? EmptyState(
-                              icon: Icons.folder_off_outlined,
-                              title: 'Error',
-                              message: drive.error!,
-                              actionLabel: 'Reintentar',
-                              onAction: drive.refresh,
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              EmptyState(
+                                icon: Icons.folder_off_outlined,
+                                title: 'Error',
+                                message: drive.error!,
+                                actionLabel: 'Reintentar',
+                                onAction: drive.refresh,
+                              ),
                             )
                           : drive.visibleItems.isEmpty
-                          ? EmptyState(
-                              icon: drive.scoped && drive.path.isEmpty
-                                  ? Icons.folder_off_outlined
-                                  : Icons.folder_open_rounded,
-                              title: drive.search != null
-                                  ? 'Sin resultados'
-                                  : drive.scoped && drive.path.isEmpty
-                                  ? 'Aún no se te comparte ninguna carpeta'
-                                  : 'Esta carpeta está vacía',
-                              message: drive.search != null
-                                  ? 'No hay coincidencias en esta carpeta.'
-                                  : drive.scoped && drive.path.isEmpty
-                                  ? 'Tu fotógrafo todavía no compartió carpetas '
-                                        'contigo. En cuanto las asigne a tus '
-                                        'paquetes, aparecerán aquí.'
-                                  : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
-                              // Sin permiso de crear, la tarjeta vacía invita
-                              // pero no ofrece el botón.
-                              actionLabel:
-                                  drive.scoped && drive.path.isEmpty ||
-                                      !_driveCan(widget.drive, 'create')
-                                  ? null
-                                  : 'Subir archivos',
-                              onAction:
-                                  drive.scoped && drive.path.isEmpty ||
-                                      !_driveCan(widget.drive, 'create')
-                                  ? null
-                                  : _upload,
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              EmptyState(
+                                icon: drive.scoped && drive.path.isEmpty
+                                    ? Icons.folder_off_outlined
+                                    : Icons.folder_open_rounded,
+                                title: drive.search != null
+                                    ? 'Sin resultados'
+                                    : drive.scoped && drive.path.isEmpty
+                                    ? 'Aún no se te comparte ninguna carpeta'
+                                    : 'Esta carpeta está vacía',
+                                message: drive.search != null
+                                    ? 'No hay coincidencias en esta carpeta.'
+                                    : drive.scoped && drive.path.isEmpty
+                                    ? 'Tu fotógrafo todavía no compartió carpetas '
+                                          'contigo. En cuanto las asigne a tus '
+                                          'paquetes, aparecerán aquí.'
+                                    : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
+                                // Sin permiso de crear, la tarjeta vacía invita
+                                // pero no ofrece el botón.
+                                actionLabel:
+                                    drive.scoped && drive.path.isEmpty ||
+                                        !_driveCan(widget.drive, 'create')
+                                    ? null
+                                    : 'Subir archivos',
+                                onAction:
+                                    drive.scoped && drive.path.isEmpty ||
+                                        !_driveCan(widget.drive, 'create')
+                                    ? null
+                                    : _upload,
+                              ),
                             )
                           : AnimatedSwitcher(
                               // Transición suave al cambiar de carpeta (o de
@@ -2049,6 +2289,8 @@ class _DrivePageState extends State<DrivePage> {
                                         noEntrance: _noEntrance,
                                         scrollController: _scrollController,
                                         sweep: sweep,
+                                        header: scrollHeader,
+                                        crumbs: stickyCrumbs,
                                       )
                                     : _ListContent(
                                         drive: drive,
@@ -2062,7 +2304,7 @@ class _DrivePageState extends State<DrivePage> {
                                         onRename: _rename,
                                         onDelete: _delete,
                                         onDrop: _onItemDrop,
-                                        itemKeys: _itemKeys,
+                                        itemKeys: _rowKeys,
                                         onTapSelect: _onCardTap,
                                         onContextMenu: _openItemMenu,
                                         onDownload: (item) =>
@@ -2071,6 +2313,8 @@ class _DrivePageState extends State<DrivePage> {
                                         noEntrance: _noEntrance,
                                         scrollController: _scrollController,
                                         sweep: sweep,
+                                        header: scrollHeader,
+                                        crumbs: stickyCrumbs,
                                       )),
                               ),
                             ),
@@ -2079,6 +2323,18 @@ class _DrivePageState extends State<DrivePage> {
                 ],
               ),
             ),
+            // ===== Botón FIJO de creación (solo celular) =====
+            // El encabezado ya se desplaza con el contenido, así que crear
+            // carpeta o subir archivos se queda siempre a mano. Solo aparece
+            // con permiso de crear y nunca encima de la barra de selección.
+            if (isCompact &&
+                !_selectMode &&
+                _driveCan(widget.drive, 'create'))
+              Positioned(
+                right: 18,
+                bottom: 18 + MediaQuery.viewPaddingOf(context).bottom,
+                child: _CreateFab(onTap: _showCreateMenu),
+              ),
             // ===== Recuadro de selección (marquesina) =====
             if (_marqueeRect != null)
               Positioned.fromRect(
@@ -2242,24 +2498,67 @@ class SelectionPayload {
   final List<String> names;
 }
 
-/// Botón circular compacto para móvil.
-class _RoundAction extends StatelessWidget {
-  const _RoundAction({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
+/// Botón FIJO de creación del celular: SOLO el icono.
+///
+/// Se ve como una pieza de la app (círculo con el degradado de marca, un
+/// anillo claro y un halo suave) en vez del botón alargado con texto: ocupa
+/// menos y deja ver las fotos de abajo. Al tocarlo abre la hoja con "Nueva
+/// carpeta" y "Subir archivos".
+class _CreateFab extends StatelessWidget {
+  const _CreateFab({required this.onTap});
 
-  final IconData icon;
-  final String tooltip;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return IconButton.filledTonal(
-      tooltip: tooltip,
-      onPressed: onTap,
-      icon: Icon(icon, size: 20),
+    return Tooltip(
+      message: 'Agregar',
+      child: Semantics(
+        button: true,
+        label: 'Agregar',
+        // El degradado y el halo van en un DecoratedBox y el toque en un
+        // Material RECORTADO en círculo: así el resaltado (ripple) también es
+        // redondo. Antes el Material no recortaba su tinta y el resaltado
+        // salía CUADRADO. Sin contorno: solo el degradado.
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.brand, AppColors.brandDark],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.brand.withValues(alpha: .40),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              splashColor: Colors.white.withValues(alpha: .22),
+              highlightColor: Colors.white.withValues(alpha: .12),
+              child: const SizedBox(
+                width: 58,
+                height: 58,
+                child: Center(
+                  child: Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2469,8 +2768,62 @@ class _BarAction extends StatelessWidget {
 
 // ===================== Breadcrumbs =====================
 
+/// Barra de ruta PEGAJOSA: va después del encabezado del módulo y, en cuanto
+/// está a punto de salir de la vista, se PEGA arriba (`pinned`) para que el
+/// camino siga a la vista sin robarle alto a la carpeta.
+Widget _stickyCrumbs(Widget bar) => SliverPersistentHeader(
+  pinned: true,
+  delegate: _CrumbsHeaderDelegate(child: bar),
+);
+
+class _CrumbsHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _CrumbsHeaderDelegate({required this.child});
+
+  final Widget child;
+
+  /// Alto de la barra: exactamente el de las migas (34), sin aire de sobra
+  /// arriba ni abajo — ese aire se veía como un pequeño espacio aparte.
+  static const double height = 34;
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => child;
+
+  @override
+  bool shouldRebuild(covariant _CrumbsHeaderDelegate old) => old.child != child;
+}
+
+/// Una miga de la ruta (ver el dibujo en [_BreadcrumbsState]).
+class _Crumb {
+  const _Crumb(
+    this.label,
+    this.onTap, {
+    this.current = false,
+    this.target = const [],
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  /// La carpeta donde se está ahora (se resalta).
+  final bool current;
+
+  /// Destino al soltar un arrastre (para mover ahí).
+  final List<String> target;
+}
+
 class _Breadcrumbs extends StatefulWidget {
   const _Breadcrumbs({
+    super.key,
     required this.drive,
     required this.onDropMove,
     this.onRootTap,
@@ -2520,6 +2873,20 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
     });
   }
 
+  /// El «…» del medio: dice que hay carpetas ocultas en el camino.
+  static Widget _gap(ColorScheme scheme) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 4),
+    child: Text(
+      '…',
+      maxLines: 1,
+      style: TextStyle(
+        fontSize: 13.5,
+        fontWeight: FontWeight.w700,
+        color: scheme.onSurfaceVariant.withValues(alpha: .8),
+      ),
+    ),
+  );
+
   /// Acorta un nombre largo sin perder el principio ni el final
   /// ("SesionPreviaDeLaBodaDeAna" → "SesionPre…aDeAna").
   static String _short(String s, {int max = 24}) {
@@ -2567,6 +2934,9 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
           return InkWell(
             onTap: onTap,
             borderRadius: BorderRadius.circular(8),
+            // El ratón SÍ destaca la carpeta al pasar por encima (el color
+            // sale del Material de la barra; ver [_crumbsBar]).
+            hoverColor: scheme.primary.withValues(alpha: .10),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -2608,45 +2978,54 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
     // y quedan «Mi Drive > ReynaCoot» (la raíz del cliente es donde están SUS
     // carpetas compartidas), no «Mi Drive > XV > ReynaCoot».
     final hidden = drive.hiddenPathPrefix;
-    final children = <Widget>[];
-    children.add(
-      crumb(
-        drive.rootLabel,
-        widget.onRootTap ?? () => drive.openPath(const []),
-        current: drive.path.isEmpty && drive.crumbFolderLabel == null,
-        target: const [],
-      ),
-    );
     // La carpeta en sí (solo en una COMPARTIDA: `rootLabel` es el módulo y
     // esta miga es la carpeta, para poder volver a su contenido desde una
     // subcarpeta sin salir del módulo).
     final folderCrumb = drive.crumbFolderLabel;
-    if (folderCrumb != null) {
-      children.add(separator);
-      children.add(
-        crumb(
+    // Todas las migas en orden: la raíz, la carpeta del módulo (si la hay) y
+    // cada carpeta del camino.
+    final entries = <_Crumb>[
+      _Crumb(
+        drive.rootLabel,
+        widget.onRootTap ?? () => drive.openPath(const []),
+        current: drive.path.isEmpty && folderCrumb == null,
+      ),
+      if (folderCrumb != null)
+        _Crumb(
           folderCrumb,
           () => drive.openPath(const []),
           current: drive.path.isEmpty,
-          target: const [],
         ),
-      );
-    }
-    for (var i = hidden; i < drive.path.length; i++) {
-      if (children.isNotEmpty) children.add(separator);
-      final t = drive.path.sublist(0, i + 1);
-      children.add(
-        crumb(
+      for (var i = hidden; i < drive.path.length; i++)
+        _Crumb(
           drive.path[i],
-          () => drive.openPath(t),
+          () => drive.openPath(drive.path.sublist(0, i + 1)),
+          target: drive.path.sublist(0, i + 1),
           current: i == drive.path.length - 1,
-          target: t,
         ),
+    ];
+    // AHORRO DE ESPACIO: con un camino largo NO se listan todas las carpetas.
+    // Se ve la raíz, un «…» y las DOS últimas: «Mi Drive > … > Carpeta2 >
+    // Carpeta3». Con tres migas o menos se ven completas.
+    final shown = entries.length <= 3
+        ? [for (var i = 0; i < entries.length; i++) i]
+        : [0, entries.length - 2, entries.length - 1];
+    final children = <Widget>[];
+    for (var k = 0; k < shown.length; k++) {
+      if (children.isNotEmpty) children.add(separator);
+      // El hueco va justo después de la raíz.
+      if (k == 1 && entries.length > shown.length) {
+        children.add(_gap(scheme));
+        children.add(separator);
+      }
+      final e = entries[shown[k]];
+      children.add(
+        crumb(e.label, e.onTap, current: e.current, target: e.target),
       );
     }
-    // UNA SOLA LÍNEA con desplazamiento horizontal: una ruta profunda ya no
-    // "se va para abajo" ni empuja el contenido. Cada miga se acorta y el
-    // conjunto se desliza; al cambiar de carpeta se muestra su extremo.
+    // UNA SOLA LÍNEA con desplazamiento horizontal (red de seguridad para
+    // nombres larguísimos): una ruta profunda ya no "se va para abajo" ni
+    // empuja el contenido. Al cambiar de carpeta se muestra su extremo.
     return SizedBox(
       height: 34,
       child: Scrollbar(
@@ -2684,6 +3063,8 @@ class _GridContent extends StatelessWidget {
     required this.noEntrance,
     required this.scrollController,
     required this.sweep,
+    this.header,
+    this.crumbs,
   });
 
   final DriveBase drive;
@@ -2699,6 +3080,15 @@ class _GridContent extends StatelessWidget {
   onDrop;
   final Map<String, GlobalKey> itemKeys;
   final ValueChanged<DriveItem> onTapSelect;
+
+  /// Encabezado del MÓDULO que viaja DENTRO del scroll (solo en el celular):
+  /// con él la cuadrícula se dibuja como slivers y el encabezado se va al
+  /// bajar. Sin él (escritorio) se queda fijo arriba, como siempre.
+  final Widget? header;
+
+  /// Barra de ruta PEGAJOSA del celular (ver [_CrumbsHeaderDelegate]): viaja
+  /// debajo del encabezado y se queda fija arriba al pasar.
+  final Widget? crumbs;
 
   /// Clic derecho: menú contextual del elemento (posición global).
   final void Function(DriveItem item, Offset position) onContextMenu;
@@ -2722,69 +3112,108 @@ class _GridContent extends StatelessWidget {
   bool get _scrolledDown =>
       scrollController.isSafe && scrollController.safeOffset > 8;
 
+  /// Una tarjeta de la cuadrícula (se usa igual en GridView y en SliverGrid).
+  ///
+  /// [items] es el listado que se capturó al construir esta vista: aunque el
+  /// drive cambie de carpeta mientras la anterior todavía se desvanece, el
+  /// índice sigue siendo válido (antes se leía la lista viva y podía pedir un
+  /// índice que ya no existía — rompía al entrar a una carpeta desde la raíz).
+  Widget _cardAt(List<DriveItem> items, int i) {
+    if (i < 0 || i >= items.length) return const SizedBox.shrink();
+    final item = items[i];
+    final key = itemKeys.putIfAbsent(
+      item.name,
+      () => GlobalKey(debugLabel: 'grid-${item.name}'),
+    );
+    // Entrada al DESLIZAR: la tarjeta que aparece al bajar entra con
+    // fade + deslizamiento; lo ya visible (y una foto recién subida) se pinta
+    // directo.
+    //
+    // En WEB no se anima: al bajar con el scroll del celular cada fila nueva
+    // entraba desplazándose y daba la impresión de que las CARPETAS SE MOVÍAN
+    // solas mientras se deslizaba la lista.
+    return ScrollReveal(
+      animate: !kIsWeb && _scrolledDown && !noEntrance.contains(item.name),
+      child: _GridItem(
+        key: key,
+        item: item,
+        drive: drive,
+        compact: compact,
+        isSelected: selected.contains(item.name),
+        selectMode: selectMode,
+        onOpen: () => onOpen(item),
+        onLongPress: () => onLongPress(item),
+        onToggleSelect: () => onToggleSelect(item.name),
+        onRename: () => onRename(item),
+        onDelete: () => onDelete(item),
+        onDrop: (details) => onDrop(item, details),
+        onTapSelect: () => onTapSelect(item),
+        onContextMenu: (pos) => onContextMenu(item, pos),
+        onDownload: () => onDownload(item),
+        localPreview: localPreviews[item.name],
+        selectedNames: selected.toList(growable: false),
+        sweep: sweep,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = drive.visibleItems;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final minCard = compact ? 150.0 : 190.0;
-        final crossCount = (width / minCard).floor().clamp(2, 8);
-        return GridView.builder(
+        // En el CELULAR van DOS columnas: con tres la tarjeta quedaba angosta
+        // ("delgada") y la miniatura no se apreciaba. Con dos, la tarjeta es
+        // casi cuadrada y la foto manda; en pantallas muy angostas tambien
+        // son dos, más chicas.
+        final crossCount = compact
+            ? 2
+            : (width / 190).floor().clamp(2, 8);
+        final padding = EdgeInsets.fromLTRB(
+          compact ? 16 : 24,
+          4,
+          compact ? 16 : 24,
+          compact ? 150 : 110,
+        );
+        final delegate = SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossCount,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          // Casi cuadrada: la miniatura ocupa buen parte de la tarjeta y el
+          // nombre con su ficha caben abajo sin recortarse.
+          childAspectRatio: compact ? .96 : .86,
+        );
+        // Escritorio: la cuadrícula sola, con el encabezado fijo del módulo.
+        if (header == null) {
+          return GridView.builder(
+            controller: scrollController,
+            // Siempre desplazable: sin esto, con pocos elementos el gesto de
+            // recargar (deslizar hacia abajo) no se dispara.
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: padding,
+            gridDelegate: delegate,
+            itemCount: items.length,
+            itemBuilder: (context, i) => _cardAt(items, i),
+          );
+        }
+        // Celular: el encabezado del módulo viaja DENTRO del mismo scroll, así
+        // al bajar desaparece y la carpeta se queda con toda la pantalla.
+        return CustomScrollView(
           controller: scrollController,
-          // Siempre desplazable: sin esto, con pocos elementos el gesto de
-          // recargar (deslizar hacia abajo) no se dispara.
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(
-            compact ? 14 : 24,
-            4,
-            compact ? 14 : 24,
-            compact ? 150 : 110,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossCount,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 0.86,
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, i) {
-            final item = items[i];
-            final key = itemKeys.putIfAbsent(
-              item.name,
-              () => GlobalKey(debugLabel: 'grid-${item.name}'),
-            );
-            // Entrada al DESLIZAR: la tarjeta que aparece al bajar entra con
-            // fade + deslizamiento; lo ya visible (y una foto recién subida)
-            // se pinta directo.
-            //
-            // En WEB no se anima: al bajar con el scroll del celular cada fila
-            // nueva entraba desplazándose y daba la impresión de que las
-            // CARPETAS SE MOVÍAN solas mientras se deslizaba la lista.
-            return ScrollReveal(
-              animate:
-                  !kIsWeb && _scrolledDown && !noEntrance.contains(item.name),
-              child: _GridItem(
-                key: key,
-                item: item,
-                drive: drive,
-                isSelected: selected.contains(item.name),
-                selectMode: selectMode,
-                onOpen: () => onOpen(item),
-                onLongPress: () => onLongPress(item),
-                onToggleSelect: () => onToggleSelect(item.name),
-                onRename: () => onRename(item),
-                onDelete: () => onDelete(item),
-                onDrop: (details) => onDrop(item, details),
-                onTapSelect: () => onTapSelect(item),
-                onContextMenu: (pos) => onContextMenu(item, pos),
-                onDownload: () => onDownload(item),
-                localPreview: localPreviews[item.name],
-                selectedNames: selected.toList(growable: false),
-                sweep: sweep,
+          slivers: [
+            SliverToBoxAdapter(child: header!),
+            if (crumbs != null) _stickyCrumbs(crumbs!),
+            SliverPadding(
+              padding: padding,
+              sliver: SliverGrid.builder(
+                gridDelegate: delegate,
+                itemCount: items.length,
+                itemBuilder: (context, i) => _cardAt(items, i),
               ),
-            );
-          },
+            ),
+          ],
         );
       },
     );
@@ -2797,6 +3226,7 @@ class _GridItem extends StatelessWidget {
     super.key,
     required this.item,
     required this.drive,
+    this.compact = false,
     required this.isSelected,
     required this.selectMode,
     required this.onOpen,
@@ -2815,6 +3245,10 @@ class _GridItem extends StatelessWidget {
 
   final DriveItem item;
   final DriveBase drive;
+
+  /// La cuadrícula del CELULAR (tres columnas): las tarjetas de carpeta van
+  /// más bajas para que el nombre y el conteo no se recorten.
+  final bool compact;
   final bool isSelected;
   final bool selectMode;
   final VoidCallback onOpen;
@@ -2956,6 +3390,7 @@ class _GridItem extends StatelessWidget {
                     child: item.isFolder
                         ? _FolderCard(
                             item: item,
+                            compact: compact,
                             can: drive.canDo,
                             onOpen: onOpen,
                             onLongPress: onLongPress,
@@ -3101,6 +3536,7 @@ class _DragFeedback extends StatelessWidget {
 class _FolderCard extends StatelessWidget {
   const _FolderCard({
     required this.item,
+    this.compact = false,
     required this.can,
     required this.onOpen,
     required this.onLongPress,
@@ -3111,6 +3547,11 @@ class _FolderCard extends StatelessWidget {
   });
 
   final DriveItem item;
+
+  /// En el CELULAR la tarjeta es más baja (la cuadrícula va a tres columnas):
+  /// el encabezado, los rellenos y las letras se achican para que el nombre y
+  /// el conteo sigan entrando sin recortarse.
+  final bool compact;
   final bool Function(String action) can;
   final VoidCallback onOpen;
   final VoidCallback onLongPress;
@@ -3133,49 +3574,65 @@ class _FolderCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              height: 52,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    scheme.primary.withValues(alpha: .24),
-                    scheme.primary.withValues(alpha: .07),
+            // PORTADA: la carpeta grande sobre el tinte del acento (antes era
+            // una franja con un iconito en un cuadro de color, que parecía más
+            // un acceso de app que una carpeta). El menú vive arriba a la
+            // derecha y la portada se lleva el alto que sobra.
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      scheme.primary.withValues(alpha: .20),
+                      scheme.primary.withValues(alpha: .05),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(13.5),
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Container(
+                        padding: EdgeInsets.all(compact ? 8 : 7),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: scheme.primary.withValues(alpha: .10),
+                        ),
+                        child: Icon(
+                          Icons.folder_rounded,
+                          color: scheme.primary,
+                          // En el celular la portada es más grande: el icono
+                          // también, para que no se vea perdido.
+                          size: compact ? 30 : 26,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: _ItemMenu(
+                        can: can,
+                        onOpen: onOpen,
+                        onRename: onRename,
+                        onDelete: onDelete,
+                        onDownload: onDownload,
+                      ),
+                    ),
                   ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
                 ),
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(14),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 12),
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.folder_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                  const Spacer(),
-                  _ItemMenu(
-                    can: can,
-                    onOpen: onOpen,
-                    onRename: onRename,
-                    onDelete: onDelete,
-                    onDownload: onDownload,
-                  ),
-                ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              padding: EdgeInsets.fromLTRB(
+                compact ? 10 : 12,
+                compact ? 7 : 10,
+                compact ? 10 : 12,
+                compact ? 8 : 10,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -3183,8 +3640,10 @@ class _FolderCard extends StatelessWidget {
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: compact ? 12.5 : null,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   // Sin conteo de verdad (una compartida anidada que el
@@ -3195,8 +3654,12 @@ class _FolderCard extends StatelessWidget {
                         ? 'Carpeta compartida'
                         : '${item.childCount} '
                               'elemento${item.childCount == 1 ? '' : 's'}',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: compact ? 10.5 : null,
+                    ),
                   ),
                 ],
               ),
@@ -3531,6 +3994,8 @@ class _ListContent extends StatelessWidget {
     required this.noEntrance,
     required this.scrollController,
     required this.sweep,
+    this.header,
+    this.crumbs,
   });
 
   final DriveBase drive;
@@ -3552,6 +4017,12 @@ class _ListContent extends StatelessWidget {
   final Set<String> noEntrance;
   final ScrollController scrollController;
 
+  /// Encabezado del MÓDULO dentro del scroll (solo celular).
+  final Widget? header;
+
+  /// Barra de ruta PEGAJOSA del celular (ver [_CrumbsHeaderDelegate]).
+  final Widget? crumbs;
+
   /// Barrido de selección con el dedo (ver [SelectSweep]).
   final SelectSweep sweep;
 
@@ -3560,23 +4031,105 @@ class _ListContent extends StatelessWidget {
   bool get _scrolledDown =>
       scrollController.isSafe && scrollController.safeOffset > 8;
 
+  /// Una fila del listado (se usa igual en ListView y en SliverList).
+  ///
+  /// [items] es el listado capturado al construir la vista (ver
+  /// [_GridContent._cardAt]): un cambio de carpeta a mitad de la transición no
+  /// puede pedir un índice que ya no existe.
+  Widget _rowAt(List<DriveItem> items, int i) {
+    if (i < 0 || i >= items.length) return const SizedBox.shrink();
+    final item = items[i];
+    final key = itemKeys.putIfAbsent(
+      item.name,
+      () => GlobalKey(debugLabel: 'row-${item.name}'),
+    );
+    // Igual que en la cuadrícula: anima solo lo que llega al bajar.
+    return ScrollReveal(
+      // En WEB no hay entrada animada (ver [_GridContent]): al scrollear, las
+      // filas moviéndose parecen "carpetas que se mueven".
+      animate: !kIsWeb && _scrolledDown && !noEntrance.contains(item.name),
+      child: _ListRow(
+        key: key,
+        item: item,
+        drive: drive,
+        compact: compact,
+        isSelected: selected.contains(item.name),
+        selectMode: selectMode,
+        onOpen: () => onOpen(item),
+        onLongPress: () => onLongPress(item),
+        onToggleSelect: () => onToggleSelect(item.name),
+        onRename: () => onRename(item),
+        onDelete: () => onDelete(item),
+        onDrop: (details) => onDrop(item, details),
+        onTapSelect: () => onTapSelect(item),
+        onContextMenu: (pos) => onContextMenu(item, pos),
+        onDownload: () => onDownload(item),
+        localPreview: localPreviews[item.name],
+        selectedNames: selected.toList(growable: false),
+        sweep: sweep,
+      ),
+    );
+  }
+
+  /// Fila del CELULAR: cada elemento es su PROPIA tarjeta redondeada. Antes
+  /// todo vivía en un solo Card con un Divider justo debajo del encabezado:
+  /// esa era la línea suelta que se veía al entrar (en la vista de lista).
+  Widget _rowTile(BuildContext context, List<DriveItem> items, int i) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: _rowAt(items, i),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final items = drive.visibleItems;
+    final padding = EdgeInsets.fromLTRB(
+      compact ? 14 : 24,
+      4,
+      compact ? 14 : 24,
+      compact ? 150 : 110,
+    );
+
+    // CELULAR: el encabezado del módulo viaja dentro del mismo scroll.
+    if (header != null) {
+      return CustomScrollView(
+        controller: scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: header!),
+          SliverPadding(
+            padding: padding,
+            sliver: SliverList.builder(
+              itemCount: items.length,
+              itemBuilder: (context, i) => _rowTile(context, items, i),
+            ),
+          ),
+        ],
+      );
+    }
+
     final headerStyle = Theme.of(context).textTheme.labelSmall
         ?.copyWith(color: scheme.onSurfaceVariant, fontWeight: FontWeight.w700);
-
     final dividerColor =
         Theme.of(context).dividerTheme.color ??
         scheme.outlineVariant.withValues(alpha: .5);
     return Card(
-      margin: EdgeInsets.fromLTRB(
-        compact ? 14 : 24,
-        4,
-        compact ? 14 : 24,
-        compact ? 150 : 110,
-      ),
+      margin: padding,
       child: Column(
         children: [
           if (!compact)
@@ -3598,49 +4151,13 @@ class _ListContent extends StatelessWidget {
                 ],
               ),
             ),
-          Divider(height: 1, color: dividerColor),
+          if (!compact) Divider(height: 1, color: dividerColor),
           Expanded(
             child: ListView.builder(
               controller: scrollController,
               physics: const AlwaysScrollableScrollPhysics(),
               itemCount: items.length,
-              itemBuilder: (context, i) {
-                final item = items[i];
-                final key = itemKeys.putIfAbsent(
-                  item.name,
-                  () => GlobalKey(debugLabel: 'row-${item.name}'),
-                );
-                // Igual que en la cuadrícula: anima solo lo que llega al bajar.
-                return ScrollReveal(
-                  // En WEB no hay entrada animada (ver [_GridBody]): al
-                  // scrollear, las filas moviéndose parecen "carpetas que se
-                  // mueven".
-                  animate:
-                      !kIsWeb &&
-                      _scrolledDown &&
-                      !noEntrance.contains(item.name),
-                  child: _ListRow(
-                    key: key,
-                    item: item,
-                    drive: drive,
-                    compact: compact,
-                    isSelected: selected.contains(item.name),
-                    selectMode: selectMode,
-                    onOpen: () => onOpen(item),
-                    onLongPress: () => onLongPress(item),
-                    onToggleSelect: () => onToggleSelect(item.name),
-                    onRename: () => onRename(item),
-                    onDelete: () => onDelete(item),
-                    onDrop: (details) => onDrop(item, details),
-                    onTapSelect: () => onTapSelect(item),
-                    onContextMenu: (pos) => onContextMenu(item, pos),
-                    onDownload: () => onDownload(item),
-                    localPreview: localPreviews[item.name],
-                    selectedNames: selected.toList(growable: false),
-                    sweep: sweep,
-                  ),
-                );
-              },
+              itemBuilder: (context, i) => _rowAt(items, i),
             ),
           ),
         ],
@@ -3801,15 +4318,31 @@ class _ListRow extends StatelessWidget {
             ),
           ),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         child: Row(
           children: [
             // Icono o miniatura
             SizedBox(
-              width: 40,
-              height: 40,
+              width: 42,
+              height: 42,
               child: item.isFolder
-                  ? Icon(Icons.folder_rounded, color: scheme.primary, size: 26)
+                  // La carpeta va en su ficha tintada: se reconoce de un
+                  // vistazo y la fila deja de verse como "un icono suelto".
+                  ? Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: scheme.primary.withValues(alpha: .18),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.folder_rounded,
+                        color: scheme.primary,
+                        size: 22,
+                      ),
+                    )
                   : hasThumb
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(6),
@@ -3829,16 +4362,36 @@ class _ListRow extends StatelessWidget {
                       child: _FileTile(item: item, big: false),
                     ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 11),
             Expanded(
-              child: Text(
-                item.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13.5,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  // En el CELULAR las columnas de fecha/tamaño no caben: su
+                  // dato baja a una segunda línea, en gris y pequeño.
+                  if (compact) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      _rowMeta(item),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             if (!compact) ...[
@@ -3935,6 +4488,17 @@ String _sizeLabel(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+/// Línea de apoyo de una fila en el CELULAR: qué es, cuándo se modificó y
+/// cuánto pesa (lo que en escritorio va en sus propias columnas).
+String _rowMeta(DriveItem item) {
+  final parts = <String>[
+    item.isFolder ? 'Carpeta' : driveKindLabel(item.kind),
+    if (item.modified != null) _dateLabel(item.modified),
+    if (!item.isFolder && item.size != null) _sizeLabel(item.size!),
+  ];
+  return parts.where((p) => p.trim().isNotEmpty).join(' · ');
 }
 
 String _metaLabel(DriveItem item) {

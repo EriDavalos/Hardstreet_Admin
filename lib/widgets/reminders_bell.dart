@@ -252,8 +252,9 @@ class _RemindersPanel extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               'Aquí llegan los eventos que se acercan (una semana y un día '
-              'antes), los envíos a impresión de los clientes y los avisos '
-              'del módulo Notificaciones. Toca uno para abrir su módulo.',
+              'antes), los avisos de tu paquete, los envíos a impresión de los '
+              'clientes y los del módulo Notificaciones. Toca uno para abrir '
+              'su módulo.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 11.5,
@@ -417,8 +418,14 @@ class _ReminderTile extends StatelessWidget {
     // Aviso del módulo Notificaciones (manual o de otro evento): llega con
     // `target` y al tocarlo abre ese módulo.
     final isNotice = source == 'notification';
+    // Aviso del PAQUETE del cliente («Ya puedes elegir tus fotos», «Servicio
+    // terminado»…): los mismos de «Novedades» en Mi paquete, ahora también
+    // aquí. Al tocarlo abre Mi paquete.
+    final isPackage = source == 'package';
     final kindLabel = isPrint
         ? 'Impresión'
+        : isPackage
+        ? 'Mi paquete'
         : isNotice
         ? 'Aviso'
         : kind == '1d'
@@ -479,6 +486,8 @@ class _ReminderTile extends StatelessWidget {
                     child: Icon(
                       isPrint
                           ? Icons.print_outlined
+                          : isPackage
+                          ? Icons.photo_library_outlined
                           : isNotice
                           ? Icons.notifications_none_rounded
                           : kind == '1d'
@@ -536,6 +545,8 @@ class _ReminderTile extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: isPrint
                                 ? AppColors.brand.withValues(alpha: .14)
+                                : isPackage
+                                ? const Color(0xFF16A34A).withValues(alpha: .14)
                                 : isNotice
                                 ? const Color(0xFF2F6BFF).withValues(alpha: .14)
                                 : kind == '1d'
@@ -550,6 +561,8 @@ class _ReminderTile extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                               color: isPrint
                                   ? AppColors.brand
+                                  : isPackage
+                                  ? const Color(0xFF16A34A)
                                   : isNotice
                                   ? const Color(0xFF2F6BFF)
                                   : kind == '1d'

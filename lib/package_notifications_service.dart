@@ -18,8 +18,10 @@ import 'reminder_notifications_native.dart';
 /// Los trae de `GET /api/my/notifications` cada [pollInterval] mientras hay
 /// sesión. Cuando aparece uno NUEVO dispara una notificación nativa (Android,
 /// iOS y Windows: en la computadora sale como toast aunque estés en otra
-/// ventana). En web el aviso vive en «Mi paquete». La campanita de eventos no
-/// se mezcla: estos avisos son del paquete, no de la agenda.
+/// ventana). En web el aviso vive en «Mi paquete». La campanita de la barra
+/// también los LISTA (el backend los mezcla en `/api/reminders` con
+/// `source: package`), pero el toast nativo lo dispara SOLO este servicio:
+/// `RemindersService` se salta los de ese origen para no avisar dos veces.
 ///
 /// Con la app cerrada el teléfono Android lo consulta solo (ver
 /// `PackageNotificationsReceiver`); en Windows el panel tiene que seguir

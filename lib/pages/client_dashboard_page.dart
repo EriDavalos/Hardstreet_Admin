@@ -598,7 +598,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   _packagePicker(scheme),
                   const SizedBox(height: 14),
                 ],
-                FadeSlideIn(child: _heroCard(scheme, price, paid)),
+                FadeSlideIn(child: _heroCard(price, paid)),
                 if (_notifications.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _notificationsCard(scheme),
@@ -934,7 +934,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   }
   // ==================== Portada del paquete ====================
 
-  Widget _heroCard(ColorScheme scheme, double price, double paid) {
+  Widget _heroCard(double price, double paid) {
     final p = _selected;
     final status = (p['status'] is Map)
         ? ((p['status'] as Map)['name'] ?? '').toString()
@@ -951,25 +951,30 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final photo = (pkg['urlImage'] ?? '').toString().trim();
     final look = HsTierLook.of(tier);
     final phone = MediaQuery.sizeOf(context).width < 620;
-    final payPct = price > 0 ? (paid / price).clamp(0.0, 1.0) : null;
     final folder = _sharedPaths.isNotEmpty
         ? (_sharedPaths.first['path'] ?? '').toString()
         : '';
+    // Los DOS datos que importan en la portada: qué toca hacer ahora y cómo
+    // va el pago. Antes aquí vivían el conteo de servicios, «Carpeta lista» y
+    // la barra de pago: mucha lectura para lo que el cliente necesita ver de
+    // un golpe.
+    final next = _heroNext(_services);
+    final money = _heroMoney(price, paid);
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(26),
       child: Container(
         decoration: BoxDecoration(
           gradient: look.gradient,
-          border: Border.all(color: look.accent.withValues(alpha: .38)),
-          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: look.accent.withValues(alpha: .34)),
+          borderRadius: BorderRadius.circular(26),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // ---------- Foto del paquete con su información ----------
             SizedBox(
-              height: phone ? 178 : 218,
+              height: phone ? 196 : 240,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -1033,6 +1038,25 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                             Color(0xE6000000),
                           ],
                           stops: [0, .28, .55, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Filo de luz en el borde de arriba: da el aire de cristal
+                  // al recorte de la foto sin ensuciarla.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      height: 1,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.white.withValues(alpha: .00),
+                            Colors.white.withValues(alpha: .30),
+                            Colors.white.withValues(alpha: .00),
+                          ],
                         ),
                       ),
                     ),
@@ -1109,81 +1133,40 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 ],
               ),
             ),
-            // ---------- Pago + accesos rápidos ----------
-            Padding(
+            // ---------- Pie: lo que sigue + cómo va el pago ----------
+            // SIN cajas: antes eran dos tarjetas grandes y «Elige tus fotos»
+            // y «Liquidado» pesaban más que la propia foto. Ahora son una
+            // línea de estado y un sello de recibo, alineados con el diseño
+            // plano del panel.
+            Container(
               padding: EdgeInsets.fromLTRB(
-                phone ? 15 : 18,
+                phone ? 14 : 17,
+                12,
+                phone ? 14 : 17,
                 14,
-                phone ? 15 : 18,
-                16,
+              ),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Colors.white.withValues(alpha: .10)),
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Wrap(
-                    spacing: 7,
-                    runSpacing: 7,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _glassPill(
-                        Icons.check_circle_outline,
-                        '${_services.where(_isDone).length} de '
-                        '${_services.length} servicios',
+                      Expanded(
+                        child: next ?? const SizedBox.shrink(),
                       ),
-                      if (folder.isNotEmpty)
-                        _glassPill(
-                          Icons.folder_shared_outlined,
-                          'Carpeta lista',
-                        ),
+                      if (money != null) ...[
+                        const SizedBox(width: 10),
+                        money,
+                      ],
                     ],
                   ),
-                  if (payPct != null) ...[
-                    const SizedBox(height: 15),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Pagado ${hsMoney(paid)} de ${hsMoney(price)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${(payPct * 100).round()} %',
-                          style: TextStyle(
-                            color: look.accentSoft,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(99),
-                      child: LinearProgressIndicator(
-                        value: payPct,
-                        minHeight: 7,
-                        color: look.accent,
-                        backgroundColor: Colors.white.withValues(alpha: .16),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      payPct >= .999
-                          ? 'Paquete liquidado ✓'
-                          : 'Faltan ${hsMoney(price - paid)} por cubrir',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white.withValues(alpha: .65),
-                      ),
-                    ),
-                  ],
                   if (folder.isNotEmpty) ...[
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton.icon(
@@ -1191,8 +1174,9 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                         style: FilledButton.styleFrom(
                           backgroundColor: look.accent,
                           foregroundColor: look.dark,
+                          minimumSize: const Size(0, 42),
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 15,
+                            horizontal: 16,
                             vertical: 11,
                           ),
                         ),
@@ -1241,30 +1225,171 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     );
   }
 
-  /// Píldora translúcida del bloque de pago.
-  Widget _glassPill(IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .09),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: .14)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: Colors.white70),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
+  /// El servicio ya se envió a impresión (la selección quedó en solo lectura).
+  static bool _sentToPrint(Map<String, dynamic> s) =>
+      s['sentToPrint'] == true ||
+      (s['printStatus'] ?? '').toString().trim().isNotEmpty;
+
+  /// Dinero en corto, sin el prefijo de la moneda: `MXN $6,000` -> `$6,000`.
+  static String _money(double v) => hsMoney(v).replaceFirst('MXN ', '');
+
+  /// QUÉ TOCA HACER AHORA, en una frase. Es el dato más útil de la portada:
+  /// primero lo que espera al cliente (elegir o enviar sus fotos), después en
+  /// qué va el estudio y, si ya acabó todo, que su paquete está completo.
+  Widget? _heroNext(List<Map<String, dynamic>> services) {
+    if (services.isEmpty) return null;
+    final pickable = services.where(_photoService).toList();
+    final waiting = pickable
+        .where((s) => _items(s) == 0 && !_sentToPrint(s))
+        .length;
+    final ready = pickable
+        .where((s) => _items(s) > 0 && !_sentToPrint(s))
+        .length;
+    final working = services.where((s) => !_isDone(s)).length;
+    final done = services.where(_isDone).length;
+
+    if (waiting > 0) {
+      return _heroNextLine(
+        icon: Icons.photo_library_outlined,
+        tint: const Color(0xFF8FC2FF),
+        title: 'Elige tus fotos',
+        hint: waiting == 1
+            ? '1 servicio espera tu selección'
+            : '$waiting servicios esperan tu selección',
+      );
+    }
+    if (ready > 0) {
+      return _heroNextLine(
+        icon: Icons.send_rounded,
+        tint: const Color(0xFF8FC2FF),
+        title: 'Envía tus fotos',
+        hint: ready == 1
+            ? '1 servicio listo para enviar'
+            : '$ready servicios listos para enviar',
+      );
+    }
+    if (working > 0) {
+      return _heroNextLine(
+        icon: Icons.hourglass_top_rounded,
+        tint: const Color(0xFF8FC2FF),
+        title: 'En proceso',
+        hint: working == 1
+            ? '1 servicio en preparación'
+            : '$working servicios en preparación',
+      );
+    }
+    if (done > 0) {
+      return _heroNextLine(
+        icon: Icons.task_alt_rounded,
+        tint: const Color(0xFF7BE3B0),
+        title: 'Todo entregado',
+        hint: 'Todos tus servicios están completos',
+      );
+    }
+    return null;
+  }
+
+  /// CÓMO VA EL PAGO, como el renglón de totales de un recibo: «Liquidado»
+  /// cuando ya no falta nada o, si no, el monto que falta, con el total y el
+  /// porcentaje como apoyo. Sin barra, sin caja y sin gritar.
+  Widget? _heroMoney(double price, double paid) {
+    if (price <= 0) return null;
+    final left = price - paid;
+    final paidOff = left <= .5;
+    final pct = ((paid / price) * 100).clamp(0, 100).round();
+    final tint = paidOff ? const Color(0xFF7BE3B0) : const Color(0xFFFFD98A);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              paidOff
+                  ? Icons.verified_rounded
+                  : Icons.account_balance_wallet_outlined,
+              size: 12,
+              color: tint,
             ),
+            const SizedBox(width: 4),
+            Text(
+              paidOff ? 'Liquidado' : 'Faltan ${_money(left)}',
+              style: TextStyle(
+                color: tint,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          paidOff
+              ? 'Pagado ${_money(price)}'
+              : 'de ${_money(price)} · $pct %',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .55),
+            fontSize: 9.5,
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  /// LO QUE SIGUE: icono pequeño + título y una línea de apoyo. Es una línea
+  /// de estado, no una tarjeta: no debe competir con la foto de la portada.
+  Widget _heroNextLine({
+    required IconData icon,
+    required Color tint,
+    required String title,
+    required String hint,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 27,
+          height: 27,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: tint.withValues(alpha: .14),
+            shape: BoxShape.circle,
+            border: Border.all(color: tint.withValues(alpha: .30)),
+          ),
+          child: Icon(icon, size: 13, color: tint),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                hint,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .60),
+                  fontSize: 10.5,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1274,6 +1399,49 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   static bool _photoService(Map<String, dynamic> s) =>
       s['pickPhotos'] == true &&
       (s['shareFolder'] ?? '').toString().trim().isNotEmpty;
+
+  /// Fotos que el cliente ya eligió en este servicio.
+  static int _items(Map<String, dynamic> s) =>
+      (s['items'] as num?)?.toInt() ?? 0;
+
+  /// ¿Ya puede abrir la carpeta del servicio? («Abrir carpeta» encendido y
+  /// una carpeta compartida asignada).
+  static bool _canOpenFolder(Map<String, dynamic> s) =>
+      s['showFolder'] != false &&
+      (s['shareFolder'] ?? '').toString().trim().isNotEmpty;
+
+  /// Peso de la tarjeta según lo que OFRECE: primero los servicios cuyo único
+  /// botón es «Abrir carpeta» (lo más simple), después los que además tienen
+  /// fotos («Ver fotos» / «Elegir fotos») y al final los que no ofrecen nada.
+  static int _actionRank(Map<String, dynamic> s) {
+    final photos = _photoService(s);
+    final folder = _canOpenFolder(s);
+    if (folder && !photos) return 0;
+    if (photos) return 1;
+    return 2;
+  }
+
+  static String _serviceName(Map<String, dynamic> s) =>
+      ((s['service'] is Map
+              ? ((s['service'] as Map)['name'] ?? '')
+              : ''))
+          .toString();
+
+  /// Ordena una etapa: primero por su criterio, y a igualdad por nombre.
+  List<Map<String, dynamic>> _sorted(
+    Iterable<Map<String, dynamic>> list,
+    int Function(Map<String, dynamic> a, Map<String, dynamic> b) compare,
+  ) {
+    final out = list.toList()
+      ..sort((a, b) {
+        final byRank = compare(a, b);
+        if (byRank != 0) return byRank;
+        return _serviceName(
+          a,
+        ).toLowerCase().compareTo(_serviceName(b).toLowerCase());
+      });
+    return out;
+  }
 
   static int _statusOrder(Map<String, dynamic> s) {
     final id = _statusId(s);
@@ -1302,29 +1470,40 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   ) {
     final doneCount = services.where(_isDone).length;
     final visible = services.where(_matchesService).toList();
-    List<Map<String, dynamic>> take(bool Function(Map<String, dynamic>) test) {
-      final list = visible.where(test).toList()
-        ..sort((a, b) {
-          final byStatus = _statusOrder(a).compareTo(_statusOrder(b));
-          if (byStatus != 0) return byStatus;
-          final an =
-              ((a['service'] is Map)
-                      ? ((a['service'] as Map)['name'] ?? '')
-                      : '')
-                  .toString();
-          final bn =
-              ((b['service'] is Map)
-                      ? ((b['service'] as Map)['name'] ?? '')
-                      : '')
-                  .toString();
-          return an.toLowerCase().compareTo(bn.toLowerCase());
-        });
-      return list;
-    }
 
-    final photos = take((s) => !_isDone(s) && _photoService(s));
-    final pending = take((s) => !_isDone(s) && !_photoService(s));
-    final completed = take(_isDone);
+    // ORDEN de cada etapa (lo que el cliente puede hacer ya, primero):
+    //   * «Elige tus fotos»: los que todavía NO tienen selección (le toca a
+    //     él), después los que ya eligieron y solo esperan enviarlas.
+    //   * «En proceso»: primero los que ya pueden ABRIR su carpeta.
+    //   * «Completados»: primero los que pueden abrir carpeta y, después, los
+    //     que ya tienen fotos seleccionadas.
+    final photos = _sorted(
+      visible.where((s) => !_isDone(s) && _photoService(s)),
+      (a, b) {
+        final ra = _actionRank(a);
+        final rb = _actionRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        return (_items(a) == 0 ? 0 : 1).compareTo(_items(b) == 0 ? 0 : 1);
+      },
+    );
+    final pending = _sorted(
+      visible.where((s) => !_isDone(s) && !_photoService(s)),
+      (a, b) {
+        final ra = _actionRank(a);
+        final rb = _actionRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        return _statusOrder(a).compareTo(_statusOrder(b));
+      },
+    );
+    final completed = _sorted(
+      visible.where(_isDone),
+      (a, b) {
+        final ra = _actionRank(a);
+        final rb = _actionRank(b);
+        if (ra != rb) return ra.compareTo(rb);
+        return (_items(a) > 0 ? 0 : 1).compareTo(_items(b) > 0 ? 0 : 1);
+      },
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1398,33 +1577,33 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             ),
           )
         else ...[
-          if (photos.isNotEmpty) ...[
+          // LÍNEA DE TIEMPO: la etapa que ESPERA al cliente va primero y
+          // resaltada; después lo que está en marcha y al final lo cumplido.
+          if (photos.isNotEmpty)
             _serviceGroup(
               scheme,
               title: 'Elige tus fotos',
-              subtitle: 'Marca tus favoritas de la carpeta compartida.',
+              subtitle: 'Te toca a ti: marca tus favoritas.',
               icon: Icons.photo_library_outlined,
               accent: const Color(0xFF2F6BFF),
               services: photos,
+              highlight: true,
             ),
-            const SizedBox(height: 14),
-          ],
-          if (pending.isNotEmpty) ...[
+          if (pending.isNotEmpty)
             _serviceGroup(
               scheme,
               title: 'En proceso',
-              subtitle: 'Lo que estamos preparando para ti.',
+              subtitle: 'Lo que estamos preparando. Arriba, lo que ya puedes '
+                  'abrir.',
               icon: Icons.pending_actions_outlined,
               accent: const Color(0xFF3B82F6),
               services: pending,
             ),
-            const SizedBox(height: 14),
-          ],
           if (completed.isNotEmpty)
             _serviceGroup(
               scheme,
               title: 'Completados',
-              subtitle: 'Servicios que ya entregamos.',
+              subtitle: 'Ya entregado. Arriba, con carpeta y con tus fotos.',
               icon: Icons.task_alt_rounded,
               accent: _doneColor,
               services: completed,
@@ -1434,6 +1613,12 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     );
   }
 
+  /// Un TRAMO de la línea de tiempo: el nodo de la etapa (icono, título,
+  /// cuántos servicios) y, colgando del riel, sus tarjetas.
+  ///
+  /// El riel se pinta con un [Stack] detrás del contenido y no empieza en el
+  /// borde de arriba sino DEBAJO del nodo: así cada etapa continúa el trazo de
+  /// la anterior sin cortes, sin necesidad de medir alturas.
   Widget _serviceGroup(
     ColorScheme scheme, {
     required String title,
@@ -1441,45 +1626,162 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     required IconData icon,
     required Color accent,
     required List<Map<String, dynamic>> services,
+    bool highlight = false,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final content = Stack(
       children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 8),
-          child: Row(
-            children: [
-              Icon(icon, size: 15, color: accent),
-              const SizedBox(width: 7),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$title · ${services.length}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: accent,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+        // Riel de la línea de tiempo.
+        Positioned(
+          left: 12,
+          top: 27,
+          bottom: 2,
+          child: Container(
+            width: 2,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  accent.withValues(alpha: .40),
+                  accent.withValues(alpha: .06),
+                ],
               ),
-            ],
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
         ),
-        for (final s in services) _serviceCard(scheme, s),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Nodo de la etapa (la etapa urgente va rellena).
+                Container(
+                  width: 26,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: highlight
+                        ? accent
+                        : accent.withValues(alpha: .13),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: accent.withValues(alpha: highlight ? .95 : .42),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 13,
+                    color: highlight ? Colors.white : accent,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 3,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: highlight ? accent : scheme.onSurface,
+                              ),
+                            ),
+                            _stageCount(accent, services.length),
+                            if (highlight) _stageBadge(accent, 'TE TOCA'),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            height: 1.3,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            for (final s in services)
+              Padding(
+                padding: const EdgeInsets.only(left: 34),
+                child: _serviceCard(scheme, s),
+              ),
+            const SizedBox(height: 4),
+          ],
+        ),
       ],
     );
+
+    // La etapa que ESPERA al cliente se destaca con un fondo tenue: es donde
+    // tiene que entrar, y así se ve sin leer una sola línea.
+    if (!highlight) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: content,
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(8, 12, 6, 4),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accent.withValues(alpha: .24)),
+      ),
+      child: content,
+    );
   }
+
+  /// Pastilla con cuántos servicios tiene la etapa.
+  Widget _stageCount(Color accent, int count) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+    decoration: BoxDecoration(
+      color: accent.withValues(alpha: .14),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      '$count',
+      style: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+        color: accent,
+      ),
+    ),
+  );
+
+  /// Etiqueta «TE TOCA» de la etapa urgente.
+  Widget _stageBadge(Color accent, String label) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+    decoration: BoxDecoration(
+      color: accent,
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      label,
+      style: const TextStyle(
+        fontSize: 8.5,
+        letterSpacing: .6,
+        fontWeight: FontWeight.w900,
+        color: Colors.white,
+      ),
+    ),
+  );
 
   Widget _serviceCard(ColorScheme scheme, Map<String, dynamic> s) {
     final svc = (s['service'] is Map)
@@ -1520,39 +1822,41 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
-        color: done ? _doneColor.withValues(alpha: .05) : scheme.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: done
-              ? _doneColor.withValues(alpha: .30)
-              : canPick
-              ? const Color(0xFF2F6BFF).withValues(alpha: .32)
-              : scheme.outlineVariant.withValues(alpha: .50),
+        // MISMA receta en todas las etapas: cristal translúcido teñido con el
+        // color del estado. Antes solo las cumplidas dejaban ver el fondo (las
+        // demás eran opacas) y la lista se veía a parches; el velo del fondo
+        // de la vista mantiene el texto legible.
+        color: Color.alphaBlend(
+          color.withValues(alpha: .07),
+          scheme.surface.withValues(alpha: .55),
         ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: .28)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 9),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 40,
+                  height: 40,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: color.withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(13),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color.withValues(alpha: .20)),
                   ),
                   child: Icon(
                     serviceIconOf((svc['icon'] ?? '').toString()),
-                    size: 21,
+                    size: 20,
                     color: color,
                   ),
                 ),
-                const SizedBox(width: 11),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

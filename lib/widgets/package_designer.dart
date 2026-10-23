@@ -278,15 +278,25 @@ class _PackageDesignerState extends State<_PackageDesigner> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final wide = MediaQuery.sizeOf(context).width > 980;
+    final size = MediaQuery.sizeOf(context);
+    final phone = size.width < kHsPhoneWidth;
+    final wide = size.width > 980;
 
     return Dialog(
-      insetPadding: const EdgeInsets.all(18),
+      // En el CELULAR ocupa TODA la pantalla, como el resto de modales del
+      // panel: antes conservaba su margen de 18 px y, con el texto grande (o
+      // una pantalla bajita), el pie con “Guardar diseño” se salía de la vista.
+      insetPadding: phone ? EdgeInsets.zero : const EdgeInsets.all(18),
       clipBehavior: Clip.antiAlias,
       backgroundColor: scheme.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(phone ? 0 : 26),
+      ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180, maxHeight: 940),
+        constraints: BoxConstraints(
+          maxWidth: 1180,
+          maxHeight: phone ? size.height : 940,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -380,17 +390,24 @@ class _PackageDesignerState extends State<_PackageDesigner> {
               children: [
                 const Text(
                   'Diseñador de tarjetas',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 17.5, fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'Ajusta y mira la tarjeta aquí mismo · la web lo aplica al '
-                  'guardar, sin publicar',
-                  style: TextStyle(
-                    fontSize: 11.8,
-                    color: scheme.onSurfaceVariant,
+                // En el CELULAR el subtítulo se omite: con el texto grande se
+                // partía en varios renglones y la cabecera se comía la pantalla
+                // (las pestañas y la vista quedaban casi sin alto).
+                if (!narrow) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Ajusta y mira la tarjeta aquí mismo · la web lo aplica al '
+                    'guardar, sin publicar',
+                    style: TextStyle(
+                      fontSize: 11.8,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -436,23 +453,15 @@ class _PackageDesignerState extends State<_PackageDesigner> {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
       color: scheme.surfaceContainerLowest.withValues(alpha: .6),
-      // En el celular la nota va arriba y los botones debajo, alineados a la
-      // derecha: en una sola fila no caben y desbordaban.
+      // En el CELULAR van SOLO los botones, a la derecha: la nota informativa
+      // no cabe y le robaba el alto a la vista previa (el pie se salía de la
+      // pantalla con el texto grande).
       child: narrow
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _footerNote(scheme),
-                const SizedBox(height: 10),
-                // Wrap: si los dos botones no caben, bajan a otra línea en vez
-                // de desbordar la pantalla.
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: buttons,
-                ),
-              ],
+          ? Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
+              children: buttons,
             )
           : Row(
               children: [

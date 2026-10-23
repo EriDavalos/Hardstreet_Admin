@@ -75,7 +75,17 @@ class AdminShell extends StatelessWidget {
                 companySelector: companySelector,
                 onOpenNotification: onOpenNotification,
               ),
-              Divider(height: 1, color: Theme.of(context).dividerTheme.color),
+              // En ventana ANGOSTA (celular o panel estrecho) NO va la línea
+              // bajo la barra superior: ahí el contenido empieza con la barra
+              // pegajosa de la ruta del Drive, que tiene el mismo color de la
+              // página, así que el divisor se veía como una raya suelta sobre
+              // las migas. El contenido se separa solo (tarjetas y la barra de
+              // ruta). En escritorio ancho se conserva, como siempre.
+              if (!isCompact)
+                Divider(
+                  height: 1,
+                  color: Theme.of(context).dividerTheme.color,
+                ),
               ?updateBanner,
               Expanded(
                 // Transición fluida al cambiar de módulo: el contenido

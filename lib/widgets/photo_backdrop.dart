@@ -44,7 +44,7 @@ class PhotoBackdrop extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final dark = scheme.brightness == Brightness.dark;
     final scrim = (dark ? const Color(0xFF0C111C) : const Color(0xFFF7F9FC))
-        .withValues(alpha: opacity ?? (dark ? .72 : .80));
+        .withValues(alpha: opacity ?? (dark ? 0.90 : 0.95));
     return Stack(
       fit: StackFit.expand,
       children: [

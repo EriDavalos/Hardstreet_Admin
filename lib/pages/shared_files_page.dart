@@ -1692,8 +1692,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
               // comparte y su estado; en una tarjeta angosta el texto ocupa
               // más renglones y con altura proporcional se recortaba. Ahora
               // que permisos y estado van en una fila, las tarjetas quedan
-              // parecidas a las del Drive.
-              mainAxisExtent: isCompact ? 226 : 232,
+              // parecidas a las del Drive. En el celular son un poco más
+              // bajas (con la portada estirada) para que no se vean delgadas.
+              mainAxisExtent: isCompact ? 214 : 232,
             ),
             itemCount: rows.length,
             itemBuilder: (context, i) => Listener(
@@ -2056,9 +2057,19 @@ class _FolderCard extends StatelessWidget {
   /// Descargar la carpeta entera (ZIP).
   final VoidCallback? onDownload;
 
+  /// La portada de la carpeta: franja fija en escritorio y estirada en el
+  /// celular (el alto lo pone la cuadrícula).
+  Widget _cover(bool compact, Widget cover) {
+    if (compact) return Expanded(child: cover);
+    return SizedBox(height: 52, child: cover);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // En el TELÉFONO la portada se estira con la tarjeta (asi no queda con un
+    // hueco abajo y la tarjeta no se ve delgada).
+    final compact = MediaQuery.sizeOf(context).width < 620;
     final local = entry['local'] == true;
     final path = '${entry['path'] ?? ''}';
     final people = shared
@@ -2090,46 +2101,48 @@ class _FolderCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        scheme.primary.withValues(alpha: .24),
-                        scheme.primary.withValues(alpha: .07),
+                _cover(
+                  compact,
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          scheme.primary.withValues(alpha: .24),
+                          scheme.primary.withValues(alpha: .07),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(14),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            local
+                                ? Icons.computer_rounded
+                                : Icons.folder_shared_outlined,
+                            color: Colors.white,
+                            size: compact ? 24 : 20,
+                          ),
+                        ),
+                        const Spacer(),
+                        _EntryMenu(
+                          onOpen: onOpen,
+                          onEdit: onEdit,
+                          onUnshare: onUnshare,
+                          onDownload: onDownload,
+                        ),
                       ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
                     ),
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(14),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 12),
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Icon(
-                          local
-                              ? Icons.computer_rounded
-                              : Icons.folder_shared_outlined,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                      const Spacer(),
-                      _EntryMenu(
-                        onOpen: onOpen,
-                        onEdit: onEdit,
-                        onUnshare: onUnshare,
-                        onDownload: onDownload,
-                      ),
-                    ],
                   ),
                 ),
                 Padding(

@@ -161,8 +161,11 @@ void main() {
     expect(find.text('Paquete Gold'), findsOneWidget); // solo en el hero
     expect(find.text('En proceso'), findsWidgets); // estatus global + servicio
 
-    // Avance de pago (6000 de 12000) y pill de servicios cumplidos.
-    expect(find.textContaining('MXN'), findsWidgets);
+    // Portada: qué toca hacer y cuánto FALTA (sin barra de pago), más la
+    // píldora de servicios cumplidos.
+    expect(find.text('2 servicios en preparación'), findsOneWidget);
+    expect(find.text('Faltan \$6,000'), findsOneWidget);
+    expect(find.textContaining('\$12,000'), findsOneWidget);
     expect(find.text('1 de 3 servicios cumplidos'), findsOneWidget);
 
     // Checklist: cada servicio con su estado (verde/azul/gris).
@@ -205,7 +208,8 @@ void main() {
       findsWidgets,
       reason: 'pill de la cabecera + cabecera del checklist',
     );
-    expect(find.text('Paquete liquidado ✓'), findsOneWidget);
+    // Al estar pagado completo, la portada dice «Liquidado».
+    expect(find.text('Liquidado'), findsOneWidget);
   });
 
   testWidgets('la carpeta propia entrega la ruta al panel (onOpenDrive)', (
@@ -284,8 +288,66 @@ void main() {
     final done = tester.getTopLeft(find.text('Cobertura en evento').first).dy;
     expect(photos, lessThan(pending));
     expect(pending, lessThan(done));
-    expect(find.text('Elige tus fotos · 1'), findsOneWidget);
+    expect(find.text('Elige tus fotos'), findsOneWidget);
     expect(find.text('2 fotos elegidas'), findsOneWidget);
+  });
+
+  testWidgets('en «En proceso» va primero lo que ya tiene carpeta', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    final services = (pkgs.first['services'] as List);
+    // «Sesión previa» está PENDIENTE y sin carpeta; le damos una compartida:
+    // debe subir por encima de «Álbum de fotos» (en proceso, sin carpeta).
+    (services[2] as Map<String, dynamic>)
+      ..['shareFolder'] = 'Sesion'
+      ..['showFolder'] = true;
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    final withFolder = tester.getTopLeft(find.text('Sesión previa').first).dy;
+    final without = tester.getTopLeft(find.text('Álbum de fotos').first).dy;
+    expect(
+      withFolder,
+      lessThan(without),
+      reason: 'la carpeta disponible manda sobre el estado',
+    );
+  });
+
+  testWidgets('en «Completados» van primero carpeta y luego fotos', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    final services = (pkgs.first['services'] as List);
+    // Un entregado que SOLO abre carpeta y otro que además tiene fotos
+    // («Ver fotos»): primero el de solo carpeta, luego el de fotos y al final
+    // el que no ofrece nada.
+    services.add({
+      'id': 104,
+      'description': '',
+      'status': {'id': 3, 'name': 'Entregado'},
+      'shareFolder': 'ReynaCoot/entrega',
+      'showFolder': true,
+      'pickPhotos': true,
+      'items': 3,
+      'service': {'id': 5, 'name': 'Galería digital', 'icon': '', 'url': ''},
+    });
+    services.add({
+      'id': 105,
+      'description': '',
+      'status': {'id': 3, 'name': 'Entregado'},
+      'shareFolder': 'ReynaCoot/video',
+      'showFolder': true,
+      'service': {'id': 6, 'name': 'Video resumen', 'icon': '', 'url': ''},
+    });
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    final folderOnly = tester.getTopLeft(find.text('Video resumen').first).dy;
+    final withPhotos = tester.getTopLeft(find.text('Galería digital').first).dy;
+    final without = tester.getTopLeft(find.text('Cobertura en evento').first).dy;
+    expect(folderOnly, lessThan(withPhotos));
+    expect(withPhotos, lessThan(without));
   });
 
   testWidgets('en celular la portada, la búsqueda y los servicios caben', (

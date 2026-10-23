@@ -1097,6 +1097,81 @@ class _PackagesPageState extends State<PackagesPage> {
   /// cambiar.
   Widget _designBar(ColorScheme scheme) {
     final gold = hsHexColor(_design.gold);
+    // En el CELULAR el botón baja a su propia fila: en una sola, el icono y el
+    // botón dejaban al texto una columna de ~37 px (una palabra por renglón) y
+    // la fila de colores se salía de la tarjeta.
+    final phone = hsIsPhone(context);
+
+    final icon = Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: gold.withValues(alpha: .14),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: gold.withValues(alpha: .35)),
+      ),
+      child: Icon(Icons.style_outlined, size: 19, color: gold),
+    );
+
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Diseño de las cards',
+          style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Forma, densidad, colores de cada tier y qué se muestra '
+          '(precio, servicios, botón…). Lo que se guarde aquí es lo que ve la '
+          'web.',
+          style: TextStyle(
+            fontSize: 11.5,
+            height: 1.3,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Muestra en vivo de los colores de cada tier (Wrap: en el celular
+        // bajan a otra línea en vez de desbordar).
+        Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          children: [
+            for (final tier in const ['basic', 'gold', 'premium'])
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: hsHexColor(_design.tierOf(tier).accent),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    kTierLabels[tier] ?? tier,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ],
+    );
+
+    final button = FilledButton.tonalIcon(
+      onPressed: _openDesigner,
+      icon: const Icon(Icons.tune_rounded, size: 18),
+      label: const Text('Personalizar'),
+    );
+
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: .35),
       borderRadius: BorderRadius.circular(16),
@@ -1106,85 +1181,31 @@ class _PackagesPageState extends State<PackagesPage> {
         onTap: _openDesigner,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-          child: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: gold.withValues(alpha: .14),
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(color: gold.withValues(alpha: .35)),
-                ),
-                child: Icon(Icons.style_outlined, size: 19, color: gold),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: phone
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Diseño de las cards',
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Forma, densidad, colores de cada tier y qué se muestra '
-                      '(precio, servicios, botón…). Lo que se guarde aquí es lo '
-                      'que ve la web.',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        height: 1.3,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Muestra en vivo de los colores de cada tier.
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final tier in const ['basic', 'gold', 'premium'])
-                          Padding(
-                            padding: const EdgeInsets.only(right: 10),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                    color: hsHexColor(
-                                      _design.tierOf(tier).accent,
-                                    ),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  kTierLabels[tier] ?? tier,
-                                  style: TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                        icon,
+                        const SizedBox(width: 12),
+                        Expanded(child: text),
                       ],
                     ),
+                    const SizedBox(height: 12),
+                    button,
+                  ],
+                )
+              : Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: 12),
+                    Expanded(child: text),
+                    const SizedBox(width: 10),
+                    button,
                   ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.tonalIcon(
-                onPressed: _openDesigner,
-                icon: const Icon(Icons.tune_rounded, size: 18),
-                label: const Text('Personalizar'),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -2362,14 +2383,25 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
     // cards generales): con espacio, los campos a la IZQUIERDA y la vista
     // previa a la DERECHA; en pantalla angosta, en dos pestañas. Así se
     // personaliza viendo siempre cómo va a quedar.
-    final wide = MediaQuery.sizeOf(context).width > 980;
+    final size = MediaQuery.sizeOf(context);
+    final phone = size.width < kHsPhoneWidth;
+    final wide = size.width > 980;
 
     return Dialog(
       key: const ValueKey('package-form'),
-      insetPadding: const EdgeInsets.all(18),
+      // En el CELULAR ocupa TODA la pantalla, como el resto de modales del
+      // panel: antes conservaba su margen de 18 px y, con el texto grande (o
+      // una pantalla bajita), el pie con “Guardar” se salía de la vista.
+      insetPadding: phone ? EdgeInsets.zero : const EdgeInsets.all(18),
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(phone ? 0 : 28),
+      ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1080, maxHeight: 900),
+        constraints: BoxConstraints(
+          maxWidth: 1080,
+          maxHeight: phone ? size.height : 900,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2435,20 +2467,26 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
               children: [
                 Text(
                   _editing ? 'Personalizar paquete' : 'Nuevo paquete',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'Este paquete aparece en la web ("Nuestros Paquetes") y se '
-                  'asigna a clientes.',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: scheme.onSurfaceVariant,
+                // En el CELULAR el subtítulo se omite: ocupaba varios renglones
+                // y dejaba el formulario sin alto. En escritorio sigue igual.
+                if (!hsIsPhone(context)) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Este paquete aparece en la web ("Nuestros Paquetes") y se '
+                    'asigna a clientes.',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -2464,45 +2502,105 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
 
   /// Pie: el aviso (o el error) a la izquierda y las acciones a la derecha.
   Widget _footer(ColorScheme scheme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-      child: Row(
-        children: [
-          Icon(
-            _error == null ? Icons.visibility_outlined : Icons.error_outline,
-            size: 16,
-            color: _error == null ? scheme.onSurfaceVariant : scheme.error,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _error ?? 'La vista previa se actualiza mientras escribes.',
-              style: TextStyle(
-                fontSize: 12,
-                color: _error == null ? scheme.onSurfaceVariant : scheme.error,
-              ),
+    // En el CELULAR el aviso informativo se omite (deja aire para los botones);
+    // el ERROR sí se enseña siempre, porque hay que poder leerlo.
+    final phone = hsIsPhone(context);
+    final note = Row(
+      children: [
+        Icon(
+          _error == null ? Icons.visibility_outlined : Icons.error_outline,
+          size: 16,
+          color: _error == null ? scheme.onSurfaceVariant : scheme.error,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _error ?? 'La vista previa se actualiza mientras escribes.',
+            style: TextStyle(
+              fontSize: 12,
+              color: _error == null ? scheme.onSurfaceVariant : scheme.error,
             ),
           ),
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save_outlined, size: 18),
-            label: Text(_editing ? 'Guardar cambios' : 'Crear paquete'),
-          ),
-        ],
-      ),
+        ),
+      ],
+    );
+    // Wrap: con el texto grande los dos botones ya no caben en una fila (se
+    // salían 72 px de la pantalla); así bajan a otra línea.
+    final actions = Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton.icon(
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save_outlined, size: 18),
+          label: Text(_editing ? 'Guardar cambios' : 'Crear paquete'),
+        ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+      child: phone
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_error != null) ...[note, const SizedBox(height: 8)],
+                actions,
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: note),
+                const SizedBox(width: 8),
+                actions,
+              ],
+            ),
     );
   }
+
+  /// Desplegable del TIER del paquete.
+  Widget _tierField() => DropdownButtonFormField<int>(
+    initialValue: _tierId,
+    decoration: const InputDecoration(
+      labelText: 'Tier',
+      prefixIcon: Icon(Icons.military_tech_outlined, size: 20),
+    ),
+    items: [
+      for (final t in widget.tiers)
+        DropdownMenuItem<int>(
+          value: (t['id'] as num).toInt(),
+          child: Text((t['name'] ?? '').toString()),
+        ),
+    ],
+    onChanged: (v) => setState(() => _tierId = v),
+  );
+
+  /// Desplegable de la CATEGORÍA del paquete.
+  Widget _categoryField() => DropdownButtonFormField<int>(
+    initialValue: _categoryId,
+    decoration: const InputDecoration(
+      labelText: 'Categoría',
+      prefixIcon: Icon(Icons.category_outlined, size: 20),
+    ),
+    items: [
+      for (final c in widget.categories)
+        DropdownMenuItem<int>(
+          value: (c['id'] as num).toInt(),
+          child: Text((c['name'] ?? '').toString()),
+        ),
+    ],
+    onChanged: (v) => setState(() => _categoryId = v),
+  );
 
   /// Campos del formulario (columna izquierda, como los controles del
   /// diseñador): las pestañas Datos/Servicios con su contenido.
@@ -2608,51 +2706,21 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                   label: 'Clasificación',
                   child: Column(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              initialValue: _tierId,
-                              decoration: const InputDecoration(
-                                labelText: 'Tier',
-                                prefixIcon: Icon(
-                                  Icons.military_tech_outlined,
-                                  size: 20,
-                                ),
-                              ),
-                              items: [
-                                for (final t in widget.tiers)
-                                  DropdownMenuItem<int>(
-                                    value: (t['id'] as num).toInt(),
-                                    child: Text((t['name'] ?? '').toString()),
-                                  ),
-                              ],
-                              onChanged: (v) => setState(() => _tierId = v),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              initialValue: _categoryId,
-                              decoration: const InputDecoration(
-                                labelText: 'Categoría',
-                                prefixIcon: Icon(
-                                  Icons.category_outlined,
-                                  size: 20,
-                                ),
-                              ),
-                              items: [
-                                for (final c in widget.categories)
-                                  DropdownMenuItem<int>(
-                                    value: (c['id'] as num).toInt(),
-                                    child: Text((c['name'] ?? '').toString()),
-                                  ),
-                              ],
-                              onChanged: (v) => setState(() => _categoryId = v),
-                            ),
-                          ),
-                        ],
-                      ),
+                      // En el CELULAR van uno debajo del otro: lado a lado
+                      // cada desplegable se quedaba en ~91 px y su texto se
+                      // salía de la caja (22 px de desborde).
+                      if (hsIsPhone(context)) ...[
+                        _tierField(),
+                        const SizedBox(height: 12),
+                        _categoryField(),
+                      ] else
+                        Row(
+                          children: [
+                            Expanded(child: _tierField()),
+                            const SizedBox(width: 12),
+                            Expanded(child: _categoryField()),
+                          ],
+                        ),
                       const SizedBox(height: 12),
                       CheckboxListTile(
                         value: _isExtern,
@@ -2662,7 +2730,7 @@ class _PackageFormDialogState extends State<_PackageFormDialog> {
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
                         title: const Text(
-                          'Paquete externo (servicio destacado de la web)',
+                          'Paquete externo',
                           style: TextStyle(fontSize: 13.5),
                         ),
                         subtitle: const Text(

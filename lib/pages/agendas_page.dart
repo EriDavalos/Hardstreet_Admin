@@ -486,7 +486,18 @@ class _AgendasPageState extends State<AgendasPage> {
     showDialog<void>(
       context: context,
       barrierColor: Colors.black45,
-      builder: (_) => _AgendaDetailDialog(date: day, agendas: list),
+      builder: (dialogCtx) => _AgendaDetailDialog(
+        date: day,
+        agendas: list,
+        // Editar desde el propio detalle: se cierra el detalle y se abre el
+        // formulario de edición del evento tocado.
+        onEdit: _canEdit
+            ? (agenda) async {
+                Navigator.of(dialogCtx).pop();
+                await _editEvent(agenda);
+              }
+            : null,
+      ),
     );
   }
 
@@ -495,6 +506,25 @@ class _AgendasPageState extends State<AgendasPage> {
       HsAccess.instance.degraded ||
       HsAccess.instance.can('schedules', 'create') ||
       HsAccess.instance.can('Agendas', 'create');
+
+  /// ¿Puede EDITAR eventos? Sin este permiso el detalle no ofrece Editar.
+  bool get _canEdit =>
+      HsAccess.instance.degraded ||
+      HsAccess.instance.can('schedules', 'update') ||
+      HsAccess.instance.can('Agendas', 'update');
+
+  /// Edición de un evento ya agendado (fecha/hora, servicio, ubicaciones y
+  /// nota). El cliente y el paquete se conservan tal como están.
+  Future<void> _editEvent(Map<String, dynamic> agenda) async {
+    if (!_canEdit) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _EditAgendaDialog(agenda: agenda),
+    );
+    if (!mounted) return;
+    if (saved == true) await _reload();
+  }
 
   /// Alta de un evento desde el CALENDARIO: se elige el cliente, después el
   /// paquete comprado de ese cliente y el servicio del paquete.
@@ -2601,10 +2631,17 @@ class _UpcomingEventCard extends StatelessWidget {
 /// Modal de detalle con el DISEÑO ESTÁNDAR del panel (FormDialog): cabecera
 /// con icono, título y botón de cerrar ARRIBA A LA DERECHA.
 class _AgendaDetailDialog extends StatelessWidget {
-  const _AgendaDetailDialog({required this.date, required this.agendas});
+  const _AgendaDetailDialog({
+    required this.date,
+    required this.agendas,
+    this.onEdit,
+  });
 
   final DateTime date;
   final List<Map<String, dynamic>> agendas;
+
+  /// Editar el evento tocado (null = el rol no puede editar).
+  final void Function(Map<String, dynamic> agenda)? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -2619,7 +2656,10 @@ class _AgendaDetailDialog extends StatelessWidget {
       children: [
         for (var i = 0; i < agendas.length; i++) ...[
           if (i > 0) const SizedBox(height: 12),
-          _AgendaDetailBlock(agenda: agendas[i]),
+          _AgendaDetailBlock(
+            agenda: agendas[i],
+            onEdit: onEdit == null ? null : () => onEdit!(agendas[i]),
+          ),
         ],
       ],
     );
@@ -2628,9 +2668,12 @@ class _AgendaDetailDialog extends StatelessWidget {
 
 /// Bloque de detalle (cliente, paquete, servicio, hora y nota).
 class _AgendaDetailBlock extends StatelessWidget {
-  const _AgendaDetailBlock({required this.agenda});
+  const _AgendaDetailBlock({required this.agenda, this.onEdit});
 
   final Map<String, dynamic> agenda;
+
+  /// Abre la edición de ESTE evento (null = sin permiso o hueco ocupado).
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -2790,12 +2833,28 @@ class _AgendaDetailBlock extends StatelessWidget {
                   ),
                 ),
               ),
+              // EDITAR: la puerta a cambiar fecha/hora, servicio, ubicaciones
+              // y nota sin salir del calendario.
+              if (onEdit != null)
+                IconButton(
+                  tooltip: 'Editar agenda',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  onPressed: onEdit,
+                  icon: Icon(Icons.edit_outlined, size: 17, color: color),
+                ),
             ],
           ),
+          // Un evento suelto (solo cliente) no tiene paquete: se dice así en
+          // vez de dejar un guion que parecía un dato que no cargó.
           detailRow(
             Icons.inventory_2_outlined,
             'Paquete',
-            package.isEmpty ? '—' : package,
+            package.isEmpty ? 'Sin paquete (evento del cliente)' : package,
           ),
           detailRow(
             Icons.design_services_outlined,
@@ -2827,10 +2886,12 @@ class _AgendaDetailBlock extends StatelessWidget {
 // =====================================================================
 // NUEVO EVENTO DESDE EL CALENDARIO
 //
-// El evento siempre vive en el PAQUETE COMPRADO de un cliente, así que el
-// alta va en ese orden: CLIENTE → su PAQUETE → SERVICIO del paquete
-// (opcional) + fecha/hora + nota. Cada paso carga sus opciones del servidor
-// y, si algo falla, el error se muestra en el propio formulario.
+// El alta va en este orden: CLIENTE → su PAQUETE (OPCIONAL) → SERVICIO del
+// paquete (opcional) + fecha/hora + nota. El paquete es opcional porque un
+// evento puede ser SOLO del cliente (una fecha suelta en su calendario, sin
+// depender de un paquete comprado); sin paquete tampoco hay servicio que
+// elegir. Cada paso carga sus opciones del servidor y, si algo falla, el
+// error se muestra en el propio formulario.
 // =====================================================================
 
 /// Campo que elige UNA opción de una lista (cliente, paquete, servicio).
@@ -2921,6 +2982,152 @@ class _PickerField extends StatelessWidget {
           : (v) {
               if (v != null) onChanged?.call(v);
             },
+    );
+  }
+}
+
+/// Tarjeta táctil de fecha/hora: icono tintado + rótulo + valor, y abre el
+/// selector correspondiente. Se ve como una pieza de la app (no como un campo
+/// de texto disfrazado). La usan el alta y la edición de una agenda.
+class _AgendaSlot extends StatelessWidget {
+  const _AgendaSlot({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onTap,
+    required this.tint,
+    this.enabled = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+  final Color tint;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(11, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: .07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tint.withValues(alpha: .28)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(icon, size: 18, color: tint),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      letterSpacing: .8,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: tint,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.edit_calendar_outlined,
+              size: 16,
+              color: scheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Atajos (Hoy / Mañana / En 7 días) bajo los selectores de fecha: marca el
+/// que coincide con la fecha elegida y avisa con [onPick] los días de salto.
+class _AgendaDayChips extends StatelessWidget {
+  const _AgendaDayChips({
+    required this.date,
+    required this.onPick,
+    this.enabled = true,
+  });
+
+  final DateTime date;
+  final void Function(int days) onPick;
+  final bool enabled;
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final chips = <(String, int)>[('Hoy', 0), ('Mañana', 1), ('En 7 días', 7)];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final (label, days) in chips)
+          Builder(
+            builder: (context) {
+              final selected = _sameDay(
+                date,
+                DateTime(now.year, now.month, now.day + days),
+              );
+              return ChoiceChip(
+                label: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : scheme.onSurfaceVariant,
+                  ),
+                ),
+                selected: selected,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                selectedColor: AppColors.brand,
+                backgroundColor: scheme.surfaceContainerHighest.withValues(
+                  alpha: .45,
+                ),
+                onSelected: enabled ? (_) => onPick(days) : null,
+              );
+            },
+          ),
+      ],
     );
   }
 }
@@ -3136,19 +3343,14 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     });
   }
 
-  static bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
   Future<void> _save() async {
     if (_saving) return;
     if (_clientId == 0) {
       setState(() => _error = 'Elige el cliente del evento');
       return;
     }
-    if (_packageId == 0) {
-      setState(() => _error = 'Elige el paquete del cliente');
-      return;
-    }
+    // El PAQUETE ya no es obligatorio: con el cliente y la fecha se agenda un
+    // evento suelto de su calendario.
     setState(() {
       _saving = true;
       _error = null;
@@ -3156,7 +3358,10 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     try {
       final places = _filledPlaces;
       await HsApi.createAgenda({
-        'purchasedPackageId': _packageId,
+        // El cliente viaja SIEMPRE: es lo que identifica el evento cuando no
+        // hay paquete.
+        'userId': _clientId,
+        'purchasedPackageId': _packageId == 0 ? null : _packageId,
         'serviceId': _serviceId == 0 ? null : _serviceId,
         'eventDate': hsDateTimeValue(_dateTime),
         'description': _desc.text.trim(),
@@ -3184,122 +3389,6 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     }
   }
 
-  /// Tarjeta táctil de fecha/hora: icono tintado + rótulo + valor, y abre el
-  /// selector correspondiente. Se ve como una pieza de la app (no como un
-  /// campo de texto disfrazado).
-  Widget _slot({
-    required IconData icon,
-    required String label,
-    required String value,
-    required VoidCallback onTap,
-    required Color tint,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: _saving ? null : onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(11, 10, 10, 10),
-        decoration: BoxDecoration(
-          color: tint.withValues(alpha: .07),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: tint.withValues(alpha: .28)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: .14),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Icon(icon, size: 18, color: tint),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    label.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      letterSpacing: .8,
-                      fontWeight: FontWeight.w800,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: tint,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.edit_calendar_outlined,
-              size: 16,
-              color: scheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Atajos (Hoy / Mañana / +7 días) bajo los selectores de fecha.
-  Widget _dayChips() {
-    final scheme = Theme.of(context).colorScheme;
-    final now = DateTime.now();
-    final chips = <(String, int)>[('Hoy', 0), ('Mañana', 1), ('En 7 días', 7)];
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (final (label, days) in chips)
-          Builder(
-            builder: (context) {
-              final selected = _isSameDay(
-                _dateTime,
-                DateTime(now.year, now.month, now.day + days),
-              );
-              return ChoiceChip(
-                label: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: selected ? Colors.white : scheme.onSurfaceVariant,
-                  ),
-                ),
-                selected: selected,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                selectedColor: AppColors.brand,
-                backgroundColor: scheme.surfaceContainerHighest.withValues(
-                  alpha: .45,
-                ),
-                onSelected: _saving ? null : (_) => _quickDay(days),
-              );
-            },
-          ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final busyPackages = _loadingPackages;
@@ -3308,7 +3397,8 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
     return FormDialog(
       icon: Icons.event_available_rounded,
       title: 'Nuevo evento',
-      subtitle: 'Elige el cliente, su paquete y el servicio a agendar',
+      subtitle:
+          'Elige el cliente y la fecha · el paquete es opcional',
       saving: _saving,
       error: _error,
       saveLabel: 'Crear evento',
@@ -3382,14 +3472,17 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
               )
             else
               FormSection(
-                label: 'Paquete del cliente',
+                label: 'Paquete del cliente (opcional)',
                 child: _PickerField(
                   key: const ValueKey('agenda-package'),
                   label: 'Paquete',
-                  hint: 'Elige el paquete',
+                  hint: 'Sin paquete (evento del cliente)',
                   icon: Icons.inventory_2_outlined,
                   selected: _packageId,
                   enabled: !_saving,
+                  helper:
+                      'Opcional: sin paquete sólo se agenda la fecha del '
+                      'cliente.',
                   options: [
                     for (final p in _packages)
                       DropdownMenuItem(
@@ -3402,7 +3495,8 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                       ),
                   ],
                   emptyMessage: sinPaquetes
-                      ? 'Este cliente no tiene paquetes comprados.'
+                      ? 'Este cliente no tiene paquetes comprados: el evento '
+                            'se agenda sólo a su nombre.'
                       : null,
                   onChanged: _pickPackage,
                 ),
@@ -3458,14 +3552,14 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
             // fila el valor quedaba recortado.
             child: (() {
               final stack = MediaQuery.sizeOf(context).width < 420;
-              final date = _slot(
+              final date = _AgendaSlot(
                 icon: Icons.calendar_today_outlined,
                 label: 'Fecha',
                 value: hsShortDate(_dateTime),
                 onTap: _pickDate,
                 tint: AppColors.brand,
               );
-              final time = _slot(
+              final time = _AgendaSlot(
                 icon: Icons.schedule_outlined,
                 label: 'Hora',
                 value: hsTimeLabel(_dateTime),
@@ -3488,7 +3582,11 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
                       ],
                     ),
                   const SizedBox(height: 10),
-                  _dayChips(),
+                  _AgendaDayChips(
+                    date: _dateTime,
+                    enabled: !_saving,
+                    onPick: _quickDay,
+                  ),
                 ],
               );
             })(),
@@ -3526,6 +3624,329 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
             ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+/// EDICIÓN de una agenda ya creada.
+///
+/// El CLIENTE y el PAQUETE no se cambian aquí (el `PUT` del servidor tampoco
+/// los expone): se edita la fecha/hora, el servicio, las ubicaciones y la
+/// nota. Sirve igual para un evento con paquete que para uno agendado solo a
+/// nombre del cliente.
+class _EditAgendaDialog extends StatefulWidget {
+  const _EditAgendaDialog({required this.agenda});
+
+  final Map<String, dynamic> agenda;
+
+  @override
+  State<_EditAgendaDialog> createState() => _EditAgendaDialogState();
+}
+
+class _EditAgendaDialogState extends State<_EditAgendaDialog> {
+  final TextEditingController _desc = TextEditingController();
+  final List<HsPlace?> _places = [null];
+
+  late DateTime _dateTime;
+  int _serviceId = 0;
+  bool _loadingServices = true;
+  List<Map<String, dynamic>> _services = const [];
+
+  bool _saving = false;
+  String? _error;
+
+  int get _id => (widget.agenda['id'] as num?)?.toInt() ?? 0;
+  int get _packageId =>
+      (widget.agenda['purchasedPackageId'] as num?)?.toInt() ?? 0;
+
+  /// Las ubicaciones ya capturadas, en orden (sin los huecos vacíos).
+  List<HsPlace> get _filledPlaces => [
+    for (final p in _places)
+      if (p != null && !p.isEmpty) p,
+  ];
+
+  static int _serviceIdOf(Map<String, dynamic> s) =>
+      ((s['serviceId'] ?? s['id']) as num?)?.toInt() ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final a = widget.agenda;
+    _desc.text = (a['description'] ?? '').toString();
+    final parsed = hsParseDate(a['eventDate']);
+    final now = DateTime.now();
+    _dateTime = parsed ?? DateTime(now.year, now.month, now.day, now.hour + 1);
+    _serviceId = (a['serviceId'] as num?)?.toInt() ?? 0;
+    final places = HsPlace.allOf(a);
+    _places
+      ..clear()
+      ..addAll(places.isEmpty ? <HsPlace?>[null] : places);
+    _loadServices();
+  }
+
+  @override
+  void dispose() {
+    _desc.dispose();
+    super.dispose();
+  }
+
+  /// Servicios que se pueden poner: los del PAQUETE del evento o, si el evento
+  /// es solo del cliente, el catálogo del estudio.
+  Future<void> _loadServices() async {
+    var list = const <Map<String, dynamic>>[];
+    try {
+      if (_packageId != 0) {
+        final data = await HsApi.packageProgress(_packageId);
+        list = ((data['services'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      } else {
+        list = await HsApi.services();
+      }
+    } catch (_) {
+      // Best effort: sin catálogo el servicio ACTUAL se conserva igual.
+    }
+    if (!mounted) return;
+    setState(() {
+      _services = list;
+      _loadingServices = false;
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showHsDatePicker(context, initialDate: _dateTime);
+    if (picked == null) return;
+    setState(() {
+      _dateTime = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        _dateTime.hour,
+        _dateTime.minute,
+      );
+    });
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showHsTimePicker(context, initialTime: _dateTime);
+    if (picked == null) return;
+    setState(() {
+      _dateTime = DateTime(
+        _dateTime.year,
+        _dateTime.month,
+        _dateTime.day,
+        picked.hour,
+        picked.minute,
+      );
+    });
+  }
+
+  /// Atajos rápidos de fecha (hoy / mañana / en una semana).
+  void _quickDay(int days) {
+    final base = DateTime.now().add(Duration(days: days));
+    setState(() {
+      _dateTime = DateTime(
+        base.year,
+        base.month,
+        base.day,
+        _dateTime.hour,
+        _dateTime.minute,
+      );
+    });
+  }
+
+  Future<void> _save() async {
+    if (_saving || _id == 0) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final places = _filledPlaces;
+      await HsApi.updateAgenda({
+        'id': _id,
+        'serviceId': _serviceId == 0 ? null : _serviceId,
+        'eventDate': hsDateTimeValue(_dateTime),
+        'description': _desc.text.trim(),
+        // Las ubicaciones viajan SIEMPRE (lista vacía = se quitaron): editar
+        // una agenda también puede borrarlas, no solo cambiarlas.
+        ...HsPlace.listBody(places),
+        ...(places.isEmpty
+            ? const {'location': '', 'lat': null, 'lng': null}
+            : places.first.toBody()),
+      });
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo guardar la agenda';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = widget.agenda;
+    final client = (a['clientName'] ?? '').toString().trim();
+    final package = (a['packageName'] ?? '').toString().trim();
+    final subtitle = [
+      if (client.isNotEmpty) client,
+      package.isEmpty ? 'Sin paquete' : package,
+    ].join(' · ');
+    // El servicio ACTUAL puede no venir en la lista (otro paquete, catálogo
+    // cambiado): se agrega como opción para no borrarlo sin querer.
+    final currentMissing =
+        _serviceId != 0 && !_services.any((s) => _serviceIdOf(s) == _serviceId);
+
+    return FormDialog(
+      icon: Icons.edit_calendar_outlined,
+      title: 'Editar agenda',
+      subtitle: subtitle,
+      saving: _saving,
+      error: _error,
+      saveLabel: 'Guardar cambios',
+      maxWidth: 500,
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        FormSection(
+          label: 'Fecha y hora',
+          // El ancho se mide por la PANTALLA (no con LayoutBuilder): el
+          // diálogo calcula sus dimensiones intrínsecas y un LayoutBuilder
+          // dentro las hace fallar.
+          child: (() {
+            final stack = MediaQuery.sizeOf(context).width < 420;
+            final date = _AgendaSlot(
+              icon: Icons.calendar_today_outlined,
+              label: 'Fecha',
+              value: hsShortDate(_dateTime),
+              onTap: _pickDate,
+              tint: AppColors.brand,
+              enabled: !_saving,
+            );
+            final time = _AgendaSlot(
+              icon: Icons.schedule_outlined,
+              label: 'Hora',
+              value: hsTimeLabel(_dateTime),
+              onTap: _pickTime,
+              tint: const Color(0xFF2F6BFF),
+              enabled: !_saving,
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (stack) ...[
+                  date,
+                  const SizedBox(height: 10),
+                  time,
+                ] else
+                  Row(
+                    children: [
+                      Expanded(child: date),
+                      const SizedBox(width: 10),
+                      Expanded(child: time),
+                    ],
+                  ),
+                const SizedBox(height: 10),
+                _AgendaDayChips(
+                  date: _dateTime,
+                  enabled: !_saving,
+                  onPick: _quickDay,
+                ),
+              ],
+            );
+          })(),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Servicio',
+          child: _loadingServices
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: LinearProgressIndicator(minHeight: 3),
+                )
+              : _PickerField(
+                  key: const ValueKey('agenda-edit-service'),
+                  label: 'Servicio',
+                  hint: 'Sin servicio específico',
+                  icon: Icons.design_services_outlined,
+                  selected: _serviceId,
+                  enabled: !_saving,
+                  helper:
+                      'Opcional: déjalo en "Sin servicio específico" '
+                      'si el evento es general.',
+                  options: [
+                    const DropdownMenuItem(
+                      value: 0,
+                      child: Text('Sin servicio específico'),
+                    ),
+                    if (currentMissing)
+                      DropdownMenuItem(
+                        value: _serviceId,
+                        child: Text(
+                          (a['serviceName'] ?? 'Servicio').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    for (final s in _services)
+                      DropdownMenuItem(
+                        value: _serviceIdOf(s),
+                        child: Text(
+                          (s['name'] ?? 'Servicio').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _serviceId = v),
+                ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Ubicaciones (opcional)',
+          child: HsPlacesField(
+            numberKeyPrefix: 'agenda-edit-place',
+            places: _places,
+            enabled: !_saving,
+            onChanged: (index, place) => setState(() {
+              _places[index] = place;
+            }),
+            onAdd: () => setState(() => _places.add(null)),
+            onRemove: (index) => setState(() {
+              _places.removeAt(index);
+              // Siempre queda al menos un hueco para capturar.
+              if (_places.isEmpty) _places.add(null);
+            }),
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Nota',
+          child: TextField(
+            controller: _desc,
+            minLines: 2,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Descripción',
+              hintText: 'Ej. Ceremonia, entrega, sesión en el estudio…',
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
       ],
     );
   }

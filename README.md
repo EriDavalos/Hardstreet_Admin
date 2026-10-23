@@ -12,7 +12,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
 | **Finanzas** | ✅ Vista con pestañas: **Resumen** (DINERO ACTUAL con su tabla de conceptos y gráfica), **Por paquete** y **Pagos** a colaboradores/empleados |
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
-| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete → servicio y **lugar en el mapa** (búsqueda o punto marcado). En el mes, los **días ocupados** se marcan en rojo |
+| **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete (opcional) → servicio y **lugar en el mapa** (búsqueda o punto marcado). En el mes, los **días ocupados** se marcan en rojo |
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | **Notificaciones** | ✅ Módulo nuevo: **qué roles reciben cada aviso** (agenda próxima, fotos disponibles, envío de fotos, servicio/paquete terminado, impresión lista) y **envío de avisos manuales** a los roles elegidos. Cada aviso lleva su MÓDULO: al tocarlo en la campanita, el panel abre esa pantalla. Requiere la migración `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` |
@@ -160,10 +160,22 @@ conoce el módulo, se muestra igual).
   servicio y la franja de próximos eventos.
 - **Nuevo evento**: en escritorio es el botón de la cabecera y en móvil el
   ícono **+** de la barra del calendario (para no robarle altura al
-  calendario). El alta pide, en orden, el **cliente**, el **paquete comprado
-  de ese cliente** y el **servicio del paquete** (opcional), más fecha, hora
-  y nota. Sin cliente no se pueden elegir paquetes: el formulario avisa si el
-  cliente no tiene paquetes comprados.
+  calendario). El alta pide el **cliente** y la **fecha/hora** (más nota y
+  lugar) y, **opcionalmente**, el **paquete comprado de ese cliente** y el
+  **servicio del paquete**: con solo el cliente se agenda una fecha suelta de
+  su calendario, sin depender de un paquete. El formulario avisa cuando el
+  cliente no tiene paquetes, pero deja crear el evento igual. Las agendas sin
+  paquete se guardan con `schedules.id_user` y `id_purchased_package = NULL`:
+  requieren la migración `Hardstreet-DB/2026-10-22_agendas_por_cliente.sql`
+  (sin ella el resto del calendario sigue funcionando y el alta sin paquete
+  avisa que falta aplicarla). El `POST` de `/api/admin/agendas` acepta
+  `userId` junto a (o en lugar de) `purchasedPackageId`.
+- **Editar una agenda**: el detalle de un evento (rejilla de la semana, mes,
+  franja de próximos eventos o el widget) lleva un **lápiz** que abre el
+  formulario de edición: fecha/hora (con los atajos Hoy / Mañana / En 7 días),
+  **servicio**, **ubicaciones** y **nota**. El cliente y el paquete NO se
+  cambian ahí (el `PUT` del servidor tampoco los expone). El lápiz solo aparece
+  con permiso de **actualizar** agendas; sin él el detalle es de solo lectura.
 - **Varias ubicaciones por evento** (opcional): el alta y la edición de una
   agenda permiten sumar **una o VARIAS ubicaciones** con **Agregar otra
   ubicación**; se **numeran solas** (1, 2, 3…) en el orden en que se capturan
@@ -287,6 +299,47 @@ Requiere las tablas `purchased_packages_services_shares` (con las columnas
 `purchased_packages_services_items` (dump `Hardstreet-DB/hardstreet.sql`); sin
 ellas todo cae a "sin opciones" en vez de fallar.
 
+### Portada y línea de tiempo de servicios
+
+La portada del paquete ya no acumula cifras. Se fueron la píldora de «N de M
+servicios», «Carpeta lista» y la barra de pago: distraían de lo que el cliente
+necesita ver de un golpe. El pie de la tarjeta es una sola franja fina, separada
+por una línea, con dos datos discretos (nada de tarjetas grandes: «Elige tus
+fotos» y «Liquidado» pesaban más que la propia foto):
+
+- **Qué toca hacer ahora** — icono pequeño y una línea: «Elige tus fotos»
+  cuando algún servicio con «Elegir fotos» todavía no tiene selección; «Envía
+  tus fotos» si ya eligió y falta mandarlas; «En proceso» mientras el estudio
+  trabaja; «Todo entregado» al terminar. Debajo, cuántos servicios están en ese
+  estado.
+- **El pago**, como el renglón de totales de un recibo (alineado a la derecha):
+  «Liquidado» cuando ya no falta nada o **Faltan $X**, con el total y el
+  porcentaje pagado como apoyo. Sin barra y sin caja.
+- **Abrir mi carpeta**, si tiene una carpeta compartida.
+
+La foto de la portada es la protagonista: el recorte es más alto, las esquinas
+más suaves y el borde de arriba lleva un filo de luz. El pie queda fijo (no
+cambia con las fotos del banner).
+
+Los servicios se leen como una **línea de tiempo** vertical (riel con un nodo
+por etapa) y en este orden:
+
+1. **Elige tus fotos** — siempre primero, con fondo tenue y etiqueta «TE TOCA»:
+   es lo único que depende del cliente. Dentro, arriba los que todavía no
+   tienen selección y después los que solo esperan enviarla.
+2. **En proceso** — primero los servicios que ya pueden **abrir su carpeta**.
+3. **Completados** — primero los que pueden abrir carpeta y, después, los que
+   ya tienen fotos elegidas.
+
+Dentro de cada etapa manda el tipo de acción de la tarjeta: primero los
+servicios cuyo **único botón es «Abrir carpeta»**, después los que además
+tienen fotos (**«Ver fotos» / «Elegir fotos»**) y al final los que no ofrecen
+ninguna de las dos.
+
+Las tarjetas de las tres etapas comparten el MISMO fondo translúcido teñido con
+el color del estado: antes solo las completadas dejaban ver la foto del fondo y
+la lista se veía a parches.
+
 ## Notificaciones: quién recibe cada aviso
 
 El módulo **Notificaciones** (`/api/admin/notifications`) tiene una tarjeta por
@@ -305,7 +358,10 @@ quién lo recibe. Sin configuración se usan los roles recomendados:
 
 Los avisos llegan a la **campanita** (`/api/reminders`) y, al tocarlos, abren su
 módulo (`target`). Los avisos del **paquete** al cliente ("Ya puedes elegir tus
-fotos", "Servicio terminado"…) además suenan dentro de la app: una campanita
+fotos", "Servicio terminado"…) son los mismos que el cliente ve en «Novedades»
+dentro de Mi paquete: el endpoint los devuelve como `source: "package"` con
+`target: my_package`, así que también aparecen en la campanita y, al tocarlos,
+abren Mi paquete. Además suenan dentro de la app: una campanita
 corta (`assets/sounds/aviso.wav`, reproducida con `audioplayers`) suena UNA vez
 por aviso nuevo, igual que el toast nativo (`PackageNotificationsService`). El botón **Enviar aviso** escribe un aviso manual para los
 roles marcados y elige a qué módulo lleva. El historial muestra lo ya enviado
@@ -327,10 +383,22 @@ información tenga la pantalla:
 - El **desglose de cada renglón** (tabla de Finanzas, ficha del paquete) usa
   filas y píldoras deslizables, y su contenido scrollea por dentro de su zona
   en vez de estirar la página.
+- El **paginado** del pie va en **UNA sola fila**: ‹ Página X de Y › a la
+  izquierda y el selector de tamaño (solo el número) a la derecha. Antes tenía
+  dos líneas —el resumen "1–30 de 240" y el "30 por página" encima— y se comía
+  alto del teléfono. En el escritorio se mantiene la barra completa, con los
+  números de página y el resumen.
 
 ## Personalizar paquete
 
 El diálogo de alta/edición de paquete es visual e intuitivo:
+
+- **En el CELULAR ocupa TODA la pantalla** (como el resto de modales del
+  panel): antes conservaba un margen de 18 px y, con el texto grande, el pie
+  con “Guardar cambios” se salía 72 px de la vista. La cabecera va solo con el
+  título (el subtítulo se omite), los desplegables de **Tier** y **Categoría**
+  van uno debajo del otro (lado a lado se salía su texto) y los botones del pie
+  se acomodan en un `Wrap` (bajan de línea si no caben).
 
 - **Vista previa en vivo** (arriba) del flyer: refleja nombre, subtítulo,
   precio, tier, categoría y número de servicios al escribir.
@@ -355,6 +423,12 @@ buscador (el mismo gesto que en el Drive):
   icono de categoría, nombre, subtítulo, servicios incluidos y precio), para
   recorrer y comparar todo el catálogo sin perder la identidad de la marca. En
   el celular las acciones van al menú "⋮".
+
+La barra de arriba (**Diseño de las cards**) se ve a la vista al abrir el
+catálogo y abre el diseñador. En el **celular** el botón **Personalizar** baja a
+su propia fila a todo lo ancho: apilado con el icono y el texto, la descripción
+quedaba en una columna de ~37 px (una palabra por renglón) y los colores de los
+tiers se salían 210 px de la tarjeta.
 
 ### La FOTO del paquete en el panel
 
@@ -417,6 +491,11 @@ misma pantalla (`lib/widgets/category_gallery.dart`):
 El botón **Diseñar cards** (en Paquetes, requiere permiso de *update*) abre el
 diseñador: a la izquierda los controles y a la derecha la **vista previa en
 vivo** de la tarjeta y de la fila, tal como quedarán en la web.
+
+En el **celular** el diseñador ocupa toda la pantalla y va en dos pestañas
+(Diseño / Vista previa), con la cabecera en una sola línea: antes, con el texto
+grande, la cabecera se comía la pantalla y el botón de guardar quedaba 102 px
+por debajo del borde.
 
 - Pestaña **Global**: dorados de la marca, columnas del catálogo (1–4),
   separación, redondeo, borde, relleno, línea superior, elevación y sombra al
@@ -598,6 +677,47 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   servidor) y, si se cortaba, había que empezar la foto entera. Si el proxy
   contesta 413 al trozo, la subida se rehace con trozos más chicos.
 - Vista de cuadrícula con miniaturas o vista de lista (nombre, fecha, tamaño).
+- **En el TELÉFONO la tarjeta del módulo se va con el scroll** (título,
+  buscador y contadores) para que la carpeta se quede con toda la pantalla. La
+  **ruta** ("Mi Drive > Carpeta") tiene su propia barra: viaja justo debajo del
+  encabezado y, en cuanto está a punto de salir de la vista, **se PEGA arriba**
+  (sliver pegado, ver `_CrumbsHeaderDelegate`), siempre —en la raíz y dentro de
+  cualquier carpeta—, así el camino nunca desaparece al bajar. El título
+  tampoco lleva ya el botón de "Nueva carpeta": crear vive en el botón fijo.
+- **La ruta se ve como siempre** (las migas sueltas sobre el fondo de la
+  página, sin caja ni línea): el fondo de la barra solo existe para tapar lo
+  que pasa por detrás al pegarse, y es **exactamente el de la página**
+  (`scaffoldBackgroundColor`, no `surface`, que es otro tono y dejaba ver una
+  franja con una línea de costura en el borde). Se pinta con un `ColoredBox`
+  —sin borde, sombra ni elevación— y el `Material` de dentro es transparente:
+  solo está para que el **resaltado del ratón** al pasar por una carpeta sí se
+  pinte (antes la tinta quedaba debajo del fondo y no se veía nada). La barra
+  mide **justo el alto de las migas** (34) y no lleva aire vertical: esos 4 px
+  de arriba y 4 de abajo se veían como un hueco aparte.
+- **En ventana ANGOSTA la barra superior ya no lleva línea debajo**
+  (`AdminShell` omite ese `Divider` cuando `isCompact`): al pegarse la ruta, el
+  divisor quedaba justo encima de las migas y se leía como una raya suelta
+  sobre la barra. En escritorio ancho se conserva, porque ahí la ruta va dentro
+  de la tarjeta del módulo.
+- **La ruta se ACORTA cuando es larga**: no se listan todas las carpetas. Se ve
+  la raíz, un **«…»** y las **dos últimas**: «Mi Drive > … > Carpeta2 >
+  Carpeta3». Con tres migas o menos se ven completas. Antes la fila se
+  desbordaba y había que deslizarla de lado para saber dónde estabas.
+- **En la computadora, agarrar la barra de scroll NO selecciona**: el borde
+  derecho del contenido (donde vive la barra) se ignora al iniciar la
+  marquesina; antes, al arrastrar la barra caía en la zona vacía, encendía el
+  modo «Seleccionar» y dibujaba el recuadro mientras te desplazabas.
+- **Botón fijo de crear** (solo celular y solo con permiso de crear): un
+  círculo con el degradado de la marca y el **+** blanco —sin texto, para no
+  tapar las fotos— abajo a la derecha; abre la hoja con **Nueva carpeta** y
+  **Subir archivos**. Se esconde mientras hay selección activa. Va **sin
+  contorno** y el resaltado del toque es **redondo** (el `Material` recorta su
+  tinta en círculo; antes se veía cuadrado).
+- **Cuadrícula del teléfono**: DOS columnas con márgenes de 16 px y tarjetas
+  casi cuadradas (proporción .96), así la miniatura manda y la tarjeta no se ve
+  delgada; la portada de las carpetas se estira con la celda y su icono es más
+  grande. En Archivos compartidos (también dos columnas) la portada se estira
+  igual y la tarjeta es un poco más baja.
 - Buscar dentro de la carpeta, renombrar, eliminar, crear carpetas.
 - **Visor de imágenes a PANTALLA COMPLETA** (sin bordes curvos), con la
   información del archivo y su posición ("3 de 12") encima de la foto,
@@ -637,6 +757,11 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   moviéndose: un scroll lento baja la lista en vez de levantar la tarjeta. En
   web tampoco hay animación de entrada al bajar (las filas aparecían
   deslizándose y parecía que las carpetas se movían solas).
+- **El auto-scroll del barrido es fluido**: mientras seleccionas arrastrando y
+  el dedo llega al borde, la lista se desplaza con un `Ticker` (un paso por
+  fotograma) y la velocidad crece según cuánto entra el dedo en la zona del
+  borde. Antes era un `Timer` de 50 ms que saltaba 16 px de golpe y se veía
+  atorado, sobre todo al bajar.
 - **Descargas**: en la **computadora** ya NO se pregunta el destino — el
   diálogo "Guardar como" siempre terminaba en Descargas—; el archivo (o el
   **ZIP** de una selección/carpeta) se guarda directo en la carpeta

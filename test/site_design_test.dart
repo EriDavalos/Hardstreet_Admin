@@ -73,6 +73,7 @@ Map<String, dynamic> readWebDesignDefaults() {
 Future<void> _pumpDesigner(
   WidgetTester tester, {
   Size size = const Size(1300, 950),
+  double textScale = 1,
   void Function(SiteDesign?)? onSaved,
 }) async {
   tester.view.devicePixelRatio = 1.0;
@@ -81,6 +82,16 @@ Future<void> _pumpDesigner(
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(MaterialApp(
+    // Texto grande (como en un teléfono configurado así): el modal tiene que
+    // seguir cabiendo entero.
+    builder: textScale == 1
+        ? null
+        : (ctx, child) => MediaQuery(
+            data: MediaQuery.of(ctx).copyWith(
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: child!,
+          ),
     home: Builder(
       builder: (ctx) => Scaffold(
         body: ElevatedButton(
@@ -749,6 +760,34 @@ void main() {
       await tester.tap(find.text('Vista previa'));
       await tester.pumpAndSettle();
       expect(find.text('Así se verá en la web'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'en el CELULAR con texto grande el diseñador llena la pantalla y se ve el pie',
+        (tester) async {
+      await _pumpDesigner(
+        tester,
+        size: const Size(360, 640),
+        textScale: 1.3,
+        onSaved: (_) {},
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+
+      // Sin márgenes: la superficie del modal llega a los bordes.
+      final surface = find
+          .descendant(of: find.byType(Dialog), matching: find.byType(Material))
+          .first;
+      expect(tester.getRect(surface), const Rect.fromLTRB(0, 0, 360, 640));
+
+      // Y el pie se VE: antes, con el texto grande, “Guardar diseño” quedaba
+      // 102 px por debajo de la pantalla.
+      expect(find.text('Guardar diseño'), findsOneWidget);
+      expect(
+        tester.getRect(find.text('Guardar diseño')).bottom,
+        lessThan(640),
+      );
       expect(tester.takeException(), isNull);
     });
 

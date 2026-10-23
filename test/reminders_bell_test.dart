@@ -249,4 +249,61 @@ void main() {
     // El panel se cierra para dejar ver el módulo.
     expect(find.text('Avisos de eventos'), findsNothing);
   });
+
+  testWidgets(
+      'una novedad del paquete llega a la campanita y abre Mi paquete',
+      (tester) async {
+    final service = RemindersService.instance;
+    final bodies = <String>[];
+    final previousClient = HsApi.client;
+    HsApi.client = MockClient((request) async {
+      if (request.method == 'PUT') bodies.add(request.body);
+      return http.Response('{"ok":true,"unread":0}', 200,
+          headers: {'content-type': 'application/json'});
+    });
+    addTearDown(() => HsApi.client = previousClient);
+
+    // GET /api/reminders mezcla los avisos del PAQUETE con `source: 'package'`
+    // (antes solo vivían en «Novedades» dentro de Mi paquete).
+    service.seedForTest([
+      {
+        'id': 31,
+        'scheduleId': null,
+        'kind': 'fotos-disponibles',
+        'source': 'package',
+        'target': 'my_package',
+        'title': 'Ya puedes elegir tus fotos',
+        'body': 'La selección de «Álbum de fotos» ya está disponible.',
+        'eventDate': '2026-10-22T10:00:00',
+        'isRead': 0,
+      },
+    ]);
+
+    String? opened;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topRight,
+            child: RemindersBell(onOpen: (target) => opened = target),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(RemindersBell));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ya puedes elegir tus fotos'), findsOneWidget);
+    expect(find.text('Mi paquete'), findsOneWidget);
+
+    await tester.tap(find.text('Ya puedes elegir tus fotos'));
+    await tester.pumpAndSettle();
+
+    expect(opened, 'my_package');
+    // Se marca leída en `package_notifications` (no en las otras tablas).
+    expect(bodies.single, contains('"source":"package"'));
+    expect(service.unread, 0);
+  });
 }

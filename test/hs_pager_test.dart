@@ -160,6 +160,14 @@ void main() {
       );
       expect(find.text('Página 2 de 7'), findsOneWidget);
       expect(find.byKey(const ValueKey('hs-pager-num-1')), findsNothing);
+      // TODO en UNA fila al pie: nada de resumen arriba (ocupaba alto) y el
+      // selector de tamaño a la vista, en compacto.
+      expect(find.textContaining('de 200'), findsNothing);
+      expect(find.text('30'), findsOneWidget);
+      final label = tester.getRect(find.text('Página 2 de 7'));
+      final size = tester.getRect(find.byKey(const ValueKey('hs-pager-size')));
+      expect(size.center.dy, closeTo(label.center.dy, 8),
+          reason: 'el tamaño va en la MISMA fila que las flechas');
     });
   });
 }

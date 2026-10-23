@@ -1661,8 +1661,11 @@ class HsApi {
         .toList();
   }
 
-  /// Crea una agenda `{ purchasedPackageId, serviceId, eventDate, description }`.
-  /// `eventDate` viaja como `yyyy-MM-dd HH:mm:ss`.
+  /// Crea una agenda `{ userId, purchasedPackageId?, serviceId?, eventDate,
+  /// description? }`. `eventDate` viaja como `yyyy-MM-dd HH:mm:ss`.
+  ///
+  /// El PAQUETE es opcional: con `userId` y la fecha se agenda un evento suelto
+  /// del cliente (el servidor lo guarda sin paquete).
   ///
   /// Para VARIAS ubicaciones se agrega `locations: [{ location, lat, lng }]`
   /// (el servidor las numera 1, 2, 3… en el orden recibido) y, por

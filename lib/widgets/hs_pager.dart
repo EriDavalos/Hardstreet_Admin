@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 // Todos los módulos muestran sus filas de 30 en 30 (se puede cambiar a 50,
 // 100 o 200) y con botones para ir a la página anterior / siguiente. Los
 // botones se DESHABILITAN en los extremos (no se puede ir antes de la 1 ni
-// después de la última). En el celular se acomoda en dos líneas y los botones
-// quedan cómodos para el dedo, sin ocupar media pantalla.
+// después de la última). En el celular TODO va en una sola fila al pie
+// (‹ Página X de Y › y el tamaño), sin nada encima: es lo que menos alto ocupa
+// y los botones quedan cómodos para el dedo.
 //
 // La barra vive en el PIE FIJO de la página ([PageContainer.footer]): queda
 // abajo, fuera del scroll, como el pie de una tabla de escritorio. Antes iba
@@ -128,6 +129,7 @@ class HsPager extends StatelessWidget {
       pageSize: pageSize,
       enabled: enabled,
       onChanged: onPageSize,
+      compact: compact,
     );
 
     final arrows = Row(
@@ -172,21 +174,11 @@ class HsPager extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(top: 10),
           child: compact
-              // CELULAR: dos líneas (info + tamaño arriba, flechas abajo),
-              // centradas y con botones un poco más grandes para el dedo.
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 10,
-                      runSpacing: 6,
-                      children: [info, sizeChips],
-                    ),
-                    const SizedBox(height: 8),
-                    arrows,
-                  ],
+              // CELULAR: TODO en UNA sola fila al pie —‹ Página X de Y › a la
+              // izquierda y el tamaño a la derecha—. Antes había dos líneas
+              // (info + tamaño arriba) y se comía el alto de la pantalla.
+              ? Row(
+                  children: [arrows, const Spacer(), sizeChips],
                 )
               // ESCRITORIO: todo en una línea, alineado a la derecha salvo el
               // resumen, que va a la izquierda.
@@ -324,11 +316,15 @@ class _SizePicker extends StatelessWidget {
     required this.pageSize,
     required this.enabled,
     required this.onChanged,
+    this.compact = false,
   });
 
   final int pageSize;
   final bool enabled;
   final ValueChanged<int> onChanged;
+
+  /// Celular: solo el número ("30"), que es lo que cabe en la fila del pie.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -354,7 +350,10 @@ class _SizePicker extends StatelessWidget {
           ),
       ],
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 10,
+          vertical: 6,
+        ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
@@ -365,7 +364,7 @@ class _SizePicker extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '$pageSize por página',
+              compact ? '$pageSize' : '$pageSize por página',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,

@@ -344,6 +344,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // El CELULAR es donde peor se veía: la barra de diseño metía icono, texto y
+  // botón en una sola fila (el texto quedaba en una columna de ~37 px, una
+  // palabra por renglón, y los colores de los tiers se salían 210 px).
+  testWidgets('en el CELULAR la barra de diseño apila el botón y no desborda', (
+    tester,
+  ) async {
+    await _pump(tester, size: const Size(390, 844));
+    expect(tester.takeException(), isNull);
+
+    final bar = find.byKey(const ValueKey('packages-design-bar'));
+    expect(bar, findsOneWidget);
+
+    // El texto respira: ocupa el ancho de la tarjeta (no una columna fina).
+    final desc = find.textContaining('Forma, densidad');
+    expect(tester.getSize(desc).width, greaterThan(200));
+
+    // Y el botón va DEBAJO del texto, a lo ancho.
+    final button = find.descendant(
+      of: bar,
+      matching: find.text('Personalizar'),
+    );
+    expect(button, findsOneWidget);
+    expect(
+      tester.getTopLeft(button).dy,
+      greaterThan(tester.getTopLeft(desc).dy),
+      reason: 'el botón baja a su propia fila en el celular',
+    );
+    expect(
+      tester.getSize(bar).height,
+      lessThan(320),
+      reason: 'la barra tiene que quedar compacta',
+    );
+  });
+
+  testWidgets('en el CELULAR el formulario del paquete llena la pantalla', (
+    tester,
+  ) async {
+    await _pump(tester, size: const Size(390, 844));
+
+    final edit = find
+        .descendant(
+          of: find.byType(WebPackageCard),
+          matching: find.text('Personalizar'),
+        )
+        .first;
+    await tester.ensureVisible(edit);
+    await tester.pump();
+    await tester.tap(edit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Sin márgenes (antes quedaba un marco de 18 px) y con el pie a la vista:
+    // el botón de guardar se salía 72 px de la pantalla.
+    final form = find.byKey(const ValueKey('package-form'));
+    expect(form, findsOneWidget);
+    final surface = find
+        .descendant(of: form, matching: find.byType(Material))
+        .first;
+    expect(tester.getRect(surface), const Rect.fromLTRB(0, 0, 390, 844));
+    expect(
+      tester.getRect(find.text('Guardar cambios')).bottom,
+      lessThan(844),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   // El módulo se usa en claro y en oscuro: el catálogo tiene que pintarse
   // entero (cards y filas) sin desbordes ni excepciones de layout.
   for (final brightness in [Brightness.light, Brightness.dark]) {
