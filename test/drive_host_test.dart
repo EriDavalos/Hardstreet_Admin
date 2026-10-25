@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hardstreet_admin/app_constants.dart';
 import 'package:hardstreet_admin/app_settings.dart';
+import 'package:hardstreet_admin/drive_base.dart' show drivePublicUrl;
 import 'package:hardstreet_admin/drive_host.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,9 +45,48 @@ void main() {
     expect(DriveHost.isValid('ftp://x'), isFalse);
   });
 
-  test('el respaldo público evita TLS con el mismo nombre', () {
-    expect(DriveHost.publicHttp, 'http://oriongo.ddns.net:4000');
-    expect(DriveHost.fallbackCandidates, contains(DriveHost.publicHttp));
+  test('la fábrica va por HTTP al hub, y las fotos públicas por HTTPS', () {
+    // El hub NO tiene TLS en el 4100: con https://…:4100 la app moría con
+    // «HandshakeException … WRONG_VERSION_NUMBER» y no abría el Drive.
+    expect(DriveHost.compiled, startsWith('http://'));
+    expect(DriveHost.compiled, endsWith(':${DriveHost.hubPort}'));
+    // La web es HTTPS: una foto guardada con la base del hub (http, 4100) la
+    // bloquearía el navegador (contenido mixto). Sale por el 443 del nombre.
+    expect(DriveHost.publicBase, 'https://oriongo.ddns.net');
+    expect(
+      drivePublicUrl('XV/foto 1.jpg'),
+      'https://oriongo.ddns.net/files/XV/foto%201.jpg',
+    );
+  });
+
+  test('guardar la dirección de fábrica no desactiva el respaldo', () {
+    // El https:4100 viejo queda guardado en instalaciones anteriores; al
+    // cargarlo NO debe contar como «personalizada» (eso apagaba los respaldos
+    // y dejaba la app atascada en la pantalla de error).
+    expect(DriveHost.set('https://oriongo.ddns.net:4100'), isTrue);
+    expect(DriveHost.isCustom, isFalse);
+    expect(DriveHost.base, DriveHost.compiled);
+  });
+
+  test('el respaldo automático también entra con una dirección guardada', () {
+    DriveHost.set('https://192.168.1.72:4000');
+    expect(DriveHost.isCustom, isTrue);
+    DriveHost.useFallback('http://192.168.1.72:4100');
+    expect(DriveHost.usingFallback, isTrue);
+    expect(DriveHost.base, 'http://192.168.1.72:4100');
+    // Guardar otra dirección a mano vuelve a mandar sobre el respaldo.
+    DriveHost.set('http://192.168.1.72:4000');
+    expect(DriveHost.usingFallback, isFalse);
+    expect(DriveHost.base, 'http://192.168.1.72:4000');
+  });
+
+  test('el respaldo público usa el puerto del HUB (no el del nodo)', () {
+    // La build de fábrica ya va por HTTP al hub.
+    expect(DriveHost.publicHttp, DriveHost.compiled);
+    expect(DriveHost.publicHttp, endsWith(':${DriveHost.hubPort}'));
+    // El respaldo local también es el hub: el puerto 4000 es del servidor de
+    // archivos y solo lo alcanza el hub, nunca el teléfono.
+    expect(DriveHost.lanFallback, 'http://192.168.1.72:${DriveHost.hubPort}');
     expect(DriveHost.fallbackCandidates, contains(DriveHost.lanFallback));
   });
 

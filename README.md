@@ -16,7 +16,8 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | **Notificaciones** | ✅ Módulo nuevo: **qué roles reciben cada aviso** (agenda próxima, fotos disponibles, envío de fotos, servicio/paquete terminado, impresión lista) y **envío de avisos manuales** a los roles elegidos. Cada aviso lleva su MÓDULO: al tocarlo en la campanita, el panel abre esa pantalla. Requiere la migración `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` |
-| Conexión, Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
+| **Conexión** | ✅ **SOLO el Superadministrador** (usuario 1, rol Superadmin): los servidores del Drive en una **tabla** (estado, versión, prioridad, bibliotecas, espacio, ping, de quién depende), con terminal del servicio, reinicio y subida de archivos al proyecto. Ver *Conexión: servidores del Drive* |
+| Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
 
@@ -671,11 +672,20 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
 - **También desde el navegador**: ahí el archivo elegido no tiene ruta en el
   disco (es un Blob), así que la subida va por BYTES — antes se intentaba
   abrirlo como archivo y salía `Unsupported operation: _Namespace`.
-- **Fotos grandes**: a partir de 6 MB la subida va EN TROZOS de 4 MB y el
-  servidor la arma al final. Un solo cuerpo de decenas de MB lo rechaza el
-  proxy con `413 Request Entity Too Large` (una página HTML, no un error del
-  servidor) y, si se cortaba, había que empezar la foto entera. Si el proxy
-  contesta 413 al trozo, la subida se rehace con trozos más chicos.
+- **Fotos grandes**: a partir de 512 KB la subida va EN TROZOS de 512 KB y el
+  servidor la arma al final. Un solo cuerpo mayor lo rechaza el proxy con
+  `413 Request Entity Too Large` (una página HTML, no un error del servidor) y,
+  si se cortaba, había que empezar la foto entera. El límite de fábrica del
+  proxy (nginx: `client_max_body_size 1m`) es justo lo que manda aquí: **ninguna
+  petición lleva más de lo que el proxy acepta**, así que una foto de 8 MB sube
+  igual que una de 200 KB.
+- **En el navegador el 413 del proxy no se puede ni leer**: nginx no pone las
+  cabeceras CORS en su página de error, así que el navegador la bloquea y el
+  panel recibe `Failed to fetch`. Por eso los trozos son chicos desde el primer
+  intento, y un fallo de red al subir una foto (o un trozo) se trata como
+  "rechazo de tamaño" y se rehace más chico en vez de gastar los tres
+  reintentos. Era la razón de que la web no dejara subir fotos de más de ~1 MB
+  mientras la app de escritorio sí (ella ve el 413 limpio).
 - Vista de cuadrícula con miniaturas o vista de lista (nombre, fecha, tamaño).
 - **En el TELÉFONO la tarjeta del módulo se va con el scroll** (título,
   buscador y contadores) para que la carpeta se quede con toda la pantalla. La
@@ -718,6 +728,14 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   delgada; la portada de las carpetas se estira con la celda y su icono es más
   grande. En Archivos compartidos (también dos columnas) la portada se estira
   igual y la tarjeta es un poco más baja.
+- **Recargar (solo computadora)**: un botón de icono al lado de «Nueva
+  carpeta» vuelve a pedir el listado. En el celular no existe: ahí se recarga
+  tirando hacia abajo, con el gesto de siempre.
+- **Ya no hay franja «En línea · servidor · latencia»**: ocupaba una fila en
+  todas las vistas para repetir lo que dicen la dirección configurada y el
+  botón de recargar. El estado sigue donde importa: el aviso rojo cuando un
+  refresco falla y la tarjeta completa (dirección, protocolo y qué revisar)
+  cuando no hay nada que mostrar.
 - Buscar dentro de la carpeta, renombrar, eliminar, crear carpetas.
 - **Visor de imágenes a PANTALLA COMPLETA** (sin bordes curvos), con la
   información del archivo y su posición ("3 de 12") encima de la foto,
@@ -922,14 +940,54 @@ compartir, la tarjeta lo dice ahí mismo (antes el botón simplemente no
 aparecía).
 
 Cada carpeta compartida lleva su **estado a la vista** (se pregunta al servidor
-con `/api/local/status`): *Disponible* (está en el servidor), *En línea* (está en
-la computadora del dueño y su app está abierta), *Apagada ahora* (su app no está
-abierta), *Servidor sin base de datos* (al servidor del drive le falta
-`DRIVE_DB`), *Ya no está compartida* (el compartido se dio de baja) o *No
-disponible*, con el motivo que manda el servidor. Ese último caso también cubre
-un servidor todavía sin actualizar, que contesta 404 con "La carpeta compartida
-no existe o ya no está activa": el módulo lo traduce a "Ya no está compartida"
-y explica qué hacer, en vez de mostrar el texto crudo.
+con `/api/local/status`): *Disponible* (está en el servidor), *Apagada ahora*
+(su app no está abierta), *Servidor sin base de datos* (al servidor del drive le
+falta `DRIVE_DB`), *Ya no está compartida* (el compartido se dio de baja) o *No
+disponible*, con el motivo que manda el servidor. La carpeta que se sirve desde
+la computadora del dueño **ya no lleva píldora**: "En línea" era el caso normal
+y solo ocupaba sitio en cada tarjeta. Ese último caso también cubre un servidor
+todavía sin actualizar, que contesta 404 con "La carpeta compartida no existe o
+ya no está activa": el módulo lo traduce a "Ya no está compartida" y explica
+qué hacer, en vez de mostrar el texto crudo.
+
+## Conexión: servidores del Drive
+
+**Solo la abre el Superadministrador** (usuario 1, rol Superadmin). El backend
+lo exige en su cuenta (`/api/admin/drive-nodes` responde 403 a cualquier otro)
+y el panel ni siquiera dibuja el módulo en el menú.
+
+Los servidores se ven como una **tabla** (la de `drive_nodes`), una columna por
+dato: **servidor** (nombre, dirección, notas), **estado** (En línea / Sin
+respuesta / Mantenimiento / Apagado / Sin comprobar, con el motivo debajo),
+**versión**, **prioridad**, **bibliotecas** (`sharp` y `ffmpeg` con ✓/✕),
+**espacio** (libre / total con su barra), **ping** (lo que tardó ese servidor en
+contestar, medido por el hub), **depende de** y las **acciones**. En pantalla
+angosta son tarjetas con los mismos datos.
+
+El menú **⋯** de cada fila trae: *Editar*, *Ver terminal*, *Reiniciar servicio*,
+*Subir al proyecto*, *Apagar/Encender* y *Quitar*.
+
+- **Ver terminal** — el log del servicio (`journalctl -u hardstreet-drive -n
+  400`), en una ventana oscura de **solo lectura** con *Actualizar* y
+  *Reiniciar servicio*. No es una consola: no se escriben comandos.
+- **Reiniciar servicio** — pide confirmación y ejecuta `systemctl restart` en
+  ese servidor. El Drive deja de responder unos segundos.
+- **Subir al proyecto** — copia los archivos elegidos a la carpeta del proyecto
+  del servidor (`/home/orion/hardstreet-drive`). No reinicia: si cambiaste
+  código, reinicia después.
+
+El panel **no** guarda ningún secreto: pide al hub (`/api/admin/node/:id/...`),
+el hub comprueba con el backend que la sesión es del Superadministrador y solo
+entonces reenvía al servidor con su `DRIVE_HUB_TOKEN`.
+
+### Dependencia entre servidores (mantenimiento)
+
+En *Editar → **Depende de*** se marcan los servidores de los que éste depende
+(puede ser mutuo). Si uno de ellos **no responde**, este queda **bloqueado**: el
+hub deja de listar, leer y guardar ahí, y el Drive muestra una tarjeta ámbar
+**Mantenimiento** con el motivo, en vez de enseñar un árbol a medias. Los
+servidores independientes siguen funcionando. Al volver el servidor caído, el
+dependiente sale solo del mantenimiento.
 
 ## Botón ATRÁS (móvil y navegador)
 

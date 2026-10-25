@@ -852,7 +852,9 @@ void main() {
     await _pump(tester);
 
     expect(find.text('Disponible'), findsOneWidget);
-    expect(find.text('En línea'), findsOneWidget);
+    // «En línea» ya no se pinta: era el caso normal (la carpeta se sirve desde
+    // la computadora de quien la comparte) y solo ocupaba sitio en la tarjeta.
+    expect(find.text('En línea'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

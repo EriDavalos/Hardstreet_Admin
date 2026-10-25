@@ -36,8 +36,8 @@ void main() {
   tearDown(() {
     DriveApiService.client = http.Client();
     DriveApiService.uploadClientFactory = () => http.Client();
-    DriveApiService.chunkThreshold = 4 * 1024 * 1024;
-    DriveApiService.chunkSize = 4 * 1024 * 1024;
+    DriveApiService.chunkThreshold = 512 * 1024;
+    DriveApiService.chunkSize = 512 * 1024;
     HsSession.clear();
   });
 
@@ -257,6 +257,92 @@ void main() {
     expect(chunks, 1);
     expect(finished, isTrue);
     expect(drive.uploadJobs.single.status, 'done');
+  });
+
+  test('en el navegador, el 413 del proxy llega como error de RED: trocea',
+      () async {
+    // nginx no pone las cabeceras CORS en su página "413 Request Entity Too
+    // Large": el navegador la bloquea y el cliente recibe `Failed to fetch`
+    // en vez del 413. Antes eso gastaba los tres reintentos subiendo la foto
+    // entera para volver a rebotar, y en web la subida quedaba en error.
+    var whole = 0;
+    var chunks = 0;
+    var finished = false;
+    _mockUploads(MockClient((r) async {
+      if (r.url.path.endsWith('/api/drive')) {
+        return _json({'folders': [], 'files': []});
+      }
+      if (r.url.path.endsWith('/api/upload')) {
+        whole++;
+        throw http.ClientException('Failed to fetch', r.url);
+      }
+      if (r.url.path.endsWith('/api/upload/chunk')) {
+        chunks++;
+        return _json({'received': chunks, 'total': 1});
+      }
+      if (r.url.path.endsWith('/api/upload/finish')) {
+        finished = true;
+        return _json({'saved': 1, 'names': ['foto.jpg'], 'size': 40});
+      }
+      fail('petición inesperada: ${r.url}');
+    }));
+    final drive = DriveApiService(baseUrl: 'http://drive.test');
+    final bytes = Uint8List.fromList(List<int>.filled(40, 4));
+    final file = XFile.fromData(
+      bytes,
+      name: 'foto.jpg',
+      path: 'no-existe/foto.jpg',
+      length: bytes.length,
+    );
+
+    final saved = await drive.uploadFromFiles([file]);
+
+    expect(saved, 1, reason: 'la foto termina guardada');
+    expect(whole, 1, reason: 'un solo intento entero, no tres a ciegas');
+    expect(chunks, 1, reason: 'se rehace en trozos');
+    expect(finished, isTrue);
+    expect(drive.uploadJobs.single.status, 'done');
+  });
+
+  test('un trozo que falla en ROJO (sin 413 legible) se rehace más chico',
+      () async {
+    DriveApiService.chunkThreshold = 8;
+    DriveApiService.chunkSize = 8;
+    final sizes = <int>[];
+    var finished = false;
+    _mockUploads(MockClient((r) async {
+      if (r.url.path.endsWith('/api/drive')) {
+        return _json({'folders': [], 'files': []});
+      }
+      if (r.url.path.endsWith('/api/upload/chunk')) {
+        sizes.add(r.bodyBytes.length);
+        // El navegador esconde el 413 del proxy: error de red, no respuesta.
+        if (r.bodyBytes.length > 4) {
+          throw http.ClientException('Failed to fetch', r.url);
+        }
+        return _json({'received': sizes.length, 'total': 0});
+      }
+      if (r.url.path.endsWith('/api/upload/finish')) {
+        finished = true;
+        return _json({'saved': 1, 'names': ['grande.jpg'], 'size': 12});
+      }
+      fail('petición inesperada: ${r.url}');
+    }));
+    final drive = DriveApiService(baseUrl: 'http://drive.test');
+    final data = List<int>.generate(12, (i) => i);
+    final file = XFile.fromData(
+      Uint8List.fromList(data),
+      name: 'grande.jpg',
+      path: 'no-existe/grande.jpg',
+      length: data.length,
+    );
+
+    final saved = await drive.uploadFromFiles([file]);
+
+    expect(saved, 1);
+    expect(sizes.last, 2, reason: 'los trozos que pasan son los chicos');
+    expect(finished, isTrue);
+    expect(drive.uploadJobs.single.sent, 12);
   });
 
   test('un VÍDEO también se sube desde la app y la web', () async {

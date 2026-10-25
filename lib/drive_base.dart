@@ -435,7 +435,11 @@ String? driveRelPath(String url) {
 /// (la portada del sitio, la imagen de un paquete): la página tiene que poder
 /// abrirla sin iniciar sesión de nadie, así que el token no puede ir dentro.
 String drivePublicUrl(String absolutePath) {
-  final base = AppConstants.apiBase.replaceAll(RegExp(r'/$'), '');
+  // OJO: NO se usa la dirección con la que el panel habla con el hub (HTTP en
+  // el 4100): la web es HTTPS y las fotos por `http://` las bloquea el
+  // navegador (contenido mixto). [DriveHost.publicBase] es el 443 del nombre
+  // público, que es donde el servidor de archivos sirve `/files`.
+  final base = DriveHost.publicBase.replaceAll(RegExp(r'/$'), '');
   final path = absolutePath
       .split('/')
       .where((s) => s.trim().isNotEmpty)
@@ -606,6 +610,14 @@ abstract class DriveBase extends ChangeNotifier {
   String? error;
   List<DriveItem> _items = const [];
   List<DriveItem> get items => _items;
+
+  /// Avisos de MANTENIMIENTO del Drive federado (vacío = todo bien).
+  ///
+  /// Un servidor puede DEPENDER de otro (se configura en Conexión): si el otro
+  /// deja de responder, el hub bloquea el dependiente y lo cuenta aquí, con el
+  /// listado. La página lo enseña en una tarjeta ámbar para que nadie crea que
+  /// se perdieron carpetas.
+  List<String> maintenance = const [];
 
   // ---------- Alcance COMPARTIDO (drive del cliente) ----------
   ///
@@ -994,6 +1006,12 @@ abstract class DriveBase extends ChangeNotifier {
   DriveConn conn = DriveConn.checking;
   DriveBusy busy = DriveBusy.none;
   String busyLabel = '';
+
+  /// Cuánto tardó la ÚLTIMA respuesta buena del servidor (ms).
+  ///
+  /// `null` = todavía no hay ninguna (drive local o primer listado). Lo usa la
+  /// card de estado para decir qué tan vivo está el servidor.
+  Duration? lastResponse;
 
   /// Subidas de la sesión (activas, terminadas y con error) — no bloquea la UI.
   final List<DriveUploadJob> uploadJobs = [];

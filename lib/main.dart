@@ -1002,8 +1002,16 @@ class _AdminHomeState extends State<AdminHome> {
   /// ¿Se muestra el módulo [name]? Exige "Ver" (read) según la BD, TAMBIÉN
   /// para Admin (si su rol no tiene "Ver" en un módulo, desaparece).
   /// Sin datos (backend viejo / sin conexión) el menú queda completo.
-  bool _canSee(String module) =>
-      HsAccess.instance.degraded || HsAccess.instance.canSee(module);
+  bool _canSee(String module) {
+    // CONEXIÓN: SOLO el Superadministrador (usuario 1, rol Superadmin).
+    //
+    // Desde ahí se agregan y quitan servidores del Drive, se reinicia su
+    // servicio, se lee su terminal y se le suben archivos al proyecto. El
+    // backend ya lo exige por su cuenta; aquí se quita del menú para que
+    // nadie más vea una pantalla que le va a responder 403.
+    if (module == 'connection') return HsSession.isSuperAdmin;
+    return HsAccess.instance.degraded || HsAccess.instance.canSee(module);
+  }
 
   /// Como [_canSee], pero además muestra los módulos que el backend TODAVÍA
   /// no registra (migración pendiente): una función nueva no desaparece del

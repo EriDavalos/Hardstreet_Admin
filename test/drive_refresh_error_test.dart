@@ -33,11 +33,14 @@ Future<void> _pumpDrive(WidgetTester tester, DriveService drive) async {
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+    MaterialApp(
+      home: Scaffold(body: DrivePage(drive: drive)),
+    ),
   );
   // El constructor dispara refresh(): dejar terminar el I/O real.
   await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    () => Future<void>.delayed(const Duration(milliseconds: 60)),
+  );
   await tester.pump();
 }
 
@@ -61,7 +64,8 @@ void main() {
     expect(
       drive.items.map((i) => i.name),
       contains('dos.png'),
-      reason: 'perder el directorio por un fallo pasajero es justo lo que se '
+      reason:
+          'perder el directorio por un fallo pasajero es justo lo que se '
           'reportó como "aparece en rojo un momento"',
     );
 
@@ -71,8 +75,9 @@ void main() {
     expect(drive.items, isEmpty);
   });
 
-  testWidgets('un refresco que falla deja el directorio a la vista + aviso',
-      (tester) async {
+  testWidgets('un refresco que falla deja el directorio a la vista + aviso', (
+    tester,
+  ) async {
     // Carpetas (no imágenes): la cuadrícula no decodifica archivos y la prueba
     // se centra en el listado, que es lo que desaparecía.
     late Directory tmp;
@@ -89,11 +94,17 @@ void main() {
     drive.failRefresh('No se pudo conectar con el servidor');
     await tester.pump();
 
-    expect(find.text('Boda'), findsOneWidget,
-        reason: 'el directorio se queda a la vista');
+    expect(
+      find.text('Boda'),
+      findsOneWidget,
+      reason: 'el directorio se queda a la vista',
+    );
     expect(find.text('XV Años'), findsOneWidget);
-    expect(find.text('Error'), findsNothing,
-        reason: 'el panel de error bloqueante no debe reemplazar al contenido');
+    expect(
+      find.text('Sin conexión con el Drive'),
+      findsNothing,
+      reason: 'el panel de error bloqueante no debe reemplazar al contenido',
+    );
     expect(find.text('Reintentar'), findsNothing);
     expect(find.text('Sin conexión · reintentar'), findsOneWidget);
 
@@ -103,8 +114,9 @@ void main() {
     expect(find.text('Sin conexión · reintentar'), findsNothing);
   });
 
-  testWidgets('sin nada que mostrar, el fallo sí se explica en pantalla',
-      (tester) async {
+  testWidgets('sin nada que mostrar, el fallo sí se explica en pantalla', (
+    tester,
+  ) async {
     late Directory tmp;
     await tester.runAsync(() async {
       tmp = await _tempDrive();
@@ -116,7 +128,8 @@ void main() {
     drive.failRefresh('No se pudo conectar con el servidor (drive): timeout');
     await tester.pump();
 
-    expect(find.text('Error'), findsOneWidget);
+    // El fallo se cuenta en la CARD del servidor (no en un icono gigante).
+    expect(find.text('Sin conexión con el Drive'), findsOneWidget);
     expect(find.text('Reintentar'), findsOneWidget);
     expect(find.textContaining('No se pudo conectar'), findsWidgets);
   });

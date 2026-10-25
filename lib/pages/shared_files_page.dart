@@ -2728,6 +2728,11 @@ class _ShareStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // «En línea» ya NO se pinta: es la carpeta de una computadora que está
+    // abierta ahora mismo, o sea el caso normal, y la píldora solo ocupaba
+    // sitio en cada tarjeta. Los estados que sí importan —apagada, sin base de
+    // datos, ya no compartida, no disponible— se siguen viendo igual.
+    if (status?.servedFrom == 'agent') return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final look = _shareStatusLook(scheme, status);
     return Tooltip(

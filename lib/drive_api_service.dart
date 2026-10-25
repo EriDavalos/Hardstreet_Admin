@@ -36,6 +36,21 @@ export 'drive_base.dart'
         DriveUploadJob,
         DriveDownloadJob;
 
+/// El Drive está en MANTENIMIENTO (no es un fallo de conexión).
+///
+/// Lo lanza el hub cuando todos sus servidores usables están bloqueados porque
+/// dependen de otro que dejó de responder. Se distingue de un error de red para
+/// no probar direcciones de respaldo ni decirle al usuario que «revise el
+/// cable»: aquí el mensaje ya explica qué servidor cayó.
+class DriveMaintenance implements Exception {
+  const DriveMaintenance(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Cliente del drive remoto (Node/Express en 192.168.1.72:4000).
 /// Mantiene la MISMA interfaz que [DriveService] para que la UI no cambie.
 ///
@@ -56,8 +71,13 @@ class DriveApiService extends DriveBase {
   /// cambia las URLs sin recrear el servicio.
   String get base => _fixedBase ?? AppConstants.apiBase;
 
-  /// Evita reintentar el respaldo más de una vez por sesión.
-  static bool _fallbackTried = false;
+  /// Cuándo se intentó el respaldo automático por última vez.
+  ///
+  /// Antes era «una sola vez por sesión»: si la red aún no estaba lista al
+  /// abrir la app, quedaba atascada en el error hasta reiniciarla. Ahora se
+  /// reintenta cada [_fallbackEvery].
+  static DateTime? _fallbackAt;
+  static const Duration _fallbackEvery = Duration(seconds: 20);
 
   /// Cliente HTTP de las peticiones JSON del drive. Es INYECTABLE: las pruebas
   /// lo reemplazan por un `MockClient` para no tocar la red (mismo patrón que
@@ -162,6 +182,47 @@ class DriveApiService extends DriveBase {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  /// ¿Por qué falló una respuesta que no fue 200?
+  ///
+  /// Un 503 del hub no siempre significa «no hay conexión»: cuando un servidor
+  /// DEPENDE de otro que se cayó, el hub contesta `El Drive está en
+  /// mantenimiento` y dice cuál dejó de responder. Eso se enseña como es (y se
+  /// guarda en [maintenance]) en vez de acabar en un `HTTP 503` que no le dice
+  /// nada a nadie. El resto de errores sí se resumen como `HTTP xxx`.
+  Object _httpFailure(http.Response r) {
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(r.body);
+      if (decoded is Map<String, dynamic>) body = decoded;
+    } catch (_) {
+      // Cuerpo que no es JSON (proxy, página de error del router): se queda en
+      // «HTTP xxx» y el detalle del código de estado.
+    }
+    final message = '${body?['message'] ?? body?['error'] ?? ''}'.trim();
+    final details = '${body?['details'] ?? ''}'.trim();
+    // La lista de bloqueados también viene en el aviso: se usa para el banner.
+    final rawItems = body?['maintenance'] is Map
+        ? (body?['maintenance']['items'] as List?)
+        : null;
+    final items = [
+      for (final item in rawItems ?? const [])
+        if (item is Map)
+          '${item['name'] ?? 'Servidor'}: '
+              '${item['reason'] ?? 'depende de un servidor que no responde'}',
+    ];
+    final isMaintenance =
+        r.statusCode == 503 &&
+        (message.toLowerCase().contains('mantenimiento') || items.isNotEmpty);
+    if (isMaintenance) {
+      final text = details.isNotEmpty
+          ? details
+          : (items.isNotEmpty ? items.join(' · ') : message);
+      maintenance = items.isNotEmpty ? items : [text];
+      return DriveMaintenance('$message. $text'.trim());
+    }
+    return 'HTTP ${r.statusCode}${message.isEmpty ? '' : ' · $message'}';
+  }
+
   /// true cuando el último refresco se OMITIÓ por no haber sesión todavía.
   /// La app lo consulta para pedir el listado en cuanto entra la sesión.
   bool waitingSession = false;
@@ -231,11 +292,14 @@ class DriveApiService extends DriveBase {
     loading = true;
     error = null;
     notifyListeners();
+    // Cuánto tarda el servidor en contestar el listado: la card de estado lo
+    // muestra («320 ms») para saber si va vivo o arrastrándose.
+    final clock = Stopwatch()..start();
     try {
       final r = await client
           .get(_u('/api/drive', {'path': ticket.path}), headers: _authHeaders)
           .timeout(const Duration(seconds: 8));
-      if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+      if (r.statusCode != 200) throw _httpFailure(r);
       final data = jsonDecode(r.body) as Map<String, dynamic>;
       final raw = (data['folders'] as List? ?? []);
       final folders = <DriveItem>[];
@@ -255,9 +319,27 @@ class DriveApiService extends DriveBase {
         );
         (it.isFolder ? folders : files).add(it);
       }
+      // MANTENIMIENTO del Drive federado: el hub dice qué servidor está
+      // bloqueado porque depende de otro que no responde. Se guarda para que la
+      // página avise aunque el listado llegue bien.
+      final rawMaintenance = data['maintenance'] is Map
+          ? (data['maintenance']['items'] as List?)
+          : null;
+      maintenance = [
+        for (final item in rawMaintenance ?? const [])
+          if (item is Map)
+            '${item['name'] ?? 'Servidor'}: '
+                '${item['reason'] ?? 'depende de un servidor que no responde'}',
+      ];
       // El alcance compartido (y los conteos) los aplica [applyRefresh].
       if (!applyRefresh(ticket, [...folders, ...files])) return;
+      lastResponse = clock.elapsed;
       conn = DriveConn.online;
+    } on DriveMaintenance catch (m) {
+      // Mantenimiento NO es un fallo de red: reintentar contra otra dirección
+      // no arregla nada y el aviso tiene que llegar tal cual (dice qué
+      // servidor cayó y cuál quedó bloqueado).
+      if (isCurrentRefresh(ticket)) failRefresh(m.message);
     } catch (e) {
       if (isCurrentRefresh(ticket)) {
         // En el celular el nombre público puede responder con el certificado
@@ -286,7 +368,9 @@ class DriveApiService extends DriveBase {
   /// Solo se intenta con errores de CONEXIÓN (no con un 401/403 del servidor)
   /// y una vez por sesión, para no mandar al usuario a una IP que no existe.
   Future<bool> _tryConnectionFallback(Object error) async {
-    if (_fixedBase != null || _fallbackTried || DriveHost.isCustom) {
+    final now = DateTime.now();
+    if (_fixedBase != null) return false;
+    if (_fallbackAt != null && now.difference(_fallbackAt!) < _fallbackEvery) {
       return false;
     }
     final text = error.toString().toLowerCase();
@@ -300,16 +384,18 @@ class DriveApiService extends DriveBase {
         text.contains('timeout') ||
         text.contains('clientexception');
     if (!connectionError) return false;
-    _fallbackTried = true;
+    _fallbackAt = now;
     for (final candidate in DriveHost.fallbackCandidates) {
       try {
         final r = await http
             .get(Uri.parse('$candidate/api/health'))
             .timeout(const Duration(seconds: 3));
-        if (r.statusCode == 200) {
-          DriveHost.useFallback(candidate);
-          return true;
-        }
+        if (r.statusCode != 200) continue;
+        final before = DriveHost.base;
+        DriveHost.useFallback(candidate);
+        // Solo sirve si de verdad cambió la dirección: si no, repetir el
+        // refresco fallaría otra vez con el mismo error.
+        if (DriveHost.base != before) return true;
       } catch (_) {
         // Esta dirección no responde: se prueba la siguiente.
       }
@@ -475,20 +561,29 @@ class DriveApiService extends DriveBase {
     return saved;
   }
 
-  /// A partir de este tamaño la foto va EN TROZOS.
+  /// Tamaño de un trozo — y TAMBIÉN el umbral del troceado: los dos son el
+  /// mismo número a propósito, para que NINGUNA petición pase del límite del
+  /// proxy.
   ///
-  /// Un solo cuerpo grande lo rechaza el proxy del servidor (nginx contesta una
-  /// página HTML "413 Request Entity Too Large") y, si se corta a medio camino,
-  /// había que empezar la foto completa otra vez. El umbral es UN trozo: así
-  /// ninguna petición lleva más de lo que ese proxy aceptó ya con las fotos
-  /// grandes, y una foto mediana no gasta un intento que va a rebotar.
-  @visibleForTesting
-  static int chunkThreshold = 4 * 1024 * 1024;
+  /// 512 KB porque nginx viene de fábrica con `client_max_body_size 1m` (y el
+  /// servidor del estudio así lo tiene): un cuerpo mayor lo corta el proxy con
+  /// una página HTML "413 Request Entity Too Large".
+  ///
+  /// En el NAVEGADOR ese 413 no se puede ni leer: nginx no pone las cabeceras
+  /// CORS en su página de error, así que el navegador la bloquea y entrega un
+  /// `Failed to fetch` en vez del 413 (en la app de escritorio sí llega el
+  /// 413). Con el umbral en 4 MB, cualquier foto de más de ~1 MB se subía
+  /// entera para que el proxy la tirara, y en web la subida acababa en error
+  /// porque la red de seguridad de "rehacer en trozos" no llegaba a verse.
+  static const int _defaultChunk = 512 * 1024;
 
-  /// Tamaño de cada trozo (queda MUY por debajo de los límites típicos de un
-  /// proxy: 1-8 MB).
+  /// A partir de este tamaño la foto va EN TROZOS (ver [_defaultChunk]).
   @visibleForTesting
-  static int chunkSize = 4 * 1024 * 1024;
+  static int chunkThreshold = _defaultChunk;
+
+  /// Tamaño de cada trozo: SIEMPRE por debajo del límite del proxy.
+  @visibleForTesting
+  static int chunkSize = _defaultChunk;
 
   /// Sube un archivo con barra de progreso (stream con contador de bytes).
   Future<void> _uploadOne(
@@ -506,7 +601,16 @@ class DriveApiService extends DriveBase {
       await _uploadChunked(client, job, src);
       return;
     }
-    final rejected = await _uploadMultipart(client, job, src);
+    // En el navegador un rechazo del proxy puede llegar como ERROR DE RED (su
+    // página 413 no lleva CORS y el navegador la oculta): eso también lleva la
+    // foto al camino troceado, que sí sabe encogerse. Antes se gastaban los
+    // tres reintentos subiendo el mismo cuerpo para volver a rebotar.
+    bool rejected;
+    try {
+      rejected = await _uploadMultipart(client, job, src);
+    } on http.ClientException {
+      rejected = true;
+    }
     if (!rejected) return;
     // El proxy contestó 413 a una foto que iba en UNA pieza: su límite real es
     // más bajo que [chunkThreshold] (por eso unas fotos pequeñas subían y
@@ -685,16 +789,27 @@ class DriveApiService extends DriveBase {
         'path': rel,
         'name': job.name,
       });
-      final res = await client
-          .post(
-            uri,
-            headers: {
-              ..._authHeaders,
-              'Content-Type': 'application/octet-stream',
-            },
-            body: bytes,
-          )
-          .timeout(const Duration(minutes: 2));
+      late final http.Response res;
+      try {
+        res = await client
+            .post(
+              uri,
+              headers: {
+                ..._authHeaders,
+                'Content-Type': 'application/octet-stream',
+              },
+              body: bytes,
+            )
+            .timeout(const Duration(minutes: 2));
+      } catch (_) {
+        // En el navegador el 413 del proxy llega como error de red (nginx no
+        // manda CORS en su página de error): si el trozo todavía puede
+        // encogerse, se trata como rechazo de tamaño en vez de dar la subida
+        // por perdida. En el suelo ya no hay nada que encoger: es un fallo de
+        // verdad (sin red, servidor caído…) y se propaga.
+        if (pieces > _chunkFloor) return true;
+        rethrow;
+      }
       if (res.statusCode == 413) return true;
       if (res.statusCode != 200) {
         throw 'HTTP ${res.statusCode}: ${_errorOf(res.body)}';
@@ -827,10 +942,14 @@ class DriveApiService extends DriveBase {
     List<String> targetPath,
   ) {
     return runBusy(DriveBusy.moving, 'Moviendo en el servidor…', () async {
+      // Las rutas viajan como TEXTO ("Hardstreet/XV"), igual que en el resto
+      // de llamadas: el hub y el nodo entienden las dos formas, pero una lista
+      // JSON deja fuera a un hub viejo, que la leía como UN solo nombre y el
+      // movimiento no hacía nada.
       final r = await _post('/api/move', {
-        'from': path,
+        'from': path.join('/'),
         'names': names,
-        'to': targetPath,
+        'to': targetPath.join('/'),
       });
       await refresh();
       return (
@@ -847,9 +966,9 @@ class DriveApiService extends DriveBase {
   ) {
     return runBusy(DriveBusy.copying, 'Copiando en el servidor…', () async {
       final r = await _post('/api/copy', {
-        'from': path,
+        'from': path.join('/'),
         'names': names,
-        'to': targetPath,
+        'to': targetPath.join('/'),
       });
       await refresh();
       return (

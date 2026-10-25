@@ -1852,4 +1852,64 @@ class HsApi {
     );
     return HsPageResult.from((data as Map).cast<String, dynamic>(), 'entries');
   }
+
+  // ---------------- Servidores del Drive (Drive federado) ----------------
+  //
+  // Son los servidores entre los que el HUB reparte las carpetas. Con uno solo
+  // el Drive funciona como siempre; al agregar otro, el árbol que ve el panel
+  // sigue siendo uno (ver `hardstreet-drive-hub`).
+
+  /// Todos los servidores registrados, encendidos y apagados.
+  static Future<List<Map<String, dynamic>>> driveNodes() async {
+    final data = await get('/api/admin/drive-nodes');
+    return ((data['nodes'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+  }
+
+  /// Agrega un servidor de archivos (URL base, sin barra final).
+  static Future<Map<String, dynamic>?> createDriveNode({
+    required String name,
+    required String url,
+    int priority = 100,
+    String notes = '',
+    List<int> dependsOn = const [],
+  }) async {
+    final data = await post('/api/admin/drive-nodes', {
+      'name': name,
+      'url': url,
+      'priority': priority,
+      'notes': notes,
+      'dependsOn': dependsOn,
+    });
+    return (data['node'] as Map?)?.cast<String, dynamic>();
+  }
+
+  /// Edita nombre, dirección, prioridad, notas o el encendido de un servidor.
+  static Future<Map<String, dynamic>?> updateDriveNode({
+    required int id,
+    String? name,
+    String? url,
+    int? priority,
+    String? notes,
+    bool? enabled,
+    List<int>? dependsOn,
+  }) async {
+    final data = await put('/api/admin/drive-nodes', {
+      'id': id,
+      'name': ?name,
+      'url': ?url,
+      'priority': ?priority,
+      'notes': ?notes,
+      'enabled': ?enabled,
+      'dependsOn': ?dependsOn,
+    });
+    return (data['node'] as Map?)?.cast<String, dynamic>();
+  }
+
+  /// Quita un servidor de la lista (sus archivos dejan de verse).
+  static Future<void> deleteDriveNode(int id) async {
+    await deleteBody('/api/admin/drive-nodes', {'id': id});
+  }
 }
