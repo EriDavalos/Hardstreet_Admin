@@ -345,7 +345,9 @@ void main() {
 
     final folderOnly = tester.getTopLeft(find.text('Video resumen').first).dy;
     final withPhotos = tester.getTopLeft(find.text('Galería digital').first).dy;
-    final without = tester.getTopLeft(find.text('Cobertura en evento').first).dy;
+    final without = tester
+        .getTopLeft(find.text('Cobertura en evento').first)
+        .dy;
     expect(folderOnly, lessThan(withPhotos));
     expect(withPhotos, lessThan(without));
   });
@@ -448,7 +450,20 @@ void main() {
     });
     await _pumpPage(tester);
 
-    final send = find.widgetWithText(OutlinedButton, 'Enviar a impresión');
+    // El envío se DESTACA como siguiente paso (bloque propio + botón lleno):
+    // con las fotos elegidas y sin enviar, el cliente lo ve sin buscarlo.
+    expect(find.byKey(const ValueKey('client-send-next-step')), findsOneWidget);
+    expect(find.text('SIGUIENTE PASO'), findsOneWidget);
+    expect(find.text('Envía tus fotos a impresión'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('client-send-next-step')),
+        matching: find.textContaining('2 fotos elegidas'),
+      ),
+      findsOneWidget,
+    );
+
+    final send = find.widgetWithText(FilledButton, 'Enviar a impresión');
     expect(send, findsOneWidget);
     await _tap(tester, send);
 
@@ -462,10 +477,46 @@ void main() {
 
     expect(posted, hasLength(1));
     expect(jsonDecode(posted.single), {'serviceId': 102});
-    // El cliente ya solo puede VERLAS.
+    // El cliente ya solo puede VERLAS, y el bloque de «siguiente paso» se fue.
     expect(find.text('Ver fotos (2)'), findsOneWidget);
     expect(find.text('Enviadas a impresión'), findsOneWidget);
     expect(find.text('Enviar a impresión'), findsNothing);
+    expect(find.text('SIGUIENTE PASO'), findsNothing);
+    expect(find.byKey(const ValueKey('client-send-next-step')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin fotos elegidas NO se destaca el envío (no hay nada que '
+      'mandar)', (tester) async {
+    final pkgs = _defaultPackages();
+    ((pkgs.first['services'] as List)[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot';
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    expect(find.byKey(const ValueKey('client-send-next-step')), findsNothing);
+    expect(find.text('Elegir fotos'), findsWidgets);
+  });
+
+  testWidgets('en el celular el siguiente paso (enviar) se ve y no desborda', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    (pkgs.first['services'] as List)[1]
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot'
+      ..['items'] = 2;
+    _installMock(packages: pkgs);
+    await _pumpPage(tester, size: const Size(390, 844));
+
+    expect(find.byKey(const ValueKey('client-send-next-step')), findsOneWidget);
+    expect(find.text('SIGUIENTE PASO'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('client-send-button')),
+      findsOneWidget,
+      reason: 'el botón de enviar va dentro del bloque destacado',
+    );
     expect(tester.takeException(), isNull);
   });
 }

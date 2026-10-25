@@ -45,13 +45,11 @@ void main() {
     expect(DriveHost.isValid('ftp://x'), isFalse);
   });
 
-  test('la fábrica va por HTTP al hub, y las fotos públicas por HTTPS', () {
-    // El hub NO tiene TLS en el 4100: con https://…:4100 la app moría con
-    // «HandshakeException … WRONG_VERSION_NUMBER» y no abría el Drive.
-    expect(DriveHost.compiled, startsWith('http://'));
-    expect(DriveHost.compiled, endsWith(':${DriveHost.hubPort}'));
-    // La web es HTTPS: una foto guardada con la base del hub (http, 4100) la
-    // bloquearía el navegador (contenido mixto). Sale por el 443 del nombre.
+  test('la fábrica es el nombre público por HTTPS (la API del Drive)', () {
+    // La dirección configurada del Drive es la del estudio y NO se toca:
+    // https://oriongo.ddns.net (sin puerto, 443).
+    expect(DriveHost.compiled, 'https://oriongo.ddns.net');
+    // La web es HTTPS: las fotos públicas salen por el mismo nombre.
     expect(DriveHost.publicBase, 'https://oriongo.ddns.net');
     expect(
       drivePublicUrl('XV/foto 1.jpg'),
@@ -60,10 +58,13 @@ void main() {
   });
 
   test('guardar la dirección de fábrica no desactiva el respaldo', () {
-    // El https:4100 viejo queda guardado en instalaciones anteriores; al
-    // cargarlo NO debe contar como «personalizada» (eso apagaba los respaldos
-    // y dejaba la app atascada en la pantalla de error).
-    expect(DriveHost.set('https://oriongo.ddns.net:4100'), isTrue);
+    // Escribir EXACTAMENTE la de fábrica (con o sin :443 explícito) NO la
+    // convierte en «personalizada»: eso apagaba los respaldos automáticos y
+    // dejaba la app atascada en la pantalla de error.
+    expect(DriveHost.set('https://oriongo.ddns.net'), isTrue);
+    expect(DriveHost.isCustom, isFalse);
+    expect(DriveHost.base, DriveHost.compiled);
+    expect(DriveHost.set('https://oriongo.ddns.net:443'), isTrue);
     expect(DriveHost.isCustom, isFalse);
     expect(DriveHost.base, DriveHost.compiled);
   });
@@ -81,9 +82,8 @@ void main() {
   });
 
   test('el respaldo público usa el puerto del HUB (no el del nodo)', () {
-    // La build de fábrica ya va por HTTP al hub.
-    expect(DriveHost.publicHttp, DriveHost.compiled);
-    expect(DriveHost.publicHttp, endsWith(':${DriveHost.hubPort}'));
+    // El respaldo por HTTP del MISMO nombre apunta al puerto del hub.
+    expect(DriveHost.publicHttp, 'http://oriongo.ddns.net:${DriveHost.hubPort}');
     // El respaldo local también es el hub: el puerto 4000 es del servidor de
     // archivos y solo lo alcanza el hub, nunca el teléfono.
     expect(DriveHost.lanFallback, 'http://192.168.1.72:${DriveHost.hubPort}');

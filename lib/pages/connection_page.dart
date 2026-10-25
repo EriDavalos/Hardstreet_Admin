@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_settings.dart';
-import '../widgets/connection_nodes_table.dart';
+import '../hs_format.dart';
+import '../widgets/connection_topology.dart';
 import '../drive_api_service.dart';
 import '../drive_host.dart';
 import '../hs_api.dart';
@@ -65,6 +66,15 @@ class ConnectionPage extends StatefulWidget {
   /// `MockClient` y nunca tocan un servidor de verdad.
   static http.Client adminClient = http.Client();
 
+  /// Selector de archivos del proyecto. Inyectable: en las pruebas se
+  /// reemplaza para no abrir el diálogo del sistema.
+  static Future<List<XFile>> Function() pickProjectFiles = _pickProjectFiles;
+
+  static Future<List<XFile>> _pickProjectFiles() async {
+    const group = XTypeGroup(label: 'Archivos del proyecto');
+    return openFiles(acceptedTypeGroups: [group]);
+  }
+
   @override
   State<ConnectionPage> createState() => _ConnectionPageState();
 }
@@ -72,16 +82,18 @@ class ConnectionPage extends StatefulWidget {
 class _ConnectionPageState extends State<ConnectionPage> {
   Timer? _timer;
 
-  /// Lo que el usuario escribe en "Dirección del servidor" (vacío = la de
-  /// fábrica). Arranca con lo que haya guardado.
-  late final TextEditingController _hostCtrl = TextEditingController(
-    text: DriveHost.custom ?? '',
-  );
-  String? _hostError;
+  /// Último resultado de guardar la dirección del HUB (lo enseña la card del
+  /// panel lateral). La dirección se edita en el modal «Configurar hub».
   String? _hostSaved;
 
   /// Servidor con una acción en curso (la fila muestra un girador).
   int? _adminBusyId;
+
+  /// Servidores MARCADOS para una acción en lote (subir el proyecto a varios).
+  final Set<int> _picked = {};
+
+  /// true = tocar una card la marca; false = solo ilumina sus conexiones.
+  bool _selectMode = false;
 
   Map<String, dynamic>? parseJson(String body) {
     try {
@@ -205,9 +217,11 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   /// Mensaje legible de una respuesta de administración.
   String _apiMessage(int status, Map<String, dynamic>? data) {
-    final parts = [data?['error'], data?['details'], data?['hint']]
-        .map((v) => (v ?? '').toString().trim())
-        .where((v) => v.isNotEmpty);
+    final parts = [
+      data?['error'],
+      data?['details'],
+      data?['hint'],
+    ].map((v) => (v ?? '').toString().trim()).where((v) => v.isNotEmpty);
     return parts.isEmpty ? 'HTTP $status' : parts.join(' · ');
   }
 
@@ -215,7 +229,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
   List<NodeView> _nodeViews() {
     final names = <int, String>{
       for (final n in _nodes)
-        if (n['id'] is num) (n['id'] as num).toInt(): (n['name'] ?? '').toString(),
+        if (n['id'] is num)
+          (n['id'] as num).toInt(): (n['name'] ?? '').toString(),
     };
 
     bool? sharpOf(Object? raw) {
@@ -237,7 +252,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
     double? bytesOf(Object? raw, String key) {
       if (raw is! Map) return null;
       final value = raw[key];
-      return value is num && value.isFinite && value >= 0 ? value.toDouble() : null;
+      return value is num && value.isFinite && value >= 0
+          ? value.toDouble()
+          : null;
     }
 
     final out = <NodeView>[];
@@ -251,8 +268,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
           (extra?['dependsOn'] as List?) ??
           (state?['dependsOn'] as List?) ??
           const [];
-      final blocked =
-          state?['blocked'] == true || extra?['blocked'] == true;
+      final blocked = state?['blocked'] == true || extra?['blocked'] == true;
       final online = state == null ? null : state['online'] == true;
       final latency = (state?['latencyMs'] ?? extra?['latencyMs']);
       out.add(
@@ -271,11 +287,19 @@ class _ConnectionPageState extends State<ConnectionPage> {
           total: bytesOf(extra, 'totalBytes'),
           sharp: sharpOf(state ?? extra),
           ffmpeg: ffmpegOf(state ?? extra),
+          // RAM del servidor: la informa cada nodo en su /api/health y el hub
+          // la reenvía. Sin dato se enseña «—», nunca un 0 inventado.
+          memUsed: bytesOf(extra?['mem'] ?? state?['mem'], 'usedBytes'),
+          memTotal: bytesOf(extra?['mem'] ?? state?['mem'], 'totalBytes'),
           online: online,
           error: (state?['error'] ?? extra?['error'])?.toString(),
           blocked: blocked,
           blockedReason: (state?['blockedReason'] ?? extra?['blockedReason'])
               ?.toString(),
+          dependsOnIds: [
+            for (final d in deps)
+              if (d is num) d.toInt(),
+          ],
           dependsOnNames: [
             for (final d in deps)
               if (d is num) names[d.toInt()] ?? '#${d.toInt()}' else '$d',
@@ -284,6 +308,40 @@ class _ConnectionPageState extends State<ConnectionPage> {
       );
     }
     return out;
+  }
+
+  /// El HUB tal como lo pinta el diagrama (dirección, versión, ping, cuántos
+  /// servidores responden y si hay alguno en mantenimiento).
+  HubView _hubView() {
+    final viaHub = _viaHub;
+    final total = viaHub
+        ? (_health!['nodes'] as List).length
+        : _nodes.where((n) => n['enabled'] == true || n['enabled'] == 1).length;
+    final online = viaHub ? _nodesOnline() : 0;
+    // Sin hub al que preguntar, o con el Drive apuntando a un servidor suelto,
+    // el diagrama tiene que decirlo: si no, parece que todos están caídos.
+    final note = _health == null
+        ? 'El panel no está conectado con el HUB: el estado de cada servidor '
+              'no se puede comprobar desde aquí.'
+        : !viaHub
+        ? 'Contesta un servidor suelto, no el HUB: no se puede saber si los '
+              'demás responden. Apunta la dirección al HUB (puerto '
+              '${DriveHost.hubPort}).'
+        : !_driveOnHub
+        ? 'El estado se mira en el HUB ($_hubBase), pero el Drive apunta a '
+              '${widget.driveApi.base}: así solo se ven las carpetas de ese '
+              'servidor.'
+        : '';
+    return HubView(
+      url: (_hubBase ?? widget.driveApi.base).replaceAll(RegExp(r'/+$'), ''),
+      online: _health != null,
+      version: '${_health?['version'] ?? ''}'.replaceAll(RegExp(r'^v'), ''),
+      latencyMs: _latencyMs,
+      onlineCount: online,
+      totalCount: total,
+      blocked: _maintenanceItems.length,
+      note: note,
+    );
   }
 
   /// Servidores BLOQUEADOS por dependencia según el hub (vacío = todo bien).
@@ -366,8 +424,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
         HsToast.error('No se pudo reiniciar ${node.name}', details: message);
         return message;
       }
-      final message =
-          (data?['message'] ?? 'Reiniciando ${node.name}…').toString();
+      final message = (data?['message'] ?? 'Reiniciando ${node.name}…')
+          .toString();
       if (mounted) HsToast.success(message);
       // La salud del hub se refresca en unos segundos: se vuelve a mirar.
       unawaited(Future<void>.delayed(const Duration(seconds: 6), _check));
@@ -410,15 +468,15 @@ class _ConnectionPageState extends State<ConnectionPage> {
     return res == true;
   }
 
-  /// Sube archivos a la carpeta del proyecto del servidor.
-  ///
-  /// Es para ACTUALIZAR el código a mano (server.js, lib/, public/…), así que
-  /// no reinicia nada: si cambiaste código, reinicia tú después.
-  Future<void> _uploadProject(NodeView node) async {
-    const group = XTypeGroup(label: 'Archivos del proyecto');
-    final files = await openFiles(acceptedTypeGroups: [group]);
-    if (files.isEmpty) return;
-    setState(() => _adminBusyId = node.id);
+  /// Elige los archivos del proyecto (una sola vez, para uno o varios nodos).
+  Future<List<XFile>> _pickProjectFiles() => ConnectionPage.pickProjectFiles();
+
+  /// Manda [files] a UN servidor. Devuelve cuántos se guardaron y el error (si
+  /// hubo) para que quien llama pueda resumir uno o varios servidores.
+  Future<({int saved, String? error})> _uploadFilesTo(
+    NodeView node,
+    List<XFile> files,
+  ) async {
     try {
       final request = http.MultipartRequest(
         'POST',
@@ -436,57 +494,141 @@ class _ConnectionPageState extends State<ConnectionPage> {
       final body = await streamed.stream.bytesToString();
       final data = parseJson(body);
       if (streamed.statusCode != 200) {
-        HsToast.error(
-          'No se pudo subir a ${node.name}',
-          details: data == null ? body : _apiMessage(streamed.statusCode, data),
+        return (
+          saved: 0,
+          error: data == null ? body : _apiMessage(streamed.statusCode, data),
         );
-        return;
       }
-      final names = (data?['names'] as List?)?.whereType<String>().toList() ?? const [];
-      HsToast.success(
-        '${names.length} archivo${names.length == 1 ? '' : 's'} en ${node.name}',
-        details: (data?['hint'] ?? '').toString(),
-      );
+      final names =
+          (data?['names'] as List?)?.whereType<String>().toList() ?? const [];
+      return (saved: names.length, error: null);
     } catch (e) {
-      HsToast.error('No se pudo subir a ${node.name}', details: '$e');
-    } finally {
-      if (mounted) setState(() => _adminBusyId = null);
+      return (saved: 0, error: '$e');
     }
+  }
+
+  /// Sube archivos a la carpeta del proyecto del servidor.
+  ///
+  /// Es para ACTUALIZAR el código a mano (server.js, lib/, public/…), así que
+  /// no reinicia nada: si cambiaste código, reinicia tú después.
+  Future<void> _uploadProject(NodeView node) async {
+    final files = await _pickProjectFiles();
+    if (files.isEmpty) return;
+    setState(() => _adminBusyId = node.id);
+    final res = await _uploadFilesTo(node, files);
+    if (!mounted) return;
+    setState(() => _adminBusyId = null);
+    if (res.error != null) {
+      HsToast.error('No se pudo subir a ${node.name}', details: res.error);
+      return;
+    }
+    HsToast.success(
+      '${res.saved} archivo${res.saved == 1 ? '' : 's'} en ${node.name}',
+    );
+  }
+
+  /// Sube EL MISMO archivo de proyecto a TODOS los servidores marcados.
+  ///
+  /// Se eligen los archivos una sola vez y se manda a cada nodo por separado
+  /// (el hub no tiene un endpoint "a todos"): así un servidor caído no impide
+  /// que los demás queden actualizados, y el aviso dice cuáles fallaron.
+  Future<void> _uploadToPicked() async {
+    final targets = [
+      for (final node in _nodeViews())
+        if (_picked.contains(node.id)) node,
+    ];
+    if (targets.isEmpty) {
+      HsToast.error('Marca al menos un servidor');
+      return;
+    }
+    final files = await _pickProjectFiles();
+    if (files.isEmpty) return;
+    final failed = <String>[];
+    var ok = 0;
+    for (final node in targets) {
+      setState(() => _adminBusyId = node.id);
+      final res = await _uploadFilesTo(node, files);
+      if (res.error != null) {
+        failed.add('${node.name}: ${res.error}');
+      } else {
+        ok++;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _adminBusyId = null;
+      if (failed.isEmpty) {
+        _picked.clear();
+        _selectMode = false;
+      }
+    });
+    if (failed.isEmpty) {
+      HsToast.success(
+        '${files.length} archivo${files.length == 1 ? '' : 's'} en '
+        '$ok servidor${ok == 1 ? '' : 'es'}: '
+        '${targets.map((t) => t.name).join(', ')}',
+      );
+    } else {
+      HsToast.error(
+        'Se subió a $ok de ${targets.length} servidores',
+        details: failed.join(' · '),
+      );
+    }
+  }
+
+  /// Abre el modal de DEPENDENCIAS de un servidor (antes vivía dentro de
+  /// «Editar», donde no se podían marcar bien).
+  Future<void> _openDependencies(NodeView node) async {
+    final raw = _nodeById(node.id);
+    if (raw == null) return;
+    final saved = await showHsModal<bool>(
+      context: context,
+      builder: (_) => _DependenciesDialog(node: raw, siblings: _nodes),
+    );
+    if (saved == true) await _loadNodes();
+  }
+
+  /// Opciones del HUB (dirección del Drive): se configuran EN el hub, no en
+  /// una sección suelta de la pantalla.
+  Future<void> _openHubConfig() async {
+    await showHsModal<void>(
+      context: context,
+      builder: (_) => _HubConfigDialog(
+        current: DriveHost.custom ?? '',
+        compiled: DriveHost.compiled,
+        publicHttp: DriveHost.publicHttp,
+        lanFallback: DriveHost.lanFallback,
+        onSave: _saveHubHost,
+      ),
+    );
+  }
+
+  /// Guarda la dirección del Drive (desde el modal del HUB).
+  Future<String?> _saveHubHost(String text) async {
+    final value = text.trim();
+    if (!DriveHost.isValid(value)) {
+      return 'Escribe una dirección como https://oriongo.ddns.net';
+    }
+    final ok = await AppSettings.instance.setDriveHost(value);
+    if (!mounted) return ok ? null : 'Esa dirección no se pudo guardar.';
+    setState(() {
+      _hostSaved = ok
+          ? (DriveHost.isCustom
+                ? 'Guardado: ${DriveHost.base}'
+                : 'Guardado: se usa la dirección de fábrica (${DriveHost.compiled}).')
+          : null;
+    });
+    if (ok) {
+      unawaited(widget.driveApi.refresh());
+      unawaited(_check());
+    }
+    return ok ? null : 'Esa dirección no se pudo guardar.';
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _hostCtrl.dispose();
     super.dispose();
-  }
-
-  /// Guarda la dirección escrita (o vuelve a la de fábrica si está vacía).
-  Future<void> _saveHost(String? value) async {
-    final text = (value ?? '').trim();
-    if (!DriveHost.isValid(text)) {
-      setState(() {
-        _hostError = 'Escribe una dirección como http://192.168.1.72:4000';
-        _hostSaved = null;
-      });
-      return;
-    }
-    final ok = await AppSettings.instance.setDriveHost(text);
-    if (!mounted) return;
-    setState(() {
-      _hostError = ok ? null : 'Esa dirección no se pudo guardar.';
-      _hostSaved = ok
-          ? (DriveHost.isCustom
-                ? 'Guardado: ${DriveHost.base}. Ya se está usando en todos los módulos.'
-                : 'Guardado: se usa la dirección de fábrica (${DriveHost.compiled}).')
-          : null;
-      if (ok && !DriveHost.isCustom) _hostCtrl.text = '';
-    });
-    if (ok && mounted) {
-      // Sin reiniciar: el cliente del drive resuelve la base en cada petición.
-      unawaited(widget.driveApi.refresh());
-      unawaited(_check());
-    }
   }
 
   /// Busca el HUB, no solo la dirección configurada.
@@ -695,612 +837,697 @@ class _ConnectionPageState extends State<ConnectionPage> {
     final answered = _health != null; // ¿contestó /api/health?
     final online =
         widget.driveApi.conn == DriveConn.online && answered; // Drive usable
-    final checking = _checking;
     final viaHub = _viaHub;
-    final hubTotal = viaHub ? (_health!['nodes'] as List).length : 0;
-    final hubOnline = viaHub ? _nodesOnline() : 0;
-    // La tarjeta dice si el que contesta es el HUB (el único que conoce a todos
-    // los servidores) y cuántos están prendidos. Antes decía «Conectado» a
-    // secas y no se sabía si el hub estaba en medio ni cómo estaban los demás.
-    final (color, icon, label) = checking
-        ? (Colors.amber, Icons.sync, 'Verificando…')
-        : !answered
-        ? (scheme.error, Icons.cloud_off_outlined, 'Hub sin respuesta')
-        : !viaHub
-        ? (
-            const Color(0xFF2F6BFF),
-            Icons.dns_outlined,
-            'Conectado a un servidor',
-          )
-        : (
-            hubTotal > 0 && hubOnline == hubTotal
-                ? const Color(0xFF2F9E5B)
-                : Colors.amber,
-            Icons.hub,
-            'Hub conectado',
-          );
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 40),
-      children: [
-        // ===== Tarjeta principal de estado =====
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: scheme.outlineVariant.withValues(alpha: .4),
+    // La vista principal es SOLO el diagrama (más los avisos que explican por
+    // qué no carga). El estado del HUB —que antes era una tarjeta grande aquí
+    // arriba— vive en el panel lateral, junto a los demás detalles.
+    final sections = <Widget>[
+      // El hub contesta en /api/health pero el árbol no llega: se dice POR
+      // QUÉ (hub sin servidores, nodo caído, sin sesión…) en vez de dejar
+      // solo "Sin conexión", que parece un problema de la app.
+      if (_health != null && widget.driveApi.conn != DriveConn.online) ...[
+        const SizedBox(height: 16),
+        _SectionCard(
+          title: 'El servidor responde, pero el Drive no cargó',
+          children: [
+            Text(
+              widget.driveApi.error ??
+                  'El listado del Drive todavía no ha llegado. Toca '
+                      '«Probar conexión» en unos segundos.',
+              style: TextStyle(fontSize: 13, height: 1.35, color: scheme.error),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Si esa dirección es la del HUB, el mensaje viene de él o de '
+              'los servidores de archivos que tiene apuntados (mira cuáles '
+              'responden en «Detalles de la conexión»).',
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.35,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ],
+      // El hub puede estar tirando de `DRIVE_NODES` (o del archivo de
+      // respaldo) en vez de la tabla `drive_nodes`: entonces los servidores
+      // que editas en esta pantalla NO le llegan y esta lista no cuadra con
+      // la suya. Se dice aquí, con el motivo, en vez de dejar solo puestos
+      // «Habilitado» sin explicación.
+      if (viaHub && (_health!['nodesSource'] ?? 'backend') != 'backend') ...[
+        const SizedBox(height: 16),
+        _SectionCard(
+          title: 'El hub no está leyendo la lista de la base de datos',
+          children: [
+            _Bullet(
+              'El hub está usando ${_sourceLabel(_health!['nodesSource'])}. '
+              'Los servidores que agregues o edites aquí no le llegan, y su '
+              'estado no se puede comprobar.',
+            ),
+            if ((_health!['nodesError'] ?? '').toString().trim().isNotEmpty)
+              _Bullet('Motivo: ${_health!['nodesError']}'),
+            _Bullet(
+              'En el .env del hub tienen que estar DRIVE_CONFIG_URL y '
+              'DRIVE_HUB_TOKEN (el MISMO valor que el backend). Después se '
+              'reinicia:',
+            ),
+            _Mono('sudo systemctl restart hardstreet-drive-hub'),
+            _Bullet('Y se toca «Probar conexión» aquí arriba.'),
+          ],
+        ),
+      ],
+      // ===== Servidores del Drive (Drive federado) =====
+      _SectionCard(
+        title: 'Servidores del Drive',
+        children: [
+          Text(
+            'El Drive puede repartirse entre varios servidores y el panel lo '
+            've como un solo árbol: cada carpeta vive en UN servidor y las '
+            'carpetas nuevas se crean en el que tenga más espacio libre. Si '
+            'solo hay uno, todo funciona como siempre.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.35,
+              color: scheme.onSurfaceVariant,
             ),
           ),
-          child: Column(
-            children: [
-              Stack(
-                alignment: Alignment.center,
+          const SizedBox(height: 8),
+          Text(
+            'Solo el Superadministrador puede administrar esta sección: '
+            'agregar servidores, ver su terminal, reiniciarlos o subirles '
+            'archivos.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+              color: scheme.primary,
+            ),
+          ),
+          // ===== MANTENIMIENTO por dependencia =====
+          // Con una dependencia rota el hub deja de usar el servidor
+          // dependiente. Aquí se dice CUÁL y POR QUÉ, y el Drive enseña el
+          // mismo aviso cuando no le queda ningún servidor usable.
+          if (_maintenanceItems.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              key: const ValueKey('drive-maintenance'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.amber.withValues(alpha: .45)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (online)
-                    Container(
-                      width: 92,
-                      height: 92,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: color.withValues(alpha: .12),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.engineering_outlined,
+                        size: 18,
+                        color: Colors.orange,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Drive en mantenimiento',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.orange.shade900,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  for (final item in _maintenanceItems)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Text(
+                        '· ${item['name'] ?? 'Servidor'}: '
+                        '${item['reason'] ?? 'depende de un servidor que no responde'}',
+                        style: const TextStyle(fontSize: 12.5, height: 1.3),
                       ),
                     ),
-                  Icon(icon, size: 64, color: color),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Vuelve a responder el servidor del que dependen y salen '
+                    'solos del mantenimiento.',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 14),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ],
+          // La lista es la de la BASE (qué servidores existen y cuáles están
+          // habilitados); quién responde de verdad solo lo sabe el hub.
+          // Decirlo evita el malentendido de ver "Encendido" en un servidor
+          // apagado: con el hub se enseña su estado REAL.
+          if (_nodes.isNotEmpty && (!viaHub || !_driveOnHub)) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.amber.withValues(alpha: .45)),
               ),
-              const SizedBox(height: 4),
-              Text(
-                viaHub
-                    ? 'Hub: ${_hubBase ?? DriveHost.base}'
-                    : 'Servidor: ${DriveHost.base}',
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontSize: 13,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-              // «1 de 2 en línea»: con el hub lo que importa no es que él
-              // conteste, sino cuántos servidores de archivos están prendidos.
-              if (answered && viaHub) ...[
-                const SizedBox(height: 4),
-                Text(
-                  '$hubOnline de $hubTotal servidor${hubTotal == 1 ? '' : 'es'} en línea'
-                  '${_latencyMs == null ? '' : ' · $_latencyMs ms'}',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: hubOnline == hubTotal
-                        ? const Color(0xFF2F9E5B)
-                        : scheme.error,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.wifi_tethering_off_outlined,
+                    size: 16,
+                    color: Colors.amber,
                   ),
-                ),
-              ],
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                onPressed: checking ? null : _check,
-                icon: checking
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh, size: 18),
-                label: const Text('Probar conexión'),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _health == null
+                          ? 'No se pudo comprobar si estos servidores '
+                                'responden: el panel no está conectado a '
+                                'ninguno.'
+                          : viaHub && !_driveOnHub
+                          ? 'El estado de cada servidor se está mirando en '
+                                'el HUB ($_hubBase), pero el Drive apunta a '
+                                '${widget.driveApi.base}: así solo se ven las '
+                                'carpetas de ese servidor y no las de los '
+                                'demás. Escribe arriba la dirección del HUB '
+                                '(puerto ${DriveHost.hubPort}).'
+                          : 'Ahora mismo el panel habla con UN servidor '
+                                '(«${_health!['service'] ?? 'servidor'}»), '
+                                'no con el HUB: el Drive usa solo ese y no '
+                                'se puede saber si los demás responden. '
+                                'Para repartir las carpetas entre todos, '
+                                'apunta la dirección al HUB (puerto '
+                                '${DriveHost.hubPort}).',
+                      style: const TextStyle(fontSize: 12.5, height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          // Los botones van ANTES del diagrama: así se agrega un servidor sin
+          // bajar por todo el árbol.
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                key: const ValueKey('drive-node-add'),
+                onPressed: _nodesLoading ? null : () => _editNode(),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Agregar servidor'),
+              ),
+              // SELECCIÓN: marcar servidores para subirles el MISMO proyecto
+              // de una sola vez (el archivo se elige una vez).
+              FilterChip(
+                key: const ValueKey('drive-node-select'),
+                selected: _selectMode,
+                onSelected: _nodes.isEmpty
+                    ? null
+                    : (on) => setState(() {
+                        _selectMode = on;
+                        if (!on) _picked.clear();
+                      }),
+                avatar: const Icon(Icons.checklist_rounded, size: 16),
+                label: const Text('Seleccionar'),
+              ),
+              IconButton(
+                key: const ValueKey('drive-node-refresh'),
+                onPressed: _nodesLoading ? null : _loadNodes,
+                tooltip: 'Actualizar',
+                icon: const Icon(Icons.refresh, size: 18),
               ),
             ],
           ),
-        ),
-        // El hub contesta en /api/health pero el árbol no llega: se dice POR
-        // QUÉ (hub sin servidores, nodo caído, sin sesión…) en vez de dejar
-        // solo "Sin conexión", que parece un problema de la app.
-        if (_health != null && widget.driveApi.conn != DriveConn.online) ...[
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'El servidor responde, pero el Drive no cargó',
-            children: [
-              Text(
-                widget.driveApi.error ??
-                    'El listado del Drive todavía no ha llegado. Toca '
-                        '«Probar conexión» en unos segundos.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.35,
-                  color: scheme.error,
-                ),
+          if (_picked.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              key: const ValueKey('drive-node-bulk'),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.primary.withValues(alpha: .3)),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Si esa dirección es la del HUB, el mensaje viene de él o de '
-                'los servidores de archivos que tiene apuntados (mira cuáles '
-                'responden en «Detalles de la conexión»).',
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    '${_picked.length} servidor${_picked.length == 1 ? '' : 'es'} '
+                    'marcado${_picked.length == 1 ? '' : 's'}',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  FilledButton.icon(
+                    key: const ValueKey('drive-node-bulk-upload'),
+                    onPressed: _adminBusyId == null ? _uploadToPicked : null,
+                    icon: const Icon(Icons.upload_file_outlined, size: 18),
+                    label: const Text('Subir proyecto a los marcados'),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(_picked.clear),
+                    child: const Text('Quitar selección'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          if (_nodesLoading && _nodes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: LinearProgressIndicator(),
+            ),
+          if (_nodesError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                _nodesError!,
+                style: TextStyle(color: scheme.error, fontSize: 12.5),
+              ),
+            ),
+          if (_nodes.isEmpty && !_nodesLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Todavía no hay servidores. Agrega el primero con su dirección '
+                '(la del hub en ese servidor, puerto ${DriveHost.hubPort}).',
                 style: TextStyle(
                   fontSize: 12.5,
                   height: 1.35,
                   color: scheme.onSurfaceVariant,
                 ),
               ),
-            ],
-          ),
-        ],
-        // El hub puede estar tirando de `DRIVE_NODES` (o del archivo de
-        // respaldo) en vez de la tabla `drive_nodes`: entonces los servidores
-        // que editas en esta pantalla NO le llegan y esta lista no cuadra con
-        // la suya. Se dice aquí, con el motivo, en vez de dejar solo puestos
-        // «Habilitado» sin explicación.
-        if (viaHub && (_health!['nodesSource'] ?? 'backend') != 'backend') ...[
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'El hub no está leyendo la lista de la base de datos',
-            children: [
-              _Bullet(
-                'El hub está usando ${_sourceLabel(_health!['nodesSource'])}. '
-                'Los servidores que agregues o edites aquí no le llegan, y su '
-                'estado no se puede comprobar.',
-              ),
-              if ((_health!['nodesError'] ?? '').toString().trim().isNotEmpty)
-                _Bullet('Motivo: ${_health!['nodesError']}'),
-              _Bullet(
-                'En el .env del hub tienen que estar DRIVE_CONFIG_URL y '
-                'DRIVE_HUB_TOKEN (el MISMO valor que el backend). Después se '
-                'reinicia:',
-              ),
-              _Mono('sudo systemctl restart hardstreet-drive-hub'),
-              _Bullet('Y se toca «Probar conexión» aquí arriba.'),
-            ],
-          ),
-        ],
-        if (DriveHost.usingFallback) ...[
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'Conexión local automática',
-            children: [
-              Text(
-                'El nombre público no respondió desde esta red (certificado '
-                'del router o NAT), así que la app está usando la dirección '
-                'local ${DriveHost.lanFallback}. Funciona mientras estés en la '
-                'red de la oficina.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.35,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () {
-                  DriveHost.clearFallback();
-                  setState(() {});
-                  _check();
-                },
-                icon: const Icon(Icons.public_outlined, size: 18),
-                label: Text('Volver a ${DriveHost.compiled}'),
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 16),
-
-        // ===== Dirección del servidor (editable) =====
-        _SectionCard(
-          title: 'Dirección del servidor',
-          children: [
-            Text(
-              'El panel llega al servidor por su dirección. Dentro de la red de '
-              'la oficina el nombre público (${DriveHost.compiled}) puede '
-              'responder el router con un certificado que el dispositivo '
-              'rechaza ("unable to get local issuer certificate"). Si eso pasa, '
-              'la app prueba sola el nombre público por HTTP directo '
-              '(${DriveHost.publicHttp}) y la dirección local '
-              '(${DriveHost.lanFallback}). También puedes escribirla aquí a mano.',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('drive-host-field'),
-              controller: _hostCtrl,
-              autocorrect: false,
-              keyboardType: TextInputType.url,
-              decoration: InputDecoration(
-                labelText: 'Dirección del drive',
-                hintText: DriveHost.compiled,
-                prefixIcon: const Icon(Icons.dns_outlined),
-                helperText: 'Vacío = la de fábrica (${DriveHost.compiled})',
-                errorText: _hostError,
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: _saveHost,
-            ),
-            const SizedBox(height: 12),
-            // Wrap y no Row: en un teléfono los dos botones no caben en una
-            // línea y el Row se desbordaba (rayas amarillas).
-            Wrap(
-              spacing: 10,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            )
+          else
+            // El DIAGRAMA: el hub en el centro conectado a cada servidor y
+            // las dependencias entre servidores como líneas con flecha.
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                FilledButton.icon(
-                  key: const ValueKey('drive-host-save'),
-                  onPressed: () => _saveHost(_hostCtrl.text),
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('Guardar'),
+                NodesTopology(
+                  nodes: _nodeViews(),
+                  hub: _hubView(),
+                  busyId: _adminBusyId,
+                  onEdit: _editFromView,
+                  onToggle: _toggleFromView,
+                  onDelete: _deleteFromView,
+                  onLogs: _openTerminal,
+                  onRestart: (view) => _restartNode(view),
+                  onUpload: _uploadProject,
+                  onDependencies: _openDependencies,
+                  onConfigureHub: _openHubConfig,
+                  selectMode: _selectMode,
+                  picked: _picked,
+                  onPick: (view) => setState(() {
+                    if (!_picked.add(view.id)) _picked.remove(view.id);
+                  }),
                 ),
-                TextButton(
-                  key: const ValueKey('drive-host-reset'),
-                  onPressed: () {
-                    _hostCtrl.text = '';
-                    _saveHost(null);
-                  },
-                  child: const Text('Usar la de fábrica'),
-                ),
-              ],
-            ),
-            if (_hostSaved != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  _hostSaved!,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // ===== Servidores del Drive (Drive federado) =====
-        _SectionCard(
-          title: 'Servidores del Drive',
-          children: [
-            Text(
-              'El Drive puede repartirse entre varios servidores y el panel lo '
-              've como un solo árbol: cada carpeta vive en UN servidor y las '
-              'carpetas nuevas se crean en el que tenga más espacio libre. Si '
-              'solo hay uno, todo funciona como siempre.',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Solo el Superadministrador puede administrar esta sección: '
-              'agregar servidores, ver su terminal, reiniciarlos o subirles '
-              'archivos.',
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.35,
-                fontWeight: FontWeight.w600,
-                color: scheme.primary,
-              ),
-            ),
-            // ===== MANTENIMIENTO por dependencia =====
-            // Con una dependencia rota el hub deja de usar el servidor
-            // dependiente. Aquí se dice CUÁL y POR QUÉ, y el Drive enseña el
-            // mismo aviso cuando no le queda ningún servidor usable.
-            if (_maintenanceItems.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                key: const ValueKey('drive-maintenance'),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: .12),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.amber.withValues(alpha: .45),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.engineering_outlined,
-                          size: 18,
-                          color: Colors.orange,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Drive en mantenimiento',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.orange.shade900,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    for (final item in _maintenanceItems)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 3),
-                        child: Text(
-                          '· ${item['name'] ?? 'Servidor'}: '
-                          '${item['reason'] ?? 'depende de un servidor que no responde'}',
-                          style: const TextStyle(fontSize: 12.5, height: 1.3),
-                        ),
-                      ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Vuelve a responder el servidor del que dependen y salen '
-                      'solos del mantenimiento.',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            // La lista es la de la BASE (qué servidores existen y cuáles están
-            // habilitados); quién responde de verdad solo lo sabe el hub.
-            // Decirlo evita el malentendido de ver "Encendido" en un servidor
-            // apagado: con el hub se enseña su estado REAL.
-            if (_nodes.isNotEmpty && (!viaHub || !_driveOnHub)) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: .12),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: Colors.amber.withValues(alpha: .45),
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(
-                      Icons.wifi_tethering_off_outlined,
-                      size: 16,
-                      color: Colors.amber,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _health == null
-                            ? 'No se pudo comprobar si estos servidores '
-                                  'responden: el panel no está conectado a '
-                                  'ninguno.'
-                            : viaHub && !_driveOnHub
-                            ? 'El estado de cada servidor se está mirando en '
-                                  'el HUB ($_hubBase), pero el Drive apunta a '
-                                  '${widget.driveApi.base}: así solo se ven las '
-                                  'carpetas de ese servidor y no las de los '
-                                  'demás. Escribe arriba la dirección del HUB '
-                                  '(puerto ${DriveHost.hubPort}).'
-                            : 'Ahora mismo el panel habla con UN servidor '
-                                  '(«${_health!['service'] ?? 'servidor'}»), '
-                                  'no con el HUB: el Drive usa solo ese y no '
-                                  'se puede saber si los demás responden. '
-                                  'Para repartir las carpetas entre todos, '
-                                  'apunta la dirección al HUB (puerto '
-                                  '${DriveHost.hubPort}).',
-                        style: const TextStyle(fontSize: 12.5, height: 1.35),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            if (_nodesLoading && _nodes.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: LinearProgressIndicator(),
-              ),
-            if (_nodesError != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Text(
-                  _nodesError!,
-                  style: TextStyle(color: scheme.error, fontSize: 12.5),
-                ),
-              ),
-            if (_nodes.isEmpty && !_nodesLoading)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'Todavía no hay servidores. Agrega el primero con su dirección '
-                  '(la del hub en ese servidor, puerto ${DriveHost.hubPort}).',
+                const SizedBox(height: 6),
+                Text(
+                  'Clic en un servidor para ver solo sus conexiones · '
+                  'arrastra las cards para reacomodarlas · línea punteada = sin '
+                  'respuesta · flecha en las dos puntas = dependencia mutua.',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.35,
+                    fontSize: 11,
+                    height: 1.3,
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
-              )
-            else
-              // La tabla: servidor · estado · versión · prioridad ·
-              // bibliotecas · espacio · ping · depende de · acciones.
-              NodesSchemaTable(
-                nodes: _nodeViews(),
-                busyId: _adminBusyId,
-                onEdit: _editFromView,
-                onToggle: _toggleFromView,
-                onDelete: _deleteFromView,
-                onLogs: _openTerminal,
-                onRestart: (view) => _restartNode(view),
-                onUpload: _uploadProject,
-              ),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                OutlinedButton.icon(
-                  key: const ValueKey('drive-node-add'),
-                  onPressed: _nodesLoading ? null : () => _editNode(),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Agregar servidor'),
-                ),
-                IconButton(
-                  key: const ValueKey('drive-node-refresh'),
-                  onPressed: _nodesLoading ? null : _loadNodes,
-                  tooltip: 'Actualizar',
-                  icon: const Icon(Icons.refresh, size: 18),
-                ),
               ],
             ),
-          ],
-        ),
-        const SizedBox(height: 16),
+        ],
+      ),
+      const SizedBox(height: 16),
 
-        // ===== Detalles =====
+      const SizedBox(height: 16),
+
+      // ===== Falta ffmpeg en el servidor =====
+      if (online &&
+          _health?['video'] is Map &&
+          (_health!['video'] as Map)['posters'] != true)
         _SectionCard(
-          title: 'Detalles de la conexión',
+          title: 'Los vídeos no muestran miniatura',
           children: [
-            _Row('Dirección', DriveHost.base),
-            _Row(
-              'En uso ahora',
-              DriveHost.base == widget.driveApi.base
-                  ? 'La configurada'
-                  : '${widget.driveApi.base} (se cambia al reabrir la app)',
+            _Bullet(
+              'El servidor no tiene ffmpeg: sin él no puede sacar el primer '
+              'fotograma de un vídeo (ni su versión ligera). Las tarjetas de '
+              'vídeo se quedan con su icono.',
             ),
-            _Row('Latencia', _latencyMs == null ? '—' : '$_latencyMs ms'),
-            _Row(
-              'Última comprobación',
-              _lastCheck == null
-                  ? '—'
-                  : '${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}:${_lastCheck!.second.toString().padLeft(2, '0')}',
+            _Bullet(
+              'Instálalo en el servidor (la primera opción no necesita root) '
+              'y reinicia el servicio:',
             ),
-            _Row('Uptime del servidor', _uptimeLabel()),
-            _Row('Servicio', _health?['service'] as String? ?? '—'),
-            // Lo PRIMERO que se quiere saber: ¿contesta el hub, y está usando
-            // la lista de la base?
-            _Row(
-              'Hub',
-              _health == null
-                  ? 'Sin respuesta'
-                  : viaHub
-                  ? 'Conectado'
-                        '${(_health!['version'] ?? '').toString().isEmpty ? '' : ' · v${_health!['version']}'}'
-                  : 'No: contesta un servidor suelto',
-            ),
-            // Si el Drive apunta a un servidor suelto, se dice dónde se encontró
-            // el hub para poder corregir la dirección de arriba.
-            if (_hubBase != null && _hubBase != DriveHost.base)
-              _Row('HUB encontrado', _hubBase!),
-            if (_health?['nodesSource'] is String)
-              _Row(
-                'Lista de servidores',
-                _health!['nodesSource'] == 'backend'
-                    ? 'Base de datos (drive_nodes)'
-                    : _sourceLabel(_health!['nodesSource']),
-              ),
-            _Row('Carpeta de datos', _health?['root'] as String? ?? '—'),
-            // Con el HUB del Drive (varios servidores) el /api/health dice
-            // cuántos nodos hay y cuáles responden; con un nodo suelto, no.
-            if (_health?['nodes'] is List)
-              _Row('Servidores conectados', _nodesHealthLabel()),
-            // Detalle por nodo: con el hub, "1 de 2" no dice CUÁL falla ni por
-            // qué (apagado, sin respuesta, error de su propia base…).
-            if (_health?['nodes'] is List)
-              for (final node in (_health!['nodes'] as List).whereType<Map>())
-                _Row(
-                  '  · ${node['name'] ?? 'Servidor'}',
-                  node['online'] == true
-                      ? 'En línea'
-                      : 'Sin respuesta'
-                            '${(node['error'] ?? '').toString().isEmpty ? '' : ': ${node['error']}'}',
-                ),
-            // Los vídeos sacan su miniatura (y su versión ligera) con ffmpeg
-            // EN EL SERVIDOR. Si falta, las tarjetas de vídeo solo pueden
-            // enseñar el icono: aquí se ve el motivo en vez de parecer un
-            // fallo de la app.
-            _Row('Miniaturas de vídeo', _videoSupport('posters')),
-            _Row('Calidad ligera de vídeo', _videoSupport('lightQuality')),
-            if (_lastError != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Último error: $_lastError',
-                  style: TextStyle(color: scheme.error, fontSize: 12.5),
-                ),
-              ),
+            _Mono('cd hardstreet-drive && npm install'),
+            _Mono('sudo apt install -y ffmpeg   (alternativa del sistema)'),
+            _Mono('sudo systemctl restart hardstreet-drive'),
+            _Bullet('Luego toca «Probar conexión»: debe decir «Sí».'),
           ],
         ),
+      if (online &&
+          _health?['video'] is Map &&
+          (_health!['video'] as Map)['posters'] != true)
         const SizedBox(height: 16),
 
-        // ===== Falta ffmpeg en el servidor =====
-        if (online &&
-            _health?['video'] is Map &&
-            (_health!['video'] as Map)['posters'] != true)
-          _SectionCard(
-            title: 'Los vídeos no muestran miniatura',
-            children: [
-              _Bullet(
-                'El servidor no tiene ffmpeg: sin él no puede sacar el primer '
-                'fotograma de un vídeo (ni su versión ligera). Las tarjetas de '
-                'vídeo se quedan con su icono.',
-              ),
-              _Bullet(
-                'Instálalo en el servidor (la primera opción no necesita root) '
-                'y reinicia el servicio:',
-              ),
-              _Mono('cd hardstreet-drive && npm install'),
-              _Mono('sudo apt install -y ffmpeg   (alternativa del sistema)'),
-              _Mono('sudo systemctl restart hardstreet-drive'),
-              _Bullet('Luego toca «Probar conexión»: debe decir «Sí».'),
-            ],
-          ),
-        if (online &&
-            _health?['video'] is Map &&
-            (_health!['video'] as Map)['posters'] != true)
-          const SizedBox(height: 16),
+      // ===== Cómo solucionarlo =====
+      if (!online)
+        _SectionCard(
+          title: 'Si no conecta, revisa',
+          children: [
+            _Bullet(
+              'Que el HUB esté encendido y con su servicio corriendo (la app '
+              'habla con el hub, no con cada servidor de archivos):',
+            ),
+            _Mono('sudo systemctl status hardstreet-drive-hub'),
+            _Mono(
+              'curl http://127.0.0.1:${DriveHost.hubPort}/api/health   '
+              '(en el servidor)',
+            ),
+            _Bullet(
+              'Que el firewall y el router dejen entrar al puerto del hub:',
+            ),
+            _Mono('sudo ufw allow ${DriveHost.hubPort}/tcp'),
+            _Bullet(
+              'Los servidores de archivos NO se abren a internet: solo el hub '
+              'los alcanza. En «Servidores del Drive» va su dirección interna '
+              '(p. ej. http://192.168.1.72:4000).',
+            ),
+            _Bullet(
+              'Que la dirección sea la correcta para la red en la que estás:',
+            ),
+            _Mono('${DriveHost.compiled}  (la de fábrica: el hub)'),
+            _Mono(
+              '${DriveHost.publicHttp}  (si el HTTPS falla en el teléfono)',
+            ),
+            _Mono('${DriveHost.lanFallback}  (dentro de la red de la oficina)'),
+            _Bullet(
+              'Se cambia en el HUB: botón ⚙ «Configurar hub» de su card.',
+            ),
+          ],
+        ),
+    ];
 
-        // ===== Cómo solucionarlo =====
-        if (!online)
-          _SectionCard(
-            title: 'Si no conecta, revisa',
-            children: [
-              _Bullet(
-                'Que el HUB esté encendido y con su servicio corriendo (la app '
-                'habla con el hub, no con cada servidor de archivos):',
+    // ===== Panel lateral: todo el detalle FUERA del diagrama =====
+    final side = <Widget>[
+      _hubSideCard(),
+      const SizedBox(height: 14),
+      _detailsCard(),
+      if (DriveHost.usingFallback) ...[
+        const SizedBox(height: 14),
+        _fallbackCard(),
+      ],
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // En computadora los detalles van a un LADO (el diagrama manda); en
+        // pantalla angosta se apilan debajo, como el resto del panel.
+        final wide = constraints.maxWidth >= 1180;
+        if (!wide) {
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 40),
+            children: [...sections, const SizedBox(height: 16), ...side],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(24, 18, 24, 40),
+                children: sections,
               ),
-              _Mono('sudo systemctl status hardstreet-drive-hub'),
-              _Mono(
-                'curl http://127.0.0.1:${DriveHost.hubPort}/api/health   '
-                '(en el servidor)',
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 18, 20, 0),
+              child: SizedBox(
+                width: 360,
+                child: ListView(
+                  key: const ValueKey('connection-side'),
+                  padding: const EdgeInsets.only(bottom: 40),
+                  children: side,
+                ),
               ),
-              _Bullet(
-                'Que el firewall y el router dejen entrar al puerto del hub:',
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Estado del HUB en palabras: color, icono y texto.
+  ///
+  /// Antes era la tarjeta grande que encabezaba el diagrama; ahora es la
+  /// primera línea del panel lateral, para que la vista principal sea solo el
+  /// diagrama. Dice si el que contesta es el HUB y cuántos servidores de
+  /// archivos están prendidos, no un «Conectado» a secas.
+  ({Color color, IconData icon, String label}) _hubStatus(ColorScheme scheme) {
+    if (_checking) {
+      return (color: Colors.amber, icon: Icons.sync, label: 'Verificando…');
+    }
+    if (_health == null) {
+      return (
+        color: scheme.error,
+        icon: Icons.cloud_off_outlined,
+        label: 'Hub sin respuesta',
+      );
+    }
+    if (!_viaHub) {
+      return (
+        color: const Color(0xFF2F6BFF),
+        icon: Icons.dns_outlined,
+        label: 'Conectado a un servidor',
+      );
+    }
+    final total = (_health!['nodes'] as List).length;
+    return (
+      color: total > 0 && _nodesOnline() == total
+          ? const Color(0xFF2F9E5B)
+          : Colors.amber,
+      icon: Icons.hub,
+      label: 'Hub conectado',
+    );
+  }
+
+  /// Card del HUB en el panel lateral: su estado, la dirección del Drive y su
+  /// botón de configuración (las opciones del hub viven en el hub, no sueltas
+  /// aquí).
+  Widget _hubSideCard() {
+    final scheme = Theme.of(context).colorScheme;
+    final status = _hubStatus(scheme);
+    final total = _viaHub ? (_health!['nodes'] as List).length : 0;
+    final up = _viaHub ? _nodesOnline() : 0;
+    return _SectionCard(
+      title: 'HUB',
+      children: [
+        Row(
+          key: const ValueKey('hub-status'),
+          children: [
+            Icon(status.icon, size: 20, color: status.color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                status.label,
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  color: status.color,
+                ),
               ),
-              _Mono('sudo ufw allow ${DriveHost.hubPort}/tcp'),
-              _Bullet(
-                'Los servidores de archivos NO se abren a internet: solo el hub '
-                'los alcanza. En «Servidores del Drive» va su dirección interna '
-                '(p. ej. http://192.168.1.72:4000).',
-              ),
-              _Bullet(
-                'Que la dirección sea la correcta para la red en la que estás:',
-              ),
-              _Mono('${DriveHost.compiled}  (la de fábrica: el hub)'),
-              _Mono(
-                '${DriveHost.publicHttp}  (si el HTTPS falla en el teléfono)',
-              ),
-              _Mono(
-                '${DriveHost.lanFallback}  (dentro de la red de la oficina)',
-              ),
-              _Bullet('Se cambia arriba, en "Dirección del servidor".'),
-            ],
+            ),
+          ],
+        ),
+        if (_health != null && _viaHub) ...[
+          const SizedBox(height: 4),
+          Text(
+            '$up de $total servidor${total == 1 ? '' : 'es'} en línea'
+            '${_latencyMs == null ? '' : ' · $_latencyMs ms'}',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: up == total ? const Color(0xFF2F9E5B) : scheme.error,
+            ),
           ),
+        ],
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Icon(Icons.route_outlined, size: 17, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                DriveHost.base,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          DriveHost.isCustom
+              ? 'Dirección propia (guardada en este equipo)'
+              : 'Dirección de fábrica',
+          style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey('hub-configure-side'),
+              onPressed: _openHubConfig,
+              icon: const Icon(Icons.tune_rounded, size: 17),
+              label: const Text('Configurar hub'),
+            ),
+            TextButton.icon(
+              onPressed: _checking ? null : _check,
+              icon: const Icon(Icons.refresh_rounded, size: 17),
+              label: const Text('Probar'),
+            ),
+          ],
+        ),
+        if (_hostSaved != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              _hostSaved!,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Detalles técnicos de la conexión (antes ocupaban una sección entera del
+  /// ancho completo; ahora son el panel lateral).
+  Widget _detailsCard() {
+    final scheme = Theme.of(context).colorScheme;
+    final viaHub = _viaHub;
+    return _SectionCard(
+      title: 'Detalles de la conexión',
+      children: [
+        _Row('Dirección', DriveHost.base),
+        _Row(
+          'En uso ahora',
+          DriveHost.base == widget.driveApi.base
+              ? 'La configurada'
+              : '${widget.driveApi.base} (se cambia al reabrir la app)',
+        ),
+        _Row('Latencia', _latencyMs == null ? '—' : '$_latencyMs ms'),
+        _Row(
+          'Última comprobación',
+          _lastCheck == null
+              ? '—'
+              : '${_lastCheck!.hour.toString().padLeft(2, '0')}:${_lastCheck!.minute.toString().padLeft(2, '0')}:${_lastCheck!.second.toString().padLeft(2, '0')}',
+        ),
+        _Row('Uptime del servidor', _uptimeLabel()),
+        _Row('Servicio', _health?['service'] as String? ?? '—'),
+        _Row(
+          'Hub',
+          _health == null
+              ? 'Sin respuesta'
+              : viaHub
+              ? 'Conectado'
+                    '${(_health!['version'] ?? '').toString().isEmpty ? '' : ' · v${_health!['version']}'}'
+              : 'No: contesta un servidor suelto',
+        ),
+        if (_hubBase != null && _hubBase != DriveHost.base)
+          _Row('HUB encontrado', _hubBase!),
+        if (_health?['nodesSource'] is String)
+          _Row(
+            'Lista de servidores',
+            _health!['nodesSource'] == 'backend'
+                ? 'Base de datos (drive_nodes)'
+                : _sourceLabel(_health!['nodesSource']),
+          ),
+        _Row('Carpeta de datos', _health?['root'] as String? ?? '—'),
+        if (_health?['nodes'] is List)
+          _Row('Servidores conectados', _nodesHealthLabel()),
+        if (_health?['nodes'] is List)
+          for (final node in (_health!['nodes'] as List).whereType<Map>())
+            _Row(
+              '  · ${node['name'] ?? 'Servidor'}',
+              node['online'] == true
+                  ? 'En línea'
+                  : 'Sin respuesta'
+                        '${(node['error'] ?? '').toString().isEmpty ? '' : ': ${node['error']}'}',
+            ),
+        // RAM consumida de TODO el Drive (suma de los nodos que responden).
+        _Row('RAM del Drive', _driveRamLabel()),
+        _Row('Miniaturas de vídeo', _videoSupport('posters')),
+        _Row('Calidad ligera de vídeo', _videoSupport('lightQuality')),
+        if (_lastError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Último error: $_lastError',
+              style: TextStyle(color: scheme.error, fontSize: 12.5),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// «5.2 GB / 24 GB» con la RAM de todos los servidores que responden.
+  String _driveRamLabel() {
+    final mem = _health?['mem'];
+    if (mem is! Map) return '—';
+    final used = mem['usedBytes'];
+    final total = mem['totalBytes'];
+    if (used is! num || total is! num || total <= 0) return '—';
+    return '${hsBytes(used.toDouble())} / ${hsBytes(total.toDouble())}';
+  }
+
+  /// Aviso de la conexión local automática (respaldo por red).
+  Widget _fallbackCard() {
+    final scheme = Theme.of(context).colorScheme;
+    return _SectionCard(
+      title: 'Conexión local automática',
+      children: [
+        Text(
+          'El nombre público no respondió desde esta red (certificado del '
+          'router o NAT), así que la app está usando la dirección local '
+          '${DriveHost.lanFallback}. Funciona mientras estés en la red de la '
+          'oficina.',
+          style: TextStyle(
+            fontSize: 12.5,
+            height: 1.35,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () {
+            DriveHost.clearFallback();
+            setState(() {});
+            _check();
+          },
+          icon: const Icon(Icons.public_outlined, size: 18),
+          label: Text('Volver a ${DriveHost.compiled}'),
+        ),
       ],
     );
   }
@@ -1383,7 +1610,6 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
   late final TextEditingController _url;
   late final TextEditingController _priority;
   late final TextEditingController _notes;
-  late final Set<int> _depends;
   bool _saving = false;
   String? _error;
 
@@ -1397,19 +1623,6 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
     _url = TextEditingController(text: (n['url'] ?? '').toString());
     _priority = TextEditingController(text: (n['priority'] ?? 100).toString());
     _notes = TextEditingController(text: (n['notes'] ?? '').toString());
-    _depends = {
-      for (final id in (n['dependsOn'] as List?) ?? const [])
-        if (id is num) id.toInt(),
-    };
-  }
-
-  /// Los otros servidores (un servidor no puede depender de sí mismo).
-  List<Map<String, dynamic>> get _others {
-    final self = (widget.node?['id'] as num?)?.toInt();
-    return [
-      for (final n in widget.siblings)
-        if ((n['id'] as num?)?.toInt() != self) n,
-    ];
   }
 
   @override
@@ -1447,7 +1660,6 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
           url: url,
           priority: priority,
           notes: _notes.text.trim(),
-          dependsOn: _depends.toList()..sort(),
         );
       } else {
         await HsApi.createDriveNode(
@@ -1455,7 +1667,6 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
           url: url,
           priority: priority,
           notes: _notes.text.trim(),
-          dependsOn: _depends.toList()..sort(),
         );
       }
       if (!mounted) return;
@@ -1522,36 +1733,165 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
         TextField(
           controller: _notes,
           decoration: const InputDecoration(
-            labelText: 'Notas (opcional)',
+            // Se ve en la CARD del servidor, así que se llama descripción.
+            labelText: 'Descripción (opcional)',
             hintText: 'Disco de 2 TB en la bodega',
+            helperText: 'Se muestra en la card del servidor, en el diagrama',
             prefixIcon: Icon(Icons.notes_outlined),
           ),
           onSubmitted: (_) => _save(),
         ),
-        // ===== Dependencias =====
-        // Un servidor puede DEPENDER de otro (o de varios, y mutuamente). Si
-        // el otro deja de responder, éste queda en mantenimiento: el hub deja
-        // de usarlo y el Drive avisa en vez de enseñar medio árbol.
-        if (_others.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            'Depende de',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+        // Las DEPENDENCIAS ya no viven aquí: tienen su propio modal (menú ⋯ →
+        // «Dependencias»), porque dentro del formulario no se podían marcar
+        // bien y se guardaban sin que se notara.
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+            borderRadius: BorderRadius.circular(10),
           ),
-          const SizedBox(height: 2),
-          Text(
-            'Sin marcar ninguno, este servidor es INDEPENDIENTE (diferencia). '
-            'Marcando uno o varios queda UNIFICADO con ellos: si alguno deja '
-            'de responder, ESTE entra en mantenimiento y el Drive lo dice. '
-            'Puede ser mutuo (los dos se dependen).',
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.35,
-              color: scheme.onSurfaceVariant,
-            ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.account_tree_outlined,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Para unificar o separar servidores usa el menú ⋯ de su card → '
+                  '«Dependencias».',
+                  style: const TextStyle(fontSize: 12, height: 1.3),
+                ),
+              ),
+            ],
           ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .08),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'El servidor nuevo se puede usar en cuanto esté en línea. Las '
+                  'carpetas que ya existen NO se mueven: se siguen viendo desde '
+                  'donde están.',
+                  style: const TextStyle(fontSize: 12, height: 1.35),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// DEPENDENCIAS de un servidor, en su propio modal.
+///
+/// Antes vivían dentro de «Editar servidor»: en un formulario largo no se
+/// veían, se marcaban sin querer y el guardado no se notaba. Aquí es lo único
+/// que hay, con el estado actual ya marcado.
+class _DependenciesDialog extends StatefulWidget {
+  const _DependenciesDialog({required this.node, required this.siblings});
+
+  /// El servidor al que se le configuran las dependencias.
+  final Map<String, dynamic> node;
+
+  /// Todos los servidores (se descarta él mismo).
+  final List<Map<String, dynamic>> siblings;
+
+  @override
+  State<_DependenciesDialog> createState() => _DependenciesDialogState();
+}
+
+class _DependenciesDialogState extends State<_DependenciesDialog> {
+  late final Set<int> _depends;
+  bool _saving = false;
+  String? _error;
+
+  int get _id => (widget.node['id'] as num).toInt();
+  String get _name => (widget.node['name'] ?? 'Servidor').toString();
+
+  /// Los otros servidores (no puede depender de sí mismo).
+  List<Map<String, dynamic>> get _others => [
+    for (final n in widget.siblings)
+      if ((n['id'] as num?)?.toInt() != _id) n,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _depends = {
+      for (final id in (widget.node['dependsOn'] as List?) ?? const [])
+        if (id is num) id.toInt(),
+    };
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await HsApi.updateDriveNode(
+        id: _id,
+        dependsOn: _depends.toList()..sort(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return FormDialog(
+      icon: Icons.account_tree_outlined,
+      title: 'Dependencias de $_name',
+      subtitle: 'Unificar con otros servidores o dejarlo independiente.',
+      saveLabel: 'Guardar dependencias',
+      saving: _saving,
+      error: _error,
+      maxWidth: 520,
+      onCancel: () => Navigator.of(context).pop(false),
+      onSave: _save,
+      children: [
+        Text(
+          'Sin marcar ninguno, este servidor es INDEPENDIENTE (diferencia). '
+          'Marcando uno o varios queda UNIFICADO con ellos: si alguno deja de '
+          'responder, ESTE entra en mantenimiento y el Drive lo dice. Puede ser '
+          'mutuo (los dos se dependen).',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.35,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (_others.isEmpty)
+          Text(
+            'Es el único servidor registrado: no hay otro del que depender.',
+            style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+          )
+        else
           for (final other in _others)
             CheckboxListTile(
               key: ValueKey('drive-node-dep-${other['id']}'),
@@ -1561,7 +1901,7 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
               controlAffinity: ListTileControlAffinity.leading,
               title: Text(
                 (other['name'] ?? 'Servidor').toString(),
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 13.5),
               ),
               subtitle: Text(
                 (other['url'] ?? '').toString(),
@@ -1582,12 +1922,140 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
                 }
               }),
             ),
-        ],
+        const SizedBox(height: 8),
+        Text(
+          _depends.isEmpty
+              ? 'Ahora mismo: independiente.'
+              : 'Ahora mismo: unificado con '
+                    '${_depends.length} servidor${_depends.length == 1 ? '' : 'es'}.',
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: scheme.primary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Configuración del HUB (dirección del Drive) en su propio modal.
+///
+/// El panel SIEMPRE habla con el hub: su dirección es una opción DEL HUB, así
+/// que se edita aquí y no en una sección suelta de la pantalla.
+class _HubConfigDialog extends StatefulWidget {
+  const _HubConfigDialog({
+    required this.current,
+    required this.compiled,
+    required this.publicHttp,
+    required this.lanFallback,
+    required this.onSave,
+  });
+
+  /// Dirección propia guardada ('' = usar la de fábrica).
+  final String current;
+  final String compiled;
+  final String publicHttp;
+  final String lanFallback;
+  final Future<String?> Function(String text) onSave;
+
+  @override
+  State<_HubConfigDialog> createState() => _HubConfigDialogState();
+}
+
+class _HubConfigDialogState extends State<_HubConfigDialog> {
+  late final TextEditingController _ctrl;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.current);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _apply(String text) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final error = await widget.onSave(text);
+    if (!mounted) return;
+    if (error != null) {
+      setState(() {
+        _saving = false;
+        _error = error;
+      });
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return FormDialog(
+      icon: Icons.hub_outlined,
+      title: 'Hub del Drive',
+      subtitle: 'Dirección con la que el panel llega al hub.',
+      saveLabel: 'Guardar dirección',
+      saving: _saving,
+      error: _error,
+      maxWidth: 520,
+      onCancel: () => Navigator.of(context).pop(),
+      onSave: () => _apply(_ctrl.text),
+      footer: [
+        TextButton(
+          key: const ValueKey('hub-address-reset'),
+          onPressed: _saving
+              ? null
+              : () {
+                  _ctrl.text = '';
+                  _apply('');
+                },
+          child: const Text('Usar la de fábrica'),
+        ),
+      ],
+      children: [
+        TextField(
+          key: const ValueKey('hub-address-field'),
+          controller: _ctrl,
+          autofocus: true,
+          autocorrect: false,
+          keyboardType: TextInputType.url,
+          decoration: InputDecoration(
+            labelText: 'Dirección del Drive',
+            hintText: widget.compiled,
+            prefixIcon: const Icon(Icons.dns_outlined),
+            helperText: 'Vacío = la de fábrica (${widget.compiled})',
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: _apply,
+        ),
         const SizedBox(height: 12),
+        Text(
+          'Si el nombre público no responde desde esta red (certificado del '
+          'router o NAT), la app prueba sola el mismo nombre por HTTP directo '
+          '(${widget.publicHttp}) y la dirección local '
+          '(${widget.lanFallback}). Aquí solo se cambia si el hub está en otra '
+          'dirección.',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.35,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: scheme.primary.withValues(alpha: .08),
+            color: scheme.primary.withValues(alpha: .07),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
@@ -1597,10 +2065,10 @@ class _DriveNodeDialogState extends State<_DriveNodeDialog> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'El servidor nuevo se puede usar en cuanto esté en línea. Las '
-                  'carpetas que ya existen NO se mueven: se siguen viendo desde '
-                  'donde están.',
-                  style: const TextStyle(fontSize: 12, height: 1.35),
+                  'Los servidores de archivos NO se abren a internet: solo el '
+                  'hub los alcanza. Sus direcciones van en «Servidores del '
+                  'Drive».',
+                  style: const TextStyle(fontSize: 12, height: 1.3),
                 ),
               ),
             ],

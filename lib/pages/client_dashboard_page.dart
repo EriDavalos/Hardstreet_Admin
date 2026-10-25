@@ -1156,13 +1156,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: next ?? const SizedBox.shrink(),
-                      ),
-                      if (money != null) ...[
-                        const SizedBox(width: 10),
-                        money,
-                      ],
+                      Expanded(child: next ?? const SizedBox.shrink()),
+                      if (money != null) ...[const SizedBox(width: 10), money],
                     ],
                   ),
                   if (folder.isNotEmpty) ...[
@@ -1325,9 +1320,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         ),
         const SizedBox(height: 2),
         Text(
-          paidOff
-              ? 'Pagado ${_money(price)}'
-              : 'de ${_money(price)} · $pct %',
+          paidOff ? 'Pagado ${_money(price)}' : 'de ${_money(price)} · $pct %',
           style: TextStyle(
             color: Colors.white.withValues(alpha: .55),
             fontSize: 9.5,
@@ -1422,9 +1415,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   }
 
   static String _serviceName(Map<String, dynamic> s) =>
-      ((s['service'] is Map
-              ? ((s['service'] as Map)['name'] ?? '')
-              : ''))
+      ((s['service'] is Map ? ((s['service'] as Map)['name'] ?? '') : ''))
           .toString();
 
   /// Ordena una etapa: primero por su criterio, y a igualdad por nombre.
@@ -1436,9 +1427,9 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       ..sort((a, b) {
         final byRank = compare(a, b);
         if (byRank != 0) return byRank;
-        return _serviceName(
-          a,
-        ).toLowerCase().compareTo(_serviceName(b).toLowerCase());
+        return _serviceName(a)
+            .toLowerCase()
+            .compareTo(_serviceName(b).toLowerCase());
       });
     return out;
   }
@@ -1495,15 +1486,12 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         return _statusOrder(a).compareTo(_statusOrder(b));
       },
     );
-    final completed = _sorted(
-      visible.where(_isDone),
-      (a, b) {
-        final ra = _actionRank(a);
-        final rb = _actionRank(b);
-        if (ra != rb) return ra.compareTo(rb);
-        return (_items(a) > 0 ? 0 : 1).compareTo(_items(b) > 0 ? 0 : 1);
-      },
-    );
+    final completed = _sorted(visible.where(_isDone), (a, b) {
+      final ra = _actionRank(a);
+      final rb = _actionRank(b);
+      if (ra != rb) return ra.compareTo(rb);
+      return (_items(a) > 0 ? 0 : 1).compareTo(_items(b) > 0 ? 0 : 1);
+    });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1593,7 +1581,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             _serviceGroup(
               scheme,
               title: 'En proceso',
-              subtitle: 'Lo que estamos preparando. Arriba, lo que ya puedes '
+              subtitle:
+                  'Lo que estamos preparando. Arriba, lo que ya puedes '
                   'abrir.',
               icon: Icons.pending_actions_outlined,
               accent: const Color(0xFF3B82F6),
@@ -1662,9 +1651,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   height: 26,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: highlight
-                        ? accent
-                        : accent.withValues(alpha: .13),
+                    color: highlight ? accent : accent.withValues(alpha: .13),
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: accent.withValues(alpha: highlight ? .95 : .42),
@@ -2053,20 +2040,17 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             ),
           )
         : null;
-    final send = pickOn && items > 0 && !sentToPrint
-        ? OutlinedButton.icon(
-            onPressed: () => _sendToPrint(service, name),
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              textStyle: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            icon: const Icon(Icons.send_rounded, size: 16),
-            label: const Text('Enviar a impresión'),
+    // El ENVÍO es el SIGUIENTE PASO: el cliente ya eligió sus fotos y todavía
+    // no las ha mandado. Va en su propio bloque destacado —arriba de la fila y
+    // con botón lleno— para que no se quede con la selección hecha creyendo
+    // que con elegirlas ya está: falta tocar «Enviar a impresión».
+    final nextStep = pickOn && items > 0 && !sentToPrint
+        ? _sendNextStep(
+            scheme: scheme,
+            name: name,
+            items: items,
+            compact: compact,
+            onSend: () => _sendToPrint(service, name),
           )
         : null;
     final chip = sentToPrint
@@ -2140,8 +2124,13 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-      child: compact
-          ? Column(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // El siguiente paso, primero y a lo ancho.
+          if (nextStep != null) ...[nextStep, const SizedBox(height: 8)],
+          if (compact)
+            Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (pick != null && folder != null)
@@ -2156,7 +2145,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   SizedBox(width: double.infinity, child: pick)
                 else if (folder != null)
                   SizedBox(width: double.infinity, child: folder),
-                if (send != null) ...[const SizedBox(height: 8), send],
                 if (chip != null) ...[
                   const SizedBox(height: 8),
                   Align(alignment: Alignment.centerLeft, child: chip),
@@ -2167,12 +2155,117 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 ],
               ],
             )
-          : Wrap(
+          else
+            Wrap(
               spacing: 6,
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
-              children: [?pick, ?send, ?chip, ?folder, ?link],
+              children: [?pick, ?chip, ?folder, ?link],
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Bloque del SIGUIENTE PASO: el cliente ya marcó sus fotos y falta que las
+  /// ENVÍE. Se destaca sobre el resto de las acciones (borde de color, rótulo
+  /// «Siguiente paso» y botón lleno) para que no se quede con la selección
+  /// hecha sin mandarla a imprimir.
+  Widget _sendNextStep({
+    required ColorScheme scheme,
+    required String name,
+    required int items,
+    required bool compact,
+    required VoidCallback onSend,
+  }) {
+    const accent = Color(0xFF2F6BFF);
+    final fotos = items == 1 ? '1 foto elegida' : '$items fotos elegidas';
+    return Container(
+      key: const ValueKey('client-send-next-step'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: .55), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'SIGUIENTE PASO',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        letterSpacing: .9,
+                        fontWeight: FontWeight.w900,
+                        color: accent,
+                      ),
+                    ),
+                    Text(
+                      'Envía tus fotos a impresión',
+                      style: TextStyle(
+                        fontSize: compact ? 13 : 14,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$fotos de «$name». Tu fotógrafo las recibe cuando toques '
+            '«Enviar a impresión»: hasta entonces no se imprimen.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.35,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 9),
+          SizedBox(
+            height: 46,
+            child: FilledButton.icon(
+              key: const ValueKey('client-send-button'),
+              onPressed: onSend,
+              style: FilledButton.styleFrom(
+                backgroundColor: accent,
+                foregroundColor: Colors.white,
+                textStyle: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              icon: const Icon(Icons.send_rounded, size: 19),
+              label: const Text('Enviar a impresión'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

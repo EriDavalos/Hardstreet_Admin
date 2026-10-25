@@ -92,7 +92,7 @@ void main() {
       await _pump(tester, DriveStatusCard(drive: drive, compact: true));
 
       expect(find.textContaining('En línea'), findsOneWidget);
-      expect(find.textContaining('oriongo.ddns.net:4100'), findsOneWidget);
+      expect(find.textContaining('oriongo.ddns.net'), findsOneWidget);
       expect(find.textContaining('820 ms'), findsOneWidget);
     },
   );

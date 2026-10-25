@@ -16,7 +16,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | **Notificaciones** | ✅ Módulo nuevo: **qué roles reciben cada aviso** (agenda próxima, fotos disponibles, envío de fotos, servicio/paquete terminado, impresión lista) y **envío de avisos manuales** a los roles elegidos. Cada aviso lleva su MÓDULO: al tocarlo en la campanita, el panel abre esa pantalla. Requiere la migración `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` |
-| **Conexión** | ✅ **SOLO el Superadministrador** (usuario 1, rol Superadmin): los servidores del Drive en una **tabla** (estado, versión, prioridad, bibliotecas, espacio, ping, de quién depende), con terminal del servicio, reinicio y subida de archivos al proyecto. Ver *Conexión: servidores del Drive* |
+| **Conexión** | ✅ **SOLO el Superadministrador** (usuario 1, rol Superadmin): los servidores del Drive en un **diagrama interactivo** (hub central + cards con estado, versión, prioridad, bibliotecas, espacio, ping y dependencias), con terminal del servicio, reinicio y subida de archivos al proyecto. Ver *Conexión: servidores del Drive* |
 | Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
@@ -255,6 +255,16 @@ En "Mi paquete" cada servicio muestra sus acciones en **UNA fila deslizable**
 cada una solo si su opción está encendida. El estudio ve lo compartido,
 cuántos elementos eligió el cliente y qué opciones tiene encendidas cada
 servicio en la pestaña Servicios del paquete.
+
+**El envío se destaca como SIGUIENTE PASO.** Cuando el cliente ya marcó sus
+fotos y todavía no las ha enviado, arriba de las acciones del servicio sale un
+bloque propio —borde azul, rótulo **SIGUIENTE PASO** y una flecha— que dice
+«Envía tus fotos a impresión», cuántas fotos lleva elegidas y que su fotógrafo
+las recibe al enviarlas; el botón **Enviar a impresión** va ahí, lleno y a todo
+lo ancho (antes era un botón de contorno más, y el cliente se quedaba con la
+selección hecha creyendo que ya estaba). Al enviarlas el bloque desaparece y
+quedan solo *Ver fotos (N)* y el aviso «Enviadas». Sin fotos elegidas no hay
+bloque: no hay nada que mandar.
 
 ### Banner de la portada (Mostrar banner cliente)
 
@@ -956,17 +966,39 @@ qué hacer, en vez de mostrar el texto crudo.
 lo exige en su cuenta (`/api/admin/drive-nodes` responde 403 a cualquier otro)
 y el panel ni siquiera dibuja el módulo en el menú.
 
-Los servidores se ven como una **tabla** (la de `drive_nodes`), una columna por
-dato: **servidor** (nombre, dirección, notas), **estado** (En línea / Sin
-respuesta / Mantenimiento / Apagado / Sin comprobar, con el motivo debajo),
-**versión**, **prioridad**, **bibliotecas** (`sharp` y `ffmpeg` con ✓/✕),
-**espacio** (libre / total con su barra), **ping** (lo que tardó ese servidor en
-contestar, medido por el hub), **depende de** y las **acciones**. En pantalla
-angosta son tarjetas con los mismos datos.
+Los servidores se ven como un **diagrama de red interactivo** (no una tabla):
+el **HUB** aparece como el router central, arriba, con una línea a **cada**
+servidor; cada servidor es una **card** con toda su ficha —**nombre,
+dirección, notas**, **estado** (En línea / Sin respuesta / Mantenimiento /
+Apagado / Sin comprobar, con el motivo debajo), **versión**, **prioridad**,
+**bibliotecas** (`sharp` y `ffmpeg` con ✓/✕), **espacio** (libre / total con su
+barra), **RAM consumida** (usada / total con su barra, la informa cada nodo en
+su `/api/health`), **ping** (lo que tardó ese servidor en contestar, medido por
+el hub), su **descripción** (las notas del servidor, visibles en la card) y
+**de quién depende**—. Las líneas del hub van **punteadas** cuando ese servidor
+no responde, así se ve el tramo roto de un vistazo.
 
-El menú **⋯** de cada fila trae: *Editar*, *Ver terminal*, *Reiniciar servicio*,
-*Subir al proyecto*, *Apagar/Encender* y *Quitar*.
+En computadora la pantalla va en **dos columnas**: a la izquierda queda **solo
+el diagrama** (y los avisos que explican por qué no carga); el **estado del
+HUB** —«Hub conectado» / «Hub sin respuesta», cuántos servidores están en
+línea y la latencia, con el botón *Probar*— ya no ocupa una tarjeta encima del
+diagrama: va en el panel fijo de la derecha, junto a la **dirección del Drive**
+con *Configurar hub*, los **detalles de la conexión** y el aviso de conexión
+local. En pantalla angosta todo se apila.
 
+Se puede **hacer clic** en una card para iluminar SOLO sus conexiones (y volver
+a hacer clic para quitar), **arrastrarla** para reacomodar el diagrama y usar su
+menú **⋯**. En pantalla angosta no hay diagrama: son tarjetas con los mismos
+datos, una debajo de otra.
+
+El menú **⋯** de cada card trae: *Editar*, *Dependencias*, *Ver terminal*,
+*Reiniciar servicio*, *Subir al proyecto*, *Apagar/Encender* y *Quitar*.
+
+- **Dependencias** — un **modal propio** (ya no dentro de *Editar*): se marcan
+  los servidores de los que éste depende, se ve el resumen («independiente» o
+  «unificado con N servidores») y se guarda. Si la base no tiene todavía la
+  columna `depends_on`, el modal dice qué migración ejecutar en vez de guardar
+  sin avisar.
 - **Ver terminal** — el log del servicio (`journalctl -u hardstreet-drive -n
   400`), en una ventana oscura de **solo lectura** con *Actualizar* y
   *Reiniciar servicio*. No es una consola: no se escriben comandos.
@@ -976,14 +1008,30 @@ El menú **⋯** de cada fila trae: *Editar*, *Ver terminal*, *Reiniciar servici
   del servidor (`/home/orion/hardstreet-drive`). No reinicia: si cambiaste
   código, reinicia después.
 
+**Selección múltiple y subida en lote:** con *Seleccionar* cada card muestra
+su casilla; se marcan varios servidores y *Subir proyecto a los marcados* elige
+los archivos **una vez** y los manda a cada uno (el resumen dice a cuántos llegó
+y cuáles fallaron).
+
+**La dirección del Drive se configura en el HUB**, no suelta en la página:
+botón ⚙ de la card del hub (o *Configurar hub* en el panel lateral) abre su
+modal, con *Guardar dirección* y *Usar la de fábrica*
+(`https://oriongo.ddns.net`).
+
 El panel **no** guarda ningún secreto: pide al hub (`/api/admin/node/:id/...`),
 el hub comprueba con el backend que la sesión es del Superadministrador y solo
-entonces reenvía al servidor con su `DRIVE_HUB_TOKEN`.
+entonces reenvía al servidor con su `DRIVE_HUB_TOKEN`. Ese secreto va en el
+`.env` de **cada servidor de archivos** (`/home/orion/hardstreet-drive/.env`),
+en el del hub y en el backend, siempre con el mismo valor; el servidor lo dice
+en el error de la terminal si falta.
 
 ### Dependencia entre servidores (mantenimiento)
 
-En *Editar → **Depende de*** se marcan los servidores de los que éste depende
-(puede ser mutuo). Si uno de ellos **no responde**, este queda **bloqueado**: el
+En *⋯ → **Dependencias*** se marcan los servidores de los que éste depende
+(puede ser mutuo). En el diagrama cada dependencia es una **línea entre las dos
+cards** con flecha hacia el servidor del que se depende; si es **mutua**, la
+línea lleva flecha en **ambas puntas** (una sola línea, no dos). Si uno de ellos
+**no responde**, este queda **bloqueado**: el
 hub deja de listar, leer y guardar ahí, y el Drive muestra una tarjeta ámbar
 **Mantenimiento** con el motivo, en vez de enseñar un árbol a medias. Los
 servidores independientes siguen funcionando. Al volver el servidor caído, el

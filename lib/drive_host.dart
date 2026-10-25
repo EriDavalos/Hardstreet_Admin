@@ -1,7 +1,7 @@
 /// Dirección del servidor del DRIVE, editable en la app.
 ///
 /// El panel llega al HUB por su nombre público
-/// ([compiled] = `http://oriongo.ddns.net:4100`, o el que se pase con
+/// ([compiled] = `https://oriongo.ddns.net`, o el que se pase con
 /// `--dart-define=DRIVE_API=…`). Ese nombre funciona desde internet, pero
 /// DENTRO de la red de la oficina no siempre: el router no devuelve las
 /// conexiones a su propia IP pública (NAT loopback) y contesta él con su
@@ -17,11 +17,10 @@ class DriveHost {
 
   /// La dirección de fábrica (la que trae la build).
   ///
-  /// Va por **HTTP**: el hub escucha en ese puerto SIN TLS. Apuntar a
-  /// `https://…:4100` hacía que la app no arrancara con
-  /// `HandshakeException … WRONG_VERSION_NUMBER` (el cliente hablaba TLS con un
-  /// servidor que solo habla HTTP). El HTTPS del mismo nombre está en el 443
-  /// (el servidor de archivos), y es el que usan las fotos públicas.
+  /// Es el nombre público por **HTTPS** (sin puerto: 443). Desde ahí se sirve
+  /// el hub y también las fotos públicas. El respaldo [publicHttp] existe solo
+  /// para cuando el TLS falla (certificado del router, NAT loopback): apunta al
+  /// MISMO nombre por HTTP en [hubPort].
   static const String compiled = String.fromEnvironment(
     'DRIVE_API',
     defaultValue: 'https://oriongo.ddns.net',
