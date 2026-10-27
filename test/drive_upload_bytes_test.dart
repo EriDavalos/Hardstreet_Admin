@@ -18,10 +18,10 @@ import 'package:hardstreet_admin/hs_api.dart';
 /// rechaza el proxy del servidor con 413 (una página HTML "Request Entity Too
 /// Large") y, si se corta a mitad, había que empezar la foto entera otra vez.
 http.Response _json(Object body) => http.Response(
-      jsonEncode(body),
-      200,
-      headers: {'content-type': 'application/json'},
-    );
+  jsonEncode(body),
+  200,
+  headers: {'content-type': 'application/json'},
+);
 
 /// Deja las subidas apuntando al cliente de prueba (en la app abren su propio
 /// cliente HTTP, que sin esto saldría a la red de verdad).
@@ -43,13 +43,18 @@ void main() {
 
   test('la foto del selector se sube por BYTES (sin tocar el disco)', () async {
     final uploads = <http.Request>[];
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      uploads.add(r);
-      return _json({'saved': 1, 'names': ['foto.jpg']});
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        uploads.add(r);
+        return _json({
+          'saved': 1,
+          'names': ['foto.jpg'],
+        });
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final bytes = Uint8List.fromList(List<int>.filled(64, 7));
     // La "ruta" NO existe en el disco (en el navegador es una URL de Blob):
@@ -81,25 +86,127 @@ void main() {
     expect(drive.uploadJobs.single.status, 'done');
   });
 
+  test(
+    'cada subida dice el NOMBRE y si REEMPLAZA (lo necesita el hub)',
+    () async {
+      // Con varios servidores, el hub elige destino por el nombre: si ya existe
+      // en uno, la subida va a ESE (y con `overwrite` lo reemplaza). Sin el
+      // nombre no puede hacer ninguna de las dos cosas.
+      DriveApiService.chunkThreshold = 4096;
+      final uploads = <http.Request>[];
+      _mockUploads(
+        MockClient((r) async {
+          if (r.url.path.endsWith('/api/drive')) {
+            return _json({'folders': [], 'files': []});
+          }
+          uploads.add(r);
+          return _json({
+            'saved': 1,
+            'names': ['foto.jpg'],
+          });
+        }),
+      );
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      final bytes = Uint8List.fromList(List<int>.filled(8, 1));
+      XFile photo() => XFile.fromData(
+        bytes,
+        name: 'foto.jpg',
+        path: 'no-existe/foto.jpg',
+        length: bytes.length,
+      );
+
+      await drive.uploadFromFiles([photo()]);
+      await drive.uploadFromFiles([photo()], overwrite: true);
+
+      final ups = uploads
+          .where((r) => r.url.path.endsWith('/api/upload'))
+          .toList();
+      expect(ups, hasLength(2));
+      expect(ups[0].url.queryParameters['name'], 'foto.jpg');
+      expect(
+        ups[0].url.queryParameters['overwrite'],
+        isNull,
+        reason: 'sin «Sobrescribir» el nodo lo renombra',
+      );
+      expect(ups[1].url.queryParameters['name'], 'foto.jpg');
+      expect(ups[1].url.queryParameters['overwrite'], '1');
+    },
+  );
+
+  test(
+    'por trozos también viajan el nombre y la intención de reemplazar',
+    () async {
+      DriveApiService.chunkThreshold = 8;
+      DriveApiService.chunkSize = 4;
+      final chunks = <http.Request>[];
+      http.Request? finish;
+      _mockUploads(
+        MockClient((r) async {
+          if (r.url.path.endsWith('/api/drive')) {
+            return _json({'folders': [], 'files': []});
+          }
+          if (r.url.path.endsWith('/api/upload/chunk')) {
+            chunks.add(r);
+            return _json({'received': chunks.length});
+          }
+          if (r.url.path.endsWith('/api/upload/finish')) {
+            finish = r;
+            return _json({
+              'saved': 1,
+              'names': ['foto.jpg'],
+            });
+          }
+          fail('petición inesperada: ${r.url}');
+        }),
+      );
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      final bytes = Uint8List.fromList(List<int>.generate(10, (i) => i + 1));
+
+      await drive.uploadFromFiles([
+        XFile.fromData(
+          bytes,
+          name: 'foto.jpg',
+          path: 'no-existe/foto.jpg',
+          length: 10,
+        ),
+      ], overwrite: true);
+
+      expect(chunks, hasLength(3));
+      for (final c in chunks) {
+        expect(c.url.queryParameters['name'], 'foto.jpg');
+        expect(c.url.queryParameters['overwrite'], '1');
+      }
+      final body = jsonDecode(finish!.body) as Map<String, dynamic>;
+      expect(body['name'], 'foto.jpg');
+      expect(body['overwrite'], isTrue);
+    },
+  );
+
   test('una foto GRANDE viaja en TROZOS y el servidor la arma', () async {
     DriveApiService.chunkThreshold = 8;
     DriveApiService.chunkSize = 4;
     final chunks = <int, List<int>>{};
     var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        chunks[int.parse(r.url.queryParameters['index']!)] = r.bodyBytes;
-        return _json({'received': chunks.length, 'total': 3});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['grande.jpg'], 'size': 10});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        if (r.url.path.endsWith('/api/upload/chunk')) {
+          chunks[int.parse(r.url.queryParameters['index']!)] = r.bodyBytes;
+          return _json({'received': chunks.length, 'total': 3});
+        }
+        if (r.url.path.endsWith('/api/upload/finish')) {
+          finished = true;
+          return _json({
+            'saved': 1,
+            'names': ['grande.jpg'],
+            'size': 10,
+          });
+        }
+        fail('petición inesperada: ${r.url}');
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final data = List<int>.generate(10, (i) => i + 1);
     final file = XFile.fromData(
@@ -114,60 +221,75 @@ void main() {
     expect(saved, 1);
     expect(chunks.keys.toList()..sort(), [0, 1, 2]);
     expect(
-      [for (final i in [0, 1, 2]) ...chunks[i]!],
+      [
+        for (final i in [0, 1, 2]) ...chunks[i]!,
+      ],
       data,
       reason: 'los trozos juntos son la foto original, en orden',
     );
     expect(finished, isTrue, reason: 'el último paso arma la foto');
-    expect(drive.uploadJobs.single.sent, 10,
-        reason: 'el progreso termina en el 100% del archivo');
-  });
-
-  test('si el proxy rechaza el trozo (413), la subida se rehace más chica',
-      () async {
-    DriveApiService.chunkThreshold = 8;
-    DriveApiService.chunkSize = 8;
-    final sizes = <int>[];
-    final pieces = <int>[];
-    var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        sizes.add(r.bodyBytes.length);
-        pieces.add(int.parse(r.url.queryParameters['index']!));
-        // El proxy solo acepta cuerpos de 2 bytes (nginx de mentira).
-        if (r.bodyBytes.length > 2) {
-          return http.Response('<html>413 Request Entity Too Large</html>', 413);
-        }
-        return _json({'received': pieces.length, 'total': 0});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['grande.jpg'], 'size': 12});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
-    final drive = DriveApiService(baseUrl: 'http://drive.test');
-    final data = List<int>.generate(12, (i) => i);
-    final file = XFile.fromData(
-      Uint8List.fromList(data),
-      name: 'grande.jpg',
-      path: 'no-existe/grande.jpg',
-      length: data.length,
+    expect(
+      drive.uploadJobs.single.sent,
+      10,
+      reason: 'el progreso termina en el 100% del archivo',
     );
-
-    final saved = await drive.uploadFromFiles([file]);
-
-    expect(saved, 1, reason: 'la foto termina subiendo');
-    expect(sizes.last, 2, reason: 'los trozos que pasan son los chicos');
-    expect(finished, isTrue, reason: 'el servidor la arma al final');
-    expect(drive.uploadJobs.single.sent, 12);
   });
 
-  test('si el proxy rechaza la foto "pequeña" (413), se rehace EN TROZOS',
-      () async {
+  test(
+    'si el proxy rechaza el trozo (413), la subida se rehace más chica',
+    () async {
+      DriveApiService.chunkThreshold = 8;
+      DriveApiService.chunkSize = 8;
+      final sizes = <int>[];
+      final pieces = <int>[];
+      var finished = false;
+      _mockUploads(
+        MockClient((r) async {
+          if (r.url.path.endsWith('/api/drive')) {
+            return _json({'folders': [], 'files': []});
+          }
+          if (r.url.path.endsWith('/api/upload/chunk')) {
+            sizes.add(r.bodyBytes.length);
+            pieces.add(int.parse(r.url.queryParameters['index']!));
+            // El proxy solo acepta cuerpos de 2 bytes (nginx de mentira).
+            if (r.bodyBytes.length > 2) {
+              return http.Response(
+                '<html>413 Request Entity Too Large</html>',
+                413,
+              );
+            }
+            return _json({'received': pieces.length, 'total': 0});
+          }
+          if (r.url.path.endsWith('/api/upload/finish')) {
+            finished = true;
+            return _json({
+              'saved': 1,
+              'names': ['grande.jpg'],
+              'size': 12,
+            });
+          }
+          fail('petición inesperada: ${r.url}');
+        }),
+      );
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      final data = List<int>.generate(12, (i) => i);
+      final file = XFile.fromData(
+        Uint8List.fromList(data),
+        name: 'grande.jpg',
+        path: 'no-existe/grande.jpg',
+        length: data.length,
+      );
+
+      final saved = await drive.uploadFromFiles([file]);
+
+      expect(saved, 1, reason: 'la foto termina subiendo');
+      expect(sizes.last, 2, reason: 'los trozos que pasan son los chicos');
+      expect(finished, isTrue, reason: 'el servidor la arma al final');
+      expect(drive.uploadJobs.single.sent, 12);
+    },
+  );
+
+  test('si el proxy rechaza la foto "pequeña" (413), se rehace EN TROZOS', () async {
     // El límite del proxy puede ser MÁS bajo que el umbral de la app: una foto
     // de 40 bytes en una sola petición recibía la página HTML del 413 y, tras
     // tres intentos idénticos, quedaba en error (aunque las grandes subían
@@ -175,27 +297,33 @@ void main() {
     final whole = <http.Request>[];
     var chunks = 0;
     var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload')) {
-        whole.add(r);
-        return http.Response(
-          '<html><head><title>413 Request Entity Too Large</title></head></html>',
-          413,
-        );
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        chunks++;
-        return _json({'received': chunks, 'total': 1});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['pequena.jpg'], 'size': 40});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        if (r.url.path.endsWith('/api/upload')) {
+          whole.add(r);
+          return http.Response(
+            '<html><head><title>413 Request Entity Too Large</title></head></html>',
+            413,
+          );
+        }
+        if (r.url.path.endsWith('/api/upload/chunk')) {
+          chunks++;
+          return _json({'received': chunks, 'total': 1});
+        }
+        if (r.url.path.endsWith('/api/upload/finish')) {
+          finished = true;
+          return _json({
+            'saved': 1,
+            'names': ['pequena.jpg'],
+            'size': 40,
+          });
+        }
+        fail('petición inesperada: ${r.url}');
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final bytes = Uint8List.fromList(List<int>.filled(40, 5));
     final file = XFile.fromData(
@@ -208,41 +336,49 @@ void main() {
     final saved = await drive.uploadFromFiles([file]);
 
     expect(saved, 1, reason: 'la foto termina guardada');
-    expect(whole, hasLength(1),
-        reason: 'un solo intento entero, no los tres reintentos a ciegas');
+    expect(
+      whole,
+      hasLength(1),
+      reason: 'un solo intento entero, no los tres reintentos a ciegas',
+    );
     expect(chunks, 1, reason: 'la foto se rehace en trozos');
     expect(finished, isTrue, reason: 'el servidor la arma al final');
     expect(drive.uploadJobs.single.status, 'done');
     expect(drive.uploadJobs.single.sent, 40);
   });
 
-  test('una página HTML del proxy (502) también lleva la foto a trozos',
-      () async {
+  test('una página HTML del proxy (502) también lleva la foto a trozos', () async {
     // El cuerpo HTML no lo escribe el drive: es el proxy. Si cortó la petición
     // entera, la foto va en trozos (así también se cubre el wifi con login o el
     // túnel que devuelven su propia página en vez de un 413 limpio).
     var chunks = 0;
     var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload')) {
-        return http.Response(
-          '<html><body>502 Bad Gateway</body></html>',
-          502,
-        );
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        chunks++;
-        return _json({'received': chunks, 'total': 1});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['foto.jpg'], 'size': 9});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        if (r.url.path.endsWith('/api/upload')) {
+          return http.Response(
+            '<html><body>502 Bad Gateway</body></html>',
+            502,
+          );
+        }
+        if (r.url.path.endsWith('/api/upload/chunk')) {
+          chunks++;
+          return _json({'received': chunks, 'total': 1});
+        }
+        if (r.url.path.endsWith('/api/upload/finish')) {
+          finished = true;
+          return _json({
+            'saved': 1,
+            'names': ['foto.jpg'],
+            'size': 9,
+          });
+        }
+        fail('petición inesperada: ${r.url}');
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final file = XFile.fromData(
       Uint8List.fromList(List<int>.filled(9, 1)),
@@ -259,75 +395,88 @@ void main() {
     expect(drive.uploadJobs.single.status, 'done');
   });
 
-  test('en el navegador, el 413 del proxy llega como error de RED: trocea',
-      () async {
-    // nginx no pone las cabeceras CORS en su página "413 Request Entity Too
-    // Large": el navegador la bloquea y el cliente recibe `Failed to fetch`
-    // en vez del 413. Antes eso gastaba los tres reintentos subiendo la foto
-    // entera para volver a rebotar, y en web la subida quedaba en error.
-    var whole = 0;
-    var chunks = 0;
-    var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload')) {
-        whole++;
-        throw http.ClientException('Failed to fetch', r.url);
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        chunks++;
-        return _json({'received': chunks, 'total': 1});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['foto.jpg'], 'size': 40});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
-    final drive = DriveApiService(baseUrl: 'http://drive.test');
-    final bytes = Uint8List.fromList(List<int>.filled(40, 4));
-    final file = XFile.fromData(
-      bytes,
-      name: 'foto.jpg',
-      path: 'no-existe/foto.jpg',
-      length: bytes.length,
-    );
+  test(
+    'en el navegador, el 413 del proxy llega como error de RED: trocea',
+    () async {
+      // nginx no pone las cabeceras CORS en su página "413 Request Entity Too
+      // Large": el navegador la bloquea y el cliente recibe `Failed to fetch`
+      // en vez del 413. Antes eso gastaba los tres reintentos subiendo la foto
+      // entera para volver a rebotar, y en web la subida quedaba en error.
+      var whole = 0;
+      var chunks = 0;
+      var finished = false;
+      _mockUploads(
+        MockClient((r) async {
+          if (r.url.path.endsWith('/api/drive')) {
+            return _json({'folders': [], 'files': []});
+          }
+          if (r.url.path.endsWith('/api/upload')) {
+            whole++;
+            throw http.ClientException('Failed to fetch', r.url);
+          }
+          if (r.url.path.endsWith('/api/upload/chunk')) {
+            chunks++;
+            return _json({'received': chunks, 'total': 1});
+          }
+          if (r.url.path.endsWith('/api/upload/finish')) {
+            finished = true;
+            return _json({
+              'saved': 1,
+              'names': ['foto.jpg'],
+              'size': 40,
+            });
+          }
+          fail('petición inesperada: ${r.url}');
+        }),
+      );
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      final bytes = Uint8List.fromList(List<int>.filled(40, 4));
+      final file = XFile.fromData(
+        bytes,
+        name: 'foto.jpg',
+        path: 'no-existe/foto.jpg',
+        length: bytes.length,
+      );
 
-    final saved = await drive.uploadFromFiles([file]);
+      final saved = await drive.uploadFromFiles([file]);
 
-    expect(saved, 1, reason: 'la foto termina guardada');
-    expect(whole, 1, reason: 'un solo intento entero, no tres a ciegas');
-    expect(chunks, 1, reason: 'se rehace en trozos');
-    expect(finished, isTrue);
-    expect(drive.uploadJobs.single.status, 'done');
-  });
+      expect(saved, 1, reason: 'la foto termina guardada');
+      expect(whole, 1, reason: 'un solo intento entero, no tres a ciegas');
+      expect(chunks, 1, reason: 'se rehace en trozos');
+      expect(finished, isTrue);
+      expect(drive.uploadJobs.single.status, 'done');
+    },
+  );
 
-  test('un trozo que falla en ROJO (sin 413 legible) se rehace más chico',
-      () async {
+  test('un trozo que falla en ROJO (sin 413 legible) se rehace más chico', () async {
     DriveApiService.chunkThreshold = 8;
     DriveApiService.chunkSize = 8;
     final sizes = <int>[];
     var finished = false;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      if (r.url.path.endsWith('/api/upload/chunk')) {
-        sizes.add(r.bodyBytes.length);
-        // El navegador esconde el 413 del proxy: error de red, no respuesta.
-        if (r.bodyBytes.length > 4) {
-          throw http.ClientException('Failed to fetch', r.url);
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
         }
-        return _json({'received': sizes.length, 'total': 0});
-      }
-      if (r.url.path.endsWith('/api/upload/finish')) {
-        finished = true;
-        return _json({'saved': 1, 'names': ['grande.jpg'], 'size': 12});
-      }
-      fail('petición inesperada: ${r.url}');
-    }));
+        if (r.url.path.endsWith('/api/upload/chunk')) {
+          sizes.add(r.bodyBytes.length);
+          // El navegador esconde el 413 del proxy: error de red, no respuesta.
+          if (r.bodyBytes.length > 4) {
+            throw http.ClientException('Failed to fetch', r.url);
+          }
+          return _json({'received': sizes.length, 'total': 0});
+        }
+        if (r.url.path.endsWith('/api/upload/finish')) {
+          finished = true;
+          return _json({
+            'saved': 1,
+            'names': ['grande.jpg'],
+            'size': 12,
+          });
+        }
+        fail('petición inesperada: ${r.url}');
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final data = List<int>.generate(12, (i) => i);
     final file = XFile.fromData(
@@ -347,13 +496,18 @@ void main() {
 
   test('un VÍDEO también se sube desde la app y la web', () async {
     final uploads = <http.Request>[];
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      uploads.add(r);
-      return _json({'saved': 1, 'names': ['boda.mp4']});
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        uploads.add(r);
+        return _json({
+          'saved': 1,
+          'names': ['boda.mp4'],
+        });
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final bytes = Uint8List.fromList(List<int>.filled(64, 9));
     final file = XFile.fromData(
@@ -374,47 +528,59 @@ void main() {
     expect(drive.uploadJobs.single.status, 'done');
   });
 
-  test('un formato que el Drive no guarda falla al instante y con motivo',
-      () async {
-    final tried = <Uri>[];
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.contains('/api/upload')) tried.add(r.url);
-      return _json({'folders': [], 'files': []});
-    }));
-    final drive = DriveApiService(baseUrl: 'http://drive.test');
-    final file = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'contrato.pdf',
-      path: 'no-existe/contrato.pdf',
-      length: 3,
-    );
+  test(
+    'un formato que el Drive no guarda falla al instante y con motivo',
+    () async {
+      final tried = <Uri>[];
+      _mockUploads(
+        MockClient((r) async {
+          if (r.url.path.contains('/api/upload')) tried.add(r.url);
+          return _json({'folders': [], 'files': []});
+        }),
+      );
+      final drive = DriveApiService(baseUrl: 'http://drive.test');
+      final file = XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        name: 'contrato.pdf',
+        path: 'no-existe/contrato.pdf',
+        length: 3,
+      );
 
-    final saved = await drive.uploadFromFiles([file]);
+      final saved = await drive.uploadFromFiles([file]);
 
-    expect(saved, 0);
-    final job = drive.uploadJobs.single;
-    expect(job.status, 'error');
-    expect(job.error, contains('Formato no admitido'),
-        reason: 'el panel dice QUÉ formatos sí se admiten');
-    expect(tried, isEmpty, reason: 'ni un byte al servidor');
-  });
+      expect(saved, 0);
+      final job = drive.uploadJobs.single;
+      expect(job.status, 'error');
+      expect(
+        job.error,
+        contains('Formato no admitido'),
+        reason: 'el panel dice QUÉ formatos sí se admiten',
+      );
+      expect(tried, isEmpty, reason: 'ni un byte al servidor');
+    },
+  );
 
   test('resubir una foto del selector NO pide volver a elegirla', () async {
     var fails = 0;
-    _mockUploads(MockClient((r) async {
-      if (r.url.path.endsWith('/api/drive')) {
-        return _json({'folders': [], 'files': []});
-      }
-      // La primera subida se cae (red/servidor); el reintento debe funcionar
-      // con los mismos bytes que el usuario ya eligió.
-      if (!r.url.path.endsWith('/api/upload')) {
-        return _json({'saved': 0, 'names': []});
-      }
-      // Se caen los 3 intentos automáticos (kUploadAttempts): la foto queda
-      // en error hasta que el usuario pulsa "Resubir".
-      if (fails++ < 3) return http.Response('boom', 500);
-      return _json({'saved': 1, 'names': ['foto.jpg']});
-    }));
+    _mockUploads(
+      MockClient((r) async {
+        if (r.url.path.endsWith('/api/drive')) {
+          return _json({'folders': [], 'files': []});
+        }
+        // La primera subida se cae (red/servidor); el reintento debe funcionar
+        // con los mismos bytes que el usuario ya eligió.
+        if (!r.url.path.endsWith('/api/upload')) {
+          return _json({'saved': 0, 'names': []});
+        }
+        // Se caen los 3 intentos automáticos (kUploadAttempts): la foto queda
+        // en error hasta que el usuario pulsa "Resubir".
+        if (fails++ < 3) return http.Response('boom', 500);
+        return _json({
+          'saved': 1,
+          'names': ['foto.jpg'],
+        });
+      }),
+    );
     final drive = DriveApiService(baseUrl: 'http://drive.test');
     final file = XFile.fromData(
       Uint8List.fromList(List<int>.filled(16, 3)),

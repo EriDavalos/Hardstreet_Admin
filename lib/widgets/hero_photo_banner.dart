@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app_awake.dart';
+
 /// BANNER de fotos que van cambiando con un FUNDIDO.
 ///
 /// Detalles que importan (portada de «Mi paquete»):
@@ -185,6 +187,10 @@ class _HeroPhotoBannerState extends State<HeroPhotoBanner>
     if (_photos.length < 2) return;
     _timer = Timer.periodic(widget.every, (_) {
       if (!mounted) return;
+      // Con la app en segundo plano las fotos no se cambian: no hay quien las
+      // mire y cada cambio pide una imagen (ver [AppAwake]). Al volver, la
+      // sección se recarga entera.
+      if (!AppAwake.instance.awake) return;
       _next();
     });
   }

@@ -2,6 +2,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../theme.dart';
+
 /// FONDO DE LA VISTA con la foto que se está viendo, DESENFOCADA.
 ///
 /// Va DETRÁS de todo el contenido: no se pinta encima de ninguna tarjeta ni
@@ -43,8 +45,9 @@ class PhotoBackdrop extends StatelessWidget {
     if (image == null) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final dark = scheme.brightness == Brightness.dark;
-    final scrim = (dark ? const Color(0xFF0C111C) : const Color(0xFFF7F9FC))
-        .withValues(alpha: opacity ?? (dark ? 0.90 : 0.95));
+    final scrim = (dark ? AppColors.bgDark : AppColors.bgLight).withValues(
+      alpha: opacity ?? (dark ? 0.90 : 0.95),
+    );
     return Stack(
       fit: StackFit.expand,
       children: [

@@ -481,12 +481,17 @@ class DriveUploadJob {
     required this.total,
     this.batch = '',
     this.file,
+    this.overwrite = false,
   });
 
   final String id;
   final String name;
   final String thumb; // ruta LOCAL del archivo fuente (miniatura)
   final int total; // bytes totales (0 = indeterminado)
+
+  /// Se pidió «Sobrescribir» para este archivo: el servidor reemplaza el que
+  /// tenga ese nombre (y «Resubir» mantiene esa intención).
+  final bool overwrite;
 
   /// Fuente cuando el archivo NO está en el disco: en el navegador el selector
   /// entrega un `XFile` respaldado por un Blob (su `path` es una URL `blob:`,
@@ -569,6 +574,19 @@ class DriveDownloadJob {
   }
 }
 
+/// Aviso ÚNICO de MANTENIMIENTO del Drive federado.
+///
+/// El hub sabe qué servidor quedó bloqueado y de cuál depende, pero eso no se
+/// enseña en el Drive: nombrar servidores dependientes confundía (parecía que
+/// faltaban carpetas o que el problema era de la app). La vista simplemente
+/// ENTRA EN MANTENIMIENTO y deja de mostrar archivos hasta que termine.
+///
+/// Se entra cuando NO queda ningún servidor en funcionamiento: los que
+/// responden pero están bloqueados por una dependencia caída tampoco cuentan.
+const String driveMaintenanceNotice =
+    'El Drive está en mantenimiento: deja de mostrar archivos mientras se '
+    'revisa. Vuelve a intentarlo en unos minutos.';
+
 /// Contrato común del drive (local o servidor).
 abstract class DriveBase extends ChangeNotifier {
   /// ¿La sesión puede hacer [action] en ESTE drive?
@@ -611,12 +629,14 @@ abstract class DriveBase extends ChangeNotifier {
   List<DriveItem> _items = const [];
   List<DriveItem> get items => _items;
 
-  /// Avisos de MANTENIMIENTO del Drive federado (vacío = todo bien).
+  /// ¿El Drive está en MANTENIMIENTO? (vacío = todo bien).
   ///
   /// Un servidor puede DEPENDER de otro (se configura en Conexión): si el otro
-  /// deja de responder, el hub bloquea el dependiente y lo cuenta aquí, con el
-  /// listado. La página lo enseña en una tarjeta ámbar para que nadie crea que
-  /// se perdieron carpetas.
+  /// deja de responder, el hub bloquea el dependiente. El Drive entero entra
+  /// en mantenimiento cuando NO queda ninguno en funcionamiento —los
+  /// bloqueados no cuentan aunque respondan— y la página muestra la vista de
+  /// mantenimiento ([driveMaintenanceNotice]) en vez de un árbol a medias.
+  /// Con algún servidor sano, el Drive sigue funcionando con normalidad.
   List<String> maintenance = const [];
 
   // ---------- Alcance COMPARTIDO (drive del cliente) ----------
@@ -1049,6 +1069,13 @@ abstract class DriveBase extends ChangeNotifier {
 
   // ---------- Operaciones ----------
   Future<void> refresh();
+
+  /// Comprueba si el Drive está en mantenimiento SIN recargar carpetas.
+  ///
+  /// La vista la llama al ENTRAR: así el aviso sale solo —sin esperar a que el
+  /// usuario pulse «Reintentar»— aunque el hub se haya caído después del
+  /// último listado. Un drive local no tiene hub: no hace nada.
+  Future<void> checkMaintenance() async {}
 
   /// ¿Se puede abrir esa carpeta con el alcance compartido actual?
   /// En la raíz de un drive compartido solo se abren las carpetas

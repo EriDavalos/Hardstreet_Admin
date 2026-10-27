@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../hs_format.dart';
 
@@ -44,6 +46,7 @@ class NodeView {
     required this.enabled,
     this.priority,
     this.notes = '',
+    this.os = '',
     this.version = '',
     this.latencyMs,
     this.free,
@@ -66,6 +69,10 @@ class NodeView {
   final bool enabled;
   final int? priority;
   final String notes;
+
+  /// Sistema operativo del servidor ya legible («Ubuntu 24.04 LTS · x64»).
+  /// Lo informa cada nodo en su `/api/health`; vacío = no lo reporta.
+  final String os;
   final String version;
 
   /// Ping medido por el hub a ese servidor (null = no se sabe).
@@ -109,7 +116,14 @@ class NodeView {
     if (blocked) {
       return blockedReason ?? 'Depende de un servidor que no responde';
     }
-    if (!enabled) return 'El hub no guarda nada nuevo aquí.';
+    // APAGADO (`enabled = 0`): el servicio del servidor sigue corriendo; lo
+    // que se apaga es su participación en el Drive, así que su contenido no
+    // aparece y quien dependa de él queda en mantenimiento.
+    if (!enabled) {
+      return 'Apagado en el Drive: sus carpetas no se ven y no recibe archivos '
+          'nuevos. Quien dependa de él queda en mantenimiento. El servicio del '
+          'servidor y sus archivos NO se tocan.';
+    }
     if (online == null) return 'No se pudo comprobar si responde.';
     if (online!) return '';
     final text = (error ?? '').trim();
@@ -227,13 +241,28 @@ List<({int from, int to, bool mutual})> topologyDependencyEdges(
   return out;
 }
 
-const double _cardW = 268;
-const double _cardH = 300;
-const double _hubW = 312;
-const double _hubH = 172;
-const double _rowGap = 74;
+// Ancho máximo de la card. Estrecha a propósito: la ficha se lee de un vistazo
+// y, con dos o tres servidores, el diagrama se ve como una ESTRELLA (el HUB en
+// el centro y las cards alrededor) en vez de dos fichas enormes que se comen
+// todo el lienzo. Las letras y los datos NO se achican.
+const double _cardWMax = 400;
+// Ancho con el que una card se ve cómoda: de ahí sale CUÁNTAS caben por fila.
+const double _cardWWish = 400;
+// Por debajo de esto la card ya no se lee: se baja una columna antes.
+const double _cardWMin = 340;
+// La card lleva la ficha completa: nombre, dirección, estado, descripción y SO.
+// Con la descripción y el SO hacían falta ~30 px más (antes 300 y el contenido
+// quedaba sin aire: el `Spacer` desaparecía).
+const double _cardH = 332;
+const double _hubW = 380;
+// El HUB mide lo que mide su contenido (título + chips + aviso). Antes eran
+// 172 px fijos y la card quedaba con un hueco vacío debajo de los chips.
+const double _hubH = 140;
+// Aire entre cards: las filas y las columnas se separan bastante para que no
+// se lean como un bloque y un toque no caiga justo en el borde de la vecina.
+const double _rowGap = 104;
 const double _padX = 14;
-const double _gapX = 26;
+const double _gapX = 44;
 
 /// Diagrama interactivo de los servidores del Drive.
 class NodesTopology extends StatefulWidget {
@@ -243,7 +272,6 @@ class NodesTopology extends StatefulWidget {
     required this.hub,
     required this.onEdit,
     required this.onToggle,
-    required this.onDelete,
     required this.onLogs,
     required this.onRestart,
     required this.onUpload,
@@ -259,7 +287,6 @@ class NodesTopology extends StatefulWidget {
   final HubView hub;
   final void Function(NodeView) onEdit;
   final void Function(NodeView) onToggle;
-  final void Function(NodeView) onDelete;
   final void Function(NodeView) onLogs;
   final void Function(NodeView) onRestart;
   final void Function(NodeView) onUpload;
@@ -289,19 +316,74 @@ class NodesTopology extends StatefulWidget {
 }
 
 class _NodesTopologyState extends State<NodesTopology> {
-  /// Desplazamientos manuales (arrastrar una card): id → delta.
+  /// Desplazamientos manuales (pulsación larga + arrastrar): POSICIÓN → delta.
+  ///
+  /// Se guarda por posición y no por id a propósito: dos servidores sin id
+  /// propio (o con el id del .env del hub repetido) compartían la misma clave,
+  /// así que mover o seleccionar uno movía y marcaba al otro.
   final Map<int, Offset> _moved = {};
 
-  /// Servidor seleccionado: se iluminan SUS líneas (clic para quitar).
+  /// Servidor seleccionado (por posición): se iluminan SUS líneas.
   int? _selected;
+
+  /// La selección se quita SOLA a los 4 s (o con Esc): enfocar un servidor es
+  /// para mirar ese momento, no un modo que se queda pegado.
+  Timer? _selectionTimer;
+  static const Duration _selectionTtl = Duration(seconds: 4);
+
+  @override
+  void initState() {
+    super.initState();
+    // Esc quita el foco desde cualquier parte del panel (la página no tiene un
+    // campo con foco cuando se está mirando el diagrama).
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    _selectionTimer?.cancel();
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (_selected == null) return false;
+    // Con una ventana encima (terminal, editar…) Esc es para cerrarla.
+    if (ModalRoute.of(context)?.isCurrent != true) return false;
+    _clearSelection();
+    return true;
+  }
+
+  /// Enfoca (o desenfoca) un servidor y arma el reloj de los 4 s.
+  void _select(int index) {
+    _selectionTimer?.cancel();
+    final next = _selected == index ? null : index;
+    setState(() => _selected = next);
+    if (next == null) return;
+    _selectionTimer = Timer(_selectionTtl, () {
+      if (!mounted || _selected == null) return;
+      setState(() => _selected = null);
+    });
+  }
+
+  void _clearSelection() {
+    _selectionTimer?.cancel();
+    if (_selected == null) return;
+    setState(() => _selected = null);
+  }
 
   @override
   void didUpdateWidget(covariant NodesTopology old) {
     super.didUpdateWidget(old);
-    // Un servidor que ya no existe no puede seguir seleccionado ni movido.
-    final ids = widget.nodes.map((n) => n.id).toSet();
-    _moved.removeWhere((id, _) => !ids.contains(id));
-    if (_selected != null && !ids.contains(_selected)) _selected = null;
+    // Una card que ya no existe no puede seguir seleccionada ni movida.
+    final total = widget.nodes.length;
+    _moved.removeWhere((index, _) => index >= total);
+    if (_selected != null && _selected! >= total) {
+      _selectionTimer?.cancel();
+      _selected = null;
+    }
   }
 
   @override
@@ -316,35 +398,144 @@ class _NodesTopologyState extends State<NodesTopology> {
         // convive con el panel lateral), no el de la ventana: así nunca se
         // dibujan cards demasiado angostas.
         if (width < NodesTopology.compactWidth) return _compactCards(context);
-        final perRow = width >= 1120 ? 3 : 2;
-        final usable = width - 2 * _padX - (perRow - 1) * _gapX;
-        final cardW = math.min(_cardW, usable / perRow);
-        final rows = widget.nodes.isEmpty
-            ? 0
-            : ((widget.nodes.length - 1) ~/ perRow) + 1;
+        // Columnas: las que caben con una card de ancho cómodo, con un tope de
+        // dos mientras sean poco servidores y de tres cuando ya hay muchos.
+        // Después se reparten en filas ARRIBA y ABAJO del HUB (estrella).
+        final total = widget.nodes.length;
+        final maxCols = total <= 4 ? 2 : 3;
+        // Columnas que caben con una card del ancho cómodo, nunca tan angosta
+        // que la letra se apriete (se quita una columna antes de bajar de
+        // _cardWMin).
+        var perRow = ((width - 2 * _padX + _gapX) / (_cardWWish + _gapX))
+            .round()
+            .clamp(1, maxCols);
+        while (perRow > 1 &&
+            (width - 2 * _padX - (perRow - 1) * _gapX) / perRow < _cardWMin) {
+          perRow--;
+        }
+        // ---- GRUPOS DE DEPENDENCIA ----
+        //
+        // Un servidor y aquel del que depende se colocan JUNTOS. Antes se
+        // repartían por orden de prioridad y podían caer uno ARRIBA y otro
+        // ABAJO del HUB: la línea de la relación lo cruzaba por encima y se
+        // veía mal. Ahora los grupos (componentes de dependencias) van en
+        // filas contiguas y no se parten si caben enteros.
+        final groups = _dependencyGroups();
 
-        final hubTop = 6.0;
-        final hub = Rect.fromLTWH((width - _hubW) / 2, hubTop, _hubW, _hubH);
-        final rowsTop = hub.bottom + _rowGap;
-
-        // Reparto en filas, cada una centrada (así el árbol se ve equilibrado
-        // aunque en la última fila queden menos servidores).
-        final cards = <int, Rect>{};
-        for (var i = 0; i < widget.nodes.length; i++) {
-          final node = widget.nodes[i];
-          final row = i ~/ perRow;
-          final inRow = math.min(perRow, widget.nodes.length - row * perRow);
-          final rowWidth = inRow * cardW + (inRow - 1) * _gapX;
-          final left = (width - rowWidth) / 2 + (i % perRow) * (cardW + _gapX);
-          final top = rowsTop + row * (_cardH + _rowGap);
-          final base = Rect.fromLTWH(left, top, cardW, _cardH);
-          final delta = _moved[node.id] ?? Offset.zero;
-          cards[node.id] = base.shift(delta);
+        var rows = 0;
+        if (total > 0) {
+          perRow = math.min(perRow, total);
+          // Dos servidores RELACIONADOS van en UNA fila (del mismo lado del
+          // HUB): la relación es una línea corta entre vecinos. Solo si el
+          // ancho no da para dos cards legibles se deja uno arriba y otro
+          // abajo; entonces la línea rodea el HUB por fuera.
+          final canPair = (width - 2 * _padX - _gapX) / 2 >= _cardWMin;
+          if (groups.length == 1 && total == 2 && canPair) {
+            perRow = 2;
+          } else if (total >= 2) {
+            // Con DOS servidores sin relación en una sola fila el HUB quedaría
+            // arriba y no en el medio: se usa una card por fila (uno arriba,
+            // otro abajo).
+            perRow = math.min(perRow, (total + 1) ~/ 2);
+          }
+          rows = ((total - 1) ~/ perRow) + 1;
+          // Reparto EQUILIBRADO: si la última fila quedaría casi vacía (4 en
+          // columnas de 3 = 3 + 1 no; 5 = 3 + 2 sí), se usa una columna menos.
+          // Cada fila sale centrada, así que la estrella queda simétrica.
+          perRow = ((total - 1) ~/ rows) + 1;
         }
 
+        // Filas, metiendo grupos ENTEROS: un grupo solo se corta si es más
+        // grande que una fila entera (no cabría de otra forma).
+        final rowItems = <List<int>>[];
+        var currentRow = <int>[];
+        for (final group in groups) {
+          if (group.length > perRow) {
+            for (final i in group) {
+              if (currentRow.length == perRow) {
+                rowItems.add(currentRow);
+                currentRow = [];
+              }
+              currentRow.add(i);
+            }
+            continue;
+          }
+          if (currentRow.isNotEmpty &&
+              currentRow.length + group.length > perRow) {
+            rowItems.add(currentRow);
+            currentRow = [];
+          }
+          currentRow.addAll(group);
+        }
+        if (currentRow.isNotEmpty) rowItems.add(currentRow);
+        rows = rowItems.length;
+
+        final usable = width - 2 * _padX - (perRow - 1) * _gapX;
+        final cardW = math.min(_cardWMax, usable / perRow);
+
+        // ---- ESTRELLA: el HUB en el MEDIO y las cards alrededor ----
+        //
+        // Antes el HUB iba arriba y todas las cards colgaban debajo (un árbol).
+        // El diseño es una ESTRELLA: el HUB ocupa el centro del lienzo y los
+        // servidores se reparten en filas ARRIBA y ABAJO, alternando (la fila
+        // 0 es la más cercana al HUB por arriba, la 1 la más cercana por abajo,
+        // la 2 la siguiente arriba…). Así las líneas salen del HUB en todas
+        // direcciones y con dos, tres o cinco servidores el conjunto queda
+        // centrado en él en vez de colgando de una esquina.
+        final rowsAbove = rows <= 1 ? 0 : (rows + 1) ~/ 2; // filas pares
+        // Alto que ocupan las filas de arriba, MÁS el aire hasta el HUB (cada
+        // fila reserva `_rowGap` por delante; la de abajo hace lo mismo).
+        final aboveHeight = rowsAbove * (_cardH + _rowGap);
+        const double padY = 22.0;
+        final hubTop = padY + aboveHeight;
+        final hub = Rect.fromLTWH((width - _hubW) / 2, hubTop, _hubW, _hubH);
+
+        // Reparto en filas, cada una centrada (así la estrella se ve equilibrada
+        // aunque en la última fila queden menos servidores).
+        final cards = <int, Rect>{}; // por id (lo usan las líneas)
+        final slots = <int, Rect>{}; // por posición (lo usa cada card)
+        var lowerBottom = hub.bottom;
+        for (var r = 0; r < rowItems.length; r++) {
+          final rowNodes = rowItems[r];
+          final rowWidth =
+              rowNodes.length * cardW + (rowNodes.length - 1) * _gapX;
+          final left0 = (width - rowWidth) / 2;
+          final double top;
+          // Con UNA sola fila todo va DEBAJO del HUB: si se tratara como
+          // «fila 0 = arriba» quedaría en negativo y fuera del lienzo (se
+          // pintaba pero no se podía tocar).
+          final above = rowsAbove > 0 && r.isEven;
+          if (above) {
+            // Arriba: la fila 0 pegada al HUB y las siguientes hacia afuera.
+            final k = r ~/ 2;
+            top = hub.top - _rowGap - (k + 1) * _cardH - k * _rowGap;
+          } else {
+            // Abajo: la fila 1 es la más cercana al HUB.
+            final k = r ~/ 2;
+            top = hub.bottom + _rowGap + k * (_cardH + _rowGap);
+            lowerBottom = math.max(lowerBottom, top + _cardH);
+          }
+          for (var c = 0; c < rowNodes.length; c++) {
+            final i = rowNodes[c];
+            final node = widget.nodes[i];
+            final base = Rect.fromLTWH(
+              left0 + c * (cardW + _gapX),
+              top,
+              cardW,
+              _cardH,
+            );
+            final delta = _moved[i] ?? Offset.zero;
+            slots[i] = base.shift(delta);
+            cards[node.id] = slots[i]!;
+          }
+        }
+
+        // El alto sale del contenido real (arriba + HUB + abajo), nunca de una
+        // fórmula fija: así el HUB queda centrado con cualquier número de
+        // servidores y con las cards movidas a mano.
         final height = widget.nodes.isEmpty
-            ? hub.bottom + 24
-            : rowsTop + rows * (_cardH + _rowGap) - _rowGap + 34;
+            ? hub.bottom + padY
+            : math.max(hub.bottom + padY, lowerBottom + padY);
 
         return SizedBox(
           key: const ValueKey('drive-topology'),
@@ -368,15 +559,18 @@ class _NodesTopologyState extends State<NodesTopology> {
                       hub: hub,
                       cards: cards,
                       nodes: widget.nodes,
-                      selectedId: _selected,
+                      selectedId: _selected == null
+                          ? null
+                          : widget.nodes[_selected!].id,
                       grid: scheme.outlineVariant,
                       accent: scheme.primary,
                     ),
                   ),
                 ),
               ),
-              // El hub, en el centro de arriba (el router de la red).
+              // El hub, en el CENTRO: es el router de la estrella.
               Positioned.fromRect(
+                key: const ValueKey('drive-topology-hub'),
                 rect: hub,
                 child: _HubCard(
                   hub: widget.hub,
@@ -389,44 +583,40 @@ class _NodesTopologyState extends State<NodesTopology> {
                   right: 0,
                   top: 0,
                   child: TextButton.icon(
-                    onPressed: () => setState(() {
-                      _moved.clear();
-                      _selected = null;
-                    }),
+                    onPressed: () {
+                      setState(_moved.clear);
+                      _clearSelection();
+                    },
                     icon: const Icon(Icons.center_focus_strong, size: 16),
                     label: const Text('Reordenar'),
                   ),
                 ),
-              for (final node in widget.nodes)
-                if (cards[node.id] != null)
+              for (var i = 0; i < widget.nodes.length; i++)
+                if (slots[i] != null)
                   Positioned.fromRect(
-                    rect: cards[node.id]!,
+                    rect: slots[i]!,
                     child: _DraggableCard(
-                      offset: _moved[node.id] ?? Offset.zero,
+                      offset: _moved[i] ?? Offset.zero,
                       onMoved: (delta) => setState(() {
-                        _moved[node.id] = delta;
+                        _moved[i] = delta;
                       }),
                       child: _NodeCard(
-                        node: node,
-                        busy: widget.busyId == node.id,
+                        node: widget.nodes[i],
+                        busy: widget.busyId == widget.nodes[i].id,
                         selected:
-                            _selected == node.id ||
-                            widget.picked.contains(node.id),
-                        dimmed: _selected != null && _selected != node.id,
+                            _selected == i ||
+                            widget.picked.contains(widget.nodes[i].id),
                         selectMode: widget.selectMode,
-                        picked: widget.picked.contains(node.id),
-                        onPick: () => widget.onPick?.call(node),
-                        onTap: () => setState(
-                          () =>
-                              _selected = _selected == node.id ? null : node.id,
-                        ),
-                        onEdit: () => widget.onEdit(node),
-                        onToggle: () => widget.onToggle(node),
-                        onDelete: () => widget.onDelete(node),
-                        onLogs: () => widget.onLogs(node),
-                        onRestart: () => widget.onRestart(node),
-                        onUpload: () => widget.onUpload(node),
-                        onDependencies: () => widget.onDependencies(node),
+                        picked: widget.picked.contains(widget.nodes[i].id),
+                        onPick: () => widget.onPick?.call(widget.nodes[i]),
+                        onTap: () => _select(i),
+                        onEdit: () => widget.onEdit(widget.nodes[i]),
+                        onToggle: () => widget.onToggle(widget.nodes[i]),
+                        onLogs: () => widget.onLogs(widget.nodes[i]),
+                        onRestart: () => widget.onRestart(widget.nodes[i]),
+                        onUpload: () => widget.onUpload(widget.nodes[i]),
+                        onDependencies: () =>
+                            widget.onDependencies(widget.nodes[i]),
                       ),
                     ),
                   ),
@@ -435,6 +625,52 @@ class _NodesTopologyState extends State<NodesTopology> {
         );
       },
     );
+  }
+
+  /// Grupos de servidores unidos por DEPENDENCIAS (componentes conexas):
+  /// `[[Bodega, Respaldo], [Estudio]]`.
+  ///
+  /// Dentro de cada grupo va PRIMERO el servidor del que dependen los demás y
+  /// después sus dependientes: así se lee «Bodega → Respaldo» y la línea que
+  /// los une es corta (van en la misma fila). Los ids que no existen en la
+  /// lista se ignoran, igual que en [topologyDependencyEdges].
+  List<List<int>> _dependencyGroups() {
+    final n = widget.nodes.length;
+    if (n == 0) return const [];
+    final parent = List<int>.generate(n, (i) => i);
+    int find(int x) {
+      while (parent[x] != x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    }
+
+    final indexById = <int, int>{
+      for (var i = 0; i < n; i++) widget.nodes[i].id: i,
+    };
+    for (var i = 0; i < n; i++) {
+      for (final dep in widget.nodes[i].dependsOnIds) {
+        final j = indexById[dep];
+        if (j == null || j == i) continue;
+        final a = find(i);
+        final b = find(j);
+        if (a != b) parent[b] = a;
+      }
+    }
+
+    final byRoot = <int, List<int>>{};
+    for (var i = 0; i < n; i++) {
+      byRoot.putIfAbsent(find(i), () => []).add(i);
+    }
+    return [
+      for (final g in byRoot.values)
+        (g..sort((a, b) {
+          final da = widget.nodes[a].dependsOnIds.isEmpty ? 0 : 1;
+          final db = widget.nodes[b].dependsOnIds.isEmpty ? 0 : 1;
+          return da != db ? da - db : a - b;
+        })),
+    ];
   }
 
   // ---------------- CELULAR: tarjetas, sin diagrama ----------------
@@ -453,7 +689,6 @@ class _NodesTopologyState extends State<NodesTopology> {
               busy: widget.busyId == node.id,
               onEdit: () => widget.onEdit(node),
               onToggle: () => widget.onToggle(node),
-              onDelete: () => widget.onDelete(node),
               onLogs: () => widget.onLogs(node),
               onRestart: () => widget.onRestart(node),
               onUpload: () => widget.onUpload(node),
@@ -494,16 +729,29 @@ class _DraggableCard extends StatefulWidget {
 }
 
 class _DraggableCardState extends State<_DraggableCard> {
+  /// Dónde estaba la card cuando se levantó el dedo/ratón.
+  Offset _start = Offset.zero;
+  bool _dragging = false;
+
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      cursor: SystemMouseCursors.move,
+      cursor: _dragging ? SystemMouseCursors.grabbing : SystemMouseCursors.grab,
       child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        // Cada actualización suma SU delta al desplazamiento actual: el padre
-        // reconstruye con la posición nueva y el arrastre sigue pegado al
-        // puntero (sin saltos ni acumulaciones dobles).
-        onPanUpdate: (d) => widget.onMoved(widget.offset + d.delta),
+        behavior: HitTestBehavior.opaque,
+        // Se mueve SOLO con pulsación larga. Antes bastaba un arrastre con un
+        // pelín de movimiento para correr la card unos píxeles: el toque de
+        // "seleccionar" acababa moviéndola y parecía que se movía otra.
+        onLongPressStart: (_) => setState(() {
+          _start = widget.offset;
+          _dragging = true;
+        }),
+        onLongPressMoveUpdate: (d) =>
+            widget.onMoved(_start + d.offsetFromOrigin),
+        onLongPressEnd: (_) => setState(() => _dragging = false),
+        onLongPressCancel: () {
+          if (_dragging) setState(() => _dragging = false);
+        },
         child: widget.child,
       ),
     );
@@ -516,11 +764,9 @@ class _NodeCard extends StatelessWidget {
     required this.node,
     required this.busy,
     required this.selected,
-    required this.dimmed,
     required this.onTap,
     required this.onEdit,
     required this.onToggle,
-    required this.onDelete,
     required this.onLogs,
     required this.onRestart,
     required this.onUpload,
@@ -533,11 +779,9 @@ class _NodeCard extends StatelessWidget {
   final NodeView node;
   final bool busy;
   final bool selected;
-  final bool dimmed;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onToggle;
-  final VoidCallback onDelete;
   final VoidCallback onLogs;
   final VoidCallback onRestart;
   final VoidCallback onUpload;
@@ -552,327 +796,405 @@ class _NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final accent = node.color;
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 160),
-      opacity: dimmed ? .55 : 1,
+    // `Semantics(selected:)` es lo que dice QUÉ servidor está enfocado (y lo
+    // lee el lector de pantalla): las demás cards NO se atenúan ni se ocultan,
+    // solo se destaca la elegida.
+    return Semantics(
+      selected: selected,
       child: Tooltip(
         message: node.notes.isEmpty ? node.name : '${node.name}\n${node.notes}',
         waitDuration: const Duration(milliseconds: 600),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected ? scheme.primary : accent.withValues(alpha: .45),
-              width: selected ? 2 : 1,
+        // MANUAL: con el disparo automático, la pulsación larga —que ahora es
+        // la que MUEVE la card— abría el globo de la descripción encima del
+        // diagrama. Con ratón se sigue viendo al pasar por encima.
+        triggerMode: TooltipTriggerMode.manual,
+        child: GestureDetector(
+          // Toda la card responde al toque (antes solo el NOMBRE): seleccionar
+          // un servidor nunca depende de acertarle a la letra.
+          behavior: HitTestBehavior.opaque,
+          onTap: selectMode ? onPick : onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            // Recorta el filo de color a las esquinas de la card: sin esto la
+            // línea verde de arriba sobresalía por los lados y parecía suelta.
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              // El borde mantiene SU ancho al seleccionar: si engordaba, el
+              // contenido se corría un píxel y la card parecía moverse.
+              border: Border.all(
+                color: selected
+                    ? scheme.primary
+                    : accent.withValues(alpha: .45),
+                width: 1.4,
+              ),
+              boxShadow: [
+                if (selected)
+                  BoxShadow(
+                    color: scheme.primary.withValues(alpha: .22),
+                    blurRadius: 18,
+                    spreadRadius: 1,
+                  )
+                else
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+              ],
             ),
-            boxShadow: [
-              if (selected)
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: .22),
-                  blurRadius: 18,
-                  spreadRadius: 1,
-                )
-              else
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: .05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Filo con el color del estado: se reconoce de reojo.
-              Container(
-                height: 4,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Filo con el color del estado: se reconoce de reojo. El
+                // radio es el de la card menos su borde (16 - 1.4) para que
+                // encaje con la esquina redondeada.
+                Container(
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(14.6),
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          // En modo selección, la casilla manda: marcar aquí es
-                          // elegir el servidor para la acción en lote.
-                          if (selectMode)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 2),
-                              child: GestureDetector(
-                                onTap: onPick,
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            // En modo selección, la casilla manda: marcar aquí es
+                            // elegir el servidor para la acción en lote.
+                            if (selectMode)
+                              // Indicador propio y COMPACTO: el Checkbox de
+                              // Material dentro de una card de 268-320 px se
+                              // comía el renglón y se veía desalineado con el
+                              // nombre. Aquí basta un cuadradito con su ✓ (la
+                              // card entera ya marca al tocarla).
+                              Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: AnimatedContainer(
+                                  key: ValueKey('node-pick-${node.id}'),
+                                  duration: const Duration(milliseconds: 140),
+                                  width: 18,
+                                  height: 18,
+                                  decoration: BoxDecoration(
+                                    color: picked
+                                        ? scheme.primary
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(5),
+                                    border: Border.all(
+                                      color: picked
+                                          ? scheme.primary
+                                          : scheme.outline,
+                                      width: 1.4,
+                                    ),
+                                  ),
+                                  child: picked
+                                      ? Icon(
+                                          Icons.check_rounded,
+                                          size: 13,
+                                          color: scheme.onPrimary,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            // La card se lee como un SERVIDOR: su rack con el
+                            // foco de estado encendido encima, no un punto
+                            // suelto. El nombre va al lado, con la dirección
+                            // debajo (en la misma cabecera: así la ficha no
+                            // crece al hacerse más estrecha).
+                            _ServerBadge(color: accent),
+                            const SizedBox(width: 9),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    node.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  Text(
+                                    node.url,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 10,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (busy)
+                              const Padding(
+                                padding: EdgeInsets.all(8),
                                 child: SizedBox(
-                                  width: 26,
-                                  height: 26,
-                                  child: Checkbox(
-                                    key: ValueKey('node-pick-${node.id}'),
-                                    value: picked,
-                                    visualDensity: VisualDensity.compact,
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    onChanged: (_) => onPick?.call(),
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            else
+                              _NodeMenu(
+                                node: node,
+                                onEdit: onEdit,
+                                onToggle: onToggle,
+                                onLogs: onLogs,
+                                onRestart: onRestart,
+                                onUpload: onUpload,
+                                onDependencies: onDependencies,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        // Wrap y no Row: con la card más angosta (cuando convive
+                        // con el panel lateral) los dos chips pueden no caber.
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            _StatePill(label: node.stateLabel, color: accent),
+                            _ChipBit(
+                              icon: Icons.speed_rounded,
+                              label: node.latencyLabel,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ],
+                        ),
+                        // DESCRIPCIÓN del servidor: para qué se usa. Va aquí,
+                        // en la card, no escondida en el tooltip o en «Editar»,
+                        // y con su rótulo para que se sepa qué es ese texto.
+                        if (node.notes.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'DESCRIPCIÓN',
+                                  style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 8,
+                                    letterSpacing: .5,
+                                    fontWeight: FontWeight.w800,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                Text(
+                                  node.notes,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    height: 1.25,
+                                    fontStyle: FontStyle.italic,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 7),
+                        Row(
+                          children: [
+                            _DataBit(
+                              label: 'versión',
+                              value: node.version.isEmpty
+                                  ? '—'
+                                  : 'v${node.version}',
+                            ),
+                            const SizedBox(width: 14),
+                            _DataBit(
+                              label: 'prioridad',
+                              value: node.priority?.toString() ?? '—',
+                            ),
+                          ],
+                        ),
+                        // SO con el que trabaja ESE servidor (el nodo lo dice en
+                        // su /api/health). Sin dato se enseña «—», no se inventa.
+                        const SizedBox(height: 5),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Row(
+                            children: [
+                              Text(
+                                'SO',
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 8.5,
+                                  letterSpacing: .5,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  node.os.isEmpty ? '—' : node.os,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
-                            )
-                          else
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: accent,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: selectMode ? onPick : onTap,
-                              child: Text(
-                                node.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (busy)
-                            const Padding(
-                              padding: EdgeInsets.all(8),
-                              child: SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          else
-                            _NodeMenu(
-                              node: node,
-                              onEdit: onEdit,
-                              onToggle: onToggle,
-                              onDelete: onDelete,
-                              onLogs: onLogs,
-                              onRestart: onRestart,
-                              onUpload: onUpload,
-                              onDependencies: onDependencies,
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 1),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Text(
-                          node.url,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            color: scheme.onSurfaceVariant,
+                            ],
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      // Wrap y no Row: con la card más angosta (cuando convive
-                      // con el panel lateral) los dos chips pueden no caber.
-                      Wrap(
-                        spacing: 5,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          _StatePill(label: node.stateLabel, color: accent),
-                          _ChipBit(
-                            icon: Icons.speed_rounded,
-                            label: node.latencyLabel,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ],
-                      ),
-                      // DESCRIPCIÓN del servidor: para qué se usa. Va aquí,
-                      // en la card, no escondida en el tooltip o en «Editar».
-                      if (node.notes.isNotEmpty) ...[
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 7),
+                        Row(
+                          children: [
+                            _LibChip(label: 'sharp', ok: node.sharp),
+                            const SizedBox(width: 5),
+                            _LibChip(label: 'ffmpeg', ok: node.ffmpeg),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
-                          child: Text(
-                            node.notes,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10,
-                              height: 1.25,
-                              fontStyle: FontStyle.italic,
-                              color: scheme.onSurfaceVariant,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(3),
+                                  child: LinearProgressIndicator(
+                                    value: node.diskRatio,
+                                    minHeight: 5,
+                                    backgroundColor:
+                                        scheme.surfaceContainerHighest,
+                                    color: (node.diskRatio ?? 0) >= .9
+                                        ? scheme.error
+                                        : accent,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                node.diskLabel,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // RAM consumida (lo que pide el panel: ver si un nodo
+                        // está ahogado sin entrar por SSH).
+                        const SizedBox(height: 5),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Row(
+                            children: [
+                              Text(
+                                'RAM',
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 8,
+                                  letterSpacing: .4,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(3),
+                                  child: LinearProgressIndicator(
+                                    value: node.ramRatio,
+                                    minHeight: 4,
+                                    backgroundColor:
+                                        scheme.surfaceContainerHighest,
+                                    color: (node.ramRatio ?? 0) >= .9
+                                        ? scheme.error
+                                        : _warnAmber,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                node.ramLabel,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        if (node.stateDetail.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8, bottom: 2),
+                            child: Text(
+                              node.stateDetail,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                height: 1.2,
+                                color: node.blocked ? _warnAmber : _offGrey,
+                              ),
                             ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.account_tree_outlined,
+                                size: 12,
+                                color: node.dependsOnNames.isEmpty
+                                    ? scheme.onSurfaceVariant
+                                    : scheme.primary,
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  node.dependsOnNames.isEmpty
+                                      ? 'independiente'
+                                      : 'depende de '
+                                            '${node.dependsOnNames.join(', ')}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: node.dependsOnNames.isEmpty
+                                        ? FontWeight.w400
+                                        : FontWeight.w700,
+                                    color: node.dependsOnNames.isEmpty
+                                        ? scheme.onSurfaceVariant
+                                        : scheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
-                      const SizedBox(height: 7),
-                      Row(
-                        children: [
-                          _DataBit(
-                            label: 'versión',
-                            value: node.version.isEmpty
-                                ? '—'
-                                : 'v${node.version}',
-                          ),
-                          const SizedBox(width: 14),
-                          _DataBit(
-                            label: 'prioridad',
-                            value: node.priority?.toString() ?? '—',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 7),
-                      Row(
-                        children: [
-                          _LibChip(label: 'sharp', ok: node.sharp),
-                          const SizedBox(width: 5),
-                          _LibChip(label: 'ffmpeg', ok: node.ffmpeg),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(3),
-                                child: LinearProgressIndicator(
-                                  value: node.diskRatio,
-                                  minHeight: 5,
-                                  backgroundColor:
-                                      scheme.surfaceContainerHighest,
-                                  color: (node.diskRatio ?? 0) >= .9
-                                      ? scheme.error
-                                      : accent,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              node.diskLabel,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // RAM consumida (lo que pide el panel: ver si un nodo
-                      // está ahogado sin entrar por SSH).
-                      const SizedBox(height: 5),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Row(
-                          children: [
-                            Text(
-                              'RAM',
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 8,
-                                letterSpacing: .4,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(3),
-                                child: LinearProgressIndicator(
-                                  value: node.ramRatio,
-                                  minHeight: 4,
-                                  backgroundColor:
-                                      scheme.surfaceContainerHighest,
-                                  color: (node.ramRatio ?? 0) >= .9
-                                      ? scheme.error
-                                      : _warnAmber,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              node.ramLabel,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Spacer(),
-                      if (node.stateDetail.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8, bottom: 2),
-                          child: Text(
-                            node.stateDetail,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10,
-                              height: 1.2,
-                              color: node.blocked ? _warnAmber : _offGrey,
-                            ),
-                          ),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.account_tree_outlined,
-                              size: 12,
-                              color: node.dependsOnNames.isEmpty
-                                  ? scheme.onSurfaceVariant
-                                  : scheme.primary,
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                node.dependsOnNames.isEmpty
-                                    ? 'independiente'
-                                    : 'depende de '
-                                          '${node.dependsOnNames.join(', ')}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: node.dependsOnNames.isEmpty
-                                      ? FontWeight.w400
-                                      : FontWeight.w700,
-                                  color: node.dependsOnNames.isEmpty
-                                      ? scheme.onSurfaceVariant
-                                      : scheme.onSurface,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -954,6 +1276,13 @@ class _HubCard extends StatelessWidget {
                   tooltip: 'Configurar hub',
                   key: const ValueKey('hub-configure'),
                   visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  // Compacto de verdad: el botón de 48 px hacía más alta la
+                  // cabecera y el contenido del HUB desbordaba la card.
+                  constraints: const BoxConstraints.tightFor(
+                    width: 30,
+                    height: 30,
+                  ),
                   onPressed: onConfigure,
                   icon: const Icon(Icons.tune_rounded, size: 17),
                   color: scheme.onSurfaceVariant,
@@ -961,10 +1290,10 @@ class _HubCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 5,
-            runSpacing: 5,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          // El estado va en su píldora y el resto en UNA línea: con cuatro
+          // chips la fila se partía en dos y la card quedaba con un hueco
+          // vacío debajo (era el problema de diseño del HUB).
+          Row(
             children: [
               _ChipBit(
                 icon: hub.online
@@ -973,43 +1302,58 @@ class _HubCard extends StatelessWidget {
                 label: hub.online ? 'en línea' : 'sin respuesta',
                 color: color,
               ),
-              if (hub.version.isNotEmpty)
-                _ChipBit(
-                  icon: Icons.info_outline_rounded,
-                  label: 'v${hub.version}',
-                  color: scheme.onSurfaceVariant,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  [
+                    if (hub.version.isNotEmpty) 'v${hub.version}',
+                    hub.latencyLabel,
+                    '${hub.onlineCount}/${hub.totalCount} '
+                        'servidor${hub.totalCount == 1 ? '' : 'es'}',
+                    if (hub.blocked > 0) '${hub.blocked} en mantenimiento',
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                    color:
+                        hub.totalCount > 0 && hub.onlineCount < hub.totalCount
+                        ? _warnAmber
+                        : scheme.onSurfaceVariant,
+                  ),
                 ),
-              _ChipBit(
-                icon: Icons.speed_rounded,
-                label: hub.latencyLabel,
-                color: scheme.onSurfaceVariant,
               ),
-              _ChipBit(
-                icon: Icons.dns_outlined,
-                label:
-                    '${hub.onlineCount} de ${hub.totalCount} '
-                    'servidor${hub.totalCount == 1 ? '' : 'es'}',
-                color: hub.totalCount > 0 && hub.onlineCount < hub.totalCount
-                    ? _warnAmber
-                    : _okGreen,
-              ),
-              if (hub.blocked > 0)
-                _ChipBit(
-                  icon: Icons.engineering_outlined,
-                  label: '${hub.blocked} en mantenimiento',
-                  color: _warnAmber,
-                ),
             ],
           ),
           if (hub.note.isNotEmpty) ...[
             const SizedBox(height: 6),
+            // El aviso completo, al pasar el ratón: en la card va en dos líneas
+            // para no romper el alto del diagrama.
+            Tooltip(
+              message: hub.note,
+              child: Text(
+                hub.note,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  height: 1.25,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ] else ...[
+            // Sin aviso, la card dice qué hace el HUB (y no queda un hueco).
+            const SizedBox(height: 6),
             Text(
-              hub.note,
-              maxLines: 2,
+              'Reparte las carpetas y las subidas entre los servidores.',
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 10.5,
-                height: 1.25,
+                fontSize: 10,
+                height: 1.2,
                 color: scheme.onSurfaceVariant,
               ),
             ),
@@ -1027,7 +1371,6 @@ class _MobileNodeCard extends StatelessWidget {
     required this.busy,
     required this.onEdit,
     required this.onToggle,
-    required this.onDelete,
     required this.onLogs,
     required this.onRestart,
     required this.onUpload,
@@ -1038,7 +1381,6 @@ class _MobileNodeCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onEdit;
   final VoidCallback onToggle;
-  final VoidCallback onDelete;
   final VoidCallback onLogs;
   final VoidCallback onRestart;
   final VoidCallback onUpload;
@@ -1064,6 +1406,10 @@ class _MobileNodeCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // El mismo rack que en el diagrama: en el celular también se
+                // reconoce como un servidor.
+                _ServerBadge(color: node.color),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1105,7 +1451,6 @@ class _MobileNodeCard extends StatelessWidget {
                     node: node,
                     onEdit: onEdit,
                     onToggle: onToggle,
-                    onDelete: onDelete,
                     onLogs: onLogs,
                     onRestart: onRestart,
                     onUpload: onUpload,
@@ -1117,16 +1462,31 @@ class _MobileNodeCard extends StatelessWidget {
           if (node.notes.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Text(
-                node.notes,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  height: 1.3,
-                  fontStyle: FontStyle.italic,
-                  color: scheme.onSurfaceVariant,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'DESCRIPCIÓN',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 8.5,
+                      letterSpacing: .5,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    node.notes,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      height: 1.3,
+                      fontStyle: FontStyle.italic,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
           Padding(
@@ -1143,6 +1503,7 @@ class _MobileNodeCard extends StatelessWidget {
                   label: 'prioridad',
                   value: node.priority?.toString() ?? '—',
                 ),
+                _DataBit(label: 'SO', value: node.os.isEmpty ? '—' : node.os),
                 _DataBit(label: 'ping', value: node.latencyLabel),
                 _DataBit(label: 'espacio', value: node.diskLabel),
                 _DataBit(label: 'RAM', value: node.ramLabel),
@@ -1193,7 +1554,6 @@ class _NodeMenu extends StatelessWidget {
     required this.node,
     required this.onEdit,
     required this.onToggle,
-    required this.onDelete,
     required this.onLogs,
     required this.onRestart,
     required this.onUpload,
@@ -1203,7 +1563,6 @@ class _NodeMenu extends StatelessWidget {
   final NodeView node;
   final VoidCallback onEdit;
   final VoidCallback onToggle;
-  final VoidCallback onDelete;
   final VoidCallback onLogs;
   final VoidCallback onRestart;
   final VoidCallback onUpload;
@@ -1230,8 +1589,6 @@ class _NodeMenu extends StatelessWidget {
             onUpload();
           case 'toggle':
             onToggle();
-          case 'delete':
-            onDelete();
         }
       },
       itemBuilder: (_) => [
@@ -1269,12 +1626,13 @@ class _NodeMenu extends StatelessWidget {
             icon: node.enabled
                 ? Icons.power_settings_new
                 : Icons.power_outlined,
-            label: node.enabled ? 'Apagar' : 'Encender',
+            // Apagar NO apaga la máquina: el servidor queda apagado para el
+            // Drive (`enabled = 0`), sigue en la lista para volver a
+            // encenderlo y quien dependa de él queda en mantenimiento con su
+            // aviso. Para quitarlo de la lista está *Eliminar* (borrado
+            // lógico, `active = 0`).
+            label: node.enabled ? 'Apagar en el Drive' : 'Encender en el Drive',
           ),
-        ),
-        const PopupMenuItem(
-          value: 'delete',
-          child: _MenuRow(icon: Icons.delete_outline, label: 'Quitar'),
         ),
       ],
     );
@@ -1320,6 +1678,61 @@ class _StatePill extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// El «rack» de un servidor: el icono de una máquina con su foco de estado.
+///
+/// Antes la card llevaba un punto de color suelto delante del nombre y se
+/// leía como una fila cualquiera. Con el rack se ve de qué se está hablando
+/// (un servidor de archivos) sin leer nada, y el foco dice si está encendido,
+/// apagado o sin comprobar con el mismo color de siempre.
+class _ServerBadge extends StatelessWidget {
+  const _ServerBadge({required this.color});
+
+  final Color color;
+
+  /// Lado del rack (el foco de estado sobresale un poco por la esquina).
+  static const double size = 30;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .13),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: color.withValues(alpha: .40)),
+            ),
+            // La máquina dibujada: las ranuras de un servidor de rack.
+            child: Center(
+              child: Icon(Icons.dns_rounded, size: size * .56, color: color),
+            ),
+          ),
+          Positioned(
+            right: -1.5,
+            bottom: -1.5,
+            child: Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: scheme.surface, width: 1.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Chip pequeño con icono (estado del hub, ping…).
@@ -1495,22 +1908,29 @@ class _TopologyPainter extends CustomPainter {
     for (final node in nodes) {
       final rect = cards[node.id];
       if (rect == null) continue;
+      // El enfocado se marca MÁS, pero los demás siguen a la vista: antes sus
+      // líneas se desvanecían y parecía que el servidor había desaparecido.
       final focused = selectedId == null || selectedId == node.id;
-      final color = node.color.withValues(alpha: focused ? .85 : .25);
+      final color = node.color.withValues(alpha: focused ? .9 : .55);
       final paint = Paint()
         ..color = color
-        ..strokeWidth = focused ? 2 : 1.2
+        ..strokeWidth = focused ? 2.1 : 1.3
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
-      final start = Offset(hub.center.dx, hub.bottom);
-      final end = Offset(rect.center.dx, rect.top);
+      // En la ESTRELLA hay cards arriba y abajo del HUB: el cable sale del
+      // borde que MIRA a la card. Antes siempre salía por `hub.bottom`, así que
+      // las de arriba tenían la línea cruzando el HUB por encima.
+      final below = rect.center.dy >= hub.center.dy;
+      final start = Offset(hub.center.dx, below ? hub.bottom : hub.top);
+      final end = Offset(rect.center.dx, below ? rect.top : rect.bottom);
+      final dy = end.dy - start.dy;
       final path = Path()
         ..moveTo(start.dx, start.dy)
         ..cubicTo(
           start.dx,
-          start.dy + (end.dy - start.dy) * .55,
+          start.dy + dy * .55,
           end.dx,
-          end.dy - (end.dy - start.dy) * .55,
+          end.dy - dy * .55,
           end.dx,
           end.dy,
         );
@@ -1519,7 +1939,8 @@ class _TopologyPainter extends CustomPainter {
       } else {
         _dashed(canvas, path, paint);
       }
-      _arrow(canvas, Offset(end.dx, end.dy - 2), const Offset(0, 1), color);
+      final dir = Offset(0, below ? 1 : -1);
+      _arrow(canvas, end - dir * 2, dir, color);
     }
 
     // --- DEPENDENCIAS entre servidores ---
@@ -1539,41 +1960,130 @@ class _TopologyPainter extends CustomPainter {
           selectedId == node.id ||
           selectedId == target.id;
       final color = (broken ? _warnAmber : accent).withValues(
-        alpha: focused ? .9 : .22,
+        alpha: focused ? .95 : .55,
       );
       final paint = Paint()
         ..color = color
-        ..strokeWidth = focused ? 1.9 : 1.1
+        ..strokeWidth = focused ? 2 : 1.2
         ..style = PaintingStyle.stroke;
 
-      // La línea sale y entra por los costados y se arquea, para no
-      // confundirse con las del hub.
-      final startSide = from.center.dx <= to.center.dx ? from.right : from.left;
-      final endSide = from.center.dx <= to.center.dx ? to.left : to.right;
-      final start = Offset(startSide, from.center.dy);
-      final end = Offset(endSide, to.center.dy);
-      final mid = (start + end) / 2;
-      final bow = (to.center.dy - from.center.dy) * .35;
-      final path = Path()
-        ..moveTo(start.dx, start.dy)
-        ..cubicTo(mid.dx, start.dy + bow, mid.dx, end.dy + bow, end.dx, end.dy);
+      // ANCLAJE: por el lado de cada card que MIRA a la otra. Si una está
+      // encima de la otra, por arriba/abajo; si están al lado, por los
+      // costados. Antes SIEMPRE salía por los costados, así que dos cards en la
+      // misma columna se unían con una S que cruzaba el HUB y se veía mal.
+      final dx = to.center.dx - from.center.dx;
+      final dy = to.center.dy - from.center.dy;
+      final vertical = dy.abs() > dx.abs() * .8;
+
+      final directStart = vertical
+          ? (dy >= 0 ? from.bottomCenter : from.topCenter)
+          : (dx >= 0 ? from.centerRight : from.centerLeft);
+      final directEnd = vertical
+          ? (dy >= 0 ? to.topCenter : to.bottomCenter)
+          : (dx >= 0 ? to.centerLeft : to.centerRight);
+      // Si el tramo directo atraviesa el HUB, la relación sale POR FUERA de él
+      // (por el costado más cercano) en vez de esconderse detrás de la card.
+      final detour = _segmentCrossesHub(directStart, directEnd);
+      final viaLeft = (from.center.dx + to.center.dx) / 2 <= hub.center.dx;
+
+      final Offset start;
+      final Offset end;
+      final Offset dir;
+      if (detour) {
+        start = Offset(viaLeft ? from.left : from.right, from.center.dy);
+        end = Offset(viaLeft ? to.left : to.right, to.center.dy);
+        dir = Offset(viaLeft ? 1 : -1, 0);
+      } else if (vertical) {
+        final down = dy >= 0;
+        start = directStart;
+        end = directEnd;
+        dir = Offset(0, down ? 1 : -1);
+      } else {
+        final right = dx >= 0;
+        start = directStart;
+        end = directEnd;
+        dir = Offset(right ? 1 : -1, 0);
+      }
+
+      final Path path;
+      if (detour) {
+        final sideX = viaLeft
+            ? math.max(6.0, hub.left - 26)
+            : math.min(size.width - 6, hub.right + 26);
+        final mid = Offset(sideX, (start.dy + end.dy) / 2);
+        path = Path()
+          ..moveTo(start.dx, start.dy)
+          ..cubicTo(
+            start.dx + (mid.dx - start.dx) * .55,
+            start.dy,
+            mid.dx,
+            mid.dy - (mid.dy - start.dy) * .55,
+            mid.dx,
+            mid.dy,
+          )
+          ..cubicTo(
+            mid.dx,
+            mid.dy + (end.dy - mid.dy) * .55,
+            end.dx + (mid.dx - end.dx) * .55,
+            end.dy,
+            end.dx,
+            end.dy,
+          );
+      } else {
+        final mid = (start + end) / 2;
+        final bow = (vertical ? dx : dy) * .35;
+        final c1 = vertical
+            ? Offset(start.dx + bow, mid.dy)
+            : Offset(mid.dx, start.dy + bow);
+        final c2 = vertical
+            ? Offset(end.dx + bow, mid.dy)
+            : Offset(mid.dx, end.dy + bow);
+        path = Path()
+          ..moveTo(start.dx, start.dy)
+          ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, end.dx, end.dy);
+      }
       if (broken) {
         _dashed(canvas, path, paint, dash: 5, gap: 4);
       } else {
         canvas.drawPath(path, paint);
       }
-      final dir = (end - Offset(mid.dx, end.dy + bow));
-      _arrow(canvas, end, dir.distance == 0 ? const Offset(1, 0) : dir, color);
+      // La punta entra PERPENDICULAR a la card (la dirección del anclaje), no
+      // tangente a la curva: si no, en vertical apuntaba de lado.
+      _arrow(canvas, end, dir, color);
       if (mutual) {
-        final back = (start - Offset(mid.dx, start.dy + bow));
-        _arrow(
-          canvas,
-          start,
-          back.distance == 0 ? const Offset(-1, 0) : back,
-          color,
-        );
+        _arrow(canvas, start, -dir, color);
       }
     }
+  }
+
+  /// ¿El tramo recto entre [a] y [b] pasa por encima de la tarjeta del HUB?
+  ///
+  /// Se recorta el segmento contra el rectángulo del HUB (Liang-Barsky). Si lo
+  /// toca, la dependencia se dibuja rodeándolo: antes la línea se metía debajo
+  /// de la card del hub, desaparecía, y parecía que la relación estaba rota.
+  bool _segmentCrossesHub(Offset a, Offset b) {
+    final r = hub.inflate(8);
+    final dx = b.dx - a.dx;
+    final dy = b.dy - a.dy;
+    var t0 = 0.0;
+    var t1 = 1.0;
+    bool edge(double p, double q) {
+      if (p == 0) return q >= 0;
+      final t = q / p;
+      if (p < 0) {
+        if (t > t1) return false;
+        if (t > t0) t0 = t;
+      } else {
+        if (t < t0) return false;
+        if (t < t1) t1 = t;
+      }
+      return true;
+    }
+
+    return edge(-dx, a.dx - r.left) &&
+        edge(dx, r.right - a.dx) &&
+        edge(-dy, a.dy - r.top) &&
+        edge(dy, r.bottom - a.dy);
   }
 
   /// Pinta una punta de flecha en [tip], orientada según [direction].

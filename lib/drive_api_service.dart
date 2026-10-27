@@ -32,6 +32,7 @@ export 'drive_base.dart'
         kPdfExtensions,
         kTextExtensions,
         DriveConn,
+        driveMaintenanceNotice,
         DriveBusy,
         DriveUploadJob,
         DriveDownloadJob;
@@ -41,7 +42,7 @@ export 'drive_base.dart'
 /// Lo lanza el hub cuando todos sus servidores usables están bloqueados porque
 /// dependen de otro que dejó de responder. Se distingue de un error de red para
 /// no probar direcciones de respaldo ni decirle al usuario que «revise el
-/// cable»: aquí el mensaje ya explica qué servidor cayó.
+/// cable»: aquí el mensaje es el aviso de mantenimiento.
 class DriveMaintenance implements Exception {
   const DriveMaintenance(this.message);
 
@@ -184,11 +185,12 @@ class DriveApiService extends DriveBase {
 
   /// ¿Por qué falló una respuesta que no fue 200?
   ///
-  /// Un 503 del hub no siempre significa «no hay conexión»: cuando un servidor
-  /// DEPENDE de otro que se cayó, el hub contesta `El Drive está en
-  /// mantenimiento` y dice cuál dejó de responder. Eso se enseña como es (y se
-  /// guarda en [maintenance]) en vez de acabar en un `HTTP 503` que no le dice
-  /// nada a nadie. El resto de errores sí se resumen como `HTTP xxx`.
+  /// Un 503 del hub no siempre significa «no hay conexión»: cuando NO queda
+  /// ningún servidor en funcionamiento (los encendidos están caídos o
+  /// bloqueados por una dependencia), el hub contesta `El Drive está en
+  /// mantenimiento`. Eso se marca en [maintenance] (la vista entra en modo
+  /// mantenimiento) en vez de acabar en un `HTTP 503` que no le dice nada a
+  /// nadie. El resto de errores sí se resumen como `HTTP xxx`.
   Object _httpFailure(http.Response r) {
     Map<String, dynamic>? body;
     try {
@@ -199,26 +201,21 @@ class DriveApiService extends DriveBase {
       // «HTTP xxx» y el detalle del código de estado.
     }
     final message = '${body?['message'] ?? body?['error'] ?? ''}'.trim();
-    final details = '${body?['details'] ?? ''}'.trim();
-    // La lista de bloqueados también viene en el aviso: se usa para el banner.
-    final rawItems = body?['maintenance'] is Map
-        ? (body?['maintenance']['items'] as List?)
-        : null;
-    final items = [
-      for (final item in rawItems ?? const [])
-        if (item is Map)
-          '${item['name'] ?? 'Servidor'}: '
-              '${item['reason'] ?? 'depende de un servidor que no responde'}',
-    ];
+    // El detalle del hub (`details` y la lista `maintenance`) NOMBRA los
+    // servidores bloqueados y de cuál dependen. Ese detalle vive en Conexión:
+    // el Drive solo entra en modo mantenimiento, así que aquí no se guarda ni
+    // se enseña.
+    final maintenanceBody = body?['maintenance'];
+    final blocked =
+        maintenanceBody is Map &&
+        (maintenanceBody['active'] == true ||
+            (maintenanceBody['items'] as List?)?.isNotEmpty == true);
     final isMaintenance =
         r.statusCode == 503 &&
-        (message.toLowerCase().contains('mantenimiento') || items.isNotEmpty);
+        (message.toLowerCase().contains('mantenimiento') || blocked);
     if (isMaintenance) {
-      final text = details.isNotEmpty
-          ? details
-          : (items.isNotEmpty ? items.join(' · ') : message);
-      maintenance = items.isNotEmpty ? items : [text];
-      return DriveMaintenance('$message. $text'.trim());
+      maintenance = const [driveMaintenanceNotice];
+      return const DriveMaintenance(driveMaintenanceNotice);
     }
     return 'HTTP ${r.statusCode}${message.isEmpty ? '' : ' · $message'}';
   }
@@ -319,18 +316,10 @@ class DriveApiService extends DriveBase {
         );
         (it.isFolder ? folders : files).add(it);
       }
-      // MANTENIMIENTO del Drive federado: el hub dice qué servidor está
-      // bloqueado porque depende de otro que no responde. Se guarda para que la
-      // página avise aunque el listado llegue bien.
-      final rawMaintenance = data['maintenance'] is Map
-          ? (data['maintenance']['items'] as List?)
-          : null;
-      maintenance = [
-        for (final item in rawMaintenance ?? const [])
-          if (item is Map)
-            '${item['name'] ?? 'Servidor'}: '
-                '${item['reason'] ?? 'depende de un servidor que no responde'}',
-      ];
+      // Un listado bueno significa que el hub TIENE algún servidor en
+      // funcionamiento: el Drive ya no está en mantenimiento (aunque quede
+      // algún servidor bloqueado, ese no para el Drive entero).
+      maintenance = const [];
       // El alcance compartido (y los conteos) los aplica [applyRefresh].
       if (!applyRefresh(ticket, [...folders, ...files])) return;
       lastResponse = clock.elapsed;
@@ -350,6 +339,7 @@ class DriveApiService extends DriveBase {
           await refresh();
           return;
         }
+        maintenance = const [];
         failRefresh('No se pudo conectar con el servidor ($base): $e');
       }
     } finally {
@@ -359,6 +349,61 @@ class DriveApiService extends DriveBase {
         loading = false;
         notifyListeners();
       }
+    }
+  }
+
+  /// ¿El hub dice que NO queda ningún servidor en funcionamiento?
+  ///
+  /// Se prefiere el campo `active`, que lo calcula el hub con la regla
+  /// completa. Con un hub viejo, sin ese campo, se deduce de sus servidores:
+  /// encendido, en línea y sin bloqueo. Así la vista funciona igual contra
+  /// hubs anteriores.
+  static bool _hubInMaintenance(Map<String, dynamic> data) {
+    final maintenance = data['maintenance'];
+    if (maintenance is Map) {
+      final active = maintenance['active'];
+      if (active is bool) return active;
+    }
+    final nodes = data['nodes'];
+    if (nodes is! List) return false;
+    final enabled = nodes.whereType<Map>().where((n) => n['enabled'] == true);
+    if (enabled.isEmpty) return false;
+    return !enabled.any((n) => n['online'] == true && n['blocked'] != true);
+  }
+
+  /// Mantenimiento al ENTRAR a la vista (ver [DriveBase.checkMaintenance]).
+  ///
+  /// Pregunta `/api/health`, que es público y el hub tiene cacheado: es barato
+  /// y no toca el árbol. Antes la vista solo se enteraba al recargar, así que
+  /// un hub que entraba en mantenimiento con la app abierta seguía enseñando
+  /// las carpetas viejas hasta pulsar «Reintentar».
+  @override
+  Future<void> checkMaintenance() async {
+    if (_apikey.isEmpty || loading) return;
+    try {
+      final r = await client
+          .get(Uri.parse('$base/api/health'))
+          .timeout(const Duration(seconds: 5));
+      if (r.statusCode != 200) return;
+      final data = jsonDecode(r.body);
+      if (data is! Map<String, dynamic>) return;
+      if (_hubInMaintenance(data)) {
+        if (maintenance.isEmpty) {
+          maintenance = const [driveMaintenanceNotice];
+          notifyListeners();
+        }
+        return;
+      }
+      if (maintenance.isNotEmpty) {
+        // El hub volvió: lo que hay en pantalla es de antes del mantenimiento
+        // (o no hay nada). Se quita el aviso y se recarga.
+        maintenance = const [];
+        notifyListeners();
+        await refresh();
+      }
+    } catch (_) {
+      // Sin respuesta no se inventa mantenimiento: la vista tiene su card de
+      // conexión para contar el fallo real.
     }
   }
 
@@ -422,7 +467,8 @@ class DriveApiService extends DriveBase {
   /// NO bloquea la UI: cada trabajo vive en [uploadJobs] (panel estilo Drive).
   /// Hasta [kUploadParallel] archivos suben EN PARALELO y TODOS los trabajos
   /// aparecen en el panel desde el inicio (no uno por uno).
-  /// Con [overwrite] borra primero el existente con el mismo nombre.
+  /// Con [overwrite] el servidor REEMPLAZA el que tenga ese nombre (el hub
+  /// manda la subida al servidor que ya lo tiene); sin él se renombra.
   /// Los trabajos con `cancelled = true` se saltan o se abortan en vuelo.
   @override
   Future<int> uploadFromPaths(
@@ -453,6 +499,7 @@ class DriveApiService extends DriveBase {
         thumb: s, // miniatura del archivo LOCAL mientras sube
         total: f.lengthSync(),
         batch: batch,
+        overwrite: overwrite,
       );
       i++;
       addUploadJob(job);
@@ -497,6 +544,7 @@ class DriveApiService extends DriveBase {
         total: total,
         batch: batch,
         file: x,
+        overwrite: overwrite,
       );
       i++;
       addUploadJob(job);
@@ -533,21 +581,16 @@ class DriveApiService extends DriveBase {
         }
         // Reintentos automáticos: una subida que se corta (enlace doméstico,
         // timeout, servidor ocupado) se vuelve a intentar con espera creciente
-        // en vez de quedar perdida.
-        final ok = await runUploadWithRetries(job, () async {
-          if (overwrite) {
-            // Sobrescribir: elimina el existente y sube el nuevo.
-            try {
-              await _post('/api/delete', {
-                'path': path.join('/'),
-                'names': [job.name],
-              });
-            } catch (_) {
-              /* si no existía, sigue */
-            }
-          }
-          await _uploadOne(client, job, src);
-        });
+        // en vez de quedar perdida. Si el servidor elegido falla, el hub
+        // recuerda el fallo y este reintento va al otro.
+        //
+        // «Sobrescribir» ya NO borra antes: se le dice al servidor
+        // (`overwrite`), que reemplaza el archivo EN SU MISMO servidor. Si se
+        // borrara primero, la foto podía reaparecer en el otro servidor.
+        final ok = await runUploadWithRetries(
+          job,
+          () => _uploadOne(client, job, src, overwrite: overwrite),
+        );
         if (ok) saved++;
       }
     }
@@ -586,11 +629,17 @@ class DriveApiService extends DriveBase {
   static int chunkSize = _defaultChunk;
 
   /// Sube un archivo con barra de progreso (stream con contador de bytes).
+  ///
+  /// [overwrite] = el usuario eligió «Sobrescribir» en el aviso de duplicados:
+  /// el servidor reemplaza el que tenga ese nombre (en vez de guardarlo al
+  /// lado como «foto (1).jpg»). El nombre viaja SIEMPRE, porque con varios
+  /// servidores es lo que le dice al hub a cuál mandar la subida.
   Future<void> _uploadOne(
     http.Client client,
     DriveUploadJob job,
-    _UploadSource src,
-  ) async {
+    _UploadSource src, {
+    bool overwrite = false,
+  }) async {
     // El Drive acepta fotos, RAW y VÍDEOS (el servidor lista y sirve esos
     // formatos): cualquier otro se rechaza al instante con un motivo claro, en
     // vez de gastar los tres intentos de subida para recibir un error opaco
@@ -598,7 +647,7 @@ class DriveApiService extends DriveBase {
     final format = uploadFormatError(job.name);
     if (format != null) throw format;
     if (job.total > chunkThreshold) {
-      await _uploadChunked(client, job, src);
+      await _uploadChunked(client, job, src, overwrite: overwrite);
       return;
     }
     // En el navegador un rechazo del proxy puede llegar como ERROR DE RED (su
@@ -607,7 +656,7 @@ class DriveApiService extends DriveBase {
     // tres reintentos subiendo el mismo cuerpo para volver a rebotar.
     bool rejected;
     try {
-      rejected = await _uploadMultipart(client, job, src);
+      rejected = await _uploadMultipart(client, job, src, overwrite: overwrite);
     } on http.ClientException {
       rejected = true;
     }
@@ -621,7 +670,7 @@ class DriveApiService extends DriveBase {
     notifyUploadProgress();
     // Si el tamaño no se conocía, se lee ahora: el troceado lo necesita.
     final size = job.total > 0 ? null : await _sizeOf(src);
-    await _uploadChunked(client, job, src, size: size);
+    await _uploadChunked(client, job, src, size: size, overwrite: overwrite);
   }
 
   /// Motivo por el que una foto NO se puede subir, o `null` si su formato vale.
@@ -655,26 +704,38 @@ class DriveApiService extends DriveBase {
   Future<bool> _uploadMultipart(
     http.Client client,
     DriveUploadJob job,
-    _UploadSource src,
-  ) async {
-    final req = http.MultipartRequest('POST', _u('/api/upload'))
-      ..headers.addAll(_authHeaders)
-      ..fields['path'] = path.join('/')
-      ..files.add(
-        src.file != null
-            ? http.MultipartFile.fromBytes(
-                'files',
-                await src.file!.readAsBytes(),
-                filename: job.name,
-                contentType: _mediaType(extOf(job.name)),
-              )
-            : await http.MultipartFile.fromPath(
-                'files',
-                src.path!,
-                filename: job.name,
-                contentType: _mediaType(extOf(job.name)),
-              ),
-      );
+    _UploadSource src, {
+    bool overwrite = false,
+  }) async {
+    // La carpeta y el NOMBRE van también en la URL: el hub los necesita para
+    // elegir servidor (repartir y respetar el nombre repetido) sin tener que
+    // abrir el cuerpo multipart. El nodo los recibe además en el formulario.
+    final req =
+        http.MultipartRequest(
+            'POST',
+            _u('/api/upload', {
+              'path': path.join('/'),
+              'name': job.name,
+              if (overwrite) 'overwrite': '1',
+            }),
+          )
+          ..headers.addAll(_authHeaders)
+          ..fields['path'] = path.join('/')
+          ..files.add(
+            src.file != null
+                ? http.MultipartFile.fromBytes(
+                    'files',
+                    await src.file!.readAsBytes(),
+                    filename: job.name,
+                    contentType: _mediaType(extOf(job.name)),
+                  )
+                : await http.MultipartFile.fromPath(
+                    'files',
+                    src.path!,
+                    filename: job.name,
+                    contentType: _mediaType(extOf(job.name)),
+                  ),
+          );
 
     final counted = req.finalize().transform<List<int>>(
       StreamTransformer.fromHandlers(
@@ -742,10 +803,18 @@ class DriveApiService extends DriveBase {
     DriveUploadJob job,
     _UploadSource src, {
     int? size,
+    bool overwrite = false,
   }) async {
     var pieces = chunkSize;
     while (true) {
-      final tooBig = await _sendChunks(client, job, src, pieces, size: size);
+      final tooBig = await _sendChunks(
+        client,
+        job,
+        src,
+        pieces,
+        size: size,
+        overwrite: overwrite,
+      );
       if (!tooBig) return;
       final floor = _chunkFloor;
       if (pieces <= floor) {
@@ -768,6 +837,7 @@ class DriveApiService extends DriveBase {
     _UploadSource src,
     int pieces, {
     int? size,
+    bool overwrite = false,
   }) async {
     final total = (size != null && size > 0) ? size : job.total;
     if (total <= 0) throw 'No se pudo leer el tamaño de la foto';
@@ -788,6 +858,7 @@ class DriveApiService extends DriveBase {
         'total': '$count',
         'path': rel,
         'name': job.name,
+        if (overwrite) 'overwrite': '1',
       });
       late final http.Response res;
       try {
@@ -827,6 +898,7 @@ class DriveApiService extends DriveBase {
             'total': count,
             'path': rel,
             'name': job.name,
+            if (overwrite) 'overwrite': true,
           }),
         )
         .timeout(const Duration(minutes: 2));
@@ -884,6 +956,8 @@ class DriveApiService extends DriveBase {
             file: x,
             path: x == null ? job.thumb : (kIsWeb ? null : x.path),
           ),
+          // «Resubir» mantiene lo que se eligió en el aviso de duplicados.
+          overwrite: job.overwrite,
         ),
       );
     } finally {
@@ -1019,10 +1093,14 @@ class DriveApiService extends DriveBase {
   /// El servidor recorre el árbol, así que se le da un margen amplio.
   @override
   Future<Map<String, dynamic>?> storageInfo() async {
-    final r = await http
+    final r = await client
         .get(_u('/api/space'), headers: _authHeaders)
         .timeout(const Duration(seconds: 90));
-    if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+    // Un 503 se explica tal cual: mantenimiento (el Drive entero está parado)
+    // o el motivo que mande el servidor («todos apagados», permisos sin BD…).
+    // Antes se lanzaba solo `HTTP 503` y el módulo Almacenamiento no decía por
+    // qué ni dejaba ver que era mantenimiento.
+    if (r.statusCode != 200) throw _httpFailure(r);
     return (jsonDecode(r.body) as Map).cast<String, dynamic>();
   }
 

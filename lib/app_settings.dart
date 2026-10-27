@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_constants.dart';
 import 'drive_host.dart';
 import 'hs_api.dart';
-import 'theme.dart' show AppColors;
+import 'theme.dart' show AppColors, HsPalette;
 
 /// Modo de apariencia de la app (módulo Configuraciones).
 ///
@@ -30,7 +30,7 @@ class AppSettings extends ChangeNotifier {
 
   static const _kDark = 'app.dark';
   static const _kThemeMode = 'app.theme.mode';
-  static const _kAccent = 'app.accent';
+  static const _kPalette = 'app.palette';
   static const _kRemember = 'app.remember';
   static const _kToken = 'app.token';
   static const _kUser = 'app.user';
@@ -53,7 +53,9 @@ class AppSettings extends ChangeNotifier {
   /// De fábrica manda el **modo del sistema**: la app se ve como el teléfono o
   /// la computadora hasta que el usuario elija claro u oscuro a mano.
   HsThemeMode _themeMode = HsThemeMode.system;
-  String _accent = AppColors.defaultAccent;
+
+  /// PALETA COMPLETA de diseño (fondos, tarjetas, barra lateral y acento).
+  String _palette = HsPalette.medianoche.key;
 
   // ---- Servicio de compartir (switch de "Archivos compartidos") ----
   bool _shareServing = false;
@@ -74,8 +76,11 @@ class AppSettings extends ChangeNotifier {
   /// Modo de apariencia elegido (persistente).
   HsThemeMode get themeMode => _themeMode;
 
-  /// Clave del color de acento elegido ("azul", "violeta"…).
-  String get accent => _accent;
+  /// Clave de la paleta de diseño elegida ("medianoche", "grafito"…).
+  String get palette => _palette;
+
+  /// La paleta de diseño vigente.
+  HsPalette get paletteData => HsPalette.byKey(_palette);
 
   /// ¿La app se ve OSCURA ahora? (el menú rápido lo usa para el icono y el
   /// widget nativo para su paleta). Con el modo "sistema" sigue al equipo.
@@ -196,11 +201,14 @@ class AppSettings extends ChangeNotifier {
           final d => d ? HsThemeMode.dark : HsThemeMode.light,
         },
       };
-      final savedAccent = sp.getString(_kAccent);
-      if (savedAccent != null && AppColors.accents.containsKey(savedAccent)) {
-        _accent = savedAccent;
-      }
-      AppColors.setBrand(AppColors.accents[_accent]!);
+      // PALETA DE DISEÑO: manda sobre las superficies Y sobre el acento. El
+      // acento no se elige suelto (antes se podía y dejaba, por ejemplo, un
+      // burdeos suelto sobre una paleta gris): cada diseño trae el suyo.
+      final savedPalette = sp.getString(_kPalette);
+      final palette = HsPalette.byKey(savedPalette);
+      _palette = palette.key;
+      AppColors.setPalette(palette);
+      AppColors.setBrand(palette.accent);
       // La base del CRUD la lee el worker nativo de avisos (Android): se
       // actualiza en cada arranque por si cambió la compilación.
       await sp.setString(_kNotifyBase, AppConstants.crudApiBase);
@@ -300,16 +308,20 @@ class AppSettings extends ChangeNotifier {
     }
   }
 
-  /// Cambia el COLOR DE ACENTO (clave de la paleta) y lo guarda.
-  Future<void> setAccent(String key) async {
-    final color = AppColors.accents[key];
-    if (color == null) return;
-    _accent = key;
-    AppColors.setBrand(color);
+  /// Cambia la PALETA COMPLETA de diseño y la guarda.
+  ///
+  /// No cambia solo un color: cambian el fondo de la app, las tarjetas, la
+  /// barra lateral y los bordes, y el acento pasa al de la paleta.
+  Future<void> setPalette(String key) async {
+    final palette = HsPalette.byKey(key);
+    if (_palette == palette.key && AppColors.palette.key == palette.key) return;
+    _palette = palette.key;
+    AppColors.setPalette(palette);
+    AppColors.setBrand(palette.accent);
     notifyListeners();
     try {
       final sp = await SharedPreferences.getInstance();
-      await sp.setString(_kAccent, key);
+      await sp.setString(_kPalette, _palette);
     } catch (_) {
       // Sin storage: el cambio vale solo para esta sesión.
     }

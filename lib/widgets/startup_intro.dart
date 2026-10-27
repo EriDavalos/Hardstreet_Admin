@@ -87,7 +87,7 @@ class _StartupIntroState extends State<StartupIntro>
     final scheme = Theme.of(context).colorScheme;
     final dark = scheme.brightness == Brightness.dark;
     // Mismo fondo que el panel: el fundido cruzado no deja costura.
-    final background = dark ? const Color(0xFF0C111C) : const Color(0xFFF7F9FC);
+    final background = dark ? AppColors.bgDark : AppColors.bgLight;
 
     return Scaffold(
       backgroundColor: background,

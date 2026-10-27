@@ -4,11 +4,13 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_awake.dart';
 import 'app_constants.dart';
 import 'app_platform.dart';
 import 'app_settings.dart';
 import 'back_nav.dart';
 import 'drive_api_service.dart';
+import 'drive_host.dart';
 import 'event_widget.dart';
 import 'hs_access.dart';
 import 'hs_api.dart';
@@ -85,7 +87,9 @@ void applySystemChromeStyle({required bool isDark}) {
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
-      systemNavigationBarColor: isDark ? const Color(0xFF0C111C) : Colors.white,
+      // La barra del sistema toma el fondo de la PALETA vigente, no un color
+      // fijo: con «Vino» o «Marfil» la franja no puede quedar azul noche.
+      systemNavigationBarColor: isDark ? AppColors.bgDark : AppColors.bgLight,
       systemNavigationBarIconBrightness: isDark
           ? Brightness.light
           : Brightness.dark,
@@ -161,6 +165,10 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // también en web. La app ESCUCHA los cambios: alternar el tema desde el
     // login o desde el panel reconstruye el MaterialApp al instante.
     AppSettings.instance.addListener(_onSettingsChanged);
+    // ¿Ventana a la vista? El estado se usa en todo el panel (ver [AppAwake]):
+    // en segundo plano solo siguen consultando los avisos.
+    AppAwake.instance.start();
+    AppAwake.instance.resumed.addListener(_onAwake);
     // Preferencia del panel de eventos de escritorio (Windows): se lee ANTES
     // de que el servicio de avisos empiece a alimentarlo.
     UpcomingEventsWidget.load();
@@ -203,11 +211,21 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       }
     });
     // Chequeo periódico mientras la app siga abierta (por si el servidor
-    // publica una versión nueva en caliente). En web/tests se omite.
-    _versionTimer = Timer.periodic(
-      const Duration(hours: 6),
-      (_) => _checkVersion(),
-    );
+    // publica una versión nueva en caliente). En web/tests se omite. Con la app
+    // en segundo plano el turno se salta: al volver ya se comprueba
+    // ([_onAwake]).
+    _versionTimer = Timer.periodic(const Duration(hours: 6), (_) {
+      if (!AppAwake.instance.awake) return;
+      _checkVersion();
+    });
+  }
+
+  /// La app VOLVIÓ a primer plano (un clic en la ventana): se revisa la versión
+  /// otra vez (el chequeo periódico se salta los turnos en segundo plano).
+  /// Recargar la sección lo hace [AdminHome], con la misma señal.
+  void _onAwake() {
+    if (!mounted) return;
+    _checkVersion();
   }
 
   void _onSettingsChanged() {
@@ -230,6 +248,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   @override
   void dispose() {
     AppSettings.instance.removeListener(_onSettingsChanged);
+    AppAwake.instance.resumed.removeListener(_onAwake);
     _versionTimer?.cancel();
     RemindersService.instance.stop();
     PackageNotificationsService.instance.stop();
@@ -277,11 +296,11 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       );
       _forceUpdateShown = true;
       final plat = isAndroidPlatform ? 'android' : 'windows';
-      final url = info.downloads[plat] ?? '';
-      final fallback = info.downloads.values.firstWhere(
-        (u) => u.isNotEmpty,
-        orElse: () => '',
-      );
+      // El APK/EXE se descarga DEL HUB: es el único servidor del Drive al que
+      // la app tiene que llegar, y él reenvía `/downloads/<archivo>` al
+      // servidor que tenga el release (aunque no sea el principal).
+      final url = info.downloadUrlFor(plat, viaBase: DriveHost.base);
+      final fallback = info.downloadUrlFor('', viaBase: DriveHost.base);
       // Contexto del NAVIGATOR (dentro de MaterialApp): usar el context del
       // State hace que showDialog falle en silencio y la ventana jamás salga.
       final navCtx = _navKey.currentContext;
@@ -412,7 +431,7 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
           // diálogo abierto.
           return HsToastHost(
             child: ColoredBox(
-              color: isDark ? const Color(0xFF0C111C) : Colors.white,
+              color: isDark ? AppColors.bgDark : AppColors.bgLight,
               child: SafeArea(
                 bottom: false,
                 child: child ?? const SizedBox.shrink(),
@@ -479,12 +498,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
       notes: info.notes,
       onDownload: () async {
         final plat = isAndroidPlatform ? 'android' : 'windows';
-        final url =
-            info.downloads[plat] ??
-            info.downloads.values.firstWhere(
-              (u) => u.isNotEmpty,
-              orElse: () => '',
-            );
+        // Se descarga del HUB (ver [AppVersionInfo.downloadUrlFor]).
+        final url = info.downloadUrlFor(plat, viaBase: DriveHost.base);
         // Mismo modal de actualización (descarga interna con barra de
         // progreso + instalación); NO abre el navegador.
         final ctx = _navKey.currentContext;
@@ -520,7 +535,7 @@ class PanelLoadingScreen extends StatelessWidget {
     final dark = scheme.brightness == Brightness.dark;
     // Mismo fondo que la animación de arranque: la intro cede el paso a esta
     // pantalla sin costura, sin un parpadeo blanco de por medio.
-    final background = dark ? const Color(0xFF0C111C) : const Color(0xFFF7F9FC);
+    final background = dark ? AppColors.bgDark : AppColors.bgLight;
     return Scaffold(
       backgroundColor: background,
       body: Center(
@@ -776,6 +791,22 @@ class _AdminHomeState extends State<AdminHome> {
   /// remontar la página actual para que pida los datos de la nueva.
   int _companyEpoch = 0;
 
+  /// Sube cada vez que la app VUELVE a primer plano. Va en la clave de la
+  /// sección, así que la página actual se remonta y pide TODO otra vez: en
+  /// segundo plano el panel dejó de consultar y soltó las imágenes.
+  int _awakeEpoch = 0;
+
+  /// Volvió la app (un clic en la ventana): se recarga TODO.
+  ///
+  /// La sección actual vuelve a montarse (cambia su clave) y el Drive, que
+  /// comparte su estado entre páginas, vuelve a pedir su listado: en segundo
+  /// plano se soltaron las imágenes y no se consultó nada.
+  void _onAwake() {
+    if (!mounted) return;
+    unawaited(_drive.refresh());
+    setState(() => _awakeEpoch = AppAwake.instance.resumed.value);
+  }
+
   void _onCompanyChanged() {
     if (!mounted) return;
     // El Superadministrador cambia de empresa: el Drive vuelve a la RAÍZ de la
@@ -837,6 +868,9 @@ class _AdminHomeState extends State<AdminHome> {
     // módulos se registran después y por eso se atienden primero.
     BackNav.add(_backStep);
     HsAccess.addListener(_onAccessChanged);
+    // Al VOLVER a la app se recarga la sección actual ([_onAwake]); en segundo
+    // plano el panel no consulta nada (ver [AppAwake]).
+    AppAwake.instance.resumed.addListener(_onAwake);
     _loadPermissions();
     // Toques del widget nativo: tocar un evento (o el botón "Agregar agenda")
     // lleva a Agendas; la página abre el detalle o el alta.
@@ -882,6 +916,7 @@ class _AdminHomeState extends State<AdminHome> {
     BackNav.remove(_backStep);
     HsApi.onPermissionsChanged = null;
     HsAccess.removeListener(_onAccessChanged);
+    AppAwake.instance.resumed.removeListener(_onAwake);
     UpcomingEventsWidget.requested.removeListener(_onWidgetRequest);
     super.dispose();
   }
@@ -1447,8 +1482,13 @@ class _AdminHomeState extends State<AdminHome> {
       // La empresa activa del Superadministrador cambia el CONTEXTO de todos
       // los módulos: la llave remonta la página para que vuelva a pedir sus
       // datos con la empresa nueva.
+      // La clave lleva la empresa Y los regresos a primer plano: al volver a la
+      // app la sección se remonta y recarga todo (en segundo plano no se
+      // consultó nada y se soltaron las imágenes).
       body: KeyedSubtree(
-        key: ValueKey('company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch'),
+        key: ValueKey(
+          'company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch-$_awakeEpoch',
+        ),
         child: body,
       ),
       companySelector: CompanySelector(onChanged: _onCompanyChanged),

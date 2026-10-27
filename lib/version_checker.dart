@@ -26,6 +26,38 @@ class AppVersionInfo {
   final String notes;
   final Map<String, String> downloads; // windows / android
 
+  /// Enlace de descarga de la plataforma [platform] (`android` / `windows`),
+  /// servido SIEMPRE por el servidor con el que habla la app (el HUB).
+  ///
+  /// El backend publica la dirección del servidor que tiene el APK/EXE. Pero
+  /// la app solo habla con el HUB, así que se cambia el ORIGEN y se conserva
+  /// la ruta `/downloads/<archivo>`: el hub la reenvía al servidor donde está
+  /// el archivo (aunque ese no sea el primero de la lista) y sigue sirviendo
+  /// cuando un nodo está apagado. Un enlace externo (otro dominio, una nube)
+  /// se respeta tal cual: no se reescribe.
+  String downloadUrlFor(String platform, {String? viaBase}) {
+    final own = downloads[platform] ?? '';
+    final chosen = own.isNotEmpty
+        ? own
+        : downloads.values.firstWhere((u) => u.isNotEmpty, orElse: () => '');
+    final base = (viaBase ?? '').replaceAll(RegExp(r'/+$'), '');
+    if (chosen.isEmpty || base.isEmpty) return chosen;
+    final link = Uri.tryParse(chosen);
+    final hub = Uri.tryParse(base);
+    if (link == null || hub == null || hub.host.isEmpty) return chosen;
+    final at = link.path.indexOf('/downloads/');
+    if (at < 0) return chosen;
+    final tail = link.path.substring(at);
+    final pathOfHub = hub.path.replaceAll(RegExp(r'/+$'), '');
+    return Uri(
+      scheme: hub.scheme,
+      host: hub.host,
+      port: hub.hasPort ? hub.port : null,
+      path: '$pathOfHub$tail',
+      query: link.hasQuery ? link.query : null,
+    ).toString();
+  }
+
   /// ¿La versión [current] es más vieja que [minVersion]?
   bool isOutdated(String current) => compareVersions(current, minVersion) < 0;
 

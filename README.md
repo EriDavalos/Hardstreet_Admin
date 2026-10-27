@@ -113,6 +113,14 @@ compactas (resumen + finanzas, eventos y clientes, distribución + accesos
 rápidos). Cada columna scrollea por dentro solo si su contenido no cabe. En
 pantallas angostas se mantiene el acomodo en una columna con scroll.
 
+**Las tarjetas no desaparecen mientras cargan.** Las cuatro fuentes del resumen
+(usuarios, clientes, paquetes y agendas) se piden **a la vez**, y lo opcional
+(finanzas y espacio del drive) va después y en paralelo: su tarjeta ya está en
+su sitio con un **esqueleto de carga** y se rellena cuando llega el dato, en vez
+de aparecer de golpe y reacomodar la pantalla. Al **refrescar** tampoco se
+vuelve al esqueleto: se siguen viendo los datos anteriores hasta que llegan los
+nuevos.
+
 ## Módulo Finanzas
 
 Todo lo monetario del negocio en una vista moderna con **tres pestañas**
@@ -265,6 +273,31 @@ lo ancho (antes era un botón de contorno más, y el cliente se quedaba con la
 selección hecha creyendo que ya estaba). Al enviarlas el bloque desaparece y
 quedan solo *Ver fotos (N)* y el aviso «Enviadas». Sin fotos elegidas no hay
 bloque: no hay nada que mandar.
+
+**El paso que le TOCA al cliente va en su propio BLOQUE, con el botón
+latiendo.** El cliente puede tener dos pasos pendientes y los dos usan el MISMO
+bloque destacado —borde y fondo del color del paso, circulito con icono, rótulo
+y botón lleno a todo lo ancho— porque en la fila de acciones, entre *Abrir
+carpeta* y el resto, el botón se perdía y no se veía que el turno era suyo:
+
+- **TE TOCA A TI · Elige tus fotos** — mientras no tenga ninguna marcada. El
+  bloque de elegir sale en lugar del botón de la fila (que vuelve como *Mis
+  fotos (N)* en cuanto elige).
+- **SIGUIENTE PASO · Envía tus fotos a impresión** — ya con fotos elegidas y
+  sin enviar: cuántas lleva y que su fotógrafo las recibe al enviarlas.
+
+En los dos casos el botón del bloque lleva un **aro del color del paso que
+respira** alrededor (se abre un poco y su color sube y baja; un ciclo completo
+≈ 2,4 s) —y el aro va siempre en el paso que toca: enviadas las fotos no hay
+aro en ninguna parte, porque ya no queda nada pendiente.
+
+**El aro no toca el botón.** Nada se agranda, nada se mueve y no se añade
+espacio: lo pinta `AttentionRing` (`lib/widgets/anim.dart`) por FUERA de la caja
+del botón —sin `Padding` ni `Transform`—, así que el botón mide y se coloca
+exactamente igual que sin aro (dentro de su `SizedBox` o de un `Expanded` no se
+descuadra ni se monta sobre el vecino). Con «reducir animaciones» del sistema
+el aro sigue saliendo, pero quieto: el paso pendiente se ve igual de destacado
+sin animación.
 
 ### Banner de la portada (Mostrar banner cliente)
 
@@ -727,6 +760,13 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   derecho del contenido (donde vive la barra) se ignora al iniciar la
   marquesina; antes, al arrastrar la barra caía en la zona vacía, encendía el
   modo «Seleccionar» y dibujaba el recuadro mientras te desplazabas.
+- **Un clic en el CARRIL de la barra salta justo al punto clicado** (antes
+  avanzaba UNA PANTALLA hacia donde apuntabas, que se siente como «le di para
+  bajar»). El pulgar queda centrado en el punto clicado y los extremos se topan
+  con el rango real de la carpeta. Va en `ScrollTrackJump`: una franja encima
+  del carril que se queda el clic (el avance por pantalla de Flutter no llega a
+  dispararse). El clic SOBRE el pulgar no mueve nada —de ahí se agarra para
+  arrastrar— y en el celular la franja ni se pone, porque ahí no hay barra.
 - **Botón fijo de crear** (solo celular y solo con permiso de crear): un
   círculo con el degradado de la marca y el **+** blanco —sin texto, para no
   tapar las fotos— abajo a la derecha; abre la hoja con **Nueva carpeta** y
@@ -800,6 +840,21 @@ ve el Drive tampoco elige archivos de ahí. La regla vive en
   expande a sus archivos), cada una a **Descargas** (`MediaStore` en Android).
   La descarga sigue en segundo plano si sales de la pantalla: vive en el panel
   de transferencias, con su progreso y su cancelar, y no bloquea la app.
+- **Varios servidores del Drive:** el panel no cambia nada, pero si el hub
+  tiene más de un servidor **reparte las subidas**: cada archivo va **por
+  turno** a un servidor distinto (uno a uno, alternando), así que una sesión de
+  fotos usa los dos enlaces a la vez. El panel manda el **nombre** de cada
+  archivo para que el hub pueda decidir: si ese mismo nombre (misma carpeta y
+  extensión) ya existe en un servidor, la subida va **a ese** y allí se
+  **reemplaza** (o se renombra, según lo que elijas en el aviso de duplicados);
+  nunca queda dos veces. Si el servidor elegido falla, el **reintento va al
+  otro**.
+  La carpeta se **crea sola** en el servidor de destino si solo existía en el
+  otro (el `drive-data` de un servidor recién puesto puede estar vacío).
+  Al descargar también **usa los dos**: cada archivo se pide al servidor que lo
+  tiene y el **ZIP** de una selección repartida se arma con lo de todos, sin
+  recomprimir y anunciando su tamaño (la barra de progreso es la real). Sigue
+  viéndose un solo árbol.
 - Si un refresco de fondo falla (servidor ocupado mientras subes fotos), el
   listado se queda a la vista y solo aparece el aviso “Sin conexión ·
   reintentar”: el directorio no se vacía ni cambia por un fallo pasajero.
@@ -874,6 +929,24 @@ ni al reabrir ni entre los dos.
 - **Límite conocido**: sin un servicio de push no hay entrega al segundo; en
 **iOS** con la app cerrada no llega nada (no hay worker) y en la **web móvil**
 las descargas dependen del navegador (si suspende la pestaña, se cortan).
+
+## En segundo plano: solo avisos, y al volver se recarga todo
+
+Mientras la app NO está a la vista —otra ventana al frente, la app minimizada
+o el teléfono con la app fuera— el panel **deja de consultar**: lo único que
+sigue consultando son los servicios de **avisos** (la campanita cada 15 s y los
+avisos del paquete cada 20 s), que es lo único que necesita enterarse de algo
+sin que nadie esté mirando. Se saltan el turno, entonces, el chequeo de
+versión (cada 6 h), el sondeo de **Conexión** (cada 15 s) y el cambio de foto
+de la portada.
+
+Al pasar a segundo plano también se **sueltan las imágenes en RAM**
+(`ImageMemory.clearRam`: la caché de pintura, que es lo que más memoria ocupa),
+y al volver —un clic en la ventana— se recarga TODO: la sección actual se
+vuelve a montar (misma clave que usa el cambio de empresa) y pide sus datos de
+nuevo, los avisos se refrescan al instante y las fotos se vuelven a pedir
+solas. Lo coordina `AppAwake` (`lib/app_awake.dart`), el único punto que mira
+el ciclo de vida de la ventana.
 
 ## Archivos compartidos (entre usuarios)
 
@@ -974,25 +1047,74 @@ Apagado / Sin comprobar, con el motivo debajo), **versión**, **prioridad**,
 **bibliotecas** (`sharp` y `ffmpeg` con ✓/✕), **espacio** (libre / total con su
 barra), **RAM consumida** (usada / total con su barra, la informa cada nodo en
 su `/api/health`), **ping** (lo que tardó ese servidor en contestar, medido por
-el hub), su **descripción** (las notas del servidor, visibles en la card) y
-**de quién depende**—. Las líneas del hub van **punteadas** cuando ese servidor
-no responde, así se ve el tramo roto de un vistazo.
+el hub), su **descripción** (las notas del servidor, con el rótulo
+`DESCRIPCIÓN` para que se sepa qué es ese texto) y **de quién depende**—. Las
+líneas del hub van **punteadas** cuando ese servidor no responde, así se ve el
+tramo roto de un vistazo.
 
-En computadora la pantalla va en **dos columnas**: a la izquierda queda **solo
-el diagrama** (y los avisos que explican por qué no carga); el **estado del
-HUB** —«Hub conectado» / «Hub sin respuesta», cuántos servidores están en
-línea y la latencia, con el botón *Probar*— ya no ocupa una tarjeta encima del
-diagrama: va en el panel fijo de la derecha, junto a la **dirección del Drive**
-con *Configurar hub*, los **detalles de la conexión** y el aviso de conexión
-local. En pantalla angosta todo se apila.
+Cada card dice también el **SO con el que trabaja ese servidor** (`SO`:
+«Ubuntu 24.04.1 LTS · x64», «Windows · x64»…). No se captura a mano: cada nodo
+lo manda en su `/api/health` (en Linux se lee `/etc/os-release` para el nombre
+bonito) y el hub lo reenvía. Un nodo viejo que no lo informe enseña `—`, nunca
+un dato inventado. Con varios servidores en casas distintas, el SO explica por
+qué allí cambia el camino para instalar `sharp`/`ffmpeg` o reiniciar el
+servicio.
 
-Se puede **hacer clic** en una card para iluminar SOLO sus conexiones (y volver
-a hacer clic para quitar), **arrastrarla** para reacomodar el diagrama y usar su
-menú **⋯**. En pantalla angosta no hay diagrama: son tarjetas con los mismos
-datos, una debajo de otra.
+En computadora la pantalla va en **dos columnas**: el **diagrama ocupa el
+resto de la vista** (todo el ancho menos el panel) y a la derecha queda el
+panel de 360 px con el **estado del HUB** —«Hub conectado» / «Hub sin
+respuesta», cuántos servidores están en línea y la latencia, con el botón
+*Probar*—, la **dirección del Drive** con *Configurar hub*, los **detalles de
+la conexión** y el aviso de conexión local. En pantalla angosta todo se apila
+debajo del diagrama. El diagrama es una **ESTRELLA**: el **HUB va en el
+centro** y los servidores se reparten en filas **arriba y abajo** de él,
+alternando (la primera fila por arriba, la siguiente por abajo, después otra
+arriba…), cada fila centrada. Así con dos servidores queda uno arriba y otro
+abajo, con tres dos arriba y uno abajo, y con cinco tres arriba y dos abajo,
+siempre con el HUB en medio y las líneas saliendo de él hacia todos lados. El
+alto del lienzo se calcula del contenido real, no de una fórmula fija. Las
+cards miden hasta **520 px** (sin achicar letra ni datos), se separan 44 px
+entre columnas y 104 px entre filas. El filo de color del estado va recortado a las esquinas
+de la card (antes sobresalía y parecía una línea suelta). La card del **HUB** mide lo que mide su
+contenido (estado + versión/ping/servidores en una línea) y, si no hay ningún
+aviso, dice qué hace: antes era una caja alta con las píldoras partidas en dos
+filas y un hueco vacío debajo.
+
+Se puede **tocar cualquier parte de una card** para destacar SOLO sus
+conexiones: se quita al volver a tocarla, **solo a los 4 s** o con **Esc**, y
+mientras tanto **las demás cards siguen a la vista** (antes se atenuaban y
+parecía que se ocultaban). Para **reacomodar** el diagrama se **mantiene
+pulsada** la card y se arrastra (con un toque normal nunca se mueve: antes un
+clic con un pelín de movimiento ya la corría y parecía que se había movido
+otra). El menú **⋯** sigue en la esquina. En pantalla angosta no hay diagrama:
+son tarjetas con los mismos datos, una debajo de otra.
 
 El menú **⋯** de cada card trae: *Editar*, *Dependencias*, *Ver terminal*,
-*Reiniciar servicio*, *Subir al proyecto*, *Apagar/Encender* y *Quitar*.
+*Reiniciar servicio*, *Subir al proyecto* y *Apagar/Encender en el Drive*.
+
+**Dos cosas distintas, con dos campos distintos en `drive_nodes`:**
+
+- **Apagar** (`enabled = 0`) — el servidor deja de participar en el Drive,
+  pero **sigue en la lista** y se puede volver a encender. No apaga el
+  servicio del servidor ni toca sus archivos: sus carpetas dejan de verse y no
+  se le guardan archivos nuevos, y todo servidor que dependa de él queda en
+  **mantenimiento** (el Drive entra en la vista de mantenimiento si no le
+  queda ninguno en funcionamiento y deja de servir esas carpetas). Se hace
+  desde ⋯ → *Apagar en el Drive*.
+- **Eliminar** (`active = 0`, borrado lógico) — desaparece del panel y del
+  hub, pero la fila se conserva en la base con su nombre, dirección, prioridad,
+  notas y dependencias. Se hace desde *Editar servidor* → *Eliminar del Drive*.
+
+**El filtro está en el servidor**, no en cada pantalla: `GET
+/api/admin/drive-nodes` sirve solo `active = 1` (encendidos Y apagados) y
+`/api/drive/nodes` hace lo mismo para el hub, que además necesita los apagados
+para saber que existen y bloquear a sus dependientes. Un `active = 0` no se
+dibuja, no cuenta en los totales, no entra en la subida en lote y no aparece
+como dependencia; si hiciera falta recuperarlo, se vuelve a encender la fila
+con un `PUT { id, active: true }` sobre la API (o desde la base).
+
+Requiere la migración `Hardstreet-DB/2026-10-26_drive_nodos_active.sql` (añade
+`active` y pasa los antiguos `enabled = 0` a borrados lógicos).
 
 - **Dependencias** — un **modal propio** (ya no dentro de *Editar*): se marcan
   los servidores de los que éste depende, se ve el resumen («independiente» o
@@ -1008,10 +1130,11 @@ El menú **⋯** de cada card trae: *Editar*, *Dependencias*, *Ver terminal*,
   del servidor (`/home/orion/hardstreet-drive`). No reinicia: si cambiaste
   código, reinicia después.
 
-**Selección múltiple y subida en lote:** con *Seleccionar* cada card muestra
-su casilla; se marcan varios servidores y *Subir proyecto a los marcados* elige
-los archivos **una vez** y los manda a cada uno (el resumen dice a cuántos llegó
-y cuáles fallaron).
+**Selección múltiple y subida en lote:** con *Seleccionar* (el botón cambia a
+*Seleccionando*, con su casilla llena) cada card muestra un cuadradito; se
+marcan varios servidores —tocando cualquier parte de la card— y *Subir
+proyecto a los marcados* elige los archivos **una vez** y los manda a cada uno
+(el resumen dice a cuántos llegó y cuáles fallaron).
 
 **La dirección del Drive se configura en el HUB**, no suelta en la página:
 botón ⚙ de la card del hub (o *Configurar hub* en el panel lateral) abre su
@@ -1030,12 +1153,65 @@ en el error de la terminal si falta.
 En *⋯ → **Dependencias*** se marcan los servidores de los que éste depende
 (puede ser mutuo). En el diagrama cada dependencia es una **línea entre las dos
 cards** con flecha hacia el servidor del que se depende; si es **mutua**, la
-línea lleva flecha en **ambas puntas** (una sola línea, no dos). Si uno de ellos
-**no responde**, este queda **bloqueado**: el
-hub deja de listar, leer y guardar ahí, y el Drive muestra una tarjeta ámbar
-**Mantenimiento** con el motivo, en vez de enseñar un árbol a medias. Los
-servidores independientes siguen funcionando. Al volver el servidor caído, el
-dependiente sale solo del mantenimiento.
+línea lleva flecha en **ambas puntas** (una sola línea, no dos).
+
+Los servidores relacionados se colocan **juntos**, en la misma fila y del mismo
+lado del HUB (antes podían caer uno arriba y otro abajo y la línea cruzaba la
+card del hub), y primero se lee el servidor del que se depende y después el
+dependiente. La línea sale por el borde de cada card que mira a la otra —arriba/
+abajo si están en columna, a los costados si están al lado— y, si aun así tuviera
+que atravesar el HUB, lo **rodea por el costado** más cercano con una curva
+suave, en vez de esconderse detrás de él. Si uno de ellos
+**no responde**, está **apagado** en Conexión o **ya no está** en la lista, este
+queda **bloqueado** y el hub deja de listar, leer y guardar ahí; en Conexión su
+card sigue diciendo **Mantenimiento** con el motivo. Los servidores
+independientes siguen funcionando: un bloqueo **parcial** no para el Drive, que
+enseña el árbol con lo que sí se puede servir. Al volver el servidor caído (o
+al **encenderlo** otra vez), el dependiente sale solo del mantenimiento. El
+bloqueo llega también cuando el servidor se **apaga** (`enabled = 0`): el
+servicio del servidor puede estar corriendo, pero para el Drive cuenta como
+caído y el aviso lo dice.
+
+El Drive entra en **mantenimiento a pantalla completa** —sin carpetas ni
+botones, centrado— cuando **no queda ningún servidor en funcionamiento**:
+cuentan solo los encendidos que responden y no están bloqueados. Un servidor
+que responde pero está bloqueado **no cuenta**, así que también se entra si
+todos los sanos se cayeron. Se comprueba **al entrar** al módulo (y al
+recargar), así el aviso sale solo, sin esperar a pulsar *Reintentar*. Si
+**todos** los servidores están apagados, el Drive responde «Todos los
+servidores del Drive están apagados» en vez de «no hay servidores
+configurados».
+
+Los cambios se ven **al momento**: al encender/apagar un servidor, editarlo o
+cambiar sus dependencias, el panel le pide al hub que **relea su lista**
+(`/api/health?nodes=1`) en vez de esperar hasta 30 s. La salud (estado, RAM,
+ping) la contesta el hub con **lo último sondeado** y la refresca por detrás,
+así que un servidor caído ya no frena la pantalla ni el cambio recién hecho.
+
+## Módulo Configuraciones (apariencia)
+
+Configuraciones guarda la apariencia y la aplica al instante (sin reiniciar y
+sin volver a entrar):
+
+- **Tema** — *Sistema* (sigue al teléfono o a la computadora), *Claro* u
+  *Oscuro*.
+- **Paleta de diseño** — elige un diseño COMPLETO, no un color de botón: cada
+  paleta trae su juego de superficies para claro y para oscuro (fondo, tarjetas,
+  barra lateral y bordes) **y su acento**, así que no hay forma de dejar la app
+  a tono. Hay siete: **Medianoche** (azul cobalto), **Zafiro** (azul marino e
+  índigo), **Grafito** (gris acero), **Océano** (petróleo y cian), **Esmeralda**
+  (verde profundo), **Amatista** (violeta) y **Cobre** (arena cálida y cobre).
+  Cada tarjeta del selector enseña una mini pantalla partida: la mitad oscura y
+  la mitad clara.
+
+No hay una tarjeta «Color de la app»: el acento (botones, selección, iconos,
+barras de progreso y los colores de Almacenamiento) va con la paleta. Cambiar
+diseño es un solo clic, sin combinaciones que desentonen.
+
+La paleta se guarda en la app (`app.palette`), así que se recuerda al reabrir, y
+la barra del sistema, el arranque, el login y las tarjetas usan las superficies
+de la paleta vigente (`AppColors.bgDark`, `cardLight`, `sidebarDark`…): ninguna
+pantalla queda con el azul noche de fábrica cuando se elige otra.
 
 ## Botón ATRÁS (móvil y navegador)
 
@@ -1094,6 +1270,14 @@ antes se usaba `Directory.systemTemp`, que en Android apunta a `code_cache` y
 provocaba *"Failed to find configured root that contains …"*. Además
 `MainActivity` copia el archivo al caché si llegara a quedar fuera de las
 rutas declaradas, así que la instalación ya no puede fallar por eso.
+
+**El APK se descarga DEL HUB.** El backend publica el enlace con la ruta
+`/downloads/android/app-release.apk`; la app la reescribe sobre la dirección
+del hub (`/api/version` sigue diciendo la versión, pero la descarga la sirve el
+hub), que busca el servidor donde esté el APK y lo reenvía. Así la
+actualización no depende de que el nodo principal esté encendido ni obliga al
+teléfono a llegar al puerto del nodo: con el hub alcanza. Un enlace externo
+(otro dominio o una nube) se respeta tal cual.
 
 ## Actualizaciones internas (Windows) — la app en la bandeja
 

@@ -166,6 +166,28 @@ void main() {
     expect(find.text('Sin conexión con el Drive'), findsOneWidget);
   });
 
+  testWidgets('en mantenimiento la card solo dice que está en mantenimiento', (
+    tester,
+  ) async {
+    // El hub avisa de un servidor bloqueado por dependencia, pero el Drive no
+    // nombra servidores dependientes: entra en mantenimiento y ya.
+    final drive = _FakeDrive()
+      ..conn = DriveConn.online
+      ..maintenance = const [driveMaintenanceNotice];
+
+    await _pump(
+      tester,
+      DriveStatusCard(drive: drive, onRetry: () {}),
+      size: const Size(560, 620),
+    );
+
+    expect(find.text('Drive en mantenimiento'), findsOneWidget);
+    expect(find.text('Sin respuesta'), findsOneWidget);
+    expect(find.text(driveMaintenanceNotice), findsOneWidget);
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(find.text('Conectado al Drive'), findsNothing);
+  });
+
   testWidgets('un drive local no finge tener servidor', (tester) async {
     final drive = _FakeDrive(remote: false)
       ..conn = DriveConn.online

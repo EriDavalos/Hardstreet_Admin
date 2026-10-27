@@ -1,12 +1,256 @@
 import 'package:flutter/material.dart';
 
+/// Superficies de UNA paleta, para el modo claro y el oscuro.
+///
+/// Una paleta no es un color de acento más: cambia el FONDO de la app, las
+/// tarjetas, la barra lateral y los bordes. Por eso cada una trae su juego
+/// claro y su juego oscuro, pensados para que el texto se lea igual de bien.
+class HsSurfaces {
+  const HsSurfaces({
+    required this.bg,
+    required this.surface,
+    required this.card,
+    required this.sidebar,
+    required this.line,
+  });
+
+  /// Fondo de la app (scaffold y franjas de las barras del sistema).
+  final Color bg;
+
+  /// Superficie base del [ColorScheme] (hojas, menús, campos).
+  final Color surface;
+
+  /// Tarjetas, diálogos y menús.
+  final Color card;
+
+  /// Barra lateral / panel de navegación.
+  final Color sidebar;
+
+  /// Bordes y divisores.
+  final Color line;
+}
+
+/// PALETA COMPLETA del panel.
+///
+/// Antes había un solo acento configurable sobre las mismas superficies
+/// (azul noche + blanco). Ahora se elige un diseño ENTERO: cada paleta cambia
+/// el fondo, las tarjetas, la barra lateral y —de paso— el acento, así que la
+/// app se ve distinta de verdad, no solo con otro color de botón.
+class HsPalette {
+  const HsPalette({
+    required this.key,
+    required this.name,
+    required this.hint,
+    required this.accentKey,
+    required this.light,
+    required this.dark,
+  });
+
+  /// Clave persistida (`app.palette`).
+  final String key;
+
+  /// Nombre visible en Configuraciones.
+  final String name;
+
+  /// Una línea que describe el diseño.
+  final String hint;
+
+  /// Acento que trae la paleta (clave de [AppColors.accents]).
+  final String accentKey;
+
+  final HsSurfaces light;
+  final HsSurfaces dark;
+
+  Color get accent =>
+      AppColors.accents[accentKey] ?? AppColors.accents['azul']!;
+
+  /// El azul de la marca: la paleta de fábrica.
+  static const medianoche = HsPalette(
+    key: 'medianoche',
+    name: 'Medianoche',
+    hint: 'Azul cobalto sobre azul noche',
+    accentKey: 'azul',
+    light: HsSurfaces(
+      bg: Color(0xFFF7F9FC),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFF4F6FB),
+      line: Color(0xFFE5EAF2),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF0C111C),
+      surface: Color(0xFF151B29),
+      card: Color(0xFF1A2233),
+      sidebar: Color(0xFF0F1420),
+      line: Color(0xFF2A3346),
+    ),
+  );
+
+  /// Grafito: gris acero y acento plomizo. Neutro, sin tinte azul.
+  static const grafito = HsPalette(
+    key: 'grafito',
+    name: 'Grafito',
+    hint: 'Gris acero neutro, sin azul',
+    accentKey: 'grafito',
+    light: HsSurfaces(
+      bg: Color(0xFFF5F6F8),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFEDEFF2),
+      line: Color(0xFFDFE3E9),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF0B0C0E),
+      surface: Color(0xFF16181C),
+      card: Color(0xFF1C1F24),
+      sidebar: Color(0xFF101216),
+      line: Color(0xFF2C3037),
+    ),
+  );
+
+  /// Esmeralda: verde profundo sobre casi negro con tinte verde.
+  static const esmeralda = HsPalette(
+    key: 'esmeralda',
+    name: 'Esmeralda',
+    hint: 'Verde profundo sobre negro verdoso',
+    accentKey: 'menta',
+    light: HsSurfaces(
+      bg: Color(0xFFF4F8F6),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFECF2EF),
+      line: Color(0xFFDCE7E2),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF08120F),
+      surface: Color(0xFF101D19),
+      card: Color(0xFF14231E),
+      sidebar: Color(0xFF0B1713),
+      line: Color(0xFF253A33),
+    ),
+  );
+
+  /// Amatista: violeta sobre azul noche con tinte morado.
+  static const amatista = HsPalette(
+    key: 'amatista',
+    name: 'Amatista',
+    hint: 'Violeta profundo sobre noche morada',
+    accentKey: 'violeta',
+    light: HsSurfaces(
+      bg: Color(0xFFF7F5FB),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFF1EDF8),
+      line: Color(0xFFE4DEF0),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF0E0A18),
+      surface: Color(0xFF180F28),
+      card: Color(0xFF1E1430),
+      sidebar: Color(0xFF120D1E),
+      line: Color(0xFF34264D),
+    ),
+  );
+
+  /// Zafiro: azul marino muy profundo con acento índigo. Más frío y serio que
+  /// Medianoche, que es cobalto.
+  static const zafiro = HsPalette(
+    key: 'zafiro',
+    name: 'Zafiro',
+    hint: 'Azul marino profundo e índigo',
+    accentKey: 'indigo',
+    light: HsSurfaces(
+      bg: Color(0xFFF4F6FC),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFECF0FA),
+      line: Color(0xFFDEE4F4),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF070C1A),
+      surface: Color(0xFF0F1628),
+      card: Color(0xFF151E34),
+      sidebar: Color(0xFF0A1020),
+      line: Color(0xFF24304C),
+    ),
+  );
+
+  /// Océano: petróleo verdoso con acento cian. Frío y limpio.
+  static const oceano = HsPalette(
+    key: 'oceano',
+    name: 'Océano',
+    hint: 'Petróleo y cian, fresco y sobrio',
+    accentKey: 'cian',
+    light: HsSurfaces(
+      bg: Color(0xFFF3F8FA),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFE9F2F7),
+      line: Color(0xFFD6E6EE),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF05121A),
+      surface: Color(0xFF0C1B25),
+      card: Color(0xFF112430),
+      sidebar: Color(0xFF07161E),
+      line: Color(0xFF1E3644),
+    ),
+  );
+
+  /// Cobre: neutros cálidos (arena y piedra) con acento cobre. El contrapunto
+  /// cálido de Grafito, sin caer en el dorado.
+  static const cobre = HsPalette(
+    key: 'cobre',
+    name: 'Cobre',
+    hint: 'Arena cálida y cobre',
+    accentKey: 'cobre',
+    light: HsSurfaces(
+      bg: Color(0xFFFAF7F3),
+      surface: Color(0xFFFFFFFF),
+      card: Color(0xFFFFFFFF),
+      sidebar: Color(0xFFF3EDE6),
+      line: Color(0xFFE6DACE),
+    ),
+    dark: HsSurfaces(
+      bg: Color(0xFF13100D),
+      surface: Color(0xFF1D1915),
+      card: Color(0xFF241F1A),
+      sidebar: Color(0xFF171310),
+      line: Color(0xFF3A312A),
+    ),
+  );
+
+  /// Todas las paletas, en el orden en que se ofrecen.
+  static const List<HsPalette> all = [
+    medianoche,
+    zafiro,
+    grafito,
+    oceano,
+    esmeralda,
+    amatista,
+    cobre,
+  ];
+
+  /// Paleta por clave; sin clave (o con una que ya no existe) la de fábrica.
+  static HsPalette byKey(String? key) {
+    for (final palette in all) {
+      if (palette.key == key) return palette;
+    }
+    return medianoche;
+  }
+}
+
 /// Paleta y tema de HardStreet Admin.
-/// Azules corporativos sobre superficies neutras, con soporte claro/oscuro.
+///
+/// Fondos, tarjetas, barra lateral y acento salen de la PALETA VIGENTE
+/// ([HsPalette]): cambiarla en Configuraciones repinta todo el panel sin tocar
+/// cada pantalla.
 class AppColors {
   /// COLORES DE ACENTO que se pueden elegir en Configuraciones.
   ///
-  /// El elegido pinta los botones, la selección y los acentos de TODO el
-  /// panel (la app escucha el cambio y reconstruye el tema al instante).
+  /// Cada PALETA trae el suyo (ver [HsPalette.accentKey]): «Medianoche» el
+  /// azul de marca, «Grafito» el plomo, «Cobre» el cobre… No se elige suelto en
+  /// Configuraciones; cambiar de paleta es cambiar de diseño entero.
   static const Map<String, Color> accents = {
     'azul': Color(0xFF2F6BFF),
     'indigo': Color(0xFF4F46E5),
@@ -19,6 +263,8 @@ class AppColors {
     'menta': Color(0xFF10B981),
     'teal': Color(0xFF0D9488),
     'cian': Color(0xFF0891B2),
+    'grafito': Color(0xFF5C6B7A),
+    'cobre': Color(0xFFA65B2A),
   };
 
   // ---- Colores de DATOS (Almacenamiento) ----
@@ -33,8 +279,12 @@ class AppColors {
   static Color get dataFree => accents['menta']!;
   static Color get danger => accents['rojo']!;
 
-  /// El azul de la marca: el acento de fábrica.
-  static const String defaultAccent = 'azul';
+  /// Paleta de diseño VIGENTE (la elige Configuraciones).
+  static HsPalette _palette = HsPalette.medianoche;
+  static HsPalette get palette => _palette;
+
+  /// Cambia la PALETA completa (fondos, tarjetas, barra lateral y bordes).
+  static void setPalette(HsPalette palette) => _palette = palette;
 
   /// Acento VIGENTE. No es `const` a propósito: Configuraciones lo cambia y
   /// las ~120 referencias del panel (iconos, chips, gradientes) se pintan con
@@ -43,13 +293,22 @@ class AppColors {
   static Color get brand => _brand;
   static Color get brandDark => Color.lerp(_brand, Colors.black, .28)!;
 
-  /// Cambia el acento (lo llama [AppSettings.setAccent]).
+  /// Cambia el acento (lo llama la paleta elegida en Configuraciones).
   static void setBrand(Color color) => _brand = color;
 
-  static const sidebarLight = Color(0xFFF4F6FB);
-  static const sidebarDark = Color(0xFF0F1420);
-  static const surfaceDark = Color(0xFF151B29);
-  static const cardDark = Color(0xFF1A2233);
+  // ---- Superficies de la paleta vigente ----
+  // Son getters (no constantes): al cambiar de paleta, todo lo que ya las usa
+  // se repinta en el siguiente build.
+  static Color get bgLight => _palette.light.bg;
+  static Color get bgDark => _palette.dark.bg;
+  static Color get surfaceLight => _palette.light.surface;
+  static Color get surfaceDark => _palette.dark.surface;
+  static Color get cardLight => _palette.light.card;
+  static Color get cardDark => _palette.dark.card;
+  static Color get sidebarLight => _palette.light.sidebar;
+  static Color get sidebarDark => _palette.dark.sidebar;
+  static Color get lineLight => _palette.light.line;
+  static Color get lineDark => _palette.dark.line;
 
   /// Estados: algo que YA funciona (sigue el acento) y algo que necesita
   /// atención (ámbar). Los usa, por ejemplo, la píldora de estado de las
@@ -63,13 +322,14 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: AppColors.brand,
       brightness: Brightness.light,
+      surface: AppColors.surfaceLight,
     );
-    // El primario visible (botones, selección, enlaces) es el azul del botón;
+    // El primario visible (botones, selección, enlaces) es el acento vigente;
     // el resto del esquema se deriva del mismo seed para armonía.
     return _base(scheme.copyWith(primary: AppColors.brand)).copyWith(
-      scaffoldBackgroundColor: const Color(0xFFF7F9FC),
-      cardColor: Colors.white,
-      dividerColor: const Color(0xFFE5EAF2),
+      scaffoldBackgroundColor: AppColors.bgLight,
+      cardColor: AppColors.cardLight,
+      dividerColor: AppColors.lineLight,
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
       ),
@@ -82,11 +342,11 @@ class AppTheme {
       brightness: Brightness.dark,
       surface: AppColors.surfaceDark,
     );
-    // Igual en oscuro: el primario coincide con el azul del botón.
+    // Igual en oscuro: el primario coincide con el acento vigente.
     return _base(scheme.copyWith(primary: AppColors.brand)).copyWith(
-      scaffoldBackgroundColor: const Color(0xFF0C111C),
+      scaffoldBackgroundColor: AppColors.bgDark,
       cardColor: AppColors.cardDark,
-      dividerColor: Colors.white.withValues(alpha: .08),
+      dividerColor: AppColors.lineDark.withValues(alpha: .55),
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
       ),
@@ -95,11 +355,12 @@ class AppTheme {
 
   static ThemeData _base(ColorScheme scheme) {
     final isDark = scheme.brightness == Brightness.dark;
+    final line = (isDark ? AppColors.lineDark : AppColors.lineLight);
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
       appBarTheme: AppBarTheme(
-        backgroundColor: isDark ? const Color(0xFF0C111C) : Colors.white,
+        backgroundColor: isDark ? AppColors.bgDark : AppColors.cardLight,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
@@ -112,30 +373,31 @@ class AppTheme {
       cardTheme: CardThemeData(
         // DISEÑO PLANO: sin elevación ni sombras; solo borde y superficie.
         elevation: 0,
-        color: isDark ? AppColors.cardDark : Colors.white,
+        color: isDark ? AppColors.cardDark : AppColors.cardLight,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
+          side: BorderSide(color: line.withValues(alpha: .45)),
         ),
         margin: EdgeInsets.zero,
       ),
       // Botones y diálogos sin sombra (flat).
       dialogTheme: DialogThemeData(
-        backgroundColor: isDark ? AppColors.cardDark : Colors.white,
+        backgroundColor: isDark ? AppColors.cardDark : AppColors.cardLight,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
+          side: BorderSide(color: line.withValues(alpha: .45)),
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(
         elevation: 0,
         surfaceTintColor: Colors.transparent,
+        color: isDark ? AppColors.cardDark : AppColors.cardLight,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .45)),
+          side: BorderSide(color: line.withValues(alpha: .45)),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -169,7 +431,7 @@ class AppTheme {
         filled: true,
         fillColor: isDark
             ? Colors.white.withValues(alpha: .04)
-            : const Color(0xFFF4F6FA),
+            : AppColors.sidebarLight,
         hintStyle: TextStyle(
           color: scheme.onSurfaceVariant.withValues(alpha: .8),
         ),
@@ -179,15 +441,11 @@ class AppTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: .5),
-          ),
+          borderSide: BorderSide(color: line.withValues(alpha: .6)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: .5),
-          ),
+          borderSide: BorderSide(color: line.withValues(alpha: .6)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -196,16 +454,14 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
+        side: BorderSide(color: line.withValues(alpha: .7)),
       ),
       // Tooltip SIEMPRE oscuro con texto BLANCO. En modo oscuro el fondo era
       // blanco al 12 %: el texto blanco se perdía sobre él (los nombres de las
       // ubicaciones del mapa no se leían al pasar el mouse).
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
-          color: isDark
-              ? const Color(0xFF2B3140)
-              : const Color(0xFF1F2937),
+          color: isDark ? const Color(0xFF2B3140) : const Color(0xFF1F2937),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.white.withValues(alpha: .10)),
         ),

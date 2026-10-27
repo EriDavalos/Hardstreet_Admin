@@ -257,10 +257,11 @@ class _LoginPageState extends State<LoginPage> {
                 gradient: LinearGradient(
                   begin: Alignment.topRight,
                   end: Alignment.bottomLeft,
+                  // El fondo sigue la PALETA vigente (ver [AppColors]).
                   colors: isDark
-                      ? [const Color(0xFF0C111C), AppColors.surfaceDark]
+                      ? [AppColors.bgDark, AppColors.surfaceDark]
                       : [
-                          const Color(0xFFF7F9FC),
+                          AppColors.bgLight,
                           scheme.primary.withValues(alpha: .06),
                         ],
                 ),

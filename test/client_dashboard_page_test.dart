@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/widgets/anim.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Dos paquetes comprados: uno con liga de drive PROPIA y otra externa.
@@ -518,5 +519,120 @@ void main() {
       reason: 'el botón de enviar va dentro del bloque destacado',
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el paso que le TOCA (elegir) se destaca y su botón LATE', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    ((pkgs.first['services'] as List)[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot';
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    // El paso va en su BLOQUE destacado (borde, rótulo y botón a lo ancho), no
+    // perdido dentro de la fila de acciones del servicio.
+    expect(find.byKey(const ValueKey('client-pick-next-step')), findsOneWidget);
+    expect(find.text('TE TOCA A TI'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('client-pick-next-step')),
+        matching: find.text('Elige tus fotos'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('client-pick-button')), findsOneWidget);
+
+    final ring = find.byKey(const ValueKey('client-pick-ring'));
+    expect(ring, findsOneWidget);
+    expect(
+      tester.widget<AttentionRing>(ring).enabled,
+      isTrue,
+      reason: 'sin fotos elegidas, el turno es del cliente',
+    );
+
+    // El botón se queda COMO ESTABA: nada de agrandarlo ni moverlo. Lo único
+    // que cambia es el aro que se pinta por fuera.
+    final button = find.byKey(const ValueKey('client-pick-button'));
+    final size = tester.getSize(button);
+    expect(
+      find.descendant(of: ring, matching: find.byType(Transform)),
+      findsNothing,
+      reason: 'sin escala: el botón no crece',
+    );
+
+    AttentionRingPainter painter() =>
+        tester
+                .widget<CustomPaint>(
+                  find
+                      .descendant(of: ring, matching: find.byType(CustomPaint))
+                      .first,
+                )
+                .painter!
+            as AttentionRingPainter;
+
+    final start = painter().t;
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(
+      painter().t,
+      isNot(closeTo(start, .01)),
+      reason: 'el aro late (el trazo cambia entre fotogramas)',
+    );
+    expect(
+      tester.getSize(button),
+      size,
+      reason: 'el botón mide lo mismo con el paso pendiente',
+    );
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('con fotos YA elegidas el latido pasa al botón de enviar', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    ((pkgs.first['services'] as List)[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot'
+      ..['items'] = 2;
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    // Ya eligió: el bloque de elegir se fue y en la fila vuelve «Mis fotos (N)».
+    expect(find.byKey(const ValueKey('client-pick-next-step')), findsNothing);
+    expect(find.byKey(const ValueKey('client-pick-ring')), findsNothing);
+    expect(find.text('Mis fotos (2)'), findsOneWidget);
+    // Ahora el turno es ENVIAR y el aro pasa a su botón.
+    expect(find.text('SIGUIENTE PASO'), findsOneWidget);
+    expect(
+      tester
+          .widget<AttentionRing>(find.byKey(const ValueKey('client-send-ring')))
+          .enabled,
+      isTrue,
+      reason: 'ahora lo que falta es ENVIAR',
+    );
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('enviadas las fotos, NADIE late (ya no hay paso pendiente)', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    ((pkgs.first['services'] as List)[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot'
+      ..['items'] = 2
+      ..['sentToPrint'] = true
+      ..['printStatus'] = 'sent';
+    _installMock(packages: pkgs);
+    await _pumpPage(tester);
+
+    expect(find.byKey(const ValueKey('client-pick-ring')), findsNothing);
+    expect(find.byKey(const ValueKey('client-send-ring')), findsNothing);
+    expect(find.text('Ver fotos (2)'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
   });
 }

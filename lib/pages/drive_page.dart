@@ -35,13 +35,12 @@ import '../../widgets/anim.dart';
 import '../../widgets/common.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/drive_file_visuals.dart';
+import '../../widgets/drive_maintenance_view.dart';
 import '../../widgets/drive_media_viewer.dart';
 import '../../widgets/drive_status_card.dart';
 import '../../widgets/drive_thumb.dart';
 import '../../widgets/hs_modal.dart';
-
-/// Ámbar del aviso de MANTENIMIENTO (el mismo de Conexión).
-const Color _maintenanceAmber = Color(0xFFD97706);
+import '../../widgets/scroll_track_jump.dart';
 
 /// Permiso del módulo Archivos ("drive" en la BD) para el rol logueado.
 ///
@@ -424,6 +423,10 @@ class _DrivePageState extends State<DrivePage>
     // Esta página atiende el atrás MIENTRAS está montada (y antes que el
     // panel, que se registró primero).
     BackNav.add(_backStep);
+    // Al ENTRAR se comprueba si el Drive está en mantenimiento: así la vista
+    // entera sale en ese estado sin esperar a que el usuario recargue (antes,
+    // si el hub caía con la app abierta, se seguía viendo el árbol viejo).
+    unawaited(widget.drive.checkMaintenance());
   }
 
   @override
@@ -1978,64 +1981,6 @@ class _DrivePageState extends State<DrivePage>
             },
           ),
         ),
-        // ===== Aviso de MANTENIMIENTO del Drive federado =====
-        //
-        // Un servidor depende de otro (se configura en Conexión): si el otro
-        // no responde, el hub bloquea al dependiente y lo cuenta con el
-        // listado. Se avisa AQUÍ para que nadie confunda las carpetas que
-        // faltan con carpetas perdidas.
-        if (drive.maintenance.isNotEmpty)
-          Padding(
-            padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 8),
-            child: Container(
-              key: const ValueKey('drive-maintenance-banner'),
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: _maintenanceAmber.withValues(alpha: .10),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _maintenanceAmber.withValues(alpha: .38),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.engineering_outlined,
-                    size: 18,
-                    color: _maintenanceAmber,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Mantenimiento',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFFB45309),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          drive.maintenance.join(' · '),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            height: 1.3,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         // La franja «En línea · servidor · latencia» ya no se dibuja: ocupaba
         // una fila en TODAS las vistas para repetir lo que dicen el servidor
         // configurado y el botón de recargar. El estado sigue donde importa:
@@ -2174,6 +2119,17 @@ class _DrivePageState extends State<DrivePage>
       );
     }
 
+    // MANTENIMIENTO del Drive federado.
+    //
+    // El hub lo marca cuando NO queda ningún servidor en funcionamiento (los
+    // bloqueados por una dependencia caída no cuentan aunque respondan). La
+    // vista entonces es el aviso COMPLETO —sin encabezado, sin carpetas, sin
+    // botones de subir— y también se descartan las carpetas del último listado
+    // bueno. No se nombran servidores dependientes: eso vive en Conexión.
+    if (drive.maintenance.isNotEmpty) {
+      return DriveMaintenanceView(drive: drive, onRetry: drive.refresh);
+    }
+
     final imagesCount = drive.items.where((i) => !i.isFolder).length;
     final foldersCount = drive.items.where((i) => i.isFolder).length;
 
@@ -2260,146 +2216,158 @@ class _DrivePageState extends State<DrivePage>
                 if (!isCompact) header,
                 // ===== Contenido =====
                 Expanded(
-                  // En el celular se recarga DESLIZANDO hacia abajo (ya no hay
-                  // botón de recargar en el encabezado).
-                  child: RefreshIndicator(
-                    onRefresh: drive.refresh,
-                    // El giro de "recargar" nace debajo de la barra de ruta
-                    // pegajosa, no encima de ella.
-                    edgeOffset: stickyCrumbs == null
-                        ? 0
-                        : _CrumbsHeaderDelegate.height,
-                    child: drive.loading && drive.items.isEmpty
-                        ? _scrollWithHeader(
-                            scrollHeader,
-                            stickyCrumbs,
-                            const Center(child: CircularProgressIndicator()),
-                          )
-                        // El panel bloqueante solo cuando NO hay nada que mostrar:
-                        // si ya se ve una carpeta, se queda a la vista.
-                        : drive.error != null && drive.items.isEmpty
-                        ? _scrollWithHeader(
-                            scrollHeader,
-                            stickyCrumbs,
-                            // El fallo OCUPA LA CARD del servidor (dirección,
-                            // protocolo, detalle y qué revisar) en vez de un
-                            // icono gigante con la excepción cruda.
-                            Padding(
-                              padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 28),
-                              child: Align(
-                                alignment: Alignment.topCenter,
-                                child: ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                    maxWidth: 520,
-                                  ),
-                                  child: DriveStatusCard(
-                                    key: const ValueKey('drive-server-card'),
-                                    drive: drive,
-                                    onRetry: drive.refresh,
+                  // El CARRIL de la barra de scroll salta justo al punto
+                  // clicado (ver [ScrollTrackJump]): en Flutter el clic en el
+                  // carril avanzaba una pantalla, que se siente como «le di
+                  // para bajar».
+                  child: ScrollTrackJump(
+                    controller: _scrollController,
+                    // En el celular se recarga DESLIZANDO hacia abajo (ya no
+                    // hay botón de recargar en el encabezado).
+                    child: RefreshIndicator(
+                      onRefresh: drive.refresh,
+                      // El giro de "recargar" nace debajo de la barra de ruta
+                      // pegajosa, no encima de ella.
+                      edgeOffset: stickyCrumbs == null
+                          ? 0
+                          : _CrumbsHeaderDelegate.height,
+                      child: drive.loading && drive.items.isEmpty
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              const Center(child: CircularProgressIndicator()),
+                            )
+                          // El panel bloqueante solo cuando NO hay nada que mostrar:
+                          // si ya se ve una carpeta, se queda a la vista.
+                          : drive.error != null && drive.items.isEmpty
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              // El fallo OCUPA LA CARD del servidor (dirección,
+                              // protocolo, detalle y qué revisar) en vez de un
+                              // icono gigante con la excepción cruda.
+                              Padding(
+                                padding: EdgeInsets.fromLTRB(
+                                  hPad,
+                                  10,
+                                  hPad,
+                                  28,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 520,
+                                    ),
+                                    child: DriveStatusCard(
+                                      key: const ValueKey('drive-server-card'),
+                                      drive: drive,
+                                      onRetry: drive.refresh,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          )
-                        : drive.visibleItems.isEmpty
-                        ? _scrollWithHeader(
-                            scrollHeader,
-                            stickyCrumbs,
-                            EmptyState(
-                              icon: drive.scoped && drive.path.isEmpty
-                                  ? Icons.folder_off_outlined
-                                  : Icons.folder_open_rounded,
-                              title: drive.search != null
-                                  ? 'Sin resultados'
-                                  : drive.scoped && drive.path.isEmpty
-                                  ? 'Aún no se te comparte ninguna carpeta'
-                                  : 'Esta carpeta está vacía',
-                              message: drive.search != null
-                                  ? 'No hay coincidencias en esta carpeta.'
-                                  : drive.scoped && drive.path.isEmpty
-                                  ? 'Tu fotógrafo todavía no compartió carpetas '
-                                        'contigo. En cuanto las asigne a tus '
-                                        'paquetes, aparecerán aquí.'
-                                  : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
-                              // Sin permiso de crear, la tarjeta vacía invita
-                              // pero no ofrece el botón.
-                              actionLabel:
-                                  drive.scoped && drive.path.isEmpty ||
-                                      !_driveCan(widget.drive, 'create')
-                                  ? null
-                                  : 'Subir archivos',
-                              onAction:
-                                  drive.scoped && drive.path.isEmpty ||
-                                      !_driveCan(widget.drive, 'create')
-                                  ? null
-                                  : _upload,
-                            ),
-                          )
-                        : AnimatedSwitcher(
-                            // Transición suave al cambiar de carpeta (o de
-                            // vista): la anterior se desvanece mientras la
-                            // nueva entra — sin esperar "en blanco".
-                            // El GlobalKey vive AQUÍ (no en el contenido)
-                            // para no duplicarse durante la transición.
-                            key: _contentKey,
-                            duration: const Duration(milliseconds: 220),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeIn,
-                            child: KeyedSubtree(
-                              key: ValueKey(
-                                'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}',
+                            )
+                          : drive.visibleItems.isEmpty
+                          ? _scrollWithHeader(
+                              scrollHeader,
+                              stickyCrumbs,
+                              EmptyState(
+                                icon: drive.scoped && drive.path.isEmpty
+                                    ? Icons.folder_off_outlined
+                                    : Icons.folder_open_rounded,
+                                title: drive.search != null
+                                    ? 'Sin resultados'
+                                    : drive.scoped && drive.path.isEmpty
+                                    ? 'Aún no se te comparte ninguna carpeta'
+                                    : 'Esta carpeta está vacía',
+                                message: drive.search != null
+                                    ? 'No hay coincidencias en esta carpeta.'
+                                    : drive.scoped && drive.path.isEmpty
+                                    ? 'Tu fotógrafo todavía no compartió carpetas '
+                                          'contigo. En cuanto las asigne a tus '
+                                          'paquetes, aparecerán aquí.'
+                                    : 'Sube fotos o vídeos, o crea una carpeta para organizar tu contenido.',
+                                // Sin permiso de crear, la tarjeta vacía invita
+                                // pero no ofrece el botón.
+                                actionLabel:
+                                    drive.scoped && drive.path.isEmpty ||
+                                        !_driveCan(widget.drive, 'create')
+                                    ? null
+                                    : 'Subir archivos',
+                                onAction:
+                                    drive.scoped && drive.path.isEmpty ||
+                                        !_driveCan(widget.drive, 'create')
+                                    ? null
+                                    : _upload,
                               ),
-                              child: (_grid
-                                  ? _GridContent(
-                                      drive: drive,
-                                      compact: isCompact,
-                                      selected: _selected,
-                                      selectMode: _selectMode,
-                                      onOpen: _onItemTap,
-                                      onLongPress: (item) =>
-                                          _enterSelectMode(item.name),
-                                      onToggleSelect: _toggleSelect,
-                                      onRename: _rename,
-                                      onDelete: _delete,
-                                      onDrop: _onItemDrop,
-                                      itemKeys: _itemKeys,
-                                      onTapSelect: _onCardTap,
-                                      onContextMenu: _openItemMenu,
-                                      onDownload: (item) =>
-                                          _downloadItems([item]),
-                                      localPreviews: _localPreviews,
-                                      noEntrance: _noEntrance,
-                                      scrollController: _scrollController,
-                                      sweep: sweep,
-                                      header: scrollHeader,
-                                      crumbs: stickyCrumbs,
-                                    )
-                                  : _ListContent(
-                                      drive: drive,
-                                      compact: isCompact,
-                                      selected: _selected,
-                                      selectMode: _selectMode,
-                                      onOpen: _onItemTap,
-                                      onLongPress: (item) =>
-                                          _enterSelectMode(item.name),
-                                      onToggleSelect: _toggleSelect,
-                                      onRename: _rename,
-                                      onDelete: _delete,
-                                      onDrop: _onItemDrop,
-                                      itemKeys: _rowKeys,
-                                      onTapSelect: _onCardTap,
-                                      onContextMenu: _openItemMenu,
-                                      onDownload: (item) =>
-                                          _downloadItems([item]),
-                                      localPreviews: _localPreviews,
-                                      noEntrance: _noEntrance,
-                                      scrollController: _scrollController,
-                                      sweep: sweep,
-                                      header: scrollHeader,
-                                      crumbs: stickyCrumbs,
-                                    )),
+                            )
+                          : AnimatedSwitcher(
+                              // Transición suave al cambiar de carpeta (o de
+                              // vista): la anterior se desvanece mientras la
+                              // nueva entra — sin esperar "en blanco".
+                              // El GlobalKey vive AQUÍ (no en el contenido)
+                              // para no duplicarse durante la transición.
+                              key: _contentKey,
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeIn,
+                              child: KeyedSubtree(
+                                key: ValueKey(
+                                  'content-${drive.path.join('/')}-${_grid ? 'g' : 'l'}',
+                                ),
+                                child: (_grid
+                                    ? _GridContent(
+                                        drive: drive,
+                                        compact: isCompact,
+                                        selected: _selected,
+                                        selectMode: _selectMode,
+                                        onOpen: _onItemTap,
+                                        onLongPress: (item) =>
+                                            _enterSelectMode(item.name),
+                                        onToggleSelect: _toggleSelect,
+                                        onRename: _rename,
+                                        onDelete: _delete,
+                                        onDrop: _onItemDrop,
+                                        itemKeys: _itemKeys,
+                                        onTapSelect: _onCardTap,
+                                        onContextMenu: _openItemMenu,
+                                        onDownload: (item) =>
+                                            _downloadItems([item]),
+                                        localPreviews: _localPreviews,
+                                        noEntrance: _noEntrance,
+                                        scrollController: _scrollController,
+                                        sweep: sweep,
+                                        header: scrollHeader,
+                                        crumbs: stickyCrumbs,
+                                      )
+                                    : _ListContent(
+                                        drive: drive,
+                                        compact: isCompact,
+                                        selected: _selected,
+                                        selectMode: _selectMode,
+                                        onOpen: _onItemTap,
+                                        onLongPress: (item) =>
+                                            _enterSelectMode(item.name),
+                                        onToggleSelect: _toggleSelect,
+                                        onRename: _rename,
+                                        onDelete: _delete,
+                                        onDrop: _onItemDrop,
+                                        itemKeys: _rowKeys,
+                                        onTapSelect: _onCardTap,
+                                        onContextMenu: _openItemMenu,
+                                        onDownload: (item) =>
+                                            _downloadItems([item]),
+                                        localPreviews: _localPreviews,
+                                        noEntrance: _noEntrance,
+                                        scrollController: _scrollController,
+                                        sweep: sweep,
+                                        header: scrollHeader,
+                                        crumbs: stickyCrumbs,
+                                      )),
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
               ],

@@ -14,8 +14,9 @@ import '../widgets/common.dart';
 // la app, que se aplica al instante y se recuerda al reabrirla:
 //
 //   * TEMA: sistema / claro / oscuro.
-//   * COLOR: el acento con el que se pintan botones, selección, iconos y
-//     degradados en TODO el panel (ocho colores de la paleta de la marca).
+//   * PALETA: el diseño entero (medianoche, zafiro, grafito, océano, esmeralda,
+//     amatista, cobre). Cambia fondos, tarjetas, barra lateral y acento a la
+//     vez: no hay un selector de color suelto que pueda desentonar.
 //
 // El cambio lo aplica [AppSettings] y la app escucha: el MaterialApp se
 // reconstruye solo (no hay que reiniciar ni volver a entrar).
@@ -31,8 +32,8 @@ class SettingsPage extends StatelessWidget {
       module: 'settings',
       title: 'Configuraciones',
       description:
-          'Personaliza la app: el tema y el color con el que se pinta '
-          'el panel, en todas las pantallas.',
+          'Personaliza la app: el modo (claro/oscuro) y la paleta de diseño '
+          'completa, que cambia fondos, tarjetas, barra lateral y acento.',
       icon: Icons.settings_rounded,
       child: ListenableBuilder(
         listenable: settings,
@@ -58,22 +59,22 @@ class SettingsPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   PopIn(
-                    delayMs: 60,
+                    delayMs: 40,
                     child: _SettingsCard(
-                      icon: Icons.palette_outlined,
-                      title: 'Color de la app',
+                      icon: Icons.grid_view_rounded,
+                      title: 'Paleta de diseño',
                       subtitle:
-                          'Botones, selección, iconos y acentos de todas '
-                          'las pantallas',
-                      child: _AccentPicker(
-                        value: settings.accent,
-                        onChanged: (key) => settings.setAccent(key),
+                          'Cambia la app entera: fondo, tarjetas, barra lateral '
+                          'y acento',
+                      child: _PalettePicker(
+                        value: settings.palette,
+                        onChanged: (key) => settings.setPalette(key),
                       ),
                     ),
                   ),
                   const SizedBox(height: 14),
                   PopIn(
-                    delayMs: 90,
+                    delayMs: 60,
                     child: const _SettingsCard(
                       icon: Icons.equalizer_rounded,
                       title: 'Colores de los datos',
@@ -85,7 +86,7 @@ class SettingsPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   PopIn(
-                    delayMs: 120,
+                    delayMs: 90,
                     child: _SettingsCard(
                       icon: Icons.visibility_outlined,
                       title: 'Así se verá',
@@ -94,7 +95,7 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  PopIn(delayMs: 180, child: _AboutCard()),
+                  PopIn(delayMs: 120, child: _AboutCard()),
                 ],
               ),
             ),
@@ -215,69 +216,30 @@ class _ThemePicker extends StatelessWidget {
   }
 }
 
-/// Los colores de acento de la paleta.
-class _AccentPicker extends StatelessWidget {
-  const _AccentPicker({required this.value, required this.onChanged});
+/// Las PALETAS COMPLETAS de diseño: cada tarjeta enseña cómo queda la app en
+/// oscuro (mitad izquierda) y en claro (mitad derecha).
+class _PalettePicker extends StatelessWidget {
+  const _PalettePicker({required this.value, required this.onChanged});
 
   final String value;
   final ValueChanged<String> onChanged;
 
-  static const _names = <String, String>{
-    'azul': 'Azul',
-    'indigo': 'Índigo',
-    'violeta': 'Violeta',
-    'rosa': 'Rosa',
-    'rojo': 'Rojo',
-    'naranja': 'Naranja',
-    'ambar': 'Ámbar',
-    'verde': 'Verde',
-    'menta': 'Menta',
-    'teal': 'Teal',
-    'cian': 'Cian',
-  };
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final current = HsPalette.byKey(value);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            for (final e in AppColors.accents.entries)
-              Tooltip(
-                message: _names[e.key] ?? e.key,
-                child: InkWell(
-                  key: ValueKey('settings-accent-${e.key}'),
-                  borderRadius: BorderRadius.circular(22),
-                  onTap: () => onChanged(e.key),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: e.value,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: value == e.key
-                            ? scheme.onSurface
-                            : Colors.transparent,
-                        width: 2.6,
-                      ),
-                    ),
-                    child: value == e.key
-                        ? const Icon(Icons.check, size: 20, color: Colors.white)
-                        : null,
-                  ),
-                ),
-              ),
-          ],
+          spacing: 10,
+          runSpacing: 10,
+          children: [for (final p in HsPalette.all) _tile(context, p)],
         ),
         const SizedBox(height: 10),
         Text(
-          'Color elegido: ${_names[value] ?? value}',
+          'Paleta elegida: ${current.name}. Cambia el fondo, las tarjetas, la '
+          'barra lateral y el acento de todas las pantallas.',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w700,
@@ -287,6 +249,128 @@ class _AccentPicker extends StatelessWidget {
       ],
     );
   }
+
+  Widget _tile(BuildContext context, HsPalette p) {
+    final scheme = Theme.of(context).colorScheme;
+    final on = p.key == value;
+    return InkWell(
+      key: ValueKey('settings-palette-${p.key}'),
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => onChanged(p.key),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: 176,
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: on ? p.accent : scheme.outlineVariant.withValues(alpha: .7),
+            width: on ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Mini pantalla: izquierda OSCURA, derecha CLARA.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: SizedBox(
+                height: 54,
+                child: Row(
+                  children: [_mini(p.dark, p.accent), _mini(p.light, p.accent)],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    p.name,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (on)
+                  Icon(Icons.check_circle_rounded, size: 16, color: p.accent),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              p.hint,
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.25,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Media mini pantalla: barra lateral, una tarjeta y el acento.
+  Widget _mini(HsSurfaces s, Color accent) => Expanded(
+    child: Container(
+      color: s.bg,
+      padding: const EdgeInsets.fromLTRB(5, 7, 5, 7),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            decoration: BoxDecoration(
+              color: s.sidebar,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: s.card,
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: s.line, width: .6),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 16,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Expanded(
+                      child: Container(
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: s.card,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: s.line, width: .6),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Paleta de los datos del módulo Almacenamiento.
@@ -353,8 +437,8 @@ class _DataPalette extends StatelessWidget {
         ),
         const SizedBox(height: 9),
         Text(
-          'Almacenamiento los usa para separar visualmente cada cifra. Si '
-          'cambias el acento, los acentos de las tarjetas se adaptan.',
+          'Almacenamiento los usa para separar visualmente cada cifra. '
+          'Acompañan al acento de la paleta elegida.',
           style: TextStyle(
             fontSize: 11,
             height: 1.3,

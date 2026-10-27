@@ -2011,7 +2011,33 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     required String shareLink,
   }) {
     final compact = MediaQuery.sizeOf(context).width < 620;
-    final pick = pickOn
+    // ¿Le TOCA elegir fotos? (tiene el paso encendido y todavía no ha marcado
+    // ninguna). Ese paso va en su PROPIO BLOQUE destacado —igual que el envío—
+    // con el botón a lo ancho y su aro latiendo: dentro de la fila de acciones,
+    // entre «Abrir carpeta» y el resto, el cliente no veía que le tocaba a él.
+    final pickTurn = pickOn && !sentToPrint && items == 0;
+    final pickStep = pickTurn
+        ? _nextStepBlock(
+            scheme: scheme,
+            stepKey: const ValueKey('client-pick-next-step'),
+            buttonKey: const ValueKey('client-pick-button'),
+            ringKey: const ValueKey('client-pick-ring'),
+            badge: 'TE TOCA A TI',
+            title: 'Elige tus fotos',
+            hint:
+                'Marca las que quieras de «$name» y guarda: tu fotógrafo las '
+                'recibe cuando las envíes.',
+            badgeIcon: Icons.touch_app_outlined,
+            buttonIcon: Icons.photo_library_outlined,
+            accent: AppColors.brand,
+            compact: compact,
+            buttonLabel: 'Elegir fotos',
+            onPressed: () => _pickServiceItems(service, name),
+          )
+        : null;
+    // Con el bloque arriba, la fila ya no repite el botón hasta que haya fotos
+    // elegidas (entonces vuelve como «Mis fotos (N)» o «Ver fotos (N)»).
+    final pick = pickOn && !pickTurn
         ? FilledButton.icon(
             onPressed: () => _pickServiceItems(service, name),
             style: FilledButton.styleFrom(
@@ -2044,13 +2070,24 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     // no las ha mandado. Va en su propio bloque destacado —arriba de la fila y
     // con botón lleno— para que no se quede con la selección hecha creyendo
     // que con elegirlas ya está: falta tocar «Enviar a impresión».
+    final fotos = items == 1 ? '1 foto elegida' : '$items fotos elegidas';
     final nextStep = pickOn && items > 0 && !sentToPrint
-        ? _sendNextStep(
+        ? _nextStepBlock(
             scheme: scheme,
-            name: name,
-            items: items,
+            stepKey: const ValueKey('client-send-next-step'),
+            buttonKey: const ValueKey('client-send-button'),
+            ringKey: const ValueKey('client-send-ring'),
+            badge: 'SIGUIENTE PASO',
+            title: 'Envía tus fotos a impresión',
+            hint:
+                '$fotos de «$name». Tu fotógrafo las recibe cuando toques '
+                '«Enviar a impresión»: hasta entonces no se imprimen.',
+            badgeIcon: Icons.arrow_forward_rounded,
+            buttonIcon: Icons.send_rounded,
+            accent: const Color(0xFF2F6BFF),
             compact: compact,
-            onSend: () => _sendToPrint(service, name),
+            buttonLabel: 'Enviar a impresión',
+            onPressed: () => _sendToPrint(service, name),
           )
         : null;
     final chip = sentToPrint
@@ -2122,66 +2159,93 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           )
         : null;
 
+    // El paso que le TOCA al cliente puede ser el ÚNICO contenido de la franja
+    // (un servicio con «Elegir fotos» y sin carpeta ni liga, que es lo normal):
+    // sin botones que poner, la fila de abajo no se pinta vacía.
+    final hasRow =
+        pick != null || chip != null || folder != null || link != null;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // El siguiente paso, primero y a lo ancho.
-          if (nextStep != null) ...[nextStep, const SizedBox(height: 8)],
-          if (compact)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (pick != null && folder != null)
-                  Row(
-                    children: [
-                      Expanded(child: pick),
-                      const SizedBox(width: 8),
-                      Expanded(child: folder),
-                    ],
-                  )
-                else if (pick != null)
-                  SizedBox(width: double.infinity, child: pick)
-                else if (folder != null)
-                  SizedBox(width: double.infinity, child: folder),
-                if (chip != null) ...[
-                  const SizedBox(height: 8),
-                  Align(alignment: Alignment.centerLeft, child: chip),
+          // El paso que le TOCA al cliente (elegir o enviar), primero y a lo
+          // ancho: es lo único que está esperando de él.
+          if (pickStep != null) ...[
+            pickStep,
+            if (hasRow) const SizedBox(height: 8),
+          ],
+          if (nextStep != null) ...[
+            nextStep,
+            if (hasRow) const SizedBox(height: 8),
+          ],
+          if (hasRow)
+            if (compact)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (pick != null && folder != null)
+                    Row(
+                      children: [
+                        Expanded(child: pick),
+                        const SizedBox(width: 8),
+                        Expanded(child: folder),
+                      ],
+                    )
+                  else if (pick != null)
+                    SizedBox(width: double.infinity, child: pick)
+                  else if (folder != null)
+                    SizedBox(width: double.infinity, child: folder),
+                  if (chip != null) ...[
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerLeft, child: chip),
+                  ],
+                  if (link != null) ...[
+                    const SizedBox(height: 2),
+                    Align(alignment: Alignment.centerLeft, child: link),
+                  ],
                 ],
-                if (link != null) ...[
-                  const SizedBox(height: 2),
-                  Align(alignment: Alignment.centerLeft, child: link),
-                ],
-              ],
-            )
-          else
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [?pick, ?chip, ?folder, ?link],
-            ),
+              )
+            else
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [?pick, ?chip, ?folder, ?link],
+              ),
         ],
       ),
     );
   }
 
-  /// Bloque del SIGUIENTE PASO: el cliente ya marcó sus fotos y falta que las
-  /// ENVÍE. Se destaca sobre el resto de las acciones (borde de color, rótulo
-  /// «Siguiente paso» y botón lleno) para que no se quede con la selección
-  /// hecha sin mandarla a imprimir.
-  Widget _sendNextStep({
+  /// Bloque del PASO QUE LE TOCA AL CLIENTE: el que tiene que dar ÉL.
+  ///
+  /// Se usa para los dos pasos que dependen de él y por eso es el mismo bloque
+  /// en los dos casos: **elegir** sus fotos (todavía no ha marcado ninguna) y
+  /// **enviarlas** (ya las marcó y falta mandarlas a impresión). Se destaca
+  /// sobre el resto de las acciones —borde y fondo del color del paso, rótulo
+  /// («TE TOCA A TI» / «SIGUIENTE PASO») y botón lleno a lo ancho con el aro
+  /// latiendo alrededor—
+  /// porque dentro de la fila de acciones, entre «Abrir carpeta» y el resto, el
+  /// botón se perdía y el cliente no veía que el siguiente movimiento era suyo.
+  Widget _nextStepBlock({
     required ColorScheme scheme,
-    required String name,
-    required int items,
+    required Key stepKey,
+    required Key buttonKey,
+    required Key ringKey,
+    required String badge,
+    required String title,
+    required String hint,
+    required IconData badgeIcon,
+    required IconData buttonIcon,
+    required Color accent,
     required bool compact,
-    required VoidCallback onSend,
+    required String buttonLabel,
+    required VoidCallback onPressed,
   }) {
-    const accent = Color(0xFF2F6BFF);
-    final fotos = items == 1 ? '1 foto elegida' : '$items fotos elegidas';
     return Container(
-      key: const ValueKey('client-send-next-step'),
+      key: stepKey,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
         color: accent.withValues(alpha: .10),
@@ -2197,15 +2261,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 width: 26,
                 height: 26,
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: accent,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.arrow_forward_rounded,
-                  size: 16,
-                  color: Colors.white,
-                ),
+                child: Icon(badgeIcon, size: 16, color: Colors.white),
               ),
               const SizedBox(width: 9),
               Expanded(
@@ -2213,8 +2273,8 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'SIGUIENTE PASO',
+                    Text(
+                      badge,
                       style: TextStyle(
                         fontSize: 9.5,
                         letterSpacing: .9,
@@ -2223,7 +2283,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                       ),
                     ),
                     Text(
-                      'Envía tus fotos a impresión',
+                      title,
                       style: TextStyle(
                         fontSize: compact ? 13 : 14,
                         height: 1.2,
@@ -2238,8 +2298,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            '$fotos de «$name». Tu fotógrafo las recibe cuando toques '
-            '«Enviar a impresión»: hasta entonces no se imprimen.',
+            hint,
             style: TextStyle(
               fontSize: 11.5,
               height: 1.35,
@@ -2249,19 +2308,25 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           const SizedBox(height: 9),
           SizedBox(
             height: 46,
-            child: FilledButton.icon(
-              key: const ValueKey('client-send-button'),
-              onPressed: onSend,
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                textStyle: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w900,
+            // El botón no cambia: lo que late es el ARO de su alrededor, para
+            // que se vea que es el que tiene que apretar.
+            child: AttentionRing(
+              key: ringKey,
+              color: accent,
+              child: FilledButton.icon(
+                key: buttonKey,
+                onPressed: onPressed,
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
+                icon: Icon(buttonIcon, size: 19),
+                label: Text(buttonLabel),
               ),
-              icon: const Icon(Icons.send_rounded, size: 19),
-              label: const Text('Enviar a impresión'),
             ),
           ),
         ],

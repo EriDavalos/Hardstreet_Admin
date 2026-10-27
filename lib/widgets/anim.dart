@@ -154,6 +154,173 @@ class FadeSlideIn extends StatelessWidget {
   }
 }
 
+/// ARO DE ATENCIÓN para un botón que el usuario DEBE tocar («Elegir fotos»,
+/// «Enviar a impresión»…).
+///
+/// El botón se queda EXACTAMENTE como está —mismo tamaño, mismo sitio, mismo
+/// color, sin crecer— y lo que se añade es un aro de su color dibujado POR
+/// FUERA de él, que respira despacio: se abre un poco y su color sube y baja
+/// (un ciclo completo ≈ 2,4 s).
+///
+/// El aro se PINTA, no ocupa espacio: no añade `Padding` ni `Transform`, así que
+/// el botón sigue midiendo y colocándose igual dentro de un `SizedBox`, un
+/// `Expanded` o una fila: nada se descuadra ni se monta sobre el botón vecino.
+///
+/// Con [enabled] = false se pinta el hijo tal cual (botón normal): el mismo
+/// widget sirve para los estados en los que ya NO toca pulsarlo. Con «reducir
+/// animaciones» del sistema el aro sigue saliendo, pero quieto: el paso
+/// pendiente se sigue viendo aunque no haya animación.
+class AttentionRing extends StatefulWidget {
+  const AttentionRing({
+    super.key,
+    required this.child,
+    this.enabled = true,
+    this.color,
+    this.radius = 10,
+    this.gap = 3,
+    this.width = 2,
+    this.period = const Duration(milliseconds: 1200),
+  });
+
+  final Widget child;
+
+  /// ¿Es el TURNO del usuario? false = botón normal, sin aro.
+  final bool enabled;
+
+  /// Color del aro; por defecto el color principal del tema.
+  final Color? color;
+
+  /// Radio del botón, para que el aro lo copie (los del tema usan 10).
+  final double radius;
+
+  /// Separación entre el botón y el aro cuando está recogido.
+  final double gap;
+
+  /// Grosor del aro.
+  final double width;
+
+  /// Cuánto dura una ida del latido (la vuelta tarda lo mismo).
+  final Duration period;
+
+  @override
+  State<AttentionRing> createState() => _AttentionRingState();
+}
+
+class _AttentionRingState extends State<AttentionRing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: widget.period,
+  );
+
+  /// «Reducir animaciones» del sistema: aro quieto (accesibilidad).
+  bool _reduced = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(AttentionRing old) {
+    super.didUpdateWidget(old);
+    if (old.period != widget.period) _c.duration = widget.period;
+    _sync();
+  }
+
+  /// Arranca o para el latido según el turno y las preferencias del sistema.
+  void _sync() {
+    final on = widget.enabled && !_reduced;
+    if (on && !_c.isAnimating) {
+      _c.repeat(reverse: true);
+    } else if (!on && _c.isAnimating) {
+      _c.stop();
+      _c.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+    final color = widget.color ?? Theme.of(context).colorScheme.primary;
+    AttentionRingPainter painter(double t) => AttentionRingPainter(
+      color: color,
+      radius: widget.radius,
+      gap: widget.gap,
+      width: widget.width,
+      t: t,
+    );
+    // Aro quieto a media altura: se ve igual, sin moverse.
+    if (_reduced) {
+      return CustomPaint(painter: painter(.6), child: widget.child);
+    }
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) => CustomPaint(
+        painter: painter(Curves.easeInOut.transform(_c.value)),
+        willChange: true,
+        child: child,
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// Aro redondeado que se dibuja POR FUERA de la caja del botón (el botón queda
+/// intacto: el aro no ocupa espacio en el layout, solo se pinta alrededor).
+///
+/// [t] va de 0 —recogido y tenue— a 1 —abierto, separado y con todo el color—.
+class AttentionRingPainter extends CustomPainter {
+  const AttentionRingPainter({
+    required this.color,
+    required this.radius,
+    required this.gap,
+    required this.width,
+    required this.t,
+  });
+
+  final Color color;
+  final double radius;
+  final double gap;
+  final double width;
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final out = gap + 1.5 * t;
+    final rect = Rect.fromLTWH(
+      -out,
+      -out,
+      size.width + out * 2,
+      size.height + out * 2,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width
+      ..color = color.withValues(alpha: .45 + .5 * t);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(radius + out)),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(AttentionRingPainter old) =>
+      old.t != t ||
+      old.color != color ||
+      old.radius != radius ||
+      old.gap != gap ||
+      old.width != width;
+}
+
 /// Escala + fade para iconos/avatares destacados (estados vacíos, éxito…).
 class PopIn extends StatelessWidget {
   const PopIn({super.key, required this.child, this.delayMs = 0});
@@ -163,7 +330,8 @@ class PopIn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dur = const Duration(milliseconds: 380) + Duration(milliseconds: delayMs);
+    final dur =
+        const Duration(milliseconds: 380) + Duration(milliseconds: delayMs);
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: dur,

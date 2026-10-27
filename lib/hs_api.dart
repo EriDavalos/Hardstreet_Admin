@@ -803,15 +803,17 @@ class HsApi {
   /// Lo mismo, pero con lo que hace falta para el MÓDULO de selección: la
   /// carpeta compartida del servicio, el máximo de fotos y si está habilitado.
   /// Un backend viejo devuelve sólo `items`; aquí se completan valores seguros.
-  static Future<({
-    List<String> items,
-    String folder,
-    int max,
-    bool pickPhotos,
-    String printStatus,
-    int? printRequestId,
-    bool sent,
-  })>
+  static Future<
+    ({
+      List<String> items,
+      String folder,
+      int max,
+      bool pickPhotos,
+      String printStatus,
+      int? printRequestId,
+      bool sent,
+    })
+  >
   myServiceItemsInfo(int serviceId) async {
     final data = await get(
       '/api/my/service-items',
@@ -841,14 +843,16 @@ class HsApi {
   }
 
   /// Estado del envío a impresión de un servicio (cliente).
-  static Future<({
-    String status,
-    int? requestId,
-    List<String> photos,
-    String formatName,
-    int border,
-    bool canEdit,
-  })>
+  static Future<
+    ({
+      String status,
+      int? requestId,
+      List<String> photos,
+      String formatName,
+      int border,
+      bool canEdit,
+    })
+  >
   myPrintRequest(int serviceId) async {
     final data = await get(
       '/api/my/print-requests',
@@ -867,10 +871,9 @@ class HsApi {
   }
 
   /// Envíos a impresión + formatos del estudio (módulo Impresiones).
-  static Future<({
-    List<Map<String, dynamic>> requests,
-    List<Map<String, dynamic>> formats,
-  })>
+  static Future<
+    ({List<Map<String, dynamic>> requests, List<Map<String, dynamic>> formats})
+  >
   printRequests() async {
     final data = await get('/api/admin/print-requests');
     return (
@@ -935,11 +938,10 @@ class HsApi {
   });
 
   /// Reabre un envío para que el cliente vuelva a poder cambiar la selección.
-  static Future<void> reopenPrintRequest(int requestId) =>
-      post('/api/admin/print-requests', {
-        'action': 'reopen',
-        'requestId': requestId,
-      });
+  static Future<void> reopenPrintRequest(int requestId) => post(
+    '/api/admin/print-requests',
+    {'action': 'reopen', 'requestId': requestId},
+  );
 
   /// Avisa al CLIENTE de un paquete (desde el administrador del paquete).
   /// [kind] = `fotos-disponibles` | `servicio-terminado` | `paquete`.
@@ -1859,7 +1861,9 @@ class HsApi {
   // el Drive funciona como siempre; al agregar otro, el árbol que ve el panel
   // sigue siendo uno (ver `hardstreet-drive-hub`).
 
-  /// Todos los servidores registrados, encendidos y apagados.
+  /// Todos los servidores VIVOS: encendidos y apagados (`active = 1`).
+  ///
+  /// Los eliminados (borrado lógico) no vienen: el backend no los sirve.
   static Future<List<Map<String, dynamic>>> driveNodes() async {
     final data = await get('/api/admin/drive-nodes');
     return ((data['nodes'] as List?) ?? const [])
@@ -1886,7 +1890,10 @@ class HsApi {
     return (data['node'] as Map?)?.cast<String, dynamic>();
   }
 
-  /// Edita nombre, dirección, prioridad, notas o el encendido de un servidor.
+  /// Edita nombre, dirección, prioridad, notas o el ENCENDIDO de un servidor.
+  ///
+  /// `enabled: false` lo apaga en el Drive (sigue en la lista y se puede
+  /// encender otra vez); NO lo elimina. Para eso está [deleteDriveNode].
   static Future<Map<String, dynamic>?> updateDriveNode({
     required int id,
     String? name,
@@ -1908,7 +1915,11 @@ class HsApi {
     return (data['node'] as Map?)?.cast<String, dynamic>();
   }
 
-  /// Quita un servidor de la lista (sus archivos dejan de verse).
+  /// ELIMINA un servidor del Drive con BORRADO LÓGICO (`active = 0`).
+  ///
+  /// La fila se conserva en la base (con su nombre, dirección, notas y
+  /// dependencias), pero deja de existir para el panel y para el hub. No toca
+  /// nada del servidor ni de sus archivos.
   static Future<void> deleteDriveNode(int id) async {
     await deleteBody('/api/admin/drive-nodes', {'id': id});
   }

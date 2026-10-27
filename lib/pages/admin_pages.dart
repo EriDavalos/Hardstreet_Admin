@@ -181,6 +181,27 @@ class _DashboardPageState extends State<DashboardPage> {
   /// resumen sigue siendo útil).
   FinanceData? _finance;
 
+  /// ¿Siguen en camino las fuentes OPCIONALES (finanzas y espacio del drive)?
+  ///
+  /// Mientras lo estén, sus tarjetas se pintan EN SU SITIO con un esqueleto de
+  /// carga. Antes no existían hasta que llegaba el dato, así que aparecían de
+  /// golpe y la pantalla se reacomodaba sola.
+  bool _extrasLoading = false;
+
+  /// ¿Hay un drive remoto al que preguntarle el espacio? Si no, no se reserva
+  /// sitio para esa línea (nunca llegaría).
+  bool get _spaceExpected => widget.drive is DriveApiService;
+
+  /// ¿Se pinta la tarjeta de Finanzas? Se reserva mientras carga (si el rol
+  /// puede verlas); si al final no hay dato, se retira.
+  bool get _showFinance =>
+      _finance != null || (_extrasLoading && _showModule('finance'));
+
+  /// ¿Ya se pintó el tablero alguna vez? En un REFRESCO no se vuelve al
+  /// esqueleto: las tarjetas se quedan con lo anterior hasta que llega lo
+  /// nuevo (antes desaparecía todo y volvía, que es justo lo que se notaba).
+  bool _hasBoard = false;
+
   @override
   void initState() {
     super.initState();
@@ -191,63 +212,76 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() {
       _loading = true;
       _error = null;
+      _extrasLoading = true;
     });
-    // Cada fuente falla en silencio: el dashboard muestra todo lo que sí cargó.
-    var users = const <Map<String, dynamic>>[];
-    var clients = const <Map<String, dynamic>>[];
-    var packages = const <Map<String, dynamic>>[];
-    var agendas = const <Map<String, dynamic>>[];
-    var failures = 0;
-    try {
-      users = await HsApi.adminUsers();
-    } catch (_) {
-      failures++;
-    }
-    try {
-      clients = await HsApi.clients();
-    } catch (_) {
-      failures++;
-    }
-    try {
-      packages = await HsApi.adminPackages();
-    } catch (_) {
-      failures++;
-    }
-    try {
-      agendas = await HsApi.agendas();
-    } catch (_) {
-      // Agendas es opcional: si falla, el resto del resumen sigue útil.
-    }
-    // Espacio del drive (solo drive remoto): opcional como todo el resto.
-    Map<String, dynamic>? space;
-    final apiDrive = widget.drive;
-    if (apiDrive is DriveApiService) {
-      try {
-        space = await apiDrive.fetchSpace();
-      } catch (_) {
-        // Sin conexión al drive: la tarjeta simplemente no aparece.
-      }
-    }
-    // Finanzas (ganancias, gastos, ahorro): también best effort.
-    FinanceData? finance;
-    try {
-      finance = FinanceData.fromJson(await HsApi.finance());
-    } catch (_) {
-      // Sin permiso sobre Finanzas o sin conexión: no se muestra la sección.
-    }
+    // Las cuatro fuentes del resumen van A LA VEZ. Antes se pedían una detrás
+    // de otra, así que el tablero esperaba la SUMA de las cuatro respuestas
+    // (con red lenta, varios segundos de esqueletos). Cada una falla en
+    // silencio: el dashboard muestra todo lo que sí cargó.
+    final answers = await Future.wait([
+      _tryList(HsApi.adminUsers),
+      _tryList(HsApi.clients),
+      _tryList(HsApi.adminPackages),
+      _tryList(HsApi.agendas),
+    ]);
+    // Agendas es opcional: solo cuentan los fallos de las tres primeras.
+    final failures = answers.take(3).where((a) => !a.ok).length;
     if (!mounted) return;
     setState(() {
-      _users = users;
-      _clients = clients;
-      _packages = packages;
-      _agendas = agendas;
-      _space = space;
-      _finance = finance;
+      _users = answers[0].data;
+      _clients = answers[1].data;
+      _packages = answers[2].data;
+      _agendas = answers[3].data;
       _error = failures >= 3
           ? 'No se pudo conectar con el servidor para cargar el resumen.'
           : null;
       _loading = false;
+      _hasBoard = true;
     });
+    // Lo opcional (finanzas y espacio del drive) va DESPUÉS y en paralelo: no
+    // retrasa el resumen; sus tarjetas ya están en pantalla, cargando.
+    await _loadExtras();
+  }
+
+  /// Una fuente del resumen: si falla se queda vacía y se avisa con `ok`.
+  Future<({List<Map<String, dynamic>> data, bool ok})> _tryList(
+    Future<List<Map<String, dynamic>>> Function() fetch,
+  ) async {
+    try {
+      return (data: await fetch(), ok: true);
+    } catch (_) {
+      return (data: const <Map<String, dynamic>>[], ok: false);
+    }
+  }
+
+  /// Finanzas y espacio del drive: opcionales y en paralelo con todo lo demás.
+  Future<void> _loadExtras() async {
+    final drive = widget.drive;
+    final results = await Future.wait([
+      if (drive is DriveApiService)
+        _tryMap(drive.fetchSpace)
+      else
+        Future<Map<String, dynamic>?>.value(null),
+      _tryMap(HsApi.finance),
+    ]);
+    if (!mounted) return;
+    final finance = results[1];
+    setState(() {
+      _space = results[0];
+      // Sin permiso sobre Finanzas o sin conexión: no se muestra la sección.
+      if (finance != null) _finance = FinanceData.fromJson(finance);
+      _extrasLoading = false;
+    });
+  }
+
+  Future<Map<String, dynamic>?> _tryMap(
+    Future<Map<String, dynamic>> Function() fetch,
+  ) async {
+    try {
+      return await fetch();
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _canSee(String module) =>
@@ -316,7 +350,7 @@ class _DashboardPageState extends State<DashboardPage> {
         onRefresh: _load,
         child: _error != null
             ? _errorCard(scheme)
-            : _loading
+            : _loading && !_hasBoard
             ? const ListSkeleton(lines: 3, cardHeight: 96)
             : wide
             ? _board(scheme, catalogValue, upcoming)
@@ -347,14 +381,23 @@ class _DashboardPageState extends State<DashboardPage> {
           _metricStrip(scheme, catalogValue, upcoming.length)
         else
           _metrics(scheme, catalogValue, upcoming.length),
-        if (_finance != null) ...[
+        if (_showFinance) ...[
           const SizedBox(height: 22),
           const _SectionHeader(
             icon: Icons.account_balance_wallet_outlined,
             label: 'Finanzas',
           ),
           const SizedBox(height: 10),
-          _financeSection(scheme, _finance!),
+          // Mientras carga, la tarjeta está en su sitio con el esqueleto: no
+          // aparece de golpe al terminar.
+          _finance == null
+              ? const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(14),
+                    child: ListSkeleton(lines: 2, cardHeight: 52),
+                  ),
+                )
+              : _financeSection(scheme, _finance!),
         ],
         const SizedBox(height: 22),
         const _SectionHeader(
@@ -363,9 +406,16 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         const SizedBox(height: 10),
         _charts(scheme),
-        if (_space != null) ...[
+        if (_space != null || (_extrasLoading && _spaceExpected)) ...[
           const SizedBox(height: 12),
-          _spaceCard(scheme, _space!),
+          _space == null
+              ? const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(14),
+                    child: ListSkeleton(lines: 1, cardHeight: 14),
+                  ),
+                )
+              : _spaceCard(scheme, _space!),
         ],
         const SizedBox(height: 22),
         const _SectionHeader(
@@ -420,24 +470,29 @@ class _DashboardPageState extends State<DashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _metricStrip(scheme, catalogValue, upcoming.length),
-                  if (_space != null) ...[
+                  if (_space != null || (_extrasLoading && _spaceExpected)) ...[
                     const SizedBox(height: 8),
-                    _spaceLine(scheme, _space!),
+                    _space == null
+                        ? const ListSkeleton(lines: 1, cardHeight: 12)
+                        : _spaceLine(scheme, _space!),
                   ],
                 ],
               ),
             ),
-            if (_finance != null) ...[
+            if (_showFinance) ...[
               const SizedBox(height: 10),
               _panel(
                 icon: Icons.account_balance_wallet_outlined,
                 label: 'Finanzas',
-                child: _financeSection(
-                  scheme,
-                  _finance!,
-                  bare: true,
-                  chartHeight: 84,
-                ),
+                // Mientras carga, la tarjeta ya está aquí con el esqueleto.
+                child: _finance == null
+                    ? const ListSkeleton(lines: 2, cardHeight: 52)
+                    : _financeSection(
+                        scheme,
+                        _finance!,
+                        bare: true,
+                        chartHeight: 84,
+                      ),
               ),
             ],
           ]),

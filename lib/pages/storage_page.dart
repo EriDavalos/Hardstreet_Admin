@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../drive_api_service.dart' show DriveMaintenance;
+import '../drive_base.dart';
 import '../drive_scope.dart';
 import '../hs_format.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
+import '../widgets/drive_status_card.dart';
 
 // ==================================================================
 // MÓDULO ALMACENAMIENTO: cuánto espacio ocupa la carpeta donde se
@@ -39,6 +42,13 @@ class _StoragePageState extends State<StoragePage> {
   Map<String, dynamic>? _info;
   bool _started = false;
 
+  /// El Drive está en MANTENIMIENTO (no queda ningún servidor en
+  /// funcionamiento): no hay cifras que dar, pero tampoco es «HTTP 503».
+  bool _maintenance = false;
+
+  /// Drive del panel: la card de mantenimiento lo necesita.
+  DriveBase? _drive;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -49,9 +59,15 @@ class _StoragePageState extends State<StoragePage> {
 
   Future<void> _load() async {
     final drive = DriveScope.maybeOf(context);
+    _drive = drive;
+    // Si el Drive ya sabe que está en mantenimiento, se enseña ese aviso desde
+    // el primer frame en vez de pedir cifras que el hub no puede dar.
+    final inMaintenance = drive?.maintenance.isNotEmpty ?? false;
     setState(() {
       _loading = true;
       _error = null;
+      _maintenance = inMaintenance;
+      if (inMaintenance) _info = null;
     });
     if (drive == null) {
       setState(() {
@@ -66,12 +82,27 @@ class _StoragePageState extends State<StoragePage> {
       setState(() {
         _info = info;
         _loading = false;
+        _maintenance = false;
+      });
+    } on DriveMaintenance {
+      // Mantenimiento NO es un fallo de conexión: se explica con el mismo
+      // aviso del Drive y un botón para reintentar.
+      if (!mounted) return;
+      setState(() {
+        _info = null;
+        _error = null;
+        _loading = false;
+        _maintenance = true;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = 'No se pudo consultar el espacio: $e';
         _loading = false;
+        // Un fallo de red con el Drive en mantenimiento se lee como
+        // mantenimiento, no como una excepción cruda.
+        _maintenance = drive.maintenance.isNotEmpty;
+        if (_maintenance) _error = null;
       });
     }
   }
@@ -135,6 +166,17 @@ class _StoragePageState extends State<StoragePage> {
     double usedPct,
   ) {
     if (_loading) return const ListSkeleton(lines: 3, cardHeight: 110);
+    // MANTENIMIENTO: el mismo aviso del Drive (sin carpetas ni cifras) en vez
+    // del «HTTP 503» que no decía nada.
+    final drive = _drive;
+    if (_maintenance && drive != null) {
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: DriveStatusCard(drive: drive, onRetry: _load),
+        ),
+      );
+    }
     if (_error != null) {
       return Card(
         child: Padding(

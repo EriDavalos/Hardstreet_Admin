@@ -40,12 +40,13 @@ class DriveStatusCard extends StatelessWidget {
 
   bool get _failed => drive.error != null;
 
-  /// El fallo es MANTENIMIENTO (un servidor depende de otro que no responde),
-  /// no una red caída: el hub ya dijo qué pasó y hay que decirlo con sus
-  /// palabras, en ámbar y no en rojo.
+  /// El Drive está en MANTENIMIENTO (no queda ningún servidor en
+  /// funcionamiento), no con la red caída: va en ámbar y no en rojo. La vista
+  /// principal lo enseña a pantalla completa; la card lo contempla por si el
+  /// aviso llega con un error de un hub viejo que solo lo dice en el mensaje.
   bool get _maintenance =>
-      _failed &&
-      (drive.error ?? '').toLowerCase().contains('mantenimiento');
+      drive.maintenance.isNotEmpty ||
+      (_failed && (drive.error ?? '').toLowerCase().contains('mantenimiento'));
 
   bool get _busy => !_failed && drive.conn == DriveConn.checking;
 
@@ -65,7 +66,7 @@ class DriveStatusCard extends StatelessWidget {
       ? 'Conectando con el Drive'
       : 'Conectado al Drive';
 
-  String get _state => _failed
+  String get _state => _failed || _maintenance
       ? 'Sin respuesta'
       : _busy
       ? 'Sin comprobar'
@@ -120,7 +121,7 @@ class DriveStatusCard extends StatelessWidget {
   /// puerto habla HTTP sin TLS (responde `WRONG_VERSION_NUMBER` en el
   /// handshake). También cubre el servidor apagado y el puerto equivocado.
   String? get _hint {
-    if (!drive.isRemote) return null;
+    if (!drive.isRemote || _maintenance) return null;
     final e = (drive.error ?? '').toLowerCase();
     final server = _server;
     final https = server?.scheme.toLowerCase() == 'https';
@@ -316,7 +317,7 @@ class DriveStatusCard extends StatelessWidget {
                   const SizedBox(height: 12),
                   Wrap(spacing: 6, runSpacing: 6, children: chips),
                 ],
-                if (_failed) ...[
+                if (_failed || _maintenance) ...[
                   const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
@@ -330,7 +331,7 @@ class DriveStatusCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          drive.error!,
+                          _maintenance ? driveMaintenanceNotice : drive.error!,
                           maxLines: 4,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -374,7 +375,9 @@ class DriveStatusCard extends StatelessWidget {
                     child: FilledButton.tonalIcon(
                       onPressed: onRetry,
                       icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: Text(_failed ? 'Reintentar' : 'Actualizar'),
+                      label: Text(
+                        _failed || _maintenance ? 'Reintentar' : 'Actualizar',
+                      ),
                     ),
                   ),
                 ],
