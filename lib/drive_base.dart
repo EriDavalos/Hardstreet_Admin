@@ -289,16 +289,27 @@ String drivePathNormalize(String path) => path
 /// ¿Dos carpetas del Drive se SOLAPAN? (son la misma, o una está dentro de la
 /// otra).
 ///
-/// Se usa para no compartirle al cliente carpetas redundantes: si ya tiene
-/// compartida `ReynaCoot`, compartirle `ReynaCoot/SesionPrevia` no agrega nada
-/// (vería el mismo contenido dos veces) y al revés tampoco. El backend aplica
-/// esta misma regla; aquí se adelanta para no ofrecer lo que va a fallar.
+/// OJO: compartir con un cliente NO usa esta regla (solo rechaza la MISMA
+/// carpeta, ver [sameDrivePath]). Se conserva para donde sí importa que un
+/// ámbito contenga a otro, como la carpeta raíz de una empresa.
 bool drivePathsOverlap(String a, String b) {
   final x = drivePathNormalize(a);
   final y = drivePathNormalize(b);
   if (x.isEmpty || y.isEmpty) return false;
   if (x == y) return true;
   return x.startsWith('$y/') || y.startsWith('$x/');
+}
+
+/// ¿[a] y [b] son LA MISMA carpeta? (sin distinguir mayúsculas: el Drive vive
+/// en Windows, donde `Fiesta` y `fiesta` son la misma).
+///
+/// Es lo único que impide compartir dos veces con un cliente. Dos rutas
+/// distintas lo son aunque una contenga a la otra: `PrimerServicio` y
+/// `SegundoServicio` son hermanas y se comparten por separado, una por paquete.
+bool sameDrivePath(String a, String b) {
+  final x = drivePathNormalize(a).toLowerCase();
+  final y = drivePathNormalize(b).toLowerCase();
+  return x.isNotEmpty && x == y;
 }
 
 /// ¿[host] es "de casa"? (localhost o una IP privada). El Drive interno puede
@@ -760,6 +771,7 @@ abstract class DriveBase extends ChangeNotifier {
   Future<void> setSharedRoots(
     List<String> roots, {
     required bool isClient,
+    bool refresh = true,
   }) async {
     final entries = <SharedRoot>[];
     final used = <String>{};
@@ -799,7 +811,7 @@ abstract class DriveBase extends ChangeNotifier {
       _setScreenPath(const []);
       setSearch(null);
     }
-    await refresh();
+    if (refresh) await this.refresh();
   }
 
   /// Conteo REAL de lo que hay dentro de cada carpeta compartida.

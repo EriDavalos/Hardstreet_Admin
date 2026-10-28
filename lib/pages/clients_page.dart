@@ -23,6 +23,7 @@ import '../widgets/hs_search_filter.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/service_items_gallery.dart';
 import '../widgets/service_photos_sheet.dart';
+import '../widgets/user_drive_dialog.dart';
 
 /// Estilo COMPACTO de las acciones de un servicio (dentro del administrador
 /// de paquetes): en el celular los tres botones tienen que caber en UNA fila
@@ -203,6 +204,22 @@ class _ClientsPageState extends State<ClientsPage> {
       builder: (_) => ClientPackagesDialog(client: client),
     );
     _reload(); // el conteo pudo cambiar
+  }
+
+  /// Carpetas del Drive compartidas DIRECTAMENTE con el cliente.
+  ///
+  /// Un cliente es un usuario de tipo cliente, así que se le pueden compartir
+  /// VARIAS carpetas: son su Drive personal y las ve en todos sus paquetes.
+  /// Es el mismo diálogo del módulo Usuarios (ahí se administran las cuentas
+  /// del equipo; aquí, las de los clientes).
+  Future<void> _openDriveFolders(Map<String, dynamic> client) async {
+    final id = (client['id'] as num?)?.toInt() ?? 0;
+    if (id == 0) return;
+    final name = '${client['name'] ?? ''} ${client['lastname'] ?? ''}'.trim();
+    await showHsModal<void>(
+      context: context,
+      builder: (_) => UserDriveDialog(userId: id, userName: name),
+    );
   }
 
   /// Filas que se pintan: la página del servidor o el filtro local (backend
@@ -404,6 +421,11 @@ class _ClientsPageState extends State<ClientsPage> {
                                     HsAccess.instance.can('Clientes', 'update')
                                 ? () => _openPackages(rows[i])
                                 : null,
+                            onDrive:
+                                HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Clientes', 'update')
+                                ? () => _openDriveFolders(rows[i])
+                                : null,
                             onDelete:
                                 HsAccess.instance.degraded ||
                                     HsAccess.instance.can('Clientes', 'delete')
@@ -435,6 +457,7 @@ class _ClientTile extends StatelessWidget {
     required this.client,
     required this.onEdit,
     required this.onPackages,
+    required this.onDrive,
     required this.onDelete,
   });
 
@@ -443,6 +466,9 @@ class _ClientTile extends StatelessWidget {
   /// null = el usuario no tiene el permiso → el botón NO se muestra.
   final VoidCallback? onEdit;
   final VoidCallback? onPackages;
+
+  /// Carpetas del Drive compartidas con el cliente (pueden ser varias).
+  final VoidCallback? onDrive;
   final VoidCallback? onDelete;
 
   @override
@@ -559,6 +585,11 @@ class _ClientTile extends StatelessWidget {
                       onTap: onEdit,
                     ),
                     HsMenuAction(
+                      icon: Icons.folder_shared_outlined,
+                      label: 'Carpetas del Drive',
+                      onTap: onDrive,
+                    ),
+                    HsMenuAction(
                       icon: Icons.delete_outline,
                       label: 'Eliminar',
                       onTap: onDelete,
@@ -579,6 +610,12 @@ class _ClientTile extends StatelessWidget {
                     tooltip: 'Editar',
                     onPressed: onEdit,
                     icon: const Icon(Icons.edit_outlined, size: 20),
+                  ),
+                if (onDrive != null)
+                  IconButton(
+                    tooltip: 'Carpetas del Drive',
+                    onPressed: onDrive,
+                    icon: const Icon(Icons.folder_shared_outlined, size: 20),
                   ),
                 if (onDelete != null)
                   IconButton(
@@ -2069,12 +2106,12 @@ class _PickerField extends StatelessWidget {
 // ==================================================================
 // Modal "Paquete del cliente": administración COMPLETA y visual
 //
-//   * El paquete VIGENTE (el que no está terminado) se administra:
+//   * TODOS los paquetes ABIERTOS se administran (haya uno o varios):
 //     abonar, registrar inversión / gasto / ahorro / abono externo,
-//     agendas, terminar cada servicio (con su descripción de cierre) y
-//     el paquete (con validación de servicios y dinero completos).
-//   * Los demás paquetes del cliente se consultan como detalle
-//     (solo lectura) desde el mismo selector.
+//     agendas, cambiar el estado de cada servicio con sus observaciones y
+//     finalizar el paquete (con validación de servicios y dinero completos).
+//   * Solo al FINALIZAR un paquete pasa a consulta (solo lectura); puede
+//     reabrirse si hay que corregir algo.
 //   * La vista se estructura en TRES pestañas:
 //       Servicios  · cada servicio con su estado y su cierre
 //       Calendario · el mes, con agendas y servicios terminados
@@ -2319,12 +2356,14 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return null;
   }
 
-  /// ¿El paquete en foco se puede administrar? (el vigente sí; un paquete
-  /// terminado o anterior se consulta como detalle).
+  /// ¿El paquete en foco se puede administrar?
+  ///
+  /// Cualquier paquete ABIERTO se administra (tenga el cliente uno o varios);
+  /// solo se bloquea cuando se FINALIZA, que pasa a consulta.
   bool get _canAdminister {
     final p = _selected;
     if (p == null) return false;
-    return !_isFinished(p) && (p['id'] as num).toInt() == _vigenteId;
+    return !_isFinished(p);
   }
 
   /// Servicios del paquete en foco: los del detalle (con `done`/`finishedAt`)
@@ -2538,6 +2577,34 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       () => HsApi.updatePackageService(
         (svc['id'] as num).toInt(),
         description: note,
+      ),
+    );
+  }
+
+  /// Marca el servicio como «En proceso» y guarda sus OBSERVACIONES.
+  ///
+  /// Es el avance del trabajo: el cliente lo ve en «Mi paquete». El estado
+  /// anterior (Pendiente) y el cierre se manejan aparte; aquí no se toca la
+  /// fecha de cierre porque el servicio no está entregado.
+  Future<void> _markServiceInProcess(Map<String, dynamic> svc) async {
+    final note = await _askNote(
+      icon: Icons.timelapse,
+      title: 'Servicio en proceso',
+      subtitle: (svc['name'] ?? '').toString(),
+      intro:
+          'El servicio pasará a «En proceso». Escribe las observaciones que '
+          'verá el cliente sobre el avance.',
+      initial: (svc['description'] ?? '').toString(),
+      label: 'Observaciones',
+      confirmLabel: 'Guardar y marcar en proceso',
+      allowEmpty: true,
+    );
+    if (note == null) return;
+    await _run(
+      () => HsApi.updatePackageService(
+        (svc['id'] as num).toInt(),
+        description: note,
+        statusId: 2,
       ),
     );
   }
@@ -3474,10 +3541,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _finishedSelected
-                      ? 'Paquete terminado: sus servicios y el pago quedaron '
-                            'concluidos. Reábrelo solo para corregir algo.'
-                      : 'Paquete anterior: se consulta como detalle.',
+                  'Paquete terminado: sus servicios y el pago quedaron '
+                  'concluidos. Reábrelo solo para corregir algo.',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.25,
@@ -3488,7 +3553,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
             ],
           ),
         ),
-        if (_finishedSelected && _selectedId == _vigenteId) ...[
+        if (_finishedSelected) ...[
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _busy ? null : _reopenPackage,
@@ -3729,7 +3794,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                             ),
                           ],
                         ),
-                        if (_selectedId == _vigenteId)
+                        if (_canAdminister)
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -3889,9 +3954,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       (icon: Icons.folder_shared_outlined, label: 'Drive', value: 3),
     ];
     final active = _activeTab;
-    final note = _finishedSelected
-        ? 'Paquete terminado · consulta'
-        : (!_canAdminister ? 'Paquete anterior · consulta' : null);
+    final note = _finishedSelected ? 'Paquete terminado · consulta' : null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Column(
@@ -3986,16 +4049,18 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
 
   // ---------- Pestaña: carpetas compartidas del Drive ----------
 
-  /// Carpetas del Drive COMPARTIDAS con el cliente de ESTE paquete (puede
-  /// haber VARIAS). El cliente verá estas carpetas (y las de sus otros
-  /// paquetes) en su drive; es la forma de "compartir" una parte del Drive.
+  /// Carpetas del Drive que el paquete tiene guardadas. La BASE admite una
+  /// sola: se usa la primera.
   List<String> get _drivePaths {
     final pkg = _progress?['package'];
     if (pkg is! Map) return const [];
-    final out = _pathsOf(pkg.cast<String, dynamic>());
-    if (out.isEmpty) {
-      // Backend viejo (una sola carpeta).
-      final one = drivePathNormalize((pkg['drivePath'] ?? '').toString());
+    final map = pkg.cast<String, dynamic>();
+    final out = _pathsOf(map);
+    // `drivePath` SOLO si el backend ni manda la lista (API vieja): si manda
+    // `drivePaths: []` es que el paquete no comparte carpeta, y el respaldo no
+    // debe revivir la que se le quitó.
+    if (out.isEmpty && !map.containsKey('drivePaths')) {
+      final one = drivePathNormalize((map['drivePath'] ?? '').toString());
       if (one.isNotEmpty) out.add(one);
     }
     return out;
@@ -4015,36 +4080,49 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return out;
   }
 
-  /// Rutas del Drive compartidas en los DEMÁS paquetes del cliente y en las
-  /// OTRAS carpetas del paquete que se está editando (todo menos la carpeta
-  /// que se va a compartir ahora).
+  /// LA carpeta del Drive de ESTE paquete ('' = ninguna). Un paquete comparte
+  /// una sola carpeta: así el cliente ve una carpeta por paquete en su Drive.
+  String get _packageDrivePath {
+    final paths = _drivePaths;
+    return paths.isEmpty ? '' : paths.first;
+  }
+
+  /// Rutas del Drive compartidas en los DEMÁS paquetes del cliente y
+  /// DIRECTAMENTE con el usuario: sirven para avisar de solapamientos (dos
+  /// carpetas solapadas se comerían una a la otra en su Drive).
   List<String> _otherSharedPaths() {
     final id = _selectedId;
     final out = <String>[];
     for (final p in _purchased) {
       if ((p['id'] as num?)?.toInt() == id) continue;
-      out.addAll(_pathsOf(p));
-      if (_pathsOf(p).isEmpty) {
+      final paths = _pathsOf(p);
+      // Igual que arriba: el respaldo `drivePath` solo para una API que no
+      // manda `drivePaths`; con la lista vacía el paquete no comparte nada.
+      if (paths.isEmpty && !p.containsKey('drivePaths')) {
         final one = drivePathNormalize((p['drivePath'] ?? '').toString());
         if (one.isNotEmpty) out.add(one);
+      } else {
+        for (final path in paths) {
+          if (!out.contains(path)) out.add(path);
+        }
       }
     }
-    for (final path in _drivePaths) {
+    for (final path in _clientDrivePaths) {
       if (!out.contains(path)) out.add(path);
     }
     return out;
   }
 
-  /// La carpeta YA compartida con la que choca [path], o null si no choca
-  /// (cuenta tanto lo compartido en los otros paquetes del cliente como las
-  /// otras carpetas de este mismo paquete).
+  /// La carpeta YA compartida que es LA MISMA que [path], o null si no choca.
   ///
-  /// Compartir una carpeta que está dentro de otra ya compartida (o que la
-  /// contiene) no aporta nada: el cliente vería el mismo contenido dos veces.
+  /// Solo la misma carpeta estorba (el cliente la vería dos veces). Compartir
+  /// `.../RegalandoSonrisas/PrimerServicio` a un paquete y `.../SegundoServicio`
+  /// a otro es lo normal: son carpetas distintas, aunque sean hermanas o aunque
+  /// el cliente tenga compartida la carpeta que las contiene.
   String? _sharedConflict(String path) {
     if (path.isEmpty) return null;
     for (final other in _otherSharedPaths()) {
-      if (drivePathsOverlap(path, other)) return other;
+      if (sameDrivePath(path, other)) return other;
     }
     return null;
   }
@@ -4071,10 +4149,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
   /// Selector de carpeta del Drive: abre [DriveFolderPicker] y devuelve los
   /// segmentos de la carpeta elegida (null si se cancela la elección).
   ///
-  /// [insideShared] = true: se elige DENTRO de lo que el cliente ya tiene
-  /// compartido —ese es SU drive—, así que el selector se abre EN la carpeta
-  /// compartida, muestra sus subcarpetas y no deja subir más arriba: nada
-  /// antes de esa carpeta. Es lo que usa compartir la carpeta de UN SERVICIO.
+  /// [insideShared] = true: se elige la carpeta de UN SERVICIO, DENTRO de la
+  /// carpeta que se le comparte al paquete. La raíz es SOLO esa carpeta: el
+  /// selector enseña su contenido y nada más (ni el resto del Drive, ni las
+  /// carpetas de otros paquetes) y no deja subir por encima de ella.
   Future<List<String>?> _pickDriveFolder({bool insideShared = false}) async {
     final drive = DriveScope.maybeOf(context);
     if (drive == null) {
@@ -4082,10 +4160,12 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
       return null;
     }
     // El "drive" del cliente: las carpetas que YA se le comparten.
+    final shared = _allSharedPaths();
+    // UNA sola raíz: la carpeta del paquete en foco (el servicio vive en su
+    // paquete). Antes se pasaban todas las compartidas y el selector ofreca
+    // saltar a las demás, incluido el drive general del cliente.
     final roots = <String>[
-      if (insideShared)
-        for (final p in _allSharedPaths())
-          if (drivePathNormalize(p).isNotEmpty) drivePathNormalize(p),
+      if (insideShared && shared.isNotEmpty) _servicePickRoot(shared),
     ];
     if (insideShared && roots.isEmpty) {
       _snack(
@@ -4106,10 +4186,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         initial: const <String>[],
         roots: roots,
         load: drive.listChildFolders,
-        // Dentro del drive del cliente NO hay solapamiento que valga: TODO lo
-        // que se ofrece está dentro de lo que ya ve (compartir una subcarpeta
-        // para un servicio no duplica nada en su Drive). Fuera, se avisa de
-        // las carpetas que se solapan con lo ya compartido.
+        // Dentro del drive del cliente NADA se bloquea: todo lo que se ofrece
+        // está dentro de lo que ya ve. Fuera, solo se bloquea la misma carpeta
+        // que ya tiene compartida otro paquete (o él directamente).
         conflict: insideShared
             ? (_) => null
             : (path) => _sharedConflict(drivePathNormalize(path)),
@@ -4117,15 +4196,52 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     );
   }
 
-  // Compartir una carpeta se hace SIEMPRE al CLIENTE (_shareClientDriveFolder):
-  // el Drive no depende del paquete. Solo queda el "dejar de compartir" de las
-  // carpetas que pertenecen a la versión anterior (compartidas al paquete).
+  /// Carpeta raíz al compartir la carpeta de un SERVICIO: la del paquete que
+  /// se está administrando (una carpeta por paquete). Si ese paquete todavía
+  /// no comparte ninguna, la primera que el cliente tenga compartida.
+  String _servicePickRoot(List<String> shared) {
+    final own = _packageDrivePath;
+    if (own.isNotEmpty) {
+      for (final p in shared) {
+        if (sameDrivePath(p, own)) return p;
+      }
+    }
+    return shared.first;
+  }
 
-  Future<void> _unshareDriveFolder(String path) async {
+  // El paquete comparte UNA carpeta: `compartir-directorio` la reemplaza.
+
+  /// Comparte (o CAMBIA) la carpeta del Drive de este paquete.
+  Future<void> _sharePackageDriveFolder() async {
     final id = _selectedId;
     if (id == null) return;
+    final segments = await _pickDriveFolder();
+    if (segments == null || segments.isEmpty) return;
+    final path = segments.join('/');
+    if (sameDrivePath(path, _packageDrivePath)) {
+      _snack('Esa ya es la carpeta del paquete');
+      return;
+    }
     await _run(
-      () => HsApi.removePackageDrivePath(purchasedPackageId: id, path: path),
+      () => HsApi.setPackageDrivePath(purchasedPackageId: id, path: path),
+    );
+  }
+
+  /// Deja el paquete SIN carpeta (los otros paquetes y las carpetas
+  /// compartidas al usuario no cambian).
+  Future<void> _unsharePackageDriveFolder() async {
+    final id = _selectedId;
+    final path = _packageDrivePath;
+    if (id == null || path.isEmpty) return;
+    if (!await _confirm(
+      '¿Quitar la carpeta del paquete?',
+      '«$path» dejará de verse en el Drive del cliente desde este paquete. '
+          'Los demás paquetes y las carpetas compartidas al usuario no cambian.',
+    )) {
+      return;
+    }
+    await _run(
+      () => HsApi.setPackageDrivePath(purchasedPackageId: id, path: ''),
     );
   }
 
@@ -4133,12 +4249,12 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     if (_loadingProgress) {
       return const Center(child: CircularProgressIndicator());
     }
-    // El Drive compartido NO depende del paquete: depende del CLIENTE. Lo
-    // que se comparte aquí lo ve en TODOS sus paquetes (y en su Drive solo ve
-    // eso). Las carpetas que quedaron compartidas "al paquete" en la versión
-    // anterior siguen funcionando: se listan aparte, para poder quitarlas.
-    final paths = _clientDrivePaths;
-    final legacy = _drivePaths;
+    // Cada PAQUETE tiene UNA carpeta del Drive. El cliente ve en su Drive una
+    // carpeta por cada paquete suyo (con el nombre de la carpeta) y las
+    // compartidas directamente con él; ésas últimas se administran en el
+    // módulo Usuarios y NO en esta pestaña. Antes se compartían al CLIENTE
+    // desde aquí y por eso la misma carpeta salía en todos sus paquetes.
+    final path = _packageDrivePath;
     final editable = _canAdminister && !_busy;
     return ListView(
       primary: false,
@@ -4162,9 +4278,10 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Aquí se le comparten carpetas del Drive AL CLIENTE: las ve '
-                  'en todos sus paquetes (y su Drive solo muestra lo que se le '
-                  'comparte). Puede ser más de una.',
+                  'Este paquete comparte UNA carpeta del Drive. El cliente la '
+                  've en su Drive junto a la de sus otros paquetes. Para '
+                  'compartirle varias carpetas a la persona, usa «Carpetas del '
+                  'Drive» en Clientes o en Usuarios.',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.35,
@@ -4176,13 +4293,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        // UNA tarjeta por carpeta compartida, cada una con su botón para
-        // dejar de compartirla (las demás siguen igual).
-        for (final path in paths) ...[
-          _clientFolderCard(scheme, path, editable),
-          const SizedBox(height: 8),
-        ],
-        if (paths.isEmpty)
+        if (path.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -4201,7 +4312,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Sin carpetas compartidas',
+                        'Sin carpeta en este paquete',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w800,
@@ -4209,7 +4320,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'El cliente todavía no ve nada en su Drive.',
+                        'El cliente todavía no ve esta carpeta en su Drive.',
                         style: TextStyle(
                           fontSize: 11.5,
                           color: scheme.onSurfaceVariant,
@@ -4220,60 +4331,45 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                 ),
               ],
             ),
-          ),
+          )
+        else
+          _packageFolderCard(scheme, path, editable),
         const SizedBox(height: 12),
         // Elegir una carpeta del Drive necesita permiso para ver el Drive: sin
         // él la opción no se dibuja (el cliente sigue viendo lo ya compartido).
         if (editable && HsAccess.instance.canUseDrive)
           FilledButton.icon(
-            onPressed: _shareClientDriveFolder,
+            onPressed: _sharePackageDriveFolder,
             icon: const Icon(Icons.folder_open_outlined, size: 18),
             label: Text(
-              paths.isEmpty
+              path.isEmpty
                   ? 'Compartir una carpeta del Drive'
-                  : 'Compartir otra carpeta',
+                  : 'Cambiar la carpeta',
             ),
           )
         else if (editable)
           Text(
-            'Para compartir carpetas del Drive necesitas permiso para verlo.',
+            'Para compartir una carpeta del Drive necesitas permiso para verlo.',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           )
         else
           Text(
-            paths.isEmpty
-                ? 'No se le comparte ninguna carpeta al cliente.'
+            path.isEmpty
+                ? 'No se le comparte ninguna carpeta al cliente en este paquete.'
                 : 'Solo lectura: este paquete ya no se administra.',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
-        // Carpetas de la versión anterior (compartidas AL PAQUETE): si el
-        // cliente tiene más paquetes, aquí NO se ven. Se dejan a la vista solo
-        // si existen, para poder quitarlas.
-        if (legacy.isNotEmpty) ...[
-          const SizedBox(height: 22),
-          _sectionLabel(scheme, 'Solo en este paquete'),
-          const SizedBox(height: 8),
-          Text(
-            'Estas carpetas se compartieron al paquete (versión anterior) y '
-            'solo se ven aquí. Para que el cliente las vea en TODOS sus '
-            'paquetes, quítalas y vuelve a compartirlas arriba.',
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.35,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 10),
-          for (final path in legacy) ...[
-            _sharedFolderCard(scheme, path, editable),
-            const SizedBox(height: 8),
-          ],
-        ],
+        // OJO: aquí NO se listan las carpetas que el cliente tiene
+        // compartidas directamente (su drive general): se administran en
+        // Usuarios y verlas en la pestaña del paquete confundía —parecía que
+        // el paquete compartía el drive entero—.
       ],
     );
   }
 
-  /// Carpetas compartidas DIRECTAMENTE con el cliente de este paquete.
+  /// Carpetas compartidas DIRECTAMENTE con el cliente (se ven en todos sus
+  /// paquetes). Son la raíz del selector al compartir la carpeta de un
+  /// servicio y se administran en el módulo Usuarios.
   List<String> get _clientDrivePaths {
     final pkg = _progress?['package'];
     if (pkg is! Map) return const [];
@@ -4289,35 +4385,11 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return out;
   }
 
-  Future<void> _shareClientDriveFolder() async {
-    final id = _selectedId;
-    if (id == null) return;
-    final segments = await _pickDriveFolder(insideShared: false);
-    if (segments == null || segments.isEmpty) return;
-    final path = segments.join('/');
-    if (_clientDrivePaths.contains(path)) {
-      _snack('Esa carpeta ya se comparte con el cliente');
-      return;
-    }
-    await _run(
-      () => HsApi.addClientDrivePath(purchasedPackageId: id, path: path),
-    );
-  }
-
-  Future<void> _unshareClientDriveFolder(String path) async {
-    final id = _selectedId;
-    if (id == null) return;
-    await _run(
-      () => HsApi.removeClientDrivePath(purchasedPackageId: id, path: path),
-    );
-  }
-
-  /// Tarjeta de UNA carpeta compartida con el CLIENTE (todos sus paquetes).
+  /// Tarjeta de LA carpeta del Drive de este paquete.
   ///
-  /// Se ve en TODOS sus paquetes, así que lo que se quita es el VÍNCULO con el
-  /// cliente (desvincular): el azul del panel, sin el violeta de antes y con el
-  /// botón nombrado en vez de una "x".
-  Widget _clientFolderCard(ColorScheme scheme, String path, bool editable) {
+  /// Se comparte al paquete (no al cliente): al quitarse, el cliente deja de
+  /// verla DESDE este paquete y los demás no cambian.
+  Widget _packageFolderCard(ColorScheme scheme, String path, bool editable) {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
       decoration: BoxDecoration(
@@ -4357,8 +4429,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Compartida con el cliente (todos sus paquetes).',
-                  maxLines: 1,
+                  'Carpeta de ESTE paquete: el cliente la ve en su Drive.',
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 11,
@@ -4370,9 +4442,9 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           ),
           if (editable)
             Tooltip(
-              message: 'Desvincular la carpeta del cliente',
+              message: 'Dejar de compartir la carpeta del paquete',
               child: TextButton.icon(
-                onPressed: () => _unshareClientDriveFolder(path),
+                onPressed: _unsharePackageDriveFolder,
                 style: TextButton.styleFrom(
                   foregroundColor: scheme.error,
                   visualDensity: VisualDensity.compact,
@@ -4383,56 +4455,8 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   ),
                 ),
                 icon: const Icon(Icons.link_off, size: 16),
-                label: const Text('Desvincular'),
+                label: const Text('Quitar'),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// Tarjeta de UNA carpeta compartida con el cliente de este paquete.
-  Widget _sharedFolderCard(ColorScheme scheme, String path, bool editable) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.folder_rounded, color: AppColors.brand),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  path,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Carpeta compartida con el cliente de este paquete.',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (editable)
-            IconButton(
-              tooltip: 'Dejar de compartir esta carpeta',
-              onPressed: () => _unshareDriveFolder(path),
-              icon: const Icon(Icons.link_off, size: 18),
             ),
         ],
       ),
@@ -4461,6 +4485,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
         onComplete: _completeService,
         onReopen: _reopenService,
         onNote: _editServiceNote,
+        onStatus: _markServiceInProcess,
         onUrl: _editServiceUrl,
         onShare: _editServiceShare,
         onCopy: _copyServiceUrl,
@@ -4910,6 +4935,7 @@ class _ServiceTile extends StatefulWidget {
     required this.onComplete,
     required this.onReopen,
     required this.onNote,
+    required this.onStatus,
     required this.onUrl,
     required this.onShare,
     required this.onCopy,
@@ -4925,6 +4951,9 @@ class _ServiceTile extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>> onComplete;
   final ValueChanged<Map<String, dynamic>> onReopen;
   final ValueChanged<Map<String, dynamic>> onNote;
+
+  /// Pone el servicio en «En proceso» con sus observaciones.
+  final ValueChanged<Map<String, dynamic>> onStatus;
   final ValueChanged<Map<String, dynamic>> onUrl;
   final ValueChanged<Map<String, dynamic>> onShare;
   final ValueChanged<String> onCopy;
@@ -4950,8 +4979,10 @@ class _ServiceTileState extends State<_ServiceTile> {
     final s = widget.service;
     final done = s['done'] == true;
     final when = hsParseDate(s['finishedAt']);
-    final phone = MediaQuery.sizeOf(context).width < 560;
-    final color = done ? _kDone : _kTeal;
+    final statusId = (s['statusId'] as num?)?.toInt() ?? 0;
+    // El color de la tarjeta sigue el ESTADO (el texto vive en el botón de la
+    // cabecera): ámbar pendiente, azul en proceso, verde entregado.
+    final color = done ? _kDone : (statusId == 2 ? _kTeal : _kAmber);
     final desc = (s['description'] ?? '').toString().trim();
     final url = (s['url'] ?? '').toString().trim();
     final shareFolder = (s['shareFolder'] ?? '').toString().trim();
@@ -5018,7 +5049,11 @@ class _ServiceTileState extends State<_ServiceTile> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
-                      done ? Icons.task_alt : Icons.pending_actions_outlined,
+                      done
+                          ? Icons.task_alt
+                          : (statusId == 2
+                                ? Icons.timelapse
+                                : Icons.pending_actions_outlined),
                       size: 18,
                       color: color,
                     ),
@@ -5037,89 +5072,33 @@ class _ServiceTileState extends State<_ServiceTile> {
                             fontSize: 13.5,
                           ),
                         ),
-                        const SizedBox(height: 3),
-                        _MiniPill(
-                          icon: done
-                              ? Icons.check_circle_outline
-                              : Icons.timelapse,
-                          label: (s['status'] ?? 'Pendiente').toString(),
-                          color: done ? _kDone : _kAmber,
-                        ),
                       ],
                     ),
                   ),
-                  // SELECCIÓN RÁPIDA: cerrar (o reabrir) el servicio sin
-                  // desplegar nada.
-                  if (widget.canAdminister)
-                    done
-                        ? (phone
-                              ? Tooltip(
-                                  message: 'Reabrir el servicio',
-                                  child: IconButton.outlined(
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: widget.busy
-                                        ? null
-                                        : () => widget.onReopen(s),
-                                    icon: const Icon(
-                                      Icons.undo,
-                                      size: 18,
-                                      color: _kAmber,
-                                    ),
-                                  ),
-                                )
-                              : OutlinedButton.icon(
-                                  onPressed: widget.busy
-                                      ? null
-                                      : () => widget.onReopen(s),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: _kAmber,
-                                    side: BorderSide(
-                                      color: _kAmber.withValues(alpha: .55),
-                                    ),
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  icon: const Icon(Icons.undo, size: 16),
-                                  label: const Text('Reabrir'),
-                                ))
-                        // Completar NO es la acción principal de la tarjeta (lo
-                        // importante es ver y llenar el servicio): va como
-                        // botón discreto, del mismo peso que "Asignar del
-                        // catálogo" (contorno), sin el verde de antes.
-                        : (phone
-                              ? Tooltip(
-                                  message: 'Completar servicio',
-                                  child: IconButton.outlined(
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: widget.busy
-                                        ? null
-                                        : () => widget.onComplete(s),
-                                    icon: const Icon(Icons.task_alt, size: 18),
-                                  ),
-                                )
-                              : OutlinedButton.icon(
-                                  onPressed: widget.busy
-                                      ? null
-                                      : () => widget.onComplete(s),
-                                  style: OutlinedButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  icon: const Icon(Icons.task_alt, size: 15),
-                                  label: const Text('Completar servicio'),
-                                )),
+                  // ESTADO + CIERRE, juntos y como botones de ICONO (igual en
+                  // computadora y en celular): primero el estado —tocarlo pasa
+                  // el servicio a «En proceso» con sus observaciones— y al
+                  // lado «Completar» (o «Reabrir» si ya se entregó).
+                  if (widget.canAdminister) ...[
+                    _ServiceStateButton(
+                      done: done,
+                      statusId: statusId,
+                      busy: widget.busy,
+                      onPressed: () => widget.onStatus(s),
+                    ),
+                    const SizedBox(width: 6),
+                    _ServiceQuickButton(
+                      tooltip: done
+                          ? 'Reabrir el servicio'
+                          : 'Completar servicio',
+                      icon: done ? Icons.undo : Icons.task_alt,
+                      color: done ? _kAmber : AppColors.brand,
+                      busy: widget.busy,
+                      onPressed: () => done
+                          ? widget.onReopen(s)
+                          : widget.onComplete(s),
+                    ),
+                  ],
                   if (hasDetail)
                     AnimatedRotation(
                       turns: _open ? .5 : 0,
@@ -5396,6 +5375,8 @@ class _ServiceTileState extends State<_ServiceTile> {
             icon: const Icon(Icons.edit_note, size: 16),
             label: Text(hasNote ? 'Editar nota' : 'Añadir nota'),
           ),
+          // El cambio de estado («En proceso» + observaciones) vive en la
+          // CABECERA, junto a «Completar»; aquí no se repite.
           const SizedBox(width: 6),
           FilledButton.tonalIcon(
             onPressed: widget.busy ? null : () => widget.onUrl(s),
@@ -6066,6 +6047,80 @@ class _ProgressRow extends StatelessWidget {
 }
 
 /// Pastilla pequeña de icono + texto (estados, conteos, tipos).
+/// Botón de ICONO con el ESTADO del servicio: «Pendiente», «En proceso» o
+/// «Entregado». Va en la cabecera, junto a «Completar», y ocupa lo mismo en
+/// computadora y en celular. Tocarlo pasa el servicio a «En proceso» y pide
+/// sus observaciones; en un servicio ya entregado queda deshabilitado (para
+/// eso está «Reabrir»).
+class _ServiceStateButton extends StatelessWidget {
+  const _ServiceStateButton({
+    required this.done,
+    required this.statusId,
+    required this.busy,
+    required this.onPressed,
+  });
+
+  final bool done;
+
+  /// 1 Pendiente · 2 En proceso · 3 Entregado.
+  final int statusId;
+  final bool busy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = done ? _kDone : (statusId == 2 ? _kTeal : _kAmber);
+    final icon = done
+        ? Icons.task_alt
+        : (statusId == 2
+              ? Icons.timelapse
+              : Icons.pending_actions_outlined);
+    final hint = done
+        ? 'Entregado'
+        : (statusId == 2
+              ? 'En proceso · editar las observaciones'
+              : 'Pendiente · marcar En proceso');
+    return Tooltip(
+      message: hint,
+      child: IconButton.outlined(
+        visualDensity: VisualDensity.compact,
+        onPressed: busy || done ? null : onPressed,
+        icon: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+}
+
+/// Acción inmediata de la cabecera (Completar / Reabrir), como botón de ICONO
+/// del mismo tamaño que el del estado.
+class _ServiceQuickButton extends StatelessWidget {
+  const _ServiceQuickButton({
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    required this.busy,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final Color color;
+  final bool busy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton.outlined(
+        visualDensity: VisualDensity.compact,
+        onPressed: busy ? null : onPressed,
+        icon: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+}
+
 class _MiniPill extends StatelessWidget {
   const _MiniPill({
     required this.icon,

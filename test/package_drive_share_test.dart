@@ -9,6 +9,7 @@ import 'package:hardstreet_admin/drive_base.dart';
 import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/widgets/drive_folder_picker.dart';
 
 /// Drive de prueba con un árbol FIJO de carpetas (sin red).
 class _FakeDrive extends DriveBase {
@@ -72,8 +73,8 @@ class _FakeDrive extends DriveBase {
   Future<void> retryUpload(String jobId) async {}
 }
 
-/// Carpetas compartidas con el CLIENTE (el mock las devuelve y el POST las
-/// cambia). El Drive NO depende del paquete: se comparte al cliente.
+/// Carpetas del PAQUETE (el mock las devuelve y el POST las cambia). Cada
+/// paquete comparte UNA sola carpeta del Drive.
 class _Shared {
   _Shared(this.value);
   List<String> value;
@@ -127,13 +128,10 @@ void _installMock({
         posts.add(body);
         final path = (body['path'] ?? '').toString();
         switch (body['action']) {
-          // Compartir/descompartir va contra el CLIENTE (todos sus paquetes).
-          case 'agregar-directorio-cliente':
-            if (path.isNotEmpty && !paths.value.contains(path)) {
-              paths.value = [...paths.value, path];
-            }
-          case 'quitar-directorio-cliente':
-            paths.value = [...paths.value]..remove(path);
+          // La carpeta es DEL PAQUETE: compartirla REEMPLAZA la anterior.
+          case 'agregar-directorio':
+          case 'compartir-directorio':
+            paths.value = path.isEmpty ? <String>[] : [path];
         }
         return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
       }
@@ -149,8 +147,8 @@ void _installMock({
             'statusId': 2,
             'finished': false,
             'finishedAt': null,
-            'drivePaths': const [],
-            'clientDrivePaths': paths.value,
+            'drivePaths': paths.value,
+            'clientDrivePaths': const [],
           },
           // Un servicio PENDIENTE con el que se prueba compartir su carpeta.
           'services': const [
@@ -233,7 +231,7 @@ Finder _inDialog(String text) => find.descendant(
     );
 
 void main() {
-  testWidgets('la pestaña Drive COMPARTE una carpeta con el CLIENTE',
+  testWidgets('la pestaña Drive comparte LA carpeta del PAQUETE',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared([]);
@@ -243,8 +241,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    // Sin carpetas compartidas, lo dice claramente.
-    expect(find.text('Sin carpetas compartidas'), findsOneWidget);
+    // Sin carpeta en el paquete, lo dice claramente.
+    expect(find.text('Sin carpeta en este paquete'), findsOneWidget);
 
     // Se elige del Drive: ReynaCoot / SesionPrevia.
     await _tap(tester, find.text('Compartir una carpeta del Drive'));
@@ -252,72 +250,47 @@ void main() {
     await _tap(tester, _inDialog('SesionPrevia'));
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
-    // Compartir NO depende del paquete: la acción es del CLIENTE.
+    // La carpeta es DEL PAQUETE (no se comparte al cliente entero).
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'agregar-directorio-cliente');
+    expect(posts.first['action'], 'agregar-directorio');
     expect(posts.first['purchasedPackageId'], 10);
     expect(posts.first['path'], 'ReynaCoot/SesionPrevia');
 
-    // La pestaña ya muestra la carpeta compartida.
+    // La pestaña ya muestra la carpeta del paquete.
     expect(find.text('ReynaCoot/SesionPrevia'), findsOneWidget);
-    expect(find.text('Sin carpetas compartidas'), findsNothing);
+    expect(find.text('Sin carpeta en este paquete'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el cliente puede tener VARIAS carpetas compartidas',
+  testWidgets('cambiar la carpeta REEMPLAZA la del paquete (una sola)',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
-    // El cliente YA tiene dos carpetas compartidas.
-    final paths = _Shared(['ReynaCoot', 'Cliente']);
+    // El paquete YA tiene una carpeta.
+    final paths = _Shared(['ReynaCoot']);
     await _pump(tester, posts: posts, paths: paths);
 
     await _tap(tester, find.text('Drive'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    // Las dos se ven, cada una con su tarjeta.
     expect(find.text('ReynaCoot'), findsOneWidget);
-    expect(find.text('Cliente'), findsOneWidget);
 
-    // Se agrega una TERCERA (Privado, que es una carpeta del drive).
-    await _tap(tester, find.text('Compartir otra carpeta'));
+    // Se elige otra carpeta del drive.
+    await _tap(tester, find.text('Cambiar la carpeta'));
     await _tap(tester, _inDialog('Privado'));
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'agregar-directorio-cliente');
+    expect(posts.first['action'], 'agregar-directorio');
     expect(posts.first['path'], 'Privado');
-    expect(paths.value, ['ReynaCoot', 'Cliente', 'Privado']);
+    // El paquete se queda con UNA carpeta: la nueva.
+    expect(paths.value, ['Privado']);
     expect(find.text('Privado'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('se deja de compartir UNA de las carpetas del cliente',
-      (tester) async {
-    final posts = <Map<String, dynamic>>[];
-    final paths = _Shared(['ReynaCoot', 'Cliente']);
-    await _pump(tester, posts: posts, paths: paths);
-
-    await _tap(tester, find.text('Drive'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('ReynaCoot'), findsOneWidget);
-
-    // El botón de DESVINCULAR de la PRIMERA carpeta.
-    await _tap(tester,
-        find.byTooltip('Desvincular la carpeta del cliente').first);
-
-    expect(posts, hasLength(1));
-    expect(posts.first['action'], 'quitar-directorio-cliente');
-    expect(posts.first['path'], 'ReynaCoot');
-    // La otra carpeta sigue compartida.
-    expect(paths.value, ['Cliente']);
     expect(find.text('ReynaCoot'), findsNothing);
-    expect(find.text('Cliente'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('se deja de compartir la ÚLTIMA carpeta', (tester) async {
+  testWidgets('se quita la carpeta del paquete', (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared(['ReynaCoot']);
     await _pump(tester, posts: posts, paths: paths);
@@ -325,12 +298,108 @@ void main() {
     await _tap(tester, find.text('Drive'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await _tap(tester, find.byTooltip('Desvincular la carpeta del cliente'));
+    expect(find.text('ReynaCoot'), findsOneWidget);
+
+    await _tap(
+        tester, find.byTooltip('Dejar de compartir la carpeta del paquete'));
+    await _tap(tester, find.text('Continuar'));
 
     expect(posts, hasLength(1));
-    expect(posts.first['action'], 'quitar-directorio-cliente');
-    expect(posts.first['path'], 'ReynaCoot');
-    expect(find.text('Sin carpetas compartidas'), findsOneWidget);
+    expect(posts.first['action'], 'compartir-directorio');
+    expect(posts.first['path'], '');
+    expect(paths.value, isEmpty);
+    expect(find.text('Sin carpeta en este paquete'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('las carpetas compartidas al CLIENTE no se ven en el paquete',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    final paths = _Shared(['ReynaCoot']);
+    // El cliente tiene OTRA carpeta compartida directamente con él.
+    HsApi.client = MockClient((request) async {
+      final headers = {'content-type': 'application/json'};
+      final p = request.url.path;
+      if (p.endsWith('/api/admin/client-packages')) {
+        return http.Response(
+          jsonEncode({
+            'purchasedPackages': [
+              {
+                'usersPackageId': 30,
+                'id': 10,
+                'name': 'Boda - Premium',
+                'price': 12000,
+                'paid': 6000,
+                'currency': 'MXN',
+                'status': 'En proceso',
+                'drivePaths': paths.value,
+                'services': const [],
+              },
+            ],
+            'catalog': const [],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      if (p.endsWith('/api/admin/agendas')) {
+        return http.Response(jsonEncode({'agendas': const []}), 200,
+            headers: headers);
+      }
+      if (p.endsWith('/api/admin/package-progress')) {
+        return http.Response(
+          jsonEncode({
+            'package': {
+              'id': 10,
+              'name': 'Boda - Premium',
+              'price': 12000,
+              'paid': 6000,
+              'status': 'En proceso',
+              'statusId': 2,
+              'finished': false,
+              'drivePaths': paths.value,
+              'clientDrivePaths': const ['SoloDelCliente'],
+            },
+            'services': const [],
+            'movements': const [],
+            'totals': const {},
+            'blockers': const [],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+    });
+    addTearDown(() => HsApi.client = MockClient((_) async =>
+        http.Response(jsonEncode({'ok': true}), 200,
+            headers: {'content-type': 'application/json'})));
+
+    await tester.binding.setSurfaceSize(const Size(1250, 940));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      DriveScope(
+        drive: _FakeDrive(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ClientPackagesDialog(
+              client: const {'id': 7, 'name': 'Ana', 'lastname': 'Ruiz'},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tap(tester, find.text('Boda - Premium').first);
+    await _tap(tester, find.text('Drive'));
+
+    // Solo la carpeta DEL PAQUETE; la compartida al cliente no aparece aquí.
+    expect(find.text('ReynaCoot'), findsOneWidget);
+    expect(find.text('SoloDelCliente'), findsNothing);
+    expect(posts, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('la carpeta de un SERVICIO se elige DENTRO del Drive del '
@@ -363,6 +432,17 @@ void main() {
     expect(find.text('Subir un nivel'), findsNothing);
     // La carpeta compartida es la raíz del selector y así se anuncia.
     expect(find.text('ReynaCoot'), findsOneWidget);
+    // UNA sola raíz: no hay selector para saltar a otras carpetas compartidas
+    // ni se ofrece el drive general del cliente. Solo el contenido de la
+    // carpeta del paquete al que pertenece el servicio.
+    expect(
+      find.descendant(
+        of: find.byType(DriveFolderPicker),
+        matching: find.byType(ChoiceChip),
+      ),
+      findsNothing,
+    );
+    expect(find.text('SoloDelCliente'), findsNothing);
 
     // Se elige la subcarpeta y se guarda: la ruta queda completa.
     await _tap(tester, find.text('Fiesta'));
@@ -397,7 +477,7 @@ void main() {
     await _tap(tester, find.text('Drive'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('ReynaCoot'), findsOneWidget);
-    expect(find.text('Desvincular'), findsOneWidget);
+    expect(find.text('Quitar'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await _tap(tester, find.text('Servicios'));

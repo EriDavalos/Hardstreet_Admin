@@ -20,6 +20,7 @@ import 'local_share_agent.dart';
 import 'pages/activity_page.dart';
 import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
+import 'pages/notes_page.dart';
 import 'pages/clients_page.dart';
 import 'pages/client_dashboard_page.dart';
 import 'pages/companies_page.dart';
@@ -146,8 +147,8 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   @override
   void initState() {
     super.initState();
-    // Límites de RAM para imágenes (+ poda del caché en disco, solo nativo:
-    // en web no hay dart:io y ese caché no existe).
+    // La caché de imágenes se configura para evitar picos de memoria en
+    // galerías grandes; al minimizar no se vacía para conservar la vista.
     ImageMemory.configure();
     if (!kWeb) ImageMemory.pruneDiskCache();
     // Sesión expirada (401 con "Recordarme"): regresar al login.
@@ -168,7 +169,6 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // ¿Ventana a la vista? El estado se usa en todo el panel (ver [AppAwake]):
     // en segundo plano solo siguen consultando los avisos.
     AppAwake.instance.start();
-    AppAwake.instance.resumed.addListener(_onAwake);
     // Preferencia del panel de eventos de escritorio (Windows): se lee ANTES
     // de que el servicio de avisos empiece a alimentarlo.
     UpcomingEventsWidget.load();
@@ -210,22 +210,13 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
         unawaited(LocalShareAgent.instance.syncWithShares());
       }
     });
-    // Chequeo periódico mientras la app siga abierta (por si el servidor
-    // publica una versión nueva en caliente). En web/tests se omite. Con la app
-    // en segundo plano el turno se salta: al volver ya se comprueba
-    // ([_onAwake]).
+    // Chequeo periódico mientras la app está a la vista (por si el servidor
+    // publica una versión nueva en caliente). En segundo plano solo siguen
+    // activos los servicios de notificaciones.
     _versionTimer = Timer.periodic(const Duration(hours: 6), (_) {
       if (!AppAwake.instance.awake) return;
       _checkVersion();
     });
-  }
-
-  /// La app VOLVIÓ a primer plano (un clic en la ventana): se revisa la versión
-  /// otra vez (el chequeo periódico se salta los turnos en segundo plano).
-  /// Recargar la sección lo hace [AdminHome], con la misma señal.
-  void _onAwake() {
-    if (!mounted) return;
-    _checkVersion();
   }
 
   void _onSettingsChanged() {
@@ -248,7 +239,6 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
   @override
   void dispose() {
     AppSettings.instance.removeListener(_onSettingsChanged);
-    AppAwake.instance.resumed.removeListener(_onAwake);
     _versionTimer?.cancel();
     RemindersService.instance.stop();
     PackageNotificationsService.instance.stop();
@@ -673,6 +663,7 @@ const Map<_Section, String> _kSectionModules = {
   _Section.drive: 'Archivos',
   _Section.sharedFiles: 'Archivos compartidos',
   _Section.agendas: 'Agendas',
+  _Section.notes: 'Notas',
   _Section.finance: 'Finanzas',
   _Section.storage: 'Almacenamiento',
   _Section.prints: 'Impresiones',
@@ -699,6 +690,7 @@ const Map<_Section, String> _kSectionKeys = {
   _Section.drive: 'drive',
   _Section.sharedFiles: 'shared_files',
   _Section.agendas: 'schedules',
+  _Section.notes: 'notes',
   _Section.finance: 'finance',
   _Section.storage: 'storage',
   _Section.prints: 'print',
@@ -724,6 +716,7 @@ enum _Section {
   drive,
   sharedFiles,
   agendas,
+  notes,
   finance,
   connection,
   users,
@@ -791,22 +784,6 @@ class _AdminHomeState extends State<AdminHome> {
   /// remontar la página actual para que pida los datos de la nueva.
   int _companyEpoch = 0;
 
-  /// Sube cada vez que la app VUELVE a primer plano. Va en la clave de la
-  /// sección, así que la página actual se remonta y pide TODO otra vez: en
-  /// segundo plano el panel dejó de consultar y soltó las imágenes.
-  int _awakeEpoch = 0;
-
-  /// Volvió la app (un clic en la ventana): se recarga TODO.
-  ///
-  /// La sección actual vuelve a montarse (cambia su clave) y el Drive, que
-  /// comparte su estado entre páginas, vuelve a pedir su listado: en segundo
-  /// plano se soltaron las imágenes y no se consultó nada.
-  void _onAwake() {
-    if (!mounted) return;
-    unawaited(_drive.refresh());
-    setState(() => _awakeEpoch = AppAwake.instance.resumed.value);
-  }
-
   void _onCompanyChanged() {
     if (!mounted) return;
     // El Superadministrador cambia de empresa: el Drive vuelve a la RAÍZ de la
@@ -822,9 +799,11 @@ class _AdminHomeState extends State<AdminHome> {
     setState(() => _companyEpoch++);
   }
 
-  /// El alcance compartido del drive se pide UNA vez (necesita el contexto
-  /// para llegar al DriveScope, así que no puede correr en initState).
+  /// Ya se pidió el alcance al abrir el panel. Se conserva esa carga inicial;
+  /// al entrar de nuevo a Archivos se vuelve a consultar por si el cliente
+  /// recibió carpetas mientras tenía abierta la sesión.
   bool _driveScopeLoaded = false;
+  bool _driveWasActive = false;
 
   DriveBase get _drive => DriveScope.of(context);
 
@@ -833,7 +812,7 @@ class _AdminHomeState extends State<AdminHome> {
     super.didChangeDependencies();
     if (_driveScopeLoaded) return;
     _driveScopeLoaded = true;
-    _loadDriveScope();
+    unawaited(_loadDriveScope());
   }
 
   /// Limita el drive a las carpetas COMPARTIDAS cuando el usuario es un
@@ -847,9 +826,12 @@ class _AdminHomeState extends State<AdminHome> {
     try {
       final info = await HsApi.myDriveDirectories();
       if (!mounted) return;
-      await drive.setSharedRoots([
-        for (final p in info.paths) (p['path'] ?? '').toString(),
-      ], isClient: info.isClient);
+      await drive.setSharedRoots(
+        [for (final p in info.paths) (p['path'] ?? '').toString()],
+        isClient: info.isClient,
+        refresh: false,
+      );
+      await drive.refresh();
     } catch (_) {
       // Sin permiso/sin red: no se toca el alcance del drive.
     }
@@ -868,9 +850,8 @@ class _AdminHomeState extends State<AdminHome> {
     // módulos se registran después y por eso se atienden primero.
     BackNav.add(_backStep);
     HsAccess.addListener(_onAccessChanged);
-    // Al VOLVER a la app se recarga la sección actual ([_onAwake]); en segundo
-    // plano el panel no consulta nada (ver [AppAwake]).
-    AppAwake.instance.resumed.addListener(_onAwake);
+    // En segundo plano el panel conserva la vista; los servicios de
+    // notificaciones siguen consultando en su propio ciclo.
     _loadPermissions();
     // Toques del widget nativo: tocar un evento (o el botón "Agregar agenda")
     // lleva a Agendas; la página abre el detalle o el alta.
@@ -916,7 +897,6 @@ class _AdminHomeState extends State<AdminHome> {
     BackNav.remove(_backStep);
     HsApi.onPermissionsChanged = null;
     HsAccess.removeListener(_onAccessChanged);
-    AppAwake.instance.resumed.removeListener(_onAwake);
     UpcomingEventsWidget.requested.removeListener(_onWidgetRequest);
     super.dispose();
   }
@@ -994,16 +974,34 @@ class _AdminHomeState extends State<AdminHome> {
     return true;
   }
 
-  /// «¿Salir de la app?»: el atrás ya no cierra de golpe.
+  /// «¿Salir de la app?»: manda la app al segundo plano sin cerrar la sesión.
+  Future<bool> _moveAppToBackground() async {
+    if (kWeb || (!isAndroidPlatform && !isWindowsPlatform)) return false;
+    try {
+      return await const MethodChannel('hardstreet/app_background')
+              .invokeMethod<bool>('moveToBackground') ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   Future<void> _askExit() async {
     if (_askingExit) return;
     _askingExit = true;
     try {
       final leave = await confirmExitApp(context);
       if (leave && mounted) {
-        // Android: manda la actividad atrás. Web: el motor retira sus entradas
-        // del historial y sale de la app (no deja una página en blanco).
-        await SystemNavigator.pop();
+        final moved = await _moveAppToBackground();
+        if (!moved && mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text('No se pudo enviar la app al segundo plano.'),
+            ),
+          );
+        }
       }
     } finally {
       _askingExit = false;
@@ -1063,6 +1061,8 @@ class _AdminHomeState extends State<AdminHome> {
       (module == 'activity' ||
           module == 'shared_files' ||
           module == 'print' ||
+          // Notas: sin la migración aplicada el backend responde 403.
+          module == 'notes' ||
           // Notificaciones exige su permiso real: sin la migración aplicada
           // no se ofrece una pantalla que el backend va a rechazar.
           module == 'notifications' ||
@@ -1150,6 +1150,16 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.agendas,
         'Agendas',
+      ),
+      // NOTAS: bloc personal (texto, listas de actividades y dibujo).
+      (
+        const AdminDestination(
+          icon: Icons.sticky_note_2_outlined,
+          label: 'Notas',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.notes,
+        'Notas',
       ),
       (
         const AdminDestination(
@@ -1350,6 +1360,16 @@ class _AdminHomeState extends State<AdminHome> {
     _menuOrder = visibleSections;
     _pickStartSection(access.degraded, visibleSections, useCatalog);
 
+    final driveIsActive = _section == _Section.drive;
+    if (driveIsActive && !_driveWasActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _section == _Section.drive) {
+          unawaited(_loadDriveScope());
+        }
+      });
+    }
+    _driveWasActive = driveIsActive;
+
     Widget body;
     switch (_section) {
       case _Section.dashboard:
@@ -1440,6 +1460,9 @@ class _AdminHomeState extends State<AdminHome> {
       case _Section.agendas:
         body = const AgendasPage();
         break;
+      case _Section.notes:
+        body = const NotesPage();
+        break;
       case _Section.finance:
         body = const FinancePage();
         break;
@@ -1482,13 +1505,10 @@ class _AdminHomeState extends State<AdminHome> {
       // La empresa activa del Superadministrador cambia el CONTEXTO de todos
       // los módulos: la llave remonta la página para que vuelva a pedir sus
       // datos con la empresa nueva.
-      // La clave lleva la empresa Y los regresos a primer plano: al volver a la
-      // app la sección se remonta y recarga todo (en segundo plano no se
-      // consultó nada y se soltaron las imágenes).
+      // Cambia solo al cambiar la empresa. Minimizar y restaurar conserva la
+      // vista y el estado de cada módulo.
       body: KeyedSubtree(
-        key: ValueKey(
-          'company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch-$_awakeEpoch',
-        ),
+        key: ValueKey('company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch'),
         child: body,
       ),
       companySelector: CompanySelector(onChanged: _onCompanyChanged),

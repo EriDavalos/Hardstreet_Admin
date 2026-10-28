@@ -39,6 +39,9 @@ class FlutterWindow : public Win32Window {
   // reproductor de vídeo la pide; WebView2 no puede agrandar la ventana).
   void SetUpFullscreenChannel();
 
+  // Canal `hardstreet/app_background`: manda la ventana a la bandeja sin cerrar.
+  void SetUpBackgroundChannel();
+
   // Manda a Dart qué se tocó en el panel: "agenda" (con id) o "new".
   void SendEventWidgetTap(const std::string& action, int id);
 
@@ -70,6 +73,8 @@ class FlutterWindow : public Win32Window {
   // estilo y al tamaño anteriores).
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       fullscreen_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      background_channel_;
   bool is_fullscreen_ = false;
   LONG_PTR saved_style_ = 0;
   RECT saved_rect_{};

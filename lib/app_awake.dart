@@ -1,20 +1,10 @@
 import 'package:flutter/widgets.dart';
 
-import 'image_memory.dart';
-
 /// ¿La app está A LA VISTA o en segundo plano?
 ///
-/// En segundo plano —otra ventana al frente, la app minimizada o el teléfono
-/// con la app fuera— el panel **no consulta nada**: lo ÚNICO que sigue
-/// consultando son los servicios de notificaciones ([RemindersService] y
-/// [PackageNotificationsService]), que es lo único que tiene que enterarse de
-/// algo mientras nadie mira. Los demás temporizadores (la versión, el sondeo de
-/// Conexión, la portada que cambia de foto) se saltan el turno.
-///
-/// Al pasar a segundo plano también se sueltan las IMÁGENES decodificadas
-/// ([ImageMemory.clearRam]): son lo que más RAM ocupa y se pueden volver a
-/// pedir. Al volver, [resumed] sube —el panel lo escucha para recargar todo— y
-/// las imágenes se vuelven a pedir solas.
+/// En segundo plano los sondeos de datos de los módulos se pausan; los
+/// servicios de notificaciones siguen comprobando sus avisos. Al volver, la
+/// vista y los datos que ya estaban cargados se conservan.
 class AppAwake with WidgetsBindingObserver {
   AppAwake._();
   static final AppAwake instance = AppAwake._();
@@ -22,10 +12,6 @@ class AppAwake with WidgetsBindingObserver {
   /// true = la app está a la vista (primer plano).
   bool get awake => _awake;
   bool _awake = true;
-
-  /// Sube cada vez que la app VUELVE a primer plano (el clic en la ventana).
-  /// Quien lo escuche, recarga: en segundo plano los datos dejaron de llegar.
-  final ValueNotifier<int> resumed = ValueNotifier<int>(0);
 
   bool _started = false;
 
@@ -68,10 +54,5 @@ class AppAwake with WidgetsBindingObserver {
   void _apply(bool value) {
     if (value == _awake) return;
     _awake = value;
-    if (value) {
-      resumed.value++;
-    } else {
-      ImageMemory.clearRam();
-    }
   }
 }

@@ -11,8 +11,12 @@ import 'hs_modal.dart';
 ///
 /// Con [roots] NO vacío el selector trabaja DENTRO del drive del cliente: la
 /// carpeta compartida es la RAÍZ —no hay nada antes de ella y no se puede
-/// subir más arriba—, se puede cambiar entre las carpetas compartidas y las
-/// que se solapan con lo ya compartido salen bloqueadas.
+/// subir más arriba—. Con UNA sola raíz (lo normal: la carpeta del paquete del
+/// servicio) solo se ve SU contenido; con varias se ofrece el selector de
+/// raíces, que hoy no se usa al compartir carpetas de paquetes ni servicios.
+///
+/// Solo se bloquea la carpeta que es EXACTAMENTE la misma que ya está
+/// compartida ([conflict]); sus hermanas se ofrecen normales.
 ///
 /// El módulo Empresas lo usa para elegir la carpeta raíz de un estudio dentro
 /// del Drive: mismo selector, otro texto y sin bloqueos de "ya compartida".
@@ -160,7 +164,11 @@ class _DriveFolderPickerState extends State<DriveFolderPicker> {
     // La raíz del Drive completo NO se comparte (sería todo el drive).
     final canPick = (_scoped || _rel.isNotEmpty) && conflict == null;
     return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      // En el celular el modal ocupa toda la pantalla: sin esquinas (el
+      // contenedor de `showHsModal` ya quita márgenes y forma).
+      shape: phone
+          ? const RoundedRectangleBorder()
+          : RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       titlePadding: const EdgeInsets.fromLTRB(20, 18, 14, 0),
       contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
       actionsPadding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
@@ -384,6 +392,15 @@ class _DriveFolderPickerState extends State<DriveFolderPicker> {
     );
   }
 
+  /// Por qué se bloquea una carpeta: es LA MISMA que ya se comparte con el
+  /// cliente. Es el único motivo de bloqueo; las carpetas hermanas (o las que
+  /// están dentro de otra ya compartida) se pueden compartir sin problema.
+  String _sameFolderNote(String shared) {
+    final a = drivePathNormalize(shared);
+    if (a.isEmpty) return 'Ya está compartida con el cliente';
+    return 'Es la misma carpeta que «$a», que ya está compartida';
+  }
+
   /// Aviso de solapamiento: la carpeta está dentro de (o contiene a) algo ya
   /// compartido y por eso no se puede elegir.
   Widget _conflictNotice(ColorScheme scheme, String conflict) {
@@ -401,9 +418,8 @@ class _DriveFolderPickerState extends State<DriveFolderPicker> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '«$conflict» ya está compartida con este cliente y esta carpeta '
-              'está dentro de aquella (o la contiene). Elige otra para no '
-              'compartir dos veces lo mismo.',
+              '${_sameFolderNote(conflict)}: el cliente la vería dos veces. '
+              'Elige otra carpeta, o deja de compartir «$conflict» ahí.',
               style: TextStyle(
                 fontSize: 11.5,
                 height: 1.3,
@@ -505,7 +521,8 @@ class _DriveFolderPickerState extends State<DriveFolderPicker> {
   /// Una carpeta: tarjeta con su icono. Las que se solapan con lo ya
   /// compartido salen bloqueadas y dicen por qué.
   Widget _folderTile(ColorScheme scheme, String name) {
-    final clash = widget.conflict(_absolute([..._rel, name]).join('/'));
+    final here = _absolute([..._rel, name]).join('/');
+    final clash = widget.conflict(here);
     final locked = clash != null;
     final tint = locked ? scheme.error : AppColors.brand;
     return InkWell(
@@ -554,7 +571,7 @@ class _DriveFolderPickerState extends State<DriveFolderPicker> {
                   ),
                   if (locked)
                     Text(
-                      'Ya compartida en «$clash»',
+                      _sameFolderNote(clash),
                       maxLines: 2,
                       style: TextStyle(fontSize: 11, color: scheme.error),
                     ),

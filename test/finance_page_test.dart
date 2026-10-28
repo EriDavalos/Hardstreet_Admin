@@ -303,12 +303,7 @@ void main() {
       final data = FinanceData.fromJson({
         'packages': [
           {'id': 1, 'name': 'Gratis vacío', 'price': 0},
-          {
-            'id': 2,
-            'name': 'Gratis con gasto',
-            'price': 0,
-            'gastos': 150,
-          },
+          {'id': 2, 'name': 'Gratis con gasto', 'price': 0, 'gastos': 150},
           {'id': 3, 'name': 'De pago', 'price': 9000, 'paid': 0},
         ],
       });
@@ -379,7 +374,8 @@ void main() {
     expect(find.text(r'MXN $8,300'), findsWidgets);
     expect(
       find.text(
-        'Abonado + abono externo − gastos − inversión − ahorro − pagos',
+        'Abonado + abono externo − gastos e inversión de paquetes − ahorro '
+        '− pagos',
       ),
       findsOneWidget,
     );
@@ -521,9 +517,20 @@ void main() {
       ),
       findsOneWidget,
     );
+    // Un gasto general se paga con el AHORRO, no con el dinero actual.
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('sale del ahorro'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.enterText(
-      find.descendant(of: dialog, matching: find.widgetWithText(TextField, 'Monto')),
+      find.descendant(
+        of: dialog,
+        matching: find.widgetWithText(TextField, 'Monto'),
+      ),
       '450',
     );
     await tester.pump();
@@ -604,7 +611,11 @@ void main() {
       'Resumen',
       'Por paquete',
     });
-    expect(clipped, isEmpty, reason: 'textos cortados en el teléfono: $clipped');
+    expect(
+      clipped,
+      isEmpty,
+      reason: 'textos cortados en el teléfono: $clipped',
+    );
 
     // Pestaña por paquete: tarjetas (no tabla ancha) y sin desbordes.
     await _openTab(tester, 1);

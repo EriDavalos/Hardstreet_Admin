@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
+import 'note_model.dart';
 import 'share_permissions.dart';
 import 'site_design.dart';
 import 'web_content.dart';
@@ -1125,19 +1126,27 @@ class HsApi {
   /// Carpeta del Drive COMPARTIDA con el cliente del paquete (pestaña Drive
   /// del administrador del paquete). `path` vacío deja de compartir.
   ///
-  /// Deja UNA sola carpeta: para compartir VARIAS usa [addPackageDrivePath]
-  /// y [removePackageDrivePath].
+  /// Un paquete comparte UNA sola carpeta: si ya tenía otra, se reemplaza.
   static Future<void> setPackageDrivePath({
     required int purchasedPackageId,
     required String path,
-  }) => post('/api/admin/package-progress', {
-    'action': 'compartir-directorio',
-    'purchasedPackageId': purchasedPackageId,
-    'path': path,
-  });
+  }) => post(
+    '/api/admin/package-progress',
+    path.isEmpty
+        ? {
+            'action': 'compartir-directorio',
+            'purchasedPackageId': purchasedPackageId,
+            'path': '',
+          }
+        : {
+            'action': 'agregar-directorio',
+            'purchasedPackageId': purchasedPackageId,
+            'path': path,
+          },
+  );
 
-  /// Suma UNA carpeta del Drive a las compartidas con el cliente del paquete
-  /// (un paquete puede compartir varias).
+  /// Deja esa carpeta como LA carpeta del paquete: si ya tenía otra, la
+  /// reemplaza (un paquete comparte una sola carpeta del Drive).
   static Future<void> addPackageDrivePath({
     required int purchasedPackageId,
     required String path,
@@ -1180,20 +1189,123 @@ class HsApi {
 
   /// Carpetas del Drive COMPARTIDAS con el usuario logueado.
   ///
-  /// `isClient` = true cuando su drive debe limitarse a esas carpetas (los
-  /// paquetes comprados definen lo que ve). El Admin nunca se limita.
+  /// `isClient` = true cuando su drive debe limitarse a esas carpetas. Lo
+  /// decide el ROL (`routes.drive_full_access`): el equipo ve el Drive
+  /// completo y el cliente solo lo que se le comparte.
   /// `paths` = [{ packageId, packageName, path }].
   ///
   /// Endpoint: GET /api/my/drive
-  static Future<({bool isClient, List<Map<String, dynamic>> paths})>
+  static Future<
+    ({bool isClient, bool driveFullAccess, List<Map<String, dynamic>> paths})
+  >
   myDriveDirectories() async {
     final data = (await get('/api/my/drive') as Map?) ?? const {};
     final paths = ((data['paths'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => e.cast<String, dynamic>())
         .toList();
-    return (isClient: data['isClient'] == true, paths: paths);
+    return (
+      isClient: data['isClient'] == true,
+      driveFullAccess: data['driveFullAccess'] == true,
+      paths: paths,
+    );
   }
+
+  /// TODAS las carpetas del Drive que ve un usuario: las compartidas
+  /// directamente con él y las de sus paquetes (al compartir la carpeta de un
+  /// paquete se copia a su usuario). Se administran desde Usuarios y desde
+  /// Clientes.
+  ///
+  /// `packageName` dice de qué paquete viene la carpeta ('' = compartida
+  /// directamente con la persona).
+  ///
+  /// Endpoint: GET /api/admin/user-drive
+  static Future<List<({String path, String packageName})>> userDriveFolders(
+    int userId,
+  ) async {
+    final data =
+        (await get('/api/admin/user-drive', query: {'userId': '$userId'})
+            as Map?) ??
+        const {};
+    final out = <({String path, String packageName})>[];
+    for (final e in ((data['items'] as List?) ?? const []).whereType<Map>()) {
+      final path = (e['path'] ?? '').toString();
+      if (path.isEmpty) continue;
+      out.add((path: path, packageName: (e['packageName'] ?? '').toString()));
+    }
+    if (out.isEmpty) {
+      // Backend viejo (solo `paths`, sin el paquete de origen).
+      for (final e in ((data['paths'] as List?) ?? const [])) {
+        final path = e.toString();
+        if (path.isEmpty) continue;
+        out.add((path: path, packageName: ''));
+      }
+    }
+    return out;
+  }
+
+  /// Comparte UNA carpeta del Drive con un usuario (puede tener varias).
+  static Future<void> addUserDriveFolder({
+    required int userId,
+    required String path,
+  }) => post('/api/admin/user-drive', {'userId': userId, 'path': path});
+
+  /// Deja de compartir UNA carpeta del Drive con un usuario.
+  static Future<void> removeUserDriveFolder({
+    required int userId,
+    required String path,
+  }) => delete(
+    '/api/admin/user-drive?userId=$userId&path=${Uri.encodeComponent(path)}',
+  );
+
+  // ---------------- Notas ----------------
+
+  /// Notas del usuario (listado: título, vista previa y fecha).
+  ///
+  /// Endpoint: GET /api/admin/notes
+  static Future<List<NoteSummary>> notes() async {
+    final data =
+        (await get('/api/admin/notes') as Map?) ?? const <String, dynamic>{};
+    return ((data['notes'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => NoteSummary.fromJson(e.cast<String, dynamic>()))
+        .where((n) => n.id > 0)
+        .toList();
+  }
+
+  /// Una nota completa (bloques de texto/actividades y dibujo).
+  ///
+  /// Endpoint: GET /api/admin/notes?id=N
+  static Future<Note> note(int id) async {
+    final data =
+        (await get('/api/admin/notes', query: {'id': '$id'}) as Map?) ??
+        const <String, dynamic>{};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>();
+    if (item == null) throw ApiException('No se pudo abrir la nota');
+    final note = Note.fromJson(item);
+    // Solo el AUTOR puede editar: las notas de empresa ajenas abren en
+    // solo lectura (el servidor lo vuelve a comprobar al guardar).
+    final raw = HsSession.user?['id'];
+    final myId = raw is int ? raw : int.tryParse('${raw ?? ''}');
+    if (myId != null && note.ownerId > 0) note.mine = note.ownerId == myId;
+    return note;
+  }
+
+  /// Crea (id = 0) o actualiza una nota. Devuelve la nota guardada.
+  ///
+  /// Endpoint: POST /api/admin/notes
+  static Future<Note> saveNote(Note note) async {
+    final data =
+        (await post('/api/admin/notes', note.toJson()) as Map?) ??
+        const <String, dynamic>{};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>();
+    return item == null ? note : Note.fromJson(item);
+  }
+
+  /// Elimina (baja lógica) una nota del usuario.
+  ///
+  /// Endpoint: DELETE /api/admin/notes?id=N
+  static Future<void> deleteNote(int id) => delete('/api/admin/notes?id=$id');
 
   // ---------------- Diseño del sitio (tarjetas y portada) -------------
 
@@ -1485,14 +1597,19 @@ class HsApi {
     {'action': 'reabrir-servicio', 'serviceId': serviceId},
   );
 
-  /// Cambia la descripción (avance) de un servicio.
+  /// Cambia las observaciones (avance) y/o el ESTADO de un servicio.
+  ///
+  /// `statusId`: 1 Pendiente · 2 En proceso · 3 Entregado. Al pasar a un
+  /// estado distinto de Entregado se borra su fecha de cierre.
   static Future<void> updatePackageService(
     int serviceId, {
-    required String description,
+    String? description,
+    int? statusId,
   }) => post('/api/admin/package-progress', {
     'action': 'actualizar-servicio',
     'serviceId': serviceId,
-    'description': description,
+    'description': ?description,
+    'statusId': ?statusId,
   });
 
   /// Registra un movimiento del paquete:

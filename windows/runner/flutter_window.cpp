@@ -88,6 +88,7 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetUpEventsChannel();
   SetUpFullscreenChannel();
+  SetUpBackgroundChannel();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -110,6 +111,7 @@ void FlutterWindow::OnDestroy() {
   event_widget_.reset();
   events_channel_.reset();
   fullscreen_channel_.reset();
+  background_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -255,6 +257,25 @@ void FlutterWindow::SetUpFullscreenChannel() {
           is_fullscreen_ = false;
         }
         result->Success(flutter::EncodableValue(is_fullscreen_));
+      });
+}
+
+// Canal `hardstreet/app_background`: la acción «Salir» conserva la sesión y
+// oculta la ventana en la bandeja para que los avisos sigan activos.
+void FlutterWindow::SetUpBackgroundChannel() {
+  background_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "hardstreet/app_background",
+          &flutter::StandardMethodCodec::GetInstance());
+  background_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() != "moveToBackground") {
+          result->NotImplemented();
+          return;
+        }
+        result->Success(flutter::EncodableValue(HideToTray()));
       });
 }
 

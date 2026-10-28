@@ -30,6 +30,9 @@ class MainActivity : FlutterActivity() {
     /** Guardar descargas del Drive en la carpeta pública de Descargas. */
     private val downloadsChannelName = "hardstreet/downloads"
 
+    /** Enviar la actividad al fondo sin terminar la sesión. */
+    private val backgroundChannelName = "hardstreet/app_background"
+
     private var widgetChannel: MethodChannel? = null
 
     /**
@@ -182,6 +185,13 @@ class MainActivity : FlutterActivity() {
                         pendingWidgetTap = null
                         result.success(tap)
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, backgroundChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "moveToBackground" -> result.success(moveTaskToBack(true))
                     else -> result.notImplemented()
                 }
             }

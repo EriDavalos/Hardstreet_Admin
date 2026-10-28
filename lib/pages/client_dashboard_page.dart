@@ -18,6 +18,7 @@ import '../widgets/hero_photo_banner.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/photo_backdrop.dart';
 import '../widgets/service_photos_sheet.dart';
+import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
@@ -319,6 +320,64 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     } else {
       _copy(url);
     }
+  }
+
+  /// Lista TODAS las carpetas del Drive compartidas con el cliente (una por
+  /// paquete más las compartidas directamente con él), con un botón para
+  /// abrir cada una. Es la opción «Ver carpetas compartidas» de su Drive.
+  Future<void> _showSharedFolders() async {
+    await showHsModal<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Carpetas compartidas contigo'),
+        content: SizedBox(
+          width: 460,
+          child: _sharedPaths.isEmpty
+              ? const Text(
+                  'Tu fotógrafo todavía no ha compartido ninguna carpeta del '
+                  'Drive contigo. En cuanto la asigne a tus paquetes, la verás '
+                  'aquí y en tu Drive.',
+                  style: TextStyle(fontSize: 12.5, height: 1.4),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _sharedPaths.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final item = _sharedPaths[i];
+                    final path = (item['path'] ?? '').toString();
+                    final label = (item['packageName'] ?? '').toString();
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(
+                        Icons.folder_shared_outlined,
+                        size: 18,
+                      ),
+                      title: Text(label.isEmpty ? 'Carpeta compartida' : label),
+                      subtitle: Text(
+                        path,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: TextButton(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          _openShared(path);
+                        },
+                        child: const Text('Abrir'),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Abre en el drive (sección Archivos) la carpeta compartida de un paquete.
@@ -2353,15 +2412,26 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  'Aún no se te comparte ninguna carpeta del Drive. Tu '
-                  'fotógrafo la asigna al paquete desde el administrador del '
-                  'paquete y aquí aparecerá tu acceso directo.',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.4,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Aún no se te comparte ninguna carpeta del Drive. Tu '
+                      'fotógrafo la asigna al paquete desde el administrador '
+                      'del paquete y aquí aparecerá tu acceso directo.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _showSharedFolders,
+                      icon: const Icon(Icons.folder_copy_outlined, size: 18),
+                      label: const Text('Ver carpetas compartidas'),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -2377,11 +2447,22 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
           if (shared.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-              child: FilledButton.icon(
-                onPressed: () =>
-                    _openShared((shared.first['path'] ?? '').toString()),
-                icon: const Icon(Icons.folder_open_outlined, size: 18),
-                label: const Text('Entrar a mi Drive'),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () =>
+                        _openShared((shared.first['path'] ?? '').toString()),
+                    icon: const Icon(Icons.folder_open_outlined, size: 18),
+                    label: const Text('Entrar a mi Drive'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _showSharedFolders,
+                    icon: const Icon(Icons.folder_copy_outlined, size: 18),
+                    label: const Text('Ver carpetas compartidas'),
+                  ),
+                ],
               ),
             ),
             Padding(

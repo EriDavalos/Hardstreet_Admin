@@ -8,8 +8,10 @@ import '../widgets/anim.dart';
 import '../widgets/common.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
+import '../widgets/hs_modal.dart';
 import '../widgets/hs_pager.dart';
 import '../widgets/hs_search_filter.dart';
+import '../widgets/user_drive_dialog.dart';
 
 /// Módulo USUARIOS: CRUD completo + asignación de rol.
 /// Conecta con la misma API que la web (Hardstreet-Backend):
@@ -157,6 +159,20 @@ class _UsersPageState extends State<UsersPage> {
     );
     // Al CREAR se vuelve a la página 1 (la fila nueva queda a la vista).
     if (saved == true) _reload(reset: user == null);
+  }
+
+  /// Carpetas del Drive compartidas DIRECTAMENTE con el usuario.
+  ///
+  /// A diferencia del paquete (que comparte UNA), aquí se le pueden compartir
+  /// VARIAS: son su Drive personal y las ve en todos sus paquetes.
+  Future<void> _openDriveFolders(Map<String, dynamic> user) async {
+    final id = (user['id'] as num?)?.toInt() ?? 0;
+    if (id == 0) return;
+    final name = '${user['name'] ?? ''} ${user['lastname'] ?? ''}'.trim();
+    await showHsModal<void>(
+      context: context,
+      builder: (_) => UserDriveDialog(userId: id, userName: name),
+    );
   }
 
   Future<void> _delete(Map<String, dynamic> user) async {
@@ -384,6 +400,12 @@ class _UsersPageState extends State<UsersPage> {
                                     HsAccess.instance.can('Usuarios', 'update'))
                             ? () => _openForm(_pageRows[i])
                             : null,
+                        onDrive:
+                            (_iAmAdmin || _roleOf(_pageRows[i]) != 'admin') &&
+                                (HsAccess.instance.degraded ||
+                                    HsAccess.instance.can('Usuarios', 'update'))
+                            ? () => _openDriveFolders(_pageRows[i])
+                            : null,
                         onDelete:
                             (_iAmAdmin || _roleOf(_pageRows[i]) != 'admin') &&
                                 (HsAccess.instance.degraded ||
@@ -407,6 +429,7 @@ class _UserTile extends StatelessWidget {
   const _UserTile({
     required this.user,
     required this.onEdit,
+    required this.onDrive,
     required this.onDelete,
   });
 
@@ -414,6 +437,9 @@ class _UserTile extends StatelessWidget {
 
   /// null = el usuario no tiene el permiso → el botón NO se muestra.
   final VoidCallback? onEdit;
+
+  /// Carpetas del Drive compartidas con este usuario (pueden ser varias).
+  final VoidCallback? onDrive;
   final VoidCallback? onDelete;
 
   @override
@@ -550,6 +576,11 @@ class _UserTile extends StatelessWidget {
                   onTap: onEdit,
                 ),
                 HsMenuAction(
+                  icon: Icons.folder_shared_outlined,
+                  label: 'Carpetas del Drive',
+                  onTap: onDrive,
+                ),
+                HsMenuAction(
                   icon: Icons.delete_outline,
                   label: 'Eliminar',
                   onTap: onDelete,
@@ -563,6 +594,12 @@ class _UserTile extends StatelessWidget {
                 tooltip: 'Editar y asignar rol',
                 onPressed: onEdit,
                 icon: const Icon(Icons.edit_outlined, size: 20),
+              ),
+            if (onDrive != null)
+              IconButton(
+                tooltip: 'Carpetas del Drive',
+                onPressed: onDrive,
+                icon: const Icon(Icons.folder_shared_outlined, size: 20),
               ),
             if (onDelete != null)
               IconButton(

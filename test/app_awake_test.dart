@@ -1,11 +1,9 @@
 // ==================================================================
-// SEGUNDO PLANO: SOLO AVISOS, Y AL VOLVER SE RECARGA TODO
+// SEGUNDO PLANO: SOLO AVISOS, SIN RECARGAR LA VISTA AL VOLVER
 // ==================================================================
-// Con la app en segundo plano (otra ventana al frente o minimizada) el panel
-// no puede seguir consultando lo mismo que cuando está a la vista: solo los
-// avisos necesitan enterarse de algo. Además se sueltan las imágenes
-// decodificadas, que son lo que más RAM ocupa. Al volver —un clic en la
-// ventana— la sección se vuelve a cargar completa.
+// Con la app en segundo plano (otra ventana al frente o minimizada), los
+// sondeos de los módulos se pausan; los avisos siguen su ciclo propio. La
+// caché de imágenes y el estado de la página se conservan al reanudar.
 // ==================================================================
 import 'dart:convert';
 import 'dart:io';
@@ -85,9 +83,7 @@ void main() {
     AppAwake.instance.debugSetAwake(true);
   });
 
-  testWidgets('en segundo plano se sueltan las imágenes y al volver avisa', (
-    tester,
-  ) async {
+  testWidgets('en segundo plano conserva imágenes al volver', (tester) async {
     await _loadFakePhoto(tester);
     final cache = PaintingBinding.instance.imageCache;
     expect(cache.currentSize, greaterThan(0), reason: 'la foto quedó en RAM');
@@ -96,24 +92,20 @@ void main() {
     expect(AppAwake.instance.awake, isFalse);
     expect(
       cache.currentSize,
-      0,
-      reason: 'en segundo plano la memoria de imágenes se suelta',
+      greaterThan(0),
+      reason: 'minimizar conserva las imágenes en RAM',
     );
 
-    final antes = AppAwake.instance.resumed.value;
     AppAwake.instance.debugSetAwake(true);
     expect(AppAwake.instance.awake, isTrue);
     expect(
-      AppAwake.instance.resumed.value,
-      antes + 1,
-      reason: 'volver a la app avisa para recargar todo',
+      cache.currentSize,
+      greaterThan(0),
+      reason: 'al volver se reutilizan las imágenes ya cargadas',
     );
-    // Repetir el mismo estado no cuenta como un regreso nuevo.
-    AppAwake.instance.debugSetAwake(true);
-    expect(AppAwake.instance.resumed.value, antes + 1);
   });
 
-  testWidgets('en segundo plano no se consulta y al volver se recarga todo', (
+  testWidgets('al volver conserva página y no vuelve a consultar módulos', (
     tester,
   ) async {
     final tmp = await _tempDir(tester);
@@ -165,6 +157,7 @@ void main() {
     int paquetes() =>
         pedidos.where((p) => p.endsWith('/api/my/packages')).length;
     final cargado = paquetes();
+    final pageState = tester.state(find.byType(ClientDashboardPage));
     expect(
       cargado,
       greaterThan(0),
@@ -184,7 +177,7 @@ void main() {
       reason: 'en segundo plano el panel no consulta nada',
     );
 
-    // 2. VUELVE LA APP (un clic en la ventana): todo se recarga.
+    // 2. VUELVE LA APP: sigue la misma instancia de página y sus datos.
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -192,14 +185,19 @@ void main() {
     expect(AppAwake.instance.awake, isTrue);
     expect(find.byType(ClientDashboardPage), findsOneWidget);
     expect(
+      tester.state(find.byType(ClientDashboardPage)),
+      same(pageState),
+      reason: 'reanudar no desmonta ni crea de nuevo la página',
+    );
+    expect(
       paquetes(),
-      greaterThan(cargado),
-      reason: 'al volver la sección vuelve a pedir sus datos',
+      cargado,
+      reason: 'reanudar no vuelve a pedir los datos del módulo',
     );
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('al volver el DRIVE también vuelve a pedir su listado', (
+  testWidgets('al volver el DRIVE no vuelve a pedir su listado', (
     tester,
   ) async {
     final previousApi = HsApi.client;
@@ -261,8 +259,8 @@ void main() {
 
     expect(
       pedidos.length,
-      greaterThan(cargado),
-      reason: 'al volver el Drive vuelve a pedir su listado',
+      cargado,
+      reason: 'al volver el Drive conserva su listado en memoria',
     );
     expect(tester.takeException(), isNull);
   });

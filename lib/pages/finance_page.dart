@@ -372,7 +372,8 @@ class _FinancePageState extends State<FinancePage> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Abonado + abono externo − gastos − inversión − ahorro − pagos',
+            'Abonado + abono externo − gastos e inversión de paquetes − ahorro '
+            '− pagos',
             style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 14),
@@ -439,7 +440,8 @@ class _FinancePageState extends State<FinancePage> {
       ),
       _MoneyRow(
         label: 'Ahorro',
-        note: 'Lo que se tiene apartado',
+        // Los gastos generales (sin paquete) salen de aquí.
+        note: 'Apartado; los gastos generales salen de aquí',
         amount: t.ahorro,
         icon: _kindIcon('ahorro'),
         tint: FinanceColors.teal,
@@ -1882,8 +1884,10 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
       icon: _kindIcon(_kind),
       title: _isSavings ? 'Abonar al ahorro' : 'Registrar movimiento',
       subtitle: _baseIsGeneral
-          ? 'Movimiento GENERAL del negocio (no toca ningún paquete)'
-          : 'Se registra en el paquete elegido y actualiza sus totales',
+          ? (_kind == 'gasto' || _kind == 'inversion'
+                ? 'Movimiento GENERAL: sale del ahorro, no baja el dinero actual'
+                : 'Movimiento GENERAL del negocio (no toca ningún paquete)')
+          : 'Se registra en el paquete elegido: baja el dinero de ESE paquete',
       saving: _saving,
       error: _error,
       saveLabel: _isSavings ? 'Abonar' : 'Registrar',

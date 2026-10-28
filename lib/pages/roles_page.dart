@@ -345,6 +345,9 @@ class _RoleTile extends StatelessWidget {
     final name = (role['name'] ?? '').toString();
     final perms = ((role['permissions'] as List?) ?? const []);
     final permCount = perms.length;
+    final driveLabel = role['driveFullAccess'] == true
+        ? ' · Drive completo'
+        : ' · Drive compartido';
     final moduleCount = perms
         .map((p) => p is Map ? p['moduleId'] : null)
         .whereType<Object>()
@@ -383,7 +386,8 @@ class _RoleTile extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   '$moduleCount ${moduleCount == 1 ? 'módulo' : 'módulos'} · '
-                  '$permCount ${permCount == 1 ? 'acción' : 'acciones'}',
+                  '$permCount ${permCount == 1 ? 'acción' : 'acciones'}'
+                  '$driveLabel',
                   style: TextStyle(
                     fontSize: 12.5,
                     color: scheme.onSurfaceVariant,
@@ -464,6 +468,10 @@ class _RoleFormDialogState extends State<_RoleFormDialog> {
   bool _saving = false;
   String? _error;
 
+  /// ¿Este rol ve el Drive COMPLETO? Si está apagado, solo ve las carpetas
+  /// que se le comparten al usuario (es el caso de los clientes).
+  late bool _driveFull = widget.role?['driveFullAccess'] == true;
+
   bool get _editing => widget.role != null;
 
   @override
@@ -496,9 +504,13 @@ class _RoleFormDialogState extends State<_RoleFormDialog> {
         await HsApi.updateRole({
           'id': (widget.role!['id'] as num).toInt(),
           'name': name,
+          'driveFullAccess': _driveFull,
         });
       } else {
-        await HsApi.createRole({'name': name});
+        await HsApi.createRole({
+          'name': name,
+          'driveFullAccess': _driveFull,
+        });
       }
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -542,6 +554,33 @@ class _RoleFormDialogState extends State<_RoleFormDialog> {
               prefixIcon: Icon(Icons.badge_outlined, size: 20),
             ),
             onSubmitted: (_) => _save(),
+          ),
+        ),
+        FormSection(
+          label: 'Drive',
+          child: SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _driveFull,
+            onChanged: _saving
+                ? null
+                : (v) => setState(() => _driveFull = v),
+            title: const Text(
+              'Ver el Drive completo',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(
+              _driveFull
+                  ? 'El rol ve todas las carpetas del Drive del estudio.'
+                  : 'El rol solo ve las carpetas que se le comparten al '
+                        'usuario (como un cliente).',
+              style: const TextStyle(fontSize: 11.5, height: 1.3),
+            ),
+            secondary: Icon(
+              _driveFull
+                  ? Icons.folder_open_outlined
+                  : Icons.folder_shared_outlined,
+              size: 20,
+            ),
           ),
         ),
       ],

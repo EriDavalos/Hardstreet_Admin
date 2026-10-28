@@ -204,10 +204,12 @@ void main() {
     await _tap(tester, find.text('XV Años Sofía'));
 
     expect(find.text('Paquete Premium'), findsOneWidget);
+    // Cabecera del checklist del paquete elegido (una sola pestaña de
+    // servicios, ya cumplida).
     expect(
-      find.text('1 de 1 servicios cumplidos'),
+      find.text('1 de 1 cumplidos'),
       findsWidgets,
-      reason: 'pill de la cabecera + cabecera del checklist',
+      reason: 'cabecera del checklist con el avance del paquete elegido',
     );
     // Al estar pagado completo, la portada dice «Liquidado».
     expect(find.text('Liquidado'), findsOneWidget);

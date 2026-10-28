@@ -71,6 +71,32 @@ void _installMockClient() {
       return http.Response(jsonEncode({'agendas': const []}), 200,
           headers: headers);
     }
+    if (path.endsWith('/api/admin/user-drive')) {
+      // Una carpeta viene de un paquete (se copia a su usuario) y otra está
+      // compartida directamente con el cliente.
+      return http.Response(
+        jsonEncode({
+          'paths': [
+            'Hardstreet/Comercial/RegalandoSonrisas/PrimerServicio',
+            'Hardstreet/Comercial/RegalandoSonrisas/SegundoServicio',
+          ],
+          'items': [
+            {
+              'path': 'Hardstreet/Comercial/RegalandoSonrisas/PrimerServicio',
+              'packageId': 10,
+              'packageName': 'Publicidad Digital - Básico',
+            },
+            {
+              'path': 'Hardstreet/Comercial/RegalandoSonrisas/SegundoServicio',
+              'packageId': 0,
+              'packageName': '',
+            },
+          ],
+        }),
+        200,
+        headers: headers,
+      );
+    }
     if (path.endsWith('/api/admin/package-progress')) {
       return http.Response(
         jsonEncode({
@@ -188,6 +214,33 @@ void main() {
     await _tap(tester, find.text('Cancelar'));
   });
 
+  testWidgets('el icono de carpetas del Drive abre el diálogo del cliente',
+      (tester) async {
+    await _pumpClients(tester, const Size(1280, 900));
+
+    // Mismo icono que en el módulo Usuarios: el cliente es un usuario de tipo
+    // cliente y se le pueden compartir VARIAS carpetas.
+    expect(find.byTooltip('Carpetas del Drive'), findsNWidgets(2));
+    await _tap(tester, find.byTooltip('Carpetas del Drive').first);
+
+    expect(find.text('Carpetas del Drive'), findsOneWidget);
+    expect(
+      find.text('Hardstreet/Comercial/RegalandoSonrisas/PrimerServicio'),
+      findsOneWidget,
+    );
+    // La carpeta compartida desde un paquete aparece y dice de cuál viene: es
+    // la que antes no salía porque vivía atada al paquete en `users_drive`.
+    expect(
+      find.text('Carpeta del paquete Publicidad Digital - Básico'),
+      findsOneWidget,
+    );
+    expect(find.text('Compartir otra carpeta'), findsOneWidget);
+    expect(_adminOpen, findsNothing);
+
+    await _tap(tester, find.text('Cerrar'));
+    expect(find.text('Compartir otra carpeta'), findsNothing);
+  });
+
   testWidgets('la búsqueda sigue funcionando y en móvil no desborda',
       (tester) async {
     await _pumpClients(tester, const Size(390, 844), query: 'Luis');
@@ -195,5 +248,37 @@ void main() {
     expect(find.text('Luis Gómez'), findsOneWidget);
     expect(find.text('Ana Ruiz'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('en el celular el modal de carpetas ocupa la pantalla y no '
+      'desborda', (tester) async {
+    await _pumpClients(tester, const Size(390, 844));
+
+    // En móvil las acciones de la tarjeta viven en el menú «⋮».
+    await _tap(tester, find.byTooltip('Acciones').first);
+    await _tap(tester, find.text('Carpetas del Drive'));
+
+    // El modal se adapta al ancho del teléfono: se ven sus carpetas, el
+    // paquete del que vienen y el botón, sin desbordes.
+    expect(find.text('Compartir otra carpeta'), findsOneWidget);
+    expect(
+      find.text('Hardstreet/Comercial/RegalandoSonrisas/SegundoServicio'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Carpeta del paquete Publicidad Digital - Básico'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    // La ✕ de la esquina superior derecha cierra el modal.
+    await _tap(
+      tester,
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byTooltip('Cerrar'),
+      ),
+    );
+    expect(find.text('Compartir otra carpeta'), findsNothing);
   });
 }

@@ -11,8 +11,9 @@
 //   FinanceData.payees    lo pagado a cada colaborador/empleado
 //   FinanceData.payments  cada pago individual (para desglosar por persona)
 //
-// DINERO ACTUAL = abonado + abono externo - gastos - inversión - ahorro
-//                 - pagos.
+// DINERO ACTUAL = abonado + abono externo - gastos e inversión de los
+//                 PAQUETES - ahorro apartado - pagos. Los movimientos
+//                 GENERALES (gasto/inversión) se pagan con el ahorro.
 //
 // Todo dato que falte viene en cero: la UI nunca revienta por un backend
 // viejo o a medias.
@@ -43,11 +44,13 @@ class FinanceTotals {
   /// Falta por cobrar (saldo de los paquetes).
   final num porCobrar;
 
-  /// DINERO ACTUAL: abonado + abono externo - gastos - inversión - ahorro
-  /// - pagos. Es lo que de verdad se tiene hoy.
+  /// DINERO ACTUAL: abonado + abono externo - gastos e inversión de los
+  /// PAQUETES - ahorro apartado - pagos. Es lo que de verdad se tiene hoy:
+  /// los movimientos GENERALES los paga el ahorro.
   final num disponible;
 
-  /// Ahorro apartado (dinero del negocio guardado).
+  /// Ahorro apartado (dinero del negocio guardado) MENOS los gastos e
+  /// inversiones generales que se pagaron con él.
   final num ahorro;
   final num inversiones;
   final num gastos;

@@ -151,6 +151,9 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
             'finished': false,
             'finishedAt': null,
             'drivePath': '',
+            // Carpetas compartidas con la PERSONA (todos sus paquetes):
+            // salen en la pestaña Drive para que se vea qué ya ve el cliente.
+            'clientDrivePaths': const ['Compartido/General'],
           },
           'services': const [],
           'movements': const [],
@@ -213,6 +216,47 @@ Finder _inDialog(String text) => find.descendant(
     );
 
 void main() {
+  group('sameDrivePath (lo único que impide compartir)', () {
+    test('la misma carpeta, sin importar mayúsculas ni separadores', () {
+      expect(sameDrivePath('ReynaCoot', 'ReynaCoot'), isTrue);
+      expect(sameDrivePath('Reynacoot', 'ReynaCoot'), isTrue);
+      expect(sameDrivePath(r'\ReynaCoot\SesionPrevia\', 'ReynaCoot/SesionPrevia'),
+          isTrue);
+    });
+
+    test('una carpeta DENTRO de otra es otra carpeta: se puede compartir', () {
+      expect(
+        sameDrivePath(
+          'Hardstreet/Comercial/RegalandoSonrisas/SegundoServicio',
+          'Hardstreet/Comercial/RegalandoSonrisas',
+        ),
+        isFalse,
+      );
+      expect(
+        sameDrivePath(
+          'Hardstreet/Comercial/RegalandoSonrisas/PrimerServicio',
+          'Hardstreet/Comercial/RegalandoSonrisas',
+        ),
+        isFalse,
+      );
+    });
+
+    test('dos carpetas hermanas del mismo padre son distintas', () {
+      expect(
+        sameDrivePath(
+          'Hardstreet/Comercial/RegalandoSonrisas/PrimerServicio',
+          'Hardstreet/Comercial/RegalandoSonrisas/SegundoServicio',
+        ),
+        isFalse,
+      );
+    });
+
+    test('vacío no choca con nada', () {
+      expect(sameDrivePath('', 'ReynaCoot'), isFalse);
+      expect(sameDrivePath('', ''), isFalse);
+    });
+  });
+
   group('drivePathsOverlap', () {
     test('la misma carpeta se solapa consigo misma', () {
       expect(drivePathsOverlap('ReynaCoot', 'ReynaCoot'), isTrue);
@@ -246,15 +290,33 @@ void main() {
   });
 
   testWidgets(
-      'no deja compartir una carpeta que se solapa con la de otro paquete',
+      'la pestaña Drive NO lista el drive general del cliente',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pump(tester, posts: posts);
+
+    // El paquete solo muestra SU carpeta: lo que el cliente tiene compartido
+    // directamente (su drive general) se administra en Usuarios y aquí
+    // confundía, porque parecía que el paquete compartía el drive entero.
+    expect(find.text('Compartido/General'), findsNothing);
+    expect(find.text('Compartir una carpeta del Drive'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'no deja compartir LA MISMA carpeta que la de otro paquete',
       (tester) async {
     final posts = <Map<String, dynamic>>[];
     await _pump(tester, posts: posts);
 
     await _tap(tester, find.text('Compartir una carpeta del Drive'));
 
-    // La carpeta ya compartida aparece BLOQUEADA, con el motivo a la vista.
-    expect(_inDialog('Ya compartida en «ReynaCoot»'), findsOneWidget);
+    // La carpeta ya compartida aparece BLOQUEADA, con el motivo a la vista
+    // (y diciendo QUÉ pasa: es la misma carpeta, no "se solapa" sin más).
+    expect(
+      _inDialog('Es la misma carpeta que «ReynaCoot», que ya está compartida'),
+      findsOneWidget,
+    );
 
     // Tocarla no entra: se queda en la raíz ("Mi Drive").
     await _tap(tester, _inDialog('ReynaCoot'));
@@ -265,8 +327,9 @@ void main() {
     await _tap(tester, _inDialog('Compartir esta carpeta'));
 
     expect(posts, hasLength(1));
-    // Se comparte al CLIENTE (el Drive no depende del paquete).
-    expect(posts.first['action'], 'agregar-directorio-cliente');
+    // La carpeta es DEL PAQUETE que se está administrando.
+    expect(posts.first['action'], 'agregar-directorio');
+    expect(posts.first['purchasedPackageId'], 10);
     expect(posts.first['path'], 'Cliente');
     expect(tester.takeException(), isNull);
   });

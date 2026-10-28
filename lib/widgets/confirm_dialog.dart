@@ -147,8 +147,8 @@ Future<bool> confirmExitApp(BuildContext context) async {
             ),
             const SizedBox(height: 6),
             Text(
-              'Vas a cerrar ${AppConstants.appName}. Tu sesión queda guardada: '
-              'al volver entras directo a tu módulo de inicio.',
+              '${AppConstants.appName} seguirá en segundo plano para mostrarte '
+              'avisos. Tu sesión y tu trabajo quedan como están al volver.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,

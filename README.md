@@ -62,23 +62,38 @@ usa el del catálogo). El backend (`/api/admin/client-packages`) acepta
 
 ### Carpetas compartidas (pestaña Drive)
 
-Cada paquete del cliente puede **compartir VARIAS carpetas del Drive** (antes
-solo una):
+Además de la pestaña Drive de cada paquete, el directorio de **Clientes** tiene
+el icono **«Carpetas del Drive»** (el mismo del módulo Usuarios): un cliente es
+un usuario de tipo cliente y puede tener **varias carpetas**, las de sus
+paquetes y las compartidas directamente con él. Es el mismo diálogo en los dos
+módulos y el backend acepta el permiso de Usuarios o el de Clientes.
 
-- El botón abre un **selector que navega el Drive de verdad** (sin mover la
-  carpeta que estás viendo en el módulo Archivos); cada carpeta elegida queda
-  en una tarjeta propia, con su botón para **dejar de compartirla** (las demás
-  siguen igual).
-- Se guardan en `purchased_packages_drive` (una fila por carpeta); la columna
-  vieja `purchased_packages.drive_path` se mantiene sincronizada con la
-  primera, por compatibilidad.
-- El **Drive del cliente** muestra SOLO las carpetas compartidas de sus
-  paquetes: si a un paquete le compartes `ReynaCoot` y a otro `Cliente`, en
-  su Drive aparecen esas carpetas y **nada más**.
-- **Sin duplicados**: no deja compartir una carpeta que esté dentro de otra ya
-  compartida (o que la contenga), ni en el mismo paquete ni en otro del mismo
-  cliente — el cliente vería el mismo contenido dos veces. El selector muestra
-  esas carpetas **bloqueadas, con el motivo**.
+El Drive se comparte **al usuario**, no al paquete:
+
+- `users_drive (id_user, path, active)` es LA lista de carpetas que ve una
+  persona. Tiene `UNIQUE (id_user, path)`: la misma carpeta no se le comparte
+  dos veces.
+- Cada paquete comparte **UNA** carpeta, guardada en
+  `purchased_packages.drive_path`. Al compartirla se **copia a `users_drive`**
+  de todos los clientes del paquete, y al cambiarla o quitarla se les retira:
+  así una carpeta compartida en un paquete **siempre** aparece en el Drive del
+  cliente y en «Carpetas del Drive» (con el nombre del paquete como subtítulo).
+  Desde ahí, quitarla también deja sin carpeta a ese paquete, para que no quede
+  "compartida" en un lado y no en el otro.
+- El selector navega el Drive de verdad (sin mover la carpeta que estás viendo
+  en el módulo Archivos).
+- El **Drive del cliente** muestra SOLO sus carpetas de `users_drive`: si a un
+  paquete le compartes `ReynaCoot` y a otro `Cliente`, en su Drive aparecen esas
+  carpetas y **nada más**.
+- **Solo se bloquea la MISMA carpeta**: si el cliente ya tiene compartida esa
+  ruta exacta (en otro de sus paquetes o directamente con él), el selector la
+  muestra **bloqueada con el motivo**, porque la vería dos veces. Las carpetas
+  **hermanas** —`…/RegalandoSonrisas/PrimerServicio` en un paquete y
+  `…/SegundoServicio` en otro— y las que están **dentro** de una carpeta ya
+  compartida se comparten sin problema.
+- Requiere la migración `2026-10-28_users_drive_por_usuario.sql` (rellena
+  `id_user`, pasa las carpetas de los paquetes a sus clientes y elimina
+  `users_drive.id_purchased_package`).
 - Sin carpetas asignadas, el cliente ve su Drive vacío con el aviso "Aún no se
   te comparte ninguna carpeta".
 - El equipo del estudio (rol Admin, u otro rol con permiso de Archivos) sigue

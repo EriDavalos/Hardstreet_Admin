@@ -13,7 +13,10 @@ const int _vigenteId = 10;
 
 String _two(int n) => n.toString().padLeft(2, '0');
 
-void _installMockClient({required List<Map<String, dynamic>> posts}) {
+void _installMockClient({
+  required List<Map<String, dynamic>> posts,
+  bool secondFinished = true,
+}) {
   final now = DateTime.now();
   final agendaDay = DateTime(now.year, now.month, 15, 14, 30);
 
@@ -53,7 +56,7 @@ void _installMockClient({required List<Map<String, dynamic>> posts}) {
               'price': 7500,
               'paid': 7500,
               'currency': 'MXN',
-              'status': 'Terminado',
+              'status': secondFinished ? 'Terminado' : 'En proceso',
               'packageId': 5,
               'tierName': 'Gold',
               'categoryName': 'XV Años',
@@ -112,10 +115,10 @@ void _installMockClient({required List<Map<String, dynamic>> posts}) {
             'price': isVigente ? 12000 : 7500,
             'paid': isVigente ? 6000 : 7500,
             'balance': isVigente ? 6000 : 0,
-            'status': isVigente ? 'En proceso' : 'Terminado',
-            'statusId': isVigente ? 2 : 6,
-            'finished': !isVigente,
-            'finishedAt': isVigente ? null : doneAt,
+            'status': isVigente || !secondFinished ? 'En proceso' : 'Terminado',
+            'statusId': isVigente || !secondFinished ? 2 : 6,
+            'finished': !isVigente && secondFinished,
+            'finishedAt': isVigente || !secondFinished ? null : doneAt,
           },
           'services': isVigente
               ? [
@@ -194,7 +197,8 @@ void _installMockClient({required List<Map<String, dynamic>> posts}) {
 Future<void> _pumpDialog(WidgetTester tester,
     {required List<Map<String, dynamic>> posts,
     Size size = const Size(1250, 940),
-    bool openDetail = true}) async {
+    bool openDetail = true,
+    bool secondFinished = true}) async {
   await tester.binding.setSurfaceSize(size);
   // En pruebas, MediaQuery NO sigue al tamaño de la superficie: hay que
   // declarar la vista para que el modal vea la MISMA ventana que dibuja.
@@ -203,7 +207,7 @@ Future<void> _pumpDialog(WidgetTester tester,
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
-  _installMockClient(posts: posts);
+  _installMockClient(posts: posts, secondFinished: secondFinished);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -382,7 +386,27 @@ void main() {
     expect(find.text('Registrar movimiento'), findsOneWidget);
   });
 
-  testWidgets('los demás paquetes se ven como detalle (solo lectura)',
+  testWidgets('un paquete ABIERTO que no es el vigente también se administra',
+      (tester) async {
+    await _pumpDialog(tester, posts: [], secondFinished: false);
+
+    // Se vuelve al selector y se elige el OTRO paquete, que sigue abierto.
+    await _tap(tester, find.byTooltip('Todos los paquetes'));
+    await _tap(tester, find.text('XV Años - Gold'));
+
+    // No es «solo lectura»: se administra hasta que se finalice.
+    expect(find.text('Solo lectura'), findsNothing);
+    expect(find.text('Paquete terminado · consulta'), findsNothing);
+    expect(find.text('EN ADMINISTRACIÓN'), findsOneWidget);
+    expect(find.text('Finalizar paquete'), findsOneWidget);
+
+    // Y sus pestañas de administración están disponibles.
+    await _tap(tester, find.text('Movimientos'));
+    expect(find.text('Finalizar paquete'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('los paquetes FINALIZADOS se ven como detalle (solo lectura)',
       (tester) async {
     await _pumpDialog(tester, posts: []);
 
@@ -404,7 +428,8 @@ void main() {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
-    await _tap(tester, find.text('Completar servicio'));
+    // Completar es un botón de ICONO en la cabecera (como el del estado).
+    await _tap(tester, find.byTooltip('Completar servicio'));
     expect(find.text('Terminar servicio'), findsOneWidget);
 
     await tester.enterText(
@@ -418,6 +443,31 @@ void main() {
     expect(completar, hasLength(1));
     expect(completar.first['serviceId'], 1);
     expect(completar.first['description'], 'Entrega de la galería completa');
+  });
+
+  testWidgets('un servicio pasa a «En proceso» con sus observaciones',
+      (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    // El estado ya no se esconde en el detalle: es un botón de icono en la
+    // cabecera, junto a «Completar».
+    await _tap(tester, find.byTooltip('Pendiente · marcar En proceso'));
+    expect(find.text('Servicio en proceso'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Observaciones'),
+      'Revelado y retoque en curso',
+    );
+    await _tap(tester, find.text('Guardar y marcar en proceso'));
+
+    final cambio = posts
+        .where((p) => p['action'] == 'actualizar-servicio')
+        .toList();
+    expect(cambio, hasLength(1));
+    expect(cambio.first['serviceId'], 1);
+    expect(cambio.first['statusId'], 2);
+    expect(cambio.first['description'], 'Revelado y retoque en curso');
   });
 
   testWidgets('la pestaña Calendario lista TARJETAS de los eventos del '
@@ -583,15 +633,21 @@ void main() {
     // La liga base de su carpeta se ve tal cual, sin terminarlo.
     expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
 
-    // Completar el servicio es una acción DISCRETA (contorno), no el botón
-    // relleno de color de antes.
+    // Estado y «Completar» son DOS botones de icono, juntos en la cabecera y
+    // en ese orden (el estado a la izquierda de Completar).
+    final estado = find.byTooltip('Pendiente · marcar En proceso');
+    final completar = find.byTooltip('Completar servicio');
+    expect(estado, findsOneWidget);
+    expect(completar, findsOneWidget);
     expect(
-      find.ancestor(
-        of: find.text('Completar servicio'),
-        matching: find.byType(OutlinedButton),
-      ),
-      findsOneWidget,
-      reason: 'completar va con contorno, como "Asignar del catálogo"',
+      tester.getCenter(estado).dx,
+      lessThan(tester.getCenter(completar).dx),
+      reason: 'el estado va al lado de Completar, no aparte',
+    );
+    expect(
+      tester.getCenter(estado).dy,
+      tester.getCenter(completar).dy,
+      reason: 'los dos botones comparten la misma línea',
     );
 
     // Editar la liga manda la acción al backend con el servicio correcto.
