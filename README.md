@@ -445,6 +445,12 @@ quién lo recibe. Sin configuración se usan los roles recomendados:
 | Avisar cuando la impresión está lista | Cliente | Mi paquete |
 | Avisos manuales del estudio | (se elige al enviar) | el módulo elegido |
 
+En **Mi paquete** esos avisos viven en la ventana **«Novedades»**, que arranca
+**minimizada**: su barra dice cuántos hay sin leer (`3 sin leer · 5 avisos`) y
+un toque la despliega; el alto **se anima** (el contenido se recorta mientras
+crece y la flecha gira) y las acciones como «Marcar leídas» están dentro, para
+que el encabezado quede limpio. Desplegada muestra todas las novedades.
+
 Los avisos llegan a la **campanita** (`/api/reminders`) y, al tocarlos, abren su
 módulo (`target`). Los avisos del **paquete** al cliente ("Ya puedes elegir tus
 fotos", "Servicio terminado"…) son los mismos que el cliente ve en «Novedades»
@@ -1276,8 +1282,12 @@ general:
    la carpeta compartida abierta desde su módulo—.
 3. **Sub-vista**: una carpeta compartida abierta vuelve al listado del módulo
    Archivos compartidos.
-4. **Módulo de inicio**: desde cualquier otro módulo vuelve al PRIMER módulo
-   que el rol ve al entrar (`_homeSection`, el mismo que elige el arranque).
+4. **Módulo de inicio**: desde cualquier otro módulo (en su vista principal)
+   vuelve a su **módulo principal** (`_homeSection`, el mismo con el que se
+   abre el panel). El **CLIENTE** vuelve a **Mi paquete** y el resto del equipo
+   al **Dashboard**, sin importar el orden de los módulos en la BD (antes
+   mandaba ese orden y el atrás podía dejar a alguien en Archivos). Si el rol
+   no ve ese módulo, se usa el primero que sí vea.
 5. **¿Salir?**: ya en el módulo de inicio pregunta «¿Salir de la app?» con
    Cancelar / Salir; solo con **Salir** se cierra (en la web el motor retira
    sus entradas del historial y sale, no deja una página en blanco).
@@ -1287,6 +1297,21 @@ del registro es el de montaje, así que lo abierto DENTRO de un módulo atiende
 antes que su listado y el panel siempre queda al final. Las pruebas
 (`test/back_nav_test.dart` y `test/panel_start_test.dart`) mandan el mismo
 mensaje `popRoute` que Android y el motor web.
+
+**Guardia final** (`BackNavGuard`): el framework despacha el atrás a sus
+observadores en orden de alta y, **si ninguno lo atiende, apaga la app**
+(`SystemNavigator.pop`); en la web eso equivale a salirse. `WidgetsApp` es el
+primero y atiende los diálogos y el `PopScope` del panel, pero si por lo que
+sea la ruta que queda al frente no tiene quién lo atienda (el caso reportado:
+ver una foto, cerrarla y pulsar atrás —también en el selector de fotos—) el
+gesto se escapaba y la app se cerraba. El guardia se instala **después del
+primer frame** (`main`), o sea al final: solo ve los atrás que nadie más
+quiso, y en vez de dejar que la app se cierre los entrega a `BackNav` (sube de
+carpeta / deselecciona / vuelve al módulo de inicio / pregunta). Con la cadena
+VACÍA (login, arranque) no interviene: ahí el atrás sigue siendo del navegador.
+La prueba `sin PopScope raíz, el guardia evita que la app se cierre` monta el
+Drive SIN el `PopScope` del panel y comprueba que el `popRoute` queda atendido
+(es el valor que, sin guardia, cierra la app).
 
 ## Barra de estado de la PWA (instalada desde la web)
 

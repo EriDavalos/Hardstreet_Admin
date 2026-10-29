@@ -60,6 +60,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   List<Map<String, dynamic>> _notifications = const [];
   int _unread = 0;
 
+  /// ¿La ventana de «Novedades» está DESPLEGADA? Arranca minimizada: solo se
+  /// ve su barra (con cuántas hay sin leer) y un toque la abre. Así las
+  /// novedades no empujan el resto de la página hacia abajo al entrar.
+  bool _noticesOpen = false;
+
   /// FOTOS DEL BANNER de la portada: hasta 10 al azar entre las carpetas
   /// compartidas de los servicios CUMPLIDOS que tienen encendido «Mostrar
   /// banner cliente» (lo enciende el estudio en el servicio del catálogo).
@@ -856,10 +861,22 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   }
 
   /// Novedades que el estudio envió al cliente (fotos, cierre de servicio…).
+  ///
+  /// Arranca MINIMIZADA: la barra dice cuántas hay sin leer y al tocarla se
+  /// despliega la lista. El alto se ANIMA (no da un salto): el contenido se
+  /// recorta mientras crece, y la flecha gira al mismo tiempo.
   Widget _notificationsCard(ColorScheme scheme) {
-    final items = _notifications.take(4).toList();
+    // Desplegada se ven TODAS (hasta 30); minimizada no ocupa espacio.
+    final items = _noticesOpen
+        ? _notifications.take(30).toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final total = _notifications.length;
+    final resumen = _unread > 0
+        ? '$_unread sin leer · $total aviso${total == 1 ? '' : 's'}'
+        : '$total aviso${total == 1 ? '' : 's'} · todo leído';
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      key: const ValueKey('client-notices-card'),
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
       decoration: BoxDecoration(
         color: scheme.primary.withValues(alpha: .06),
         borderRadius: BorderRadius.circular(18),
@@ -868,37 +885,130 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.notifications_active_outlined,
-                size: 17,
-                color: scheme.primary,
-              ),
-              const SizedBox(width: 7),
-              const Expanded(
-                child: Text(
-                  'Novedades',
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
-                ),
-              ),
-              if (_unread > 0)
-                TextButton(
-                  onPressed: _readAllNotifications,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    textStyle: const TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
+          // ---------------- Barra (siempre visible) ----------------
+          InkWell(
+            key: const ValueKey('client-notices-toggle'),
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _noticesOpen = !_noticesOpen),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.notifications_active_outlined,
+                    size: 17,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Novedades',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          resumen,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _unread > 0
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                            fontWeight: _unread > 0
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: const Text('Marcar leídas'),
-                ),
-            ],
+                  // Punto de "hay algo sin leer" (se ve también minimizada).
+                  if (_unread > 0)
+                    Container(
+                      width: 7,
+                      height: 7,
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  // La flecha gira: abajo = desplegada.
+                  AnimatedRotation(
+                    key: const ValueKey('client-notices-chevron'),
+                    turns: _noticesOpen ? .5 : 0,
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.expand_more_rounded,
+                      size: 21,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 4),
-          for (final n in items) _noticeRow(scheme, n),
+          // ---------------- Lista (se despliega con animación) --------------
+          AnimatedSize(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            // Recorta el contenido mientras crece: se ve "desplegarse", no
+            // aparecer de golpe.
+            clipBehavior: Clip.hardEdge,
+            child: _noticesOpen
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Divider(
+                        height: 8,
+                        thickness: 1,
+                        color: scheme.primary.withValues(alpha: .16),
+                      ),
+                      for (final n in items) _noticeRow(scheme, n),
+                      if (_unread > 0)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: _readAllNotifications,
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            icon: const Icon(Icons.done_all_rounded, size: 15),
+                            label: const Text('Marcar leídas'),
+                          ),
+                        ),
+                      if (total > items.length)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: 2),
+                          child: Text(
+                            'y ${total - items.length} más',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                    ],
+                  )
+                : const SizedBox(width: double.infinity, height: 0),
+          ),
         ],
       ),
     );

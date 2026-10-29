@@ -65,6 +65,12 @@ void main() {
     );
   }
   applySystemChromeStyle(isDark: false);
+  // GUARDIA del ATRÁS: se instala DESPUÉS del primer frame (o sea después de
+  // `WidgetsApp`, que es quien atiende diálogos y el `PopScope` del panel) para
+  // quedar al final de la cadena. Si nadie atendió el gesto, él lo entrega a
+  // `BackNav` en vez de dejar que el framework apague la app: en la WEB ese
+  // cierre sacaba de la app (p. ej., al ver una foto y pulsar atrás).
+  WidgetsBinding.instance.addPostFrameCallback((_) => BackNavGuard.install());
   runApp(const HardStreetAdminApp());
 }
 
@@ -954,9 +960,25 @@ class _AdminHomeState extends State<AdminHome> {
     if (_startPicked) return;
     if (degraded || !catalogReady || menu.isEmpty) return;
     _startPicked = true;
-    _section = _firstAllowedSection();
+    _section = _homeForRole();
     // Este es el módulo de INICIO: a él vuelve el atrás desde cualquier otro.
     _homeSection = _section;
+  }
+
+  /// MÓDULO PRINCIPAL del usuario: con el que se abre el panel y al que vuelve
+  /// el ATRÁS desde cualquier otro módulo (en su vista principal).
+  ///
+  /// Es el primero que le aparece en su menú: el **CLIENTE** entra por «Mi
+  /// paquete» y el resto del equipo por el **Dashboard**, sin importar el
+  /// orden que los módulos tengan en la BD (antes mandaba ese orden, así que
+  /// el atrás podía dejar a alguien en Archivos en vez de en su pantalla de
+  /// inicio). Si el rol NO ve ese módulo, se usa el primero que sí vea: nunca
+  /// una pantalla que el backend le va a negar.
+  _Section _homeForRole() {
+    final client = HsSession.role.toLowerCase().trim() == 'cliente';
+    if (client && _canSee('my_package')) return _Section.clientDashboard;
+    if (!client && _canSee('dashboard')) return _Section.dashboard;
+    return _firstAllowedSection();
   }
 
   /// Paso de ATRÁS del PANEL (el último de la cadena).
@@ -1508,7 +1530,9 @@ class _AdminHomeState extends State<AdminHome> {
       // Cambia solo al cambiar la empresa. Minimizar y restaurar conserva la
       // vista y el estado de cada módulo.
       body: KeyedSubtree(
-        key: ValueKey('company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch'),
+        key: ValueKey(
+          'company-${HsSession.activeCompanyId ?? 0}-$_companyEpoch',
+        ),
         child: body,
       ),
       companySelector: CompanySelector(onChanged: _onCompanyChanged),

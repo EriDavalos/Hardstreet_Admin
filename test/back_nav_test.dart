@@ -65,13 +65,20 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 /// El MISMO mensaje que manda Android (y el motor web) al pulsar ATRÁS.
-Future<void> _pressBack(WidgetTester tester) async {
+/// Devuelve si ALGUIEN lo atendió: en la web, un `false` es lo que hace que la
+/// app se cierre.
+Future<bool> _pressBack(WidgetTester tester) async {
+  bool handled = false;
   await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
     'flutter/navigation',
     const JSONMethodCodec().encodeMethodCall(const MethodCall('popRoute')),
-    (_) {},
+    (data) {
+      if (data == null) return;
+      handled = const JSONMethodCodec().decodeEnvelope(data) == true;
+    },
   );
   await _settle(tester);
+  return handled;
 }
 
 /// Monta el Drive como lo hace el panel: un `PopScope` raíz que NUNCA deja
@@ -79,6 +86,7 @@ Future<void> _pressBack(WidgetTester tester) async {
 Future<DriveService> _pumpDrive(
   WidgetTester tester, {
   VoidCallback? onBack,
+  bool rootPopScope = true,
 }) async {
   late Directory tmp;
   await tester.runAsync(() async {
@@ -101,19 +109,24 @@ Future<DriveService> _pumpDrive(
     tester.view.resetDevicePixelRatio();
   });
 
+  final page = Scaffold(
+    body: DrivePage(drive: drive, onBack: onBack),
+  );
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light(),
-      home: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) return;
-          BackNav.handle();
-        },
-        child: Scaffold(
-          body: DrivePage(drive: drive, onBack: onBack),
-        ),
-      ),
+      home: rootPopScope
+          ? PopScope(
+              canPop: false,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) return;
+                BackNav.handle();
+              },
+              child: page,
+            )
+          // SIN el `PopScope` raíz: es el estado que dejaba el atrás sin
+          // atender (y la app se cerraba). Lo cubre el guardia.
+          : page,
     ),
   );
   await _settle(tester);
@@ -162,6 +175,29 @@ void main() {
       // El error se reporta, pero la cadena sigue y contesta.
       expect(BackNav.handle(), isFalse);
     });
+  });
+
+  group('guardia del atrás', () {
+    test(
+      'atiende cuando hay pantallas y deja pasar si la cadena está vacía',
+      () async {
+        var steps = 0;
+        BackNav.add(() {
+          steps++;
+          return true;
+        });
+        expect(await BackNavGuard.instance.didPopRoute(), isTrue);
+        expect(steps, 1);
+
+        BackNav.resetForTest();
+        expect(
+          await BackNavGuard.instance.didPopRoute(),
+          isFalse,
+          reason:
+              'sin panel montado (login/arranque) el atrás es del navegador',
+        );
+      },
+    );
   });
 
   group('Drive', () {
@@ -221,17 +257,71 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('después de VER y cerrar una foto, el atrás sube de carpeta', (
+      tester,
+    ) async {
+      final drive = await _pumpDrive(tester);
+      await tester.tap(find.text('Bodas').first);
+      await _settle(tester);
+      expect(drive.path, ['Bodas']);
+
+      // Se abre el visor de la foto y se cierra con su botón…
+      await tester.tap(find.text('boda_00.png').first);
+      await _settle(tester);
+      expect(
+        find.byTooltip('Cerrar'),
+        findsWidgets,
+        reason: 'el visor de la foto quedó abierto',
+      );
+      await tester.tap(find.byTooltip('Cerrar').first);
+      await _settle(tester);
+
+      // …y el atrás DEBE subir de carpeta, no sacar de la app.
+      await _pressBack(tester);
+      expect(
+        drive.path,
+        isEmpty,
+        reason: 'tras ver una foto el atrás sigue volviendo a la carpeta padre',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('sin PopScope raíz, el guardia evita que la app se cierre', (
+      tester,
+    ) async {
+      // Monta el guardia como lo hace `main` (después de `WidgetsApp`).
+      BackNavGuard.install();
+      final drive = await _pumpDrive(tester, rootPopScope: false);
+      await tester.tap(find.text('Bodas').first);
+      await _settle(tester);
+      expect(drive.path, ['Bodas']);
+
+      final handled = await _pressBack(tester);
+      expect(
+        handled,
+        isTrue,
+        reason: 'un popRoute sin atender es lo que cierra la app en la web',
+      );
+      expect(
+        drive.path,
+        isEmpty,
+        reason: 'el guardia entrega el gesto a la cadena: sube de carpeta',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('en la raíz del módulo el atrás NO sale: decide el panel', (
       tester,
     ) async {
       final drive = await _pumpDrive(tester);
 
-      await _pressBack(tester);
+      expect(await _pressBack(tester), isTrue);
       expect(drive.path, isEmpty);
       expect(
         find.byType(DrivePage),
         findsOneWidget,
-        reason: 'sin nada que deshacer el gesto pasa al panel, no cierra la app',
+        reason:
+            'sin nada que deshacer el gesto pasa al panel, no cierra la app',
       );
       expect(tester.takeException(), isNull);
     });

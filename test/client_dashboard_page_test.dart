@@ -255,15 +255,86 @@ void main() {
     );
     await _pumpPage(tester);
 
+    // MINIMIZADA: se ve la barra (con el resumen) y NO la lista.
     expect(find.text('Novedades'), findsOneWidget);
+    expect(find.text('Ya puedes elegir tus fotos'), findsNothing);
+    expect(find.text('1 sin leer · 1 aviso'), findsOneWidget);
+
+    // Un toque en la barra la despliega.
+    await _tap(tester, find.text('Novedades'));
     expect(find.text('Ya puedes elegir tus fotos'), findsOneWidget);
     expect(find.textContaining('Álbum de fotos'), findsWidgets);
 
-    // Al tocar el aviso se marca leído (y la lista se queda a la vista).
+    // Al tocar el aviso se marca leído (y la lista sigue abierta).
     await _tap(tester, find.text('Ya puedes elegir tus fotos'));
     expect(find.text('Ya puedes elegir tus fotos'), findsOneWidget);
+    expect(find.text('1 aviso · todo leído'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    '«Novedades» arranca minimizada y se abre/cierra ANIMANDO el alto',
+    (tester) async {
+      _installMock(
+        notifications: [
+          for (var i = 1; i <= 3; i++)
+            {
+              'id': i,
+              'kind': 'fotos-disponibles',
+              'title': 'Aviso $i',
+              'body': 'Detalle del aviso $i.',
+              'isRead': false,
+              'created': '2026-10-1${i}T10:00:00',
+            },
+        ],
+      );
+      await _pumpPage(tester);
+
+      final card = find.byKey(const ValueKey('client-notices-card'));
+      final toggle = find.byKey(const ValueKey('client-notices-toggle'));
+      final closed = tester.getSize(card).height;
+      expect(
+        find.text('Aviso 1'),
+        findsNothing,
+        reason: 'normalmente la ventana está minimizada',
+      );
+
+      // Desplegar: a mitad de la animación el alto ya creció pero NO llegó al
+      // final (es una transición, no un salto).
+      await tester.ensureVisible(toggle);
+      await tester.pump();
+      await tester.tap(toggle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+      final medio = tester.getSize(card).height;
+      await tester.pump(const Duration(milliseconds: 400));
+      final open = tester.getSize(card).height;
+      expect(find.text('Aviso 1'), findsOneWidget);
+      expect(open, greaterThan(closed + 40), reason: 'la lista ocupa su alto');
+      expect(medio, greaterThan(closed), reason: 'crece progresivamente');
+      expect(
+        medio,
+        lessThan(open),
+        reason: 'a mitad de la animación aún no llega',
+      );
+
+      // Minimizar: vuelve al alto de la barra, también animando.
+      await tester.tap(toggle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+      final medioCierre = tester.getSize(card).height;
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        tester.getSize(card).height,
+        moreOrLessEquals(closed, epsilon: 1),
+        reason: 'vuelve a quedar minimizada',
+      );
+      expect(medioCierre, greaterThan(closed));
+      expect(medioCierre, lessThan(open));
+      expect(find.text('Aviso 1'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('sin paquetes: estado vacío claro', (tester) async {
     _installMock(packages: const []);

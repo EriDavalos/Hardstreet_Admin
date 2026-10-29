@@ -54,8 +54,13 @@ List<Map<String, dynamic>> _modules() => [
 ];
 
 /// Mock del backend. [gate] retrasa la respuesta de permisos (para poder mirar
-/// la pantalla de carga); [failPermissions] hace que no se puedan leer.
-MockClient _mock({Completer<void>? gate, bool failPermissions = false}) {
+/// la pantalla de carga); [failPermissions] hace que no se puedan leer;
+/// [modules] cambia los permisos (orden y "Ver") del rol.
+MockClient _mock({
+  Completer<void>? gate,
+  bool failPermissions = false,
+  List<Map<String, dynamic>>? modules,
+}) {
   return MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
@@ -69,7 +74,7 @@ MockClient _mock({Completer<void>? gate, bool failPermissions = false}) {
         );
       }
       return http.Response(
-        jsonEncode({'isAdmin': false, 'modules': _modules()}),
+        jsonEncode({'isAdmin': false, 'modules': modules ?? _modules()}),
         200,
         headers: headers,
       );
@@ -237,7 +242,7 @@ void main() {
     await tester.tap(find.byTooltip('Menú'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Archivos').first);
+    await tester.tap(find.text('Archivos').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byType(DrivePage), findsOneWidget);
@@ -257,6 +262,89 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('¿Salir de la app?'), findsNothing);
     expect(find.byType(ClientDashboardPage), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el CLIENTE vuelve a "Mi paquete" aunque el menú empiece por '
+      'Dashboard', (tester) async {
+    final tmp = await _tempDir(tester);
+    final previous = HsApi.client;
+    // El rol SÍ puede ver el Dashboard y es el PRIMER módulo del menú; aun así
+    // el cliente entra (y vuelve) por su paquete.
+    HsApi.client = _mock(
+      modules: [
+        _mod('dashboard', 'Dashboard', order: 1),
+        _mod('my_package', 'Mi paquete', order: 2),
+        _mod('drive', 'Archivos', order: 3),
+      ],
+    );
+    addTearDown(() => HsApi.client = previous);
+    BackNav.resetForTest();
+    HsSession.setUser({'role': 'cliente', 'name': 'Cliente'});
+
+    await _pumpPanel(tester, tmp);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      find.byType(ClientDashboardPage),
+      findsOneWidget,
+      reason: 'el cliente abre en su paquete, no en el Dashboard',
+    );
+
+    // Se va a Archivos y pulsa atrás: vuelve a Mi paquete.
+    await tester.tap(find.byTooltip('Menú'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Archivos').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(DrivePage), findsOneWidget);
+
+    await _pressBack(tester);
+    expect(find.byType(ClientDashboardPage), findsOneWidget);
+    expect(find.byType(DrivePage), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el resto del equipo vuelve al DASHBOARD aunque su menú empiece '
+      'por Archivos', (tester) async {
+    final tmp = await _tempDir(tester);
+    final previous = HsApi.client;
+    // En la BD "Archivos" va primero (order 1). El atrás ya NO sigue ese
+    // orden: el equipo vuelve al Dashboard.
+    HsApi.client = _mock(
+      modules: [
+        _mod('drive', 'Archivos', order: 1),
+        _mod('dashboard', 'Dashboard', order: 2),
+        _mod('my_package', 'Mi paquete', order: 3),
+      ],
+    );
+    addTearDown(() => HsApi.client = previous);
+    BackNav.resetForTest();
+    HsSession.setUser({'role': 'admin', 'name': 'Admin'});
+
+    await _pumpPanel(tester, tmp);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      find.byType(DashboardPage),
+      findsOneWidget,
+      reason: 'el equipo abre en el Dashboard aunque Archivos vaya primero',
+    );
+
+    await tester.tap(find.byTooltip('Menú'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Archivos').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(DrivePage), findsOneWidget);
+
+    await _pressBack(tester);
+    expect(find.byType(DashboardPage), findsOneWidget);
+    expect(find.byType(DrivePage), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
