@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Metadatos del widget «Notas».
+
+     updatePeriodMillis = 30 min (mínimo del sistema, usa la app para
+     empujar; esto solo repinta el layout guardado). Igual que «Próximos
+     eventos»: tamaño mínimo cómodo (~4 filas) y redimensionable. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/notes_widget_description"
+    android:initialLayout="@layout/notes_widget"
+    android:minHeight="180dp"
+    android:minWidth="250dp"
+    android:previewLayout="@layout/notes_widget"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="3"
+    android:targetCellWidth="4"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

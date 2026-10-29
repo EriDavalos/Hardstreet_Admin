@@ -12,6 +12,7 @@ import 'back_nav.dart';
 import 'drive_api_service.dart';
 import 'drive_host.dart';
 import 'event_widget.dart';
+import 'home_widgets.dart';
 import 'hs_access.dart';
 import 'hs_api.dart';
 import 'drive_scope.dart';
@@ -43,6 +44,7 @@ import 'reminder_notifications_native.dart';
 import 'reminders_service.dart';
 import 'theme.dart';
 import 'version_checker.dart';
+import 'web_back_guard.dart';
 import 'widgets/admin_shell.dart';
 import 'widgets/company_selector.dart';
 import 'widgets/brand_badge.dart';
@@ -182,9 +184,14 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // detalle y el botón "Agregar agenda" abre el alta. El widget AVISA; quien
     // navega es el panel (AdminHome + AgendasPage).
     UpcomingEventsWidget.listen();
+    // Toques de los widgets «Notas» y «Avisos»: la navegación la hace el
+    // panel (NotasPage se encarga del detalle y del alta).
+    NotesWidget.listen();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // ¿El widget lanzó la app en frío con una acción? (arranque en frío)
+      // ¿Lanzó un widget la app en frío con una acción? Cada widget reclama
+      // la acción SOLO si es suya.
       await UpcomingEventsWidget.consumePending();
+      await NotesWidget.consumePending();
       // Permiso de notificaciones (Android 13+ / iOS) al arrancar, no en el
       // primer aviso: sin él, el teléfono DESCARTA los avisos del paquete.
       // En WINDOWS prepara el toast nativo para que el aviso salga aunque
@@ -231,6 +238,9 @@ class _HardStreetAdminAppState extends State<HardStreetAdminApp> {
     // El widget de eventos vive FUERA de la app: se le recuerda el tema nuevo
     // (el acento o el modo se pueden cambiar desde Configuraciones).
     UpcomingEventsWidget.refresh();
+    // Los widgets nuevos también viven del MODO de la app.
+    NotesWidget.refresh();
+    AvisosWidget.refresh();
   }
 
   /// ¿La app se ve oscura AHORA? (el modo "sistema" sigue al equipo)
@@ -855,6 +865,13 @@ class _AdminHomeState extends State<AdminHome> {
     // El panel se apunta al FINAL de la cadena del atrás: las páginas de los
     // módulos se registran después y por eso se atienden primero.
     BackNav.add(_backStep);
+    // En la WEB, mientras el panel está en pantalla, el navegador deja una
+    // entrada de salvavidas debajo de la actual: así el atrás del teléfono cae
+    // en ella, el motor rearma la suya y el gesto llega a la cadena de arriba
+    // (cerrar la foto, subir de carpeta, volver al módulo) en vez de salirse
+    // de la app. En el login no se arma: allí el atrás sigue siendo del
+    // navegador.
+    setWebBackGuard(enabled: true);
     HsAccess.addListener(_onAccessChanged);
     // En segundo plano el panel conserva la vista; los servicios de
     // notificaciones siguen consultando en su propio ciclo.
@@ -862,8 +879,10 @@ class _AdminHomeState extends State<AdminHome> {
     // Toques del widget nativo: tocar un evento (o el botón "Agregar agenda")
     // lleva a Agendas; la página abre el detalle o el alta.
     UpcomingEventsWidget.requested.addListener(_onWidgetRequest);
+    NotesWidget.requested.addListener(_onNoteWidgetRequest);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (UpcomingEventsWidget.requested.value != null) _onWidgetRequest();
+      if (NotesWidget.requested.value != null) _onNoteWidgetRequest();
     });
     // Al guardar permisos en Roles: el menú se adapta AL INSTANTE.
     HsApi.onPermissionsChanged = () async {
@@ -901,9 +920,11 @@ class _AdminHomeState extends State<AdminHome> {
   @override
   void dispose() {
     BackNav.remove(_backStep);
+    setWebBackGuard(enabled: false);
     HsApi.onPermissionsChanged = null;
     HsAccess.removeListener(_onAccessChanged);
     UpcomingEventsWidget.requested.removeListener(_onWidgetRequest);
+    NotesWidget.requested.removeListener(_onNoteWidgetRequest);
     super.dispose();
   }
 
@@ -918,12 +939,22 @@ class _AdminHomeState extends State<AdminHome> {
     if (_canSee('schedules')) setState(() => _section = _Section.agendas);
   }
 
+  /// El widget de Notas pidió abrir una nota (o crear una): se salta a Notas
+  /// (si el rol puede verlas) y la página consume el detalle. El valor NO se
+  /// limpia aquí: eso lo hace NotesPage cuando ya lo atendió.
+  void _onNoteWidgetRequest() {
+    if (!mounted || NotesWidget.requested.value == null) return;
+    if (_canSee('notes')) setState(() => _section = _Section.notes);
+  }
+
   /// Descarga los permisos del usuario (HsAccess) y refresca el menú.
   Future<void> _loadPermissions() async {
     await HsAccess.load();
     // El widget nativo también vive de los permisos (el botón "Agregar
     // agenda"): se le recuerda el estado nuevo en cuanto se conocen.
     UpcomingEventsWidget.refresh();
+    // Idem el de Notas: su botón "+" depende del permiso de crear notas.
+    NotesWidget.refresh();
     if (mounted) setState(() {});
   }
 

@@ -103,18 +103,39 @@ class UpcomingEventsWidget {
   /// ¿El widget lanzó la app con una acción pendiente? (arranque en frío: el
   /// engine todavía no existía cuando llegó el Intent). Se pregunta una vez al
   /// entrar al panel.
+  ///
+  /// VARIOS widgets comparten la misma acción pendiente: aquí SOLO se reclama
+  /// si la acción es de agendas (si fue de otro widget, queda pendiente para
+  /// que él la consuma cuando pregunte).
   static Future<void> consumePending() async {
     if (kWeb) return;
     try {
       final raw = await _channel.invokeMethod<Object?>('consumeTap');
-      if (raw != null) _applyTap(raw);
+      if (raw == null) return;
+      if (!_ownsAction(raw)) return;
+      _applyTap(raw);
+      // Ya es nuestra: que no se le ofrezca otra vez a ningún widget.
+      try {
+        await _channel.invokeMethod<void>('clearTap');
+      } catch (_) {
+        // Si falla, el próximo arranque repite un toque viejo: inofensivo.
+      }
     } catch (_) {
       // Canal no disponible (plataforma sin widget): nada que hacer.
     }
   }
 
+  /// ¿La acción pendiente pertenece a las agendas? (los widgets nuevos la
+  /// comparten: el mismo Intent del arranque lleva action de cualquiera).
+  static bool _ownsAction(Object? raw) {
+    if (raw is! Map) return false;
+    final a = '${raw['action']}'.toLowerCase();
+    return a == 'agenda' || a == 'new';
+  }
+
   static void _applyTap(Object? raw) {
     if (raw is! Map) return;
+    if (!_ownsAction(raw)) return; // toques de OTROS widgets: ignorar aquí
     requested.value = WidgetTap(
       agendaId: (raw['id'] as num?)?.toInt() ?? 0,
       create: '${raw['action']}'.toLowerCase() == 'new',

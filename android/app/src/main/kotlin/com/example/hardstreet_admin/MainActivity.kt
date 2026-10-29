@@ -27,13 +27,24 @@ class MainActivity : FlutterActivity() {
     /** Widget de "próximos eventos" (la app empuja los datos). */
     private val widgetChannelName = "hardstreet/events_widget"
 
+    /** Widget de "Notas" (la app empuja las notas recientes). */
+    private val notesChannelName = "hardstreet/notes_widget"
+
+    /** Widget de "Avisos" (la app empuja los avisos recientes). */
+    private val remindersChannelName = "hardstreet/reminders_widget"
+
+    /**
+     * Canales de los widgets del inicio. El toque del widget se PUBLICA en
+     * TODOS y cada lado en Dart decide si la acción es suya
+     * (EXTRA_ACTION/EXTRA_ID llegan en el Intent de cualquiera de ellos).
+     */
+    private val widgetChannels = mutableListOf<MethodChannel>()
+
     /** Guardar descargas del Drive en la carpeta pública de Descargas. */
     private val downloadsChannelName = "hardstreet/downloads"
 
     /** Enviar la actividad al fondo sin terminar la sesión. */
     private val backgroundChannelName = "hardstreet/app_background"
-
-    private var widgetChannel: MethodChannel? = null
 
     /**
      * Acción pendiente que pidió el WIDGET (tocar un evento o "Agregar
@@ -117,29 +128,32 @@ class MainActivity : FlutterActivity() {
         return mapOf("action" to action, "id" to id)
     }
 
-    /** Manda la acción a Dart (que navega). Silencioso si aún no hay handler. */
+    /** Manda la acción a Dart (que navega). Silencioso si aún no hay handler.
+     *  Se publica en TODOS los canales de widget: cada lado suyo filtra. */
     private fun pushWidgetTap(tap: Map<String, Any>) {
-        val channel = widgetChannel ?: return
-        channel.invokeMethod(
-            "onWidgetTap",
-            tap,
-            object : MethodChannel.Result {
-                override fun success(result: Any?) {
-                    // Ya la tiene Dart: no debe volver a consumirse al arrancar.
-                    if (pendingWidgetTap == tap) pendingWidgetTap = null
+        // Copia para que el callback local no vea la lista cambiando.
+        for (channel in widgetChannels.toList()) {
+            channel.invokeMethod(
+                "onWidgetTap",
+                tap,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        // Ya la tiene Dart: no debe volver a consumirse al arrancar.
+                        if (pendingWidgetTap == tap) pendingWidgetTap = null
+                    }
+
+                    override fun error(code: String, message: String?, details: Any?) = Unit
+
+                    override fun notImplemented() = Unit
                 }
-
-                override fun error(code: String, message: String?, details: Any?) = Unit
-
-                override fun notImplemented() = Unit
-            }
-        )
+            )
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, widgetChannelName)
-        widgetChannel = channel
+        widgetChannels.add(channel)
         channel
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -180,14 +194,67 @@ class MainActivity : FlutterActivity() {
                     }
                     "isVisible" -> result.success(EventWidgetProvider.hasWidgets(this))
                     // ¿El widget lanzó la app con una acción? (arranque en frío)
-                    "consumeTap" -> {
-                        val tap = pendingWidgetTap
+                    // SOLO MIRA, no consume: VARIOS widgets comparten la misma
+                    // acción pendiente y cada uno dice si la toma (consumeTap
+                    // no borra; clearTap sí, cuando Dart la acepta).
+                    "consumeTap" -> result.success(pendingWidgetTap)
+                    "clearTap" -> {
                         pendingWidgetTap = null
-                        result.success(tap)
+                        result.success(true)
                     }
                     else -> result.notImplemented()
                 }
             }
+        // Widget «Notas»: guarda lo empujado y repinta los colocados. Comparte
+        // la acción pendiente del arranque (consumeTap/clearTap).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notesChannelName).also { noteChannel ->
+            widgetChannels.add(noteChannel)
+            noteChannel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "update" -> {
+                        val header = call.argument<String>("header") ?: "Notas"
+                        @Suppress("UNCHECKED_CAST")
+                        val notes = call.argument<List<Any?>>("notes") ?: emptyList()
+                        val dark = call.argument<Boolean>("dark") ?: false
+                        val canCreate = call.argument<Boolean>("canCreate") ?: false
+                        val arr = JSONArray()
+                        for (item in notes) {
+                            if (item is Map<*, *>) arr.put(JSONObject(item))
+                        }
+                        NotesWidgetProvider.save(this, header, arr.toString(), dark, canCreate)
+                        result.success(true)
+                    }
+                    "consumeTap" -> result.success(pendingWidgetTap)
+                    "clearTap" -> {
+                        pendingWidgetTap = null
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        // Widget «Avisos»: guarda lo empujado y repinta los colocados (sus
+        // toques solo abren la app, no necesitan consumeTap).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, remindersChannelName).also { avisoChannel ->
+            widgetChannels.add(avisoChannel)
+            avisoChannel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "update" -> {
+                        val header = call.argument<String>("header") ?: "Avisos"
+                        @Suppress("UNCHECKED_CAST")
+                        val avisos = call.argument<List<Any?>>("avisos") ?: emptyList()
+                        val dark = call.argument<Boolean>("dark") ?: false
+                        val arr = JSONArray()
+                        for (item in avisos) {
+                            if (item is Map<*, *>) arr.put(JSONObject(item))
+                        }
+                        RemindersWidgetProvider.save(this, header, arr.toString(), dark)
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, backgroundChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

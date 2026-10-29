@@ -12,4 +12,24 @@
         <item quantity="one">%d evento</item>
         <item quantity="other">%d eventos</item>
     </plurals>
+
+    <!-- Widget de inicio: «Notas». -->
+    <string name="notes_widget_header">Notas</string>
+    <string name="notes_widget_empty">Sin notas todavía</string>
+    <!-- Botón del encabezado del widget: abre el alta de nota en la app. -->
+    <string name="notes_widget_add">Nueva nota</string>
+    <string name="notes_widget_description">Tus notas recientes, a un toque del inicio.</string>
+    <plurals name="notes_widget_count">
+        <item quantity="one">%d nota</item>
+        <item quantity="other">%d notas</item>
+    </plurals>
+
+    <!-- Widget de inicio: «Avisos». -->
+    <string name="reminders_widget_header">Avisos</string>
+    <string name="reminders_widget_empty">Sin avisos</string>
+    <string name="reminders_widget_description">Los avisos recientes, a un toque del inicio.</string>
+    <plurals name="reminders_widget_count">
+        <item quantity="one">%d aviso</item>
+        <item quantity="other">%d avisos</item>
+    </plurals>
 </resources>

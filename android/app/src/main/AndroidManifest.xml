@@ -67,6 +67,31 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/event_widget_info" />
         </receiver>
+        <!-- Widgets de inicio «Notas» y «Avisos»: la app les empuja los
+             datos por los canales hardstreet/notes_widget y
+             hardstreet/reminders_widget (mismo patrón que eventos). -->
+        <receiver
+            android:name=".NotesWidgetProvider"
+            android:exported="false"
+            android:label="@string/notes_widget_header">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/notes_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".RemindersWidgetProvider"
+            android:exported="false"
+            android:label="@string/reminders_widget_header">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/reminders_widget_info" />
+        </receiver>
         <!-- Avisos con la app cerrada: consulta `/api/reminders` (eventos,
              canal `reminders`) y `/api/my/notifications` (paquete, canal
              `paquete`) y publica una notificación por cada aviso nuevo. -->
@@ -92,6 +117,16 @@
              sistema (la appwidget host) puede enlazarlo: BIND_REMOTEVIEWS. -->
         <service
             android:name=".EventWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <!-- Listas de los widgets «Notas» y «Avisos» (RemoteViewsService).
+             Solo el sistema puede enlazarlos: BIND_REMOTEVIEWS. -->
+        <service
+            android:name=".NotesWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <service
+            android:name=".RemindersWidgetService"
             android:exported="false"
             android:permission="android.permission.BIND_REMOTEVIEWS" />
         <!-- FileProvider para entregar el .apk descargado al instalador

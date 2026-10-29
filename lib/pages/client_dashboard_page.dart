@@ -60,6 +60,14 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   List<Map<String, dynamic>> _notifications = const [];
   int _unread = 0;
 
+  /// Servicios cuyo selector de fotos está ABRIÉNDOSE ahora mismo.
+  ///
+  /// Antes de abrir el selector se piden las fotos elegidas al servidor, así
+  /// que un segundo toque mientras se espera abría una SEGUNDA ventana encima.
+  /// Se bloquea el botón (y se muestra «Abriendo…») hasta que la primera
+  /// termina.
+  final Set<int> _pickingPhotos = <int>{};
+
   /// ¿La ventana de «Novedades» está DESPLEGADA? Arranca minimizada: solo se
   /// ve su barra (con cuántas hay sin leer) y un toque la abre. Así las
   /// novedades no empujan el resto de la página hacia abajo al entrar.
@@ -403,11 +411,32 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
       HsToast.info('No se pudo identificar el servicio');
       return;
     }
-    final drive = DriveScope.maybeOf(context);
-    if (drive == null) {
+    if (DriveScope.maybeOf(context) == null) {
       HsToast.info('El Drive no está disponible en esta pantalla');
       return;
     }
+    // Ya hay un selector abriéndose para este servicio: el segundo toque se
+    // ignora (no se apilan dos ventanas).
+    if (_pickingPhotos.contains(serviceId)) return;
+    setState(() => _pickingPhotos.add(serviceId));
+    try {
+      await _openServicePhotos(s, serviceId, name);
+    } finally {
+      if (mounted) {
+        setState(() => _pickingPhotos.remove(serviceId));
+      } else {
+        _pickingPhotos.remove(serviceId);
+      }
+    }
+  }
+
+  Future<void> _openServicePhotos(
+    Map<String, dynamic> s,
+    int serviceId,
+    String name,
+  ) async {
+    final drive = DriveScope.maybeOf(context);
+    if (drive == null) return;
     final catalog = (s['service'] is Map)
         ? (s['service'] as Map).cast<String, dynamic>()
         : const <String, dynamic>{};
@@ -2180,6 +2209,10 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     required String shareLink,
   }) {
     final compact = MediaQuery.sizeOf(context).width < 620;
+    // ¿Se está abriendo YA el selector de este servicio? El botón se apaga.
+    final openingPhotos = _pickingPhotos.contains(
+      (service['id'] as num?)?.toInt() ?? 0,
+    );
     // ¿Le TOCA elegir fotos? (tiene el paso encendido y todavía no ha marcado
     // ninguna). Ese paso va en su PROPIO BLOQUE destacado —igual que el envío—
     // con el botón a lo ancho y su aro latiendo: dentro de la fila de acciones,
@@ -2201,6 +2234,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             accent: AppColors.brand,
             compact: compact,
             buttonLabel: 'Elegir fotos',
+            loading: openingPhotos,
             onPressed: () => _pickServiceItems(service, name),
           )
         : null;
@@ -2208,7 +2242,9 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     // elegidas (entonces vuelve como «Mis fotos (N)» o «Ver fotos (N)»).
     final pick = pickOn && !pickTurn
         ? FilledButton.icon(
-            onPressed: () => _pickServiceItems(service, name),
+            onPressed: openingPhotos
+                ? null
+                : () => _pickServiceItems(service, name),
             style: FilledButton.styleFrom(
               visualDensity: VisualDensity.compact,
               minimumSize: const Size(0, 38),
@@ -2218,16 +2254,24 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            icon: Icon(
-              sentToPrint
-                  ? Icons.lock_outline_rounded
-                  : items > 0
-                  ? Icons.check_circle_outline_rounded
-                  : Icons.photo_library_outlined,
-              size: 16,
-            ),
+            icon: openingPhotos
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    sentToPrint
+                        ? Icons.lock_outline_rounded
+                        : items > 0
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.photo_library_outlined,
+                    size: 16,
+                  ),
             label: Text(
-              sentToPrint
+              openingPhotos
+                  ? 'Abriendo…'
+                  : sentToPrint
                   ? 'Ver fotos ($items)'
                   : items > 0
                   ? 'Mis fotos ($items)'
@@ -2412,6 +2456,11 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     required bool compact,
     required String buttonLabel,
     required VoidCallback onPressed,
+
+    /// El paso está ABRIENDO algo (el selector de fotos pide datos antes de
+    /// abrir): el botón se apaga y enseña que está trabajando, para que un
+    /// segundo toque no abra una segunda ventana encima.
+    bool loading = false,
   }) {
     return Container(
       key: stepKey,
@@ -2482,19 +2531,31 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             child: AttentionRing(
               key: ringKey,
               color: accent,
+              enabled: !loading,
               child: FilledButton.icon(
                 key: buttonKey,
-                onPressed: onPressed,
+                onPressed: loading ? null : onPressed,
                 style: FilledButton.styleFrom(
                   backgroundColor: accent,
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: accent.withValues(alpha: .45),
+                  disabledForegroundColor: Colors.white,
                   textStyle: const TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                icon: Icon(buttonIcon, size: 19),
-                label: Text(buttonLabel),
+                icon: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Icon(buttonIcon, size: 19),
+                label: Text(loading ? 'Abriendo…' : buttonLabel),
               ),
             ),
           ),

@@ -1313,6 +1313,35 @@ La prueba `sin PopScope raíz, el guardia evita que la app se cierre` monta el
 Drive SIN el `PopScope` del panel y comprueba que el `popRoute` queda atendido
 (es el valor que, sin guardia, cierra la app).
 
+**Salvavidas del historial (solo web)** — `lib/web_back_guard*.dart`.
+En el navegador el panel vive en UNA entrada de historial que el motor de
+Flutter vuelve a empujar DESPUÉS de cada atrás. En el **teléfono** eso no
+alcanzaba: Chrome descarta las entradas que se empujan *dentro* de la propia
+aacción de atrás (es su defensa contra páginas que secuestran el botón), así
+que el gesto se saltaba esa entrada y la pestaña salía del panel —en Android,
+además, cerraba la pestaña y devolvía al inicio del navegador—. En el APK nunca
+pasó: ahí el atrás es del sistema.
+
+Ahora, con el panel en pantalla (`AdminHome` avisa al montarse), el navegador
+deja una entrada de **salvavidas** debajo de la actual, escrita con la forma que
+el motor reconoce como «la entrada desde la que se llegó a la app»: al pulsar
+atrás se cae en ella, el motor rearma la suya y el gesto llega a la cadena
+(**subir de carpeta dentro del selector de fotos**, cerrar la foto, subir de
+carpeta, volver al módulo, preguntar antes de salir). Dos detalles son los que
+lo hacen funcionar: se empuja en un `setTimeout` (fuera del gesto, que es
+cuando Chrome sí la conserva) y se vuelve a armar con el primer toque del
+usuario.
+
+Está escrito en **Dart** (`dart:js_interop` + `package:web`, con un stub para
+Android/Windows/iOS), a propósito: viaja dentro de `main.dart.js`, así que basta
+con publicar la build de la web para que el teléfono lo reciba; no depende de
+que también se actualice el `index.html`. En el **login** no se arma: ahí el
+atrás sigue siendo del navegador. Comprobado en Chrome con el **botón atrás
+real** (no `history.back()`), replicando el caso reportado: selector abierto
+dentro de una carpeta → sube un nivel del selector; luego lo cierra; luego sube
+de carpeta en Archivos; luego vuelve al módulo; y cinco atrás seguidos nunca
+sacan de la app.
+
 ## Barra de estado de la PWA (instalada desde la web)
 
 Al instalar el panel desde el navegador, la barra de notificaciones de Android

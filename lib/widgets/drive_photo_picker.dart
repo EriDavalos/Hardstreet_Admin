@@ -257,14 +257,41 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
 
   /// Ve una foto en grande (con zoom y pantalla completa) sin cerrar el
   /// selector, y la marca desde ahí.
+  ///
+  /// El visor abre en MODO GALERÍA con TODAS las fotos de la carpeta actual:
+  /// deslizar (celular), las flechas ‹ › (laptop) o ← → (teclado) cambian de
+  /// foto y en cada una se puede marcar sin cerrar. El marcado NO se copia:
+  /// la entrada lo pregunta con una función, así sigue fresco al navegar.
   Future<void> _preview(DriveItem item) async {
     final abs = _abs(item.name);
+    // Las fotos de ESTA carpeta, en el MISMO orden que la cuadrícula del
+    // selector: la galería del visor recorre esa misma lista.
+    final photos = [
+      for (final i in _items)
+        if (!i.isFolder && _drive.hasImageExt(i.name)) i,
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final entries = [
+      for (final i in photos)
+        DrivePhotoEntry(
+          name: i.name,
+          meta: _metaLabel(i),
+          // La original se pide cuando la miniatura ya se ve (ver el visor).
+          src: _drive.thumbSourceIn(_path, i, width: 2200),
+          originalSrc: _remote ? _drive.fullSourceIn(_path, i) : '',
+          isRemote: _remote,
+          isPicked: () => _picked.contains(_abs(i.name)),
+          onToggle: () => _toggle(i),
+          drive: _drive,
+          item: i,
+          rel: List<String>.of(_path),
+        ),
+    ];
+    final idx = photos.indexWhere((i) => i.name == item.name);
     await showDrivePhotoViewer(
       context,
       name: item.name,
       meta: _metaLabel(item),
       src: _drive.thumbSourceIn(_path, item, width: 2200),
-      // La original se pide cuando la miniatura ya se ve (ver el visor).
       originalSrc: _remote ? _drive.fullSourceIn(_path, item) : '',
       isRemote: _remote,
       picked: _picked.contains(abs),
@@ -272,6 +299,8 @@ class _DrivePhotoPickerState extends State<DrivePhotoPicker> {
       drive: _drive,
       item: item,
       rel: List<String>.of(_path),
+      gallery: entries,
+      initialIndex: idx < 0 ? 0 : idx,
     );
   }
 

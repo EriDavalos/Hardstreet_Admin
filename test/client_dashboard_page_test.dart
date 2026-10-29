@@ -1,25 +1,42 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:hardstreet_admin/drive_scope.dart';
+import 'package:hardstreet_admin/drive_service.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
 import 'package:hardstreet_admin/widgets/anim.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
+import 'package:hardstreet_admin/widgets/service_photos_sheet.dart';
 
 /// Dos paquetes comprados: uno con liga de drive PROPIA y otra externa.
+///
+/// [gateItems] retrasa la respuesta de «fotos elegidas del servicio»: con eso
+/// se puede imitar al cliente que toca el botón mientras todavía está abriendo.
 void _installMock({
   List<Map<String, dynamic>>? packages,
   List<Map<String, dynamic>> notifications = const [],
+  Future<void>? gateItems,
 }) {
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     if (request.url.path.endsWith('/api/my/packages')) {
       return http.Response(
         jsonEncode({'purchasedPackages': packages ?? _defaultPackages()}),
+        200,
+        headers: headers,
+      );
+    }
+    if (request.url.path.endsWith('/api/my/service-items')) {
+      if (gateItems != null) await gateItems;
+      return http.Response(
+        jsonEncode({'items': const [], 'folder': 'ReynaCoot', 'max': 0}),
         200,
         headers: headers,
       );
@@ -557,6 +574,77 @@ void main() {
     expect(find.text('Enviar a impresión'), findsNothing);
     expect(find.text('SIGUIENTE PASO'), findsNothing);
     expect(find.byKey(const ValueKey('client-send-next-step')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('dos toques en «Elegir fotos» NO abren dos ventanas', (
+    tester,
+  ) async {
+    final pkgs = _defaultPackages();
+    ((pkgs.first['services'] as List)[1] as Map<String, dynamic>)
+      ..['pickPhotos'] = true
+      ..['shareFolder'] = 'ReynaCoot';
+    // El servidor tarda: es justo la ventana en la que se podía tocar dos veces
+    // y quedaban DOS selectores apilados (y el atrás se quedaba sin qué hacer).
+    final gate = Completer<void>();
+    _installMock(packages: pkgs, gateItems: gate.future);
+
+    // Con DriveScope: sin él la pantalla avisa «El Drive no está disponible» y
+    // no llega a abrir nada (el guardia que se prueba vive después).
+    late Directory tmp;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('hardstreet_doble_toque');
+    });
+    addTearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1100, 900);
+    addTearDown(tester.view.reset);
+    await tester.binding.setSurfaceSize(const Size(1100, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      DriveScope(
+        drive: DriveService.testRoot(tmp),
+        child: const MaterialApp(home: Scaffold(body: ClientDashboardPage())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final pick = find.byKey(const ValueKey('client-pick-button'));
+    await tester.ensureVisible(pick);
+    await tester.pump();
+    await tester.tap(pick, warnIfMissed: false);
+    await tester.pump();
+    // Segundo toque mientras la primera sigue abriendo: se ignora.
+    await tester.tap(pick, warnIfMissed: false);
+    await tester.pump();
+
+    expect(
+      find.text('Abriendo…'),
+      findsWidgets,
+      reason: 'el botón avisa que está trabajando',
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('client-pick-button')),
+          )
+          .onPressed,
+      isNull,
+      reason: 'mientras abre, el botón queda deshabilitado',
+    );
+
+    gate.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.byType(ServicePhotosSheet),
+      findsOneWidget,
+      reason: 'una sola ventana, no dos',
+    );
     expect(tester.takeException(), isNull);
   });
 

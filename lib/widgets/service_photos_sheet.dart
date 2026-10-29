@@ -119,7 +119,21 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
     return widget.drive.fullSourceIn(parent, item);
   }
 
+  /// ¿Se está abriendo el selector? Dos toques seguidos abrían DOS selectores
+  /// apilados (y al cerrarlos el atrás se quedaba sin nada que deshacer).
+  bool _picking = false;
+
   Future<void> _add() async {
+    if (_picking) return;
+    setState(() => _picking = true);
+    try {
+      await _openPicker();
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  Future<void> _openPicker() async {
     final picked = await showDrivePhotoPicker(
       context,
       drive: widget.drive,
@@ -137,7 +151,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
       allowDownload: false,
       confirmLabel: 'Agregar',
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     setState(() => _paths = picked);
   }
 
@@ -325,14 +339,47 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
               const SizedBox(height: 14),
               FilledButton.icon(
                 key: const ValueKey('service-photos-add-empty'),
-                onPressed: _add,
-                icon: const Icon(Icons.photo_library_outlined, size: 18),
-                label: const Text('Elegir fotos'),
+                onPressed: _picking ? null : _add,
+                icon: _picking
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.photo_library_outlined, size: 18),
+                label: Text(_picking ? 'Abriendo…' : 'Elegir fotos'),
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  /// Ve una foto en grande DESDE la lista de la selección: el visor abre en
+  /// MODO GALERÍA y se puede deslizar (celular), dar click en las flechas
+  /// (laptop) o usar ← → (teclado) para pasar a la siguiente, igual que en
+  /// el visor del Drive.
+  void _view(int index, String path) {
+    final entries = [
+      for (final p in _paths)
+        DrivePhotoEntry(
+          name: _name(p),
+          meta: p,
+          src: _src(p, width: 2200),
+          originalSrc: _original(p),
+          isRemote: _src(p).startsWith('http'),
+        ),
+    ];
+    showDrivePhotoViewer(
+      context,
+      name: _name(path),
+      meta: path,
+      src: _src(path, width: 2200),
+      originalSrc: _original(path),
+      isRemote: _src(path).startsWith('http'),
+      gallery: entries,
+      initialIndex: index,
     );
   }
 
@@ -359,14 +406,7 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
             ),
           ),
           child: InkWell(
-            onTap: () => showDrivePhotoViewer(
-              context,
-              name: _name(path),
-              meta: path,
-              src: _src(path, width: 2200),
-              originalSrc: _original(path),
-              isRemote: _src(path).startsWith('http'),
-            ),
+            onTap: () => _view(i, path),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -509,13 +549,23 @@ class _ServicePhotosSheetState extends State<ServicePhotosSheet> {
               children: [
                 FilledButton.icon(
                   key: const ValueKey('service-photos-add'),
-                  onPressed: add,
-                  icon: const Icon(
-                    Icons.add_photo_alternate_outlined,
-                    size: 18,
-                  ),
+                  onPressed: _picking ? null : add,
+                  icon: _picking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(
+                          Icons.add_photo_alternate_outlined,
+                          size: 18,
+                        ),
                   label: Text(
-                    _paths.isEmpty ? 'Elegir fotos' : 'Agregar fotos',
+                    _picking
+                        ? 'Abriendo…'
+                        : _paths.isEmpty
+                        ? 'Elegir fotos'
+                        : 'Agregar fotos',
                   ),
                 ),
                 if (widget.max > 0 && _paths.length >= widget.max)

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'event_widget.dart';
+import 'home_widgets.dart';
 import 'hs_api.dart';
 import 'reminder_notifications_native.dart';
 
@@ -119,6 +120,7 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(_clearNotified());
     notifyListeners();
     unawaited(UpcomingEventsWidget.publish(const []));
+    unawaited(AvisosWidget.publish(const []));
   }
 
   /// Lee del disco los ids ya notificados.
@@ -184,9 +186,9 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Mantiene al día el WIDGET de próximos eventos (inicio de Android / panel
-  /// de Windows). Las agendas mandan; si no se pueden leer, se usan los avisos
-  /// que ya están en memoria. No lanza nunca.
+  /// Mantiene al día los WIDGETS del inicio (Android: eventos, avisos y
+  /// notas / Windows: panel de eventos). Las agendas mandan; si no se
+  /// pueden leer, se usan los avisos que ya están en memoria. No lanza nunca.
   Future<void> feedEventWidget() async {
     if (!UpcomingEventsWidget.supported) return;
     if (!UpcomingEventsWidget.autoFeed) return;
@@ -194,11 +196,21 @@ class RemindersService extends ChangeNotifier with WidgetsBindingObserver {
     final now = DateTime.now();
     if (now.difference(_lastWidgetFeed) < eventWidgetInterval) return;
     _lastWidgetFeed = now;
+    // El widget de AVISOS vive de la MISMA lista que ya está en memoria: sin
+    // consulta adicional.
+    unawaited(AvisosWidget.publish(_reminders));
     try {
       final agendas = await HsApi.agendas();
       await UpcomingEventsWidget.publish(agendas, reminders: _reminders);
     } catch (_) {
       await UpcomingEventsWidget.publish(const [], reminders: _reminders);
+    }
+    // El widget de NOTAS: una consulta listado cada ciclo público. Falla en
+    // silencio (sin módulo Notas o sin red: el widget conserva lo suyo).
+    try {
+      await NotesWidget.publish(await HsApi.notes());
+    } catch (_) {
+      // Mejor esfuerzo: el widget sigue mostrando lo último conocido.
     }
   }
 

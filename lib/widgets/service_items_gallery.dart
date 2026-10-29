@@ -156,7 +156,7 @@ class ServiceItemsGallery extends StatelessWidget {
                       ),
                       itemCount: paths.length,
                       itemBuilder: (context, i) =>
-                          _tile(context, drive, paths[i]),
+                          _tile(context, drive, paths[i], i, paths),
                     ),
             ),
           ],
@@ -165,7 +165,36 @@ class ServiceItemsGallery extends StatelessWidget {
     );
   }
 
-  Widget _tile(BuildContext context, DriveBase? drive, String path) {
+  /// Une una ruta del paquete con lo que el visor necesita (nombre, carpeta
+  /// y fuente), igual que lo usa la aparte de la miniatura.
+  DrivePhotoEntry _entryOf(DriveBase? drive, String path) {
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    final name = parts.isEmpty ? path : parts.last;
+    final parent = parts.length > 1
+        ? parts.sublist(0, parts.length - 1)
+        : const <String>[];
+    final item = DriveItem(name: name, isFolder: false);
+    final src = drive == null
+        ? ''
+        : drive.thumbSourceIn(parent, item, width: 2200);
+    return DrivePhotoEntry(
+      name: name,
+      meta: path,
+      src: src,
+      isRemote: src.startsWith('http'),
+      drive: drive,
+      item: item,
+      rel: parent,
+    );
+  }
+
+  Widget _tile(
+    BuildContext context,
+    DriveBase? drive,
+    String path,
+    int index,
+    List<String> paths,
+  ) {
     final scheme = Theme.of(context).colorScheme;
     final name = _name(path);
     final parts = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -193,6 +222,13 @@ class ServiceItemsGallery extends StatelessWidget {
                 meta: path,
                 src: drive!.thumbSourceIn(parent, item, width: 2200),
                 isRemote: remote,
+                // GALERÍA: la lista entera del paquete y la foto tocada, así
+                // se desliza (celular) o se da click en ‹ › (laptop) para
+                // cambiar de foto, igual que en el visor del Drive.
+                gallery: [
+                  for (final p in paths) _entryOf(drive, p),
+                ],
+                initialIndex: index,
               ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

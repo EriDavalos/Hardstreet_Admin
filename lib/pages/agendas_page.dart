@@ -13,6 +13,7 @@ import '../hs_place.dart';
 import '../theme.dart';
 import '../widgets/anim.dart';
 import '../widgets/common.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_pickers.dart';
 import '../widgets/hs_place_picker.dart';
@@ -497,6 +498,15 @@ class _AgendasPageState extends State<AgendasPage> {
                 await _editEvent(agenda);
               }
             : null,
+        // Eliminar desde el propio detalle: confirmación y baja. El detalle
+        // se cierra ANTES (igual que al editar) para que el calendario
+        // refresque de inmediato sin un modal obsoleto encima.
+        onDelete: _canDelete
+            ? (agenda) async {
+                Navigator.of(dialogCtx).pop();
+                await _deleteEvent(agenda);
+              }
+            : null,
       ),
     );
   }
@@ -512,6 +522,45 @@ class _AgendasPageState extends State<AgendasPage> {
       HsAccess.instance.degraded ||
       HsAccess.instance.can('schedules', 'update') ||
       HsAccess.instance.can('Agendas', 'update');
+
+  /// ¿Puede ELIMINAR eventos? Sin este permiso el detalle no ofrece Eliminar.
+  bool get _canDelete =>
+      HsAccess.instance.degraded ||
+      HsAccess.instance.can('schedules', 'delete') ||
+      HsAccess.instance.can('Agendas', 'delete');
+
+  /// Baja de un evento ya agendado (baja lógica: la agenda queda fuera del
+  /// calendario, el paquete y el servicio no cambian). Con confirmación,
+  /// igual que los demás módulos.
+  Future<void> _deleteEvent(Map<String, dynamic> agenda) async {
+    if (!_canDelete) return;
+    final id = (agenda['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    final client = (agenda['clientName'] ?? '').toString().trim();
+    final package = (agenda['packageName'] ?? '').toString().trim();
+    final about = client.isNotEmpty
+        ? 'del cliente $client'
+        : package.isNotEmpty
+        ? 'del paquete $package'
+        : 'de esa fecha';
+    final ok = await confirmDelete(
+      context,
+      title: '¿Eliminar la agenda?',
+      message:
+          'El evento $about se quitará del calendario. Esta acción no '
+          'se puede deshacer.',
+      confirmLabel: 'Eliminar',
+    );
+    if (!ok || !mounted) return;
+    try {
+      await HsApi.deleteAgenda(id);
+    } catch (_) {
+      // El error lo avisa la capa de API con la notificación roja.
+      return;
+    }
+    if (!mounted) return;
+    unawaited(_reload());
+  }
 
   /// Edición de un evento ya agendado (fecha/hora, servicio, ubicaciones y
   /// nota). El cliente y el paquete se conservan tal como están.
@@ -2635,6 +2684,7 @@ class _AgendaDetailDialog extends StatelessWidget {
     required this.date,
     required this.agendas,
     this.onEdit,
+    this.onDelete,
   });
 
   final DateTime date;
@@ -2642,6 +2692,9 @@ class _AgendaDetailDialog extends StatelessWidget {
 
   /// Editar el evento tocado (null = el rol no puede editar).
   final void Function(Map<String, dynamic> agenda)? onEdit;
+
+  /// Eliminar el evento tocado (null = el rol no puede eliminar).
+  final void Function(Map<String, dynamic> agenda)? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2659,6 +2712,7 @@ class _AgendaDetailDialog extends StatelessWidget {
           _AgendaDetailBlock(
             agenda: agendas[i],
             onEdit: onEdit == null ? null : () => onEdit!(agendas[i]),
+            onDelete: onDelete == null ? null : () => onDelete!(agendas[i]),
           ),
         ],
       ],
@@ -2668,12 +2722,16 @@ class _AgendaDetailDialog extends StatelessWidget {
 
 /// Bloque de detalle (cliente, paquete, servicio, hora y nota).
 class _AgendaDetailBlock extends StatelessWidget {
-  const _AgendaDetailBlock({required this.agenda, this.onEdit});
+  const _AgendaDetailBlock({required this.agenda, this.onEdit, this.onDelete});
 
   final Map<String, dynamic> agenda;
 
   /// Abre la edición de ESTE evento (null = sin permiso o hueco ocupado).
   final VoidCallback? onEdit;
+
+  /// Elimina ESTE evento con confirmación (null = sin permiso). En un hueco
+  /// OCUPADO no hay nada que administrar: no se ofrece ni editar ni eliminar.
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2846,6 +2904,22 @@ class _AgendaDetailBlock extends StatelessWidget {
                   ),
                   onPressed: onEdit,
                   icon: Icon(Icons.edit_outlined, size: 17, color: color),
+                ),
+              // ELIMINAR: acción destructiva, en ROJO y con confirmación
+              // propia (mirar _deleteEvent). Junto a Editar, sin sacar al
+              // usuario de la pantalla en la que vió el evento.
+              if (onDelete != null)
+                IconButton(
+                  tooltip: 'Eliminar agenda',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                  onPressed: onDelete,
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 17,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
                 ),
             ],
           ),

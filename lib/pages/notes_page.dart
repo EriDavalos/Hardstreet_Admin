@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../hs_access.dart';
 import '../hs_api.dart';
+import '../home_widgets.dart';
 import '../note_model.dart';
 import '../note_selection.dart';
 import '../theme.dart';
@@ -100,6 +101,42 @@ class _NotesPageState extends State<NotesPage> {
   void initState() {
     super.initState();
     _load();
+    // Toque en el WIDGET de Notas: abrir esa nota (o el alta). El listado
+    // llega con _load; la aplicación del pedido se repite en cada carga.
+    NotesWidget.requested.addListener(_onWidgetRequest);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onWidgetRequest());
+  }
+
+  @override
+  void dispose() {
+    NotesWidget.requested.removeListener(_onWidgetRequest);
+    super.dispose();
+  }
+
+  /// Nota pedida por el widget (aún no localizable si la lista sigue
+  /// cargando): se aplica al terminar la carga.
+  void _onWidgetRequest() {
+    final req = NotesWidget.requested.value;
+    if (req == null) return;
+    if (req.create) {
+      NotesWidget.requested.value = null;
+      _newNote();
+      return;
+    }
+    final summary = _notes.firstWhere(
+      (n) => n.id == req.noteId,
+      orElse: () => const NoteSummary(
+        id: 0, title: '', preview: '', color: '', pinned: false,
+        updated: null, hasDrawing: false,
+      ),
+    );
+    if (summary.id > 0) {
+      NotesWidget.requested.value = null;
+      _open(summary);
+    } else if (!_loading) {
+      // Ya cargó y la nota no está (p. ej. se borró): que no quede colgado.
+      NotesWidget.requested.value = null;
+    }
   }
 
   Future<void> _load() async {
@@ -112,6 +149,8 @@ class _NotesPageState extends State<NotesPage> {
         _loading = false;
         _error = null;
       });
+      // La lista llegó: ya se puede atender un toque del widget.
+      _onWidgetRequest();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
