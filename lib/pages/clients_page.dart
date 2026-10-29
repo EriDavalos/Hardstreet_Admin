@@ -15,6 +15,7 @@ import '../widgets/common.dart';
 import '../widgets/hs_pickers.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/drive_folder_picker.dart';
+import '../widgets/finance_chart.dart' show FinanceColors;
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_pager.dart';
@@ -1716,14 +1717,14 @@ class _AbonarDialogState extends State<_AbonarDialog> {
                 child: _MiniStat(
                   'Pagado',
                   hsMoney(paid, currency),
-                  const Color(0xFF2F6BFF),
+                  FinanceColors.abono,
                 ),
               ),
               Expanded(
                 child: _MiniStat(
                   'Saldo',
                   hsMoney(saldo < 0 ? 0 : saldo, currency),
-                  const Color(0xFFF59E0B),
+                  FinanceColors.porCobrar,
                 ),
               ),
             ],
@@ -2119,7 +2120,9 @@ class _PickerField extends StatelessWidget {
 //                   abonos externos) + disponible del paquete
 // ==================================================================
 
-/// Colores de los movimientos y estados (se usan en todo el modal).
+/// Acentos del modal (azules de la marca y estados). OJO: los colores del
+/// DINERO no viven aquí, viven en [FinanceColors] (finance_chart.dart) para
+/// que el mismo concepto se pinte igual en Finanzas y en este administrador.
 const Color _kGreen = Color(0xFF2F6BFF);
 
 /// VERDE de lo CUMPLIDO (servicio terminado). `_kGreen` es el azul de la
@@ -2128,7 +2131,6 @@ const Color _kGreen = Color(0xFF2F6BFF);
 const Color _kDone = Color(0xFF16A34A);
 const Color _kAmber = Color(0xFFF59E0B);
 const Color _kBlue = Color(0xFF3B82F6);
-const Color _kRed = Color(0xFFEF4444);
 const Color _kTeal = Color(0xFF2F6BFF);
 
 /// Etiqueta / icono / color de cada tipo de movimiento.
@@ -2137,6 +2139,7 @@ String _moveLabel(String kind) => switch (kind) {
   'abono_externo' => 'Abono externo',
   'inversion' => 'Inversión',
   'ahorro' => 'Ahorro',
+  'retiro_ahorro' => 'Retiro del ahorro',
   'pago' => 'Pago',
   _ => 'Gasto',
 };
@@ -2146,17 +2149,22 @@ IconData _moveIcon(String kind) => switch (kind) {
   'abono_externo' => Icons.account_balance_wallet_outlined,
   'inversion' => Icons.trending_up,
   'ahorro' => Icons.savings_rounded,
+  'retiro_ahorro' => Icons.savings_outlined,
   'pago' => Icons.handshake_outlined,
   _ => Icons.trending_down,
 };
 
+/// Color de cada concepto de dinero: el MISMO de [FinanceColors], compartido
+/// con el módulo Finanzas (verde abono, azul claro abono externo, azul ahorro,
+/// naranja inversión, ámbar pago y rojo gasto).
 Color _moveColor(String kind) => switch (kind) {
-  'abono' => _kGreen,
-  'abono_externo' => _kBlue,
-  'inversion' => _kTeal,
-  'ahorro' => _kTeal,
-  'pago' => _kAmber,
-  _ => _kRed,
+  'abono' => FinanceColors.abono,
+  'abono_externo' => FinanceColors.abonoExterno,
+  'inversion' => FinanceColors.inversion,
+  'ahorro' => FinanceColors.ahorro,
+  'retiro_ahorro' => FinanceColors.ahorro,
+  'pago' => FinanceColors.pagado,
+  _ => FinanceColors.gasto,
 };
 
 /// Tipos que ofrece el diálogo "Movimiento del paquete".
@@ -3839,14 +3847,18 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     return Row(
       children: [
         Expanded(
-          child: _MoneyTile('Abonado', hsMoney(paid, currency), _kGreen),
+          child: _MoneyTile(
+            'Abonado',
+            hsMoney(paid, currency),
+            FinanceColors.abono,
+          ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: _MoneyTile(
             'Saldo',
             hsMoney(saldo < 0 ? 0 : saldo, currency),
-            _kAmber,
+            FinanceColors.porCobrar,
           ),
         ),
         const SizedBox(width: 8),
@@ -3854,7 +3866,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
           child: _MoneyTile(
             'Pagado',
             '${(pct * 100).toStringAsFixed(0)} %',
-            _kBlue,
+            FinanceColors.abono,
           ),
         ),
       ],
@@ -4623,31 +4635,35 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
     final totals = _totals;
     final phone = MediaQuery.sizeOf(context).width < 560;
     final tiles = <Widget>[
-      _MoneyTile('Disponible', hsMoney(_disponible, currency), _kGreen),
+      _MoneyTile(
+        'Disponible',
+        hsMoney(_disponible, currency),
+        FinanceColors.positive,
+      ),
       _MoneyTile(
         'Ahorro',
         hsMoney((totals['ahorrado'] as num?) ?? 0, currency),
-        _kTeal,
+        FinanceColors.ahorro,
       ),
       _MoneyTile(
         'Abono externo',
         hsMoney((totals['abonoExterno'] as num?) ?? 0, currency),
-        _kBlue,
+        FinanceColors.abonoExterno,
       ),
       _MoneyTile(
         'Invertido',
         hsMoney((totals['invertido'] as num?) ?? 0, currency),
-        _kTeal,
+        FinanceColors.inversion,
       ),
       _MoneyTile(
         'Gastado',
         hsMoney((totals['gastado'] as num?) ?? 0, currency),
-        _kRed,
+        FinanceColors.gasto,
       ),
       _MoneyTile(
         'Pagado',
         hsMoney((totals['pagos'] as num?) ?? 0, currency),
-        _kAmber,
+        FinanceColors.pagado,
       ),
     ];
 
@@ -4683,7 +4699,7 @@ class ClientPackagesDialogState extends State<ClientPackagesDialog> {
                   style: const TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
-                    color: _kGreen,
+                    color: FinanceColors.positive,
                   ),
                 ),
               Tooltip(

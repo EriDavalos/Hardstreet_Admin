@@ -10,7 +10,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Paquetes** | ✅ DOS NIVELES en el mismo módulo: abre en la **galería de categorías** (portadas con su foto, cuántos paquetes y desde qué precio, más la de "Todo el catálogo" y el botón **Nueva categoría**) y al abrir una se ven SUS paquetes, editables, sin salir ni abrir un modal. Ya dentro, el catálogo estilo flyer (tier, categoría, servicios, imagen) con cards o filas; el formulario tiene pestañas Datos / Servicios, vista previa en vivo y permite AGREGAR servicios sin salir |
 | **Servicios** | ✅ Catálogo con icono, nombre, descripción y liga del Drive (opcional) |
 | **Clientes** | ✅ CRUD + tarjeta interactiva que abre el modal de administración de paquetes |
-| **Finanzas** | ✅ Vista con pestañas: **Resumen** (DINERO ACTUAL con su tabla de conceptos y gráfica), **Por paquete** y **Pagos** a colaboradores/empleados |
+| **Finanzas** | ✅ Vista con pestañas: **Resumen** (DINERO ACTUAL con su tabla de conceptos y gráfica), **Por paquete**, **Pagos** a colaboradores/empleados y **Estimación** (planeación por paquete) |
 | **Usuarios / Roles** | ✅ CRUD + permisos por módulo |
 | **Agendas** | ✅ Calendario de eventos con franja de próximos eventos, **alta de eventos** eligiendo cliente → su paquete (opcional) → servicio y **lugar en el mapa** (búsqueda o punto marcado). En el mes, los **días ocupados** se marcan en rojo |
 | **Dashboard** | ✅ Tablero sin scroll (escritorio) con el resumen, las finanzas y los eventos |
@@ -138,7 +138,7 @@ nuevos.
 
 ## Módulo Finanzas
 
-Todo lo monetario del negocio en una vista moderna con **tres pestañas**
+Todo lo monetario del negocio en una vista moderna con **cuatro pestañas**
 (`/api/admin/finance`, permiso sobre el módulo "Finanzas"):
 
 - **Resumen**:
@@ -158,20 +158,50 @@ Todo lo monetario del negocio en una vista moderna con **tres pestañas**
 - **Pagos**: todo lo pagado a **cada colaborador y empleado**: total
   histórico, número de pagos, paquetes y último pago. Al tocar a una persona
   se desglosa cada pago (paquete, cliente, concepto y fecha).
+- **Estimación** (planeación, dinero **ficticio**): **todos los paquetes del
+  CATÁLOGO** (módulo Paquetes), no los paquetes de cada cliente. Al tocar uno
+  se abre su **administrador de estimación**, donde el paquete se **desglosa
+  en varias inversiones**, cada una con monto y concepto, igual que en el
+  administrador del paquete del cliente (se pueden editar y quitar). La
+  **inversión es lo que se DESCUENTA del monto del paquete**, así que
+  **ganancia estimada = precio − suma de inversiones**, con su **margen %**.
+  Vive en su propia tabla (`package_estimates`, endpoint
+  `/api/admin/finance-estimates`) y **no entra en ninguna cuenta**: ni en el
+  dinero actual, ni en el ahorro, ni en los gastos del negocio. La tabla
+  anterior (`purchased_packages_estimates`, por paquete comprado y con
+  inversión + gasto) se elimina y ya no se usa.
 - **Registrar movimiento**: gasto, inversión, ahorro (cantidad o porcentaje
-  del dinero actual) o abono externo. El paquete es **opcional** — viene en
-  "General (todo el negocio)". Los abonos se capturan en el paquete y los
-  pagos se reparten desde el administrador del paquete (Movimientos →
-  Repartir pago).
+  del dinero actual), abono externo o **retiro del ahorro**. El paquete es
+  **opcional** — viene en "General (todo el negocio)". Los abonos se capturan
+  en el paquete y los pagos se reparten desde el administrador del paquete
+  (Movimientos → Repartir pago).
+- **Retiro del ahorro** (`retiro_ahorro`): **saca** dinero de lo apartado.
+  Baja **solo el ahorro** — no devuelve dinero al negocio, así que el DINERO
+  ACTUAL no cambia. No deja retirar más de lo que hay en el ahorro.
+- En el diálogo de movimiento el monto de referencia es el **ahorro** cuando
+  se aparta o se saca, y el **dinero del paquete** cuando se registra en uno:
+  el "dinero actual del negocio" es dinero de los paquetes y **no** se
+  presenta como un fondo del que se pueda gastar (un gasto general lo paga el
+  ahorro, y el diálogo lo dice en su subtítulo).
 - Ya **no hay un separador de "Ahorro apartado"**: el ahorro aparece como un
-  concepto de la tabla.
+  concepto de la tabla (con su fila de **Retiros del ahorro** cuando hay).
+- **Un color por concepto**, igual en Finanzas, en el tablero y en el
+  administrador de paquetes del cliente: **abono verde**, **abono externo azul
+  claro**, **ahorro azul**, **inversión naranja**, **gasto rojo** y **pago
+  ámbar** (el mismo del "Por cobrar"). La paleta vive en un solo lugar,
+  `FinanceColors` (`lib/widgets/finance_chart.dart`), y el administrador del
+  paquete la usa también para sus tarjetas de dinero y su historial de
+  movimientos — por eso el mismo concepto no cambia de color de una pantalla a
+  otra.
 
 El **Dashboard** añade esa misma información en versión compacta (cuadros +
 gráfica) y un acceso rápido al módulo. Todo es *best effort*: si el usuario no
 tiene permiso o no hay conexión, el resto del dashboard sigue viéndose.
 
 Requiere las tablas `site_config` y `user_drive_shares` (`Hardstreet-DB/hardstreet.sql`)
-(movimientos sin paquete + `drive_path`) y la de
+(movimientos sin paquete + `drive_path`), la de
+`Hardstreet-DB/2026-10-28_finanzas_estimaciones.sql` (tabla `package_estimates`
+de la pestaña "Estimación") y la de
 `Hardstreet-DB/2026-10-14_modulo_finanzas.sql`, que
 registra el módulo y copia los permisos de "Clientes" a los roles que ya los
 tienen. El rol **Admin pasa siempre**, así que el módulo funciona aunque la

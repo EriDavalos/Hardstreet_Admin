@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app_platform.dart';
+import 'drive_host.dart';
 
 /// Progreso de la descarga: [received] bytes leídos y [total] del servidor
 /// (-1 cuando el servidor no informa el tamaño).
@@ -82,27 +83,117 @@ class AppUpdater {
         ? await getTemporaryDirectory()
         : Directory.systemTemp;
     final dir = Directory(
-      [
-        base.path,
-        'hardstreet_cache',
-        'updates',
-      ].join(Platform.pathSeparator),
+      [base.path, 'hardstreet_cache', 'updates'].join(Platform.pathSeparator),
     );
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
 
+  /// Direcciones por las que se intenta la MISMA descarga cuando el TLS falla.
+  ///
+  /// En Android el nombre público puede contestarlo el router (NAT loopback)
+  /// con SU certificado, y entonces la descarga muere con
+  /// `CERTIFICATE_VERIFY_FAILED` aunque el archivo esté perfectamente
+  /// disponible. El hub sirve el mismo `downloads/...` por HTTP en
+  /// [DriveHost.hubPort] y por la IP local, así que esas dos van de respaldo.
+  ///
+  /// Solo se reescribe el origen de enlaces del PROPIO servidor: un enlace
+  /// externo (una nube, otro dominio) se respeta tal cual.
+  static List<String> downloadCandidates(String url) {
+    final out = <String>{url};
+    final link = Uri.tryParse(url);
+    if (link == null || link.scheme != 'https' || link.host.isEmpty) {
+      return out.toList(growable: false);
+    }
+    final ownHosts = <String>{};
+    for (final base in [
+      DriveHost.compiled,
+      DriveHost.base,
+      DriveHost.lanFallback,
+    ]) {
+      final host = Uri.tryParse(base)?.host ?? '';
+      if (host.isNotEmpty) ownHosts.add(host.toLowerCase());
+    }
+    if (!ownHosts.contains(link.host.toLowerCase())) {
+      return out.toList(growable: false);
+    }
+    String httpAt(String host, int? port) => Uri(
+      scheme: 'http',
+      host: host,
+      port: port,
+      path: link.path,
+      query: link.hasQuery ? link.query : null,
+    ).toString();
+    // 1) el MISMO nombre por HTTP en el puerto del hub,
+    // 2) la IP local (sirve si el router no devuelve la conexión a su IP).
+    out.add(httpAt(link.host, DriveHost.hubPort));
+    final lan = Uri.tryParse(DriveHost.lanFallback);
+    if (lan != null && lan.host.isNotEmpty) {
+      out.add(httpAt(lan.host, lan.hasPort ? lan.port : null));
+    }
+    return out.toList(growable: false);
+  }
+
   /// Descarga [url] a un archivo temporal informando progreso por cada
   /// chunk. Lanza [AppUpdateException] (error) o [AppUpdateCancelled].
+  ///
+  /// Si el TLS falla, reintenta la MISMA descarga por las direcciones de
+  /// respaldo de [downloadCandidates] (el certificado NUNCA se ignora).
   static Future<File> download(
     String url, {
     required UpdateProgress onProgress,
     String? fileName,
+    List<String>? fallbackUrls,
   }) async {
     if (kWeb) {
       throw const AppUpdateException('Las descargas no existen en web.');
     }
     _cancelled = false;
+    final extras =
+        fallbackUrls ??
+        downloadCandidates(url).where((u) => u != url).toList(growable: false);
+    final targets = <String>[url, ...extras];
+    for (var i = 0; i < targets.length; i++) {
+      // Una cancelación durante un intento no se reintenta con otro.
+      if (_cancelled) throw const AppUpdateCancelled();
+      try {
+        return await _downloadOnce(
+          targets[i],
+          onProgress: onProgress,
+          fileName: fileName,
+        );
+      } on AppUpdateCancelled {
+        rethrow;
+      } on AppUpdateException {
+        rethrow;
+      } on TlsException {
+        // Quedan respaldos: se prueba el siguiente en silencio.
+        if (i < targets.length - 1) continue;
+        throw const AppUpdateException(
+          'El servidor presentó un certificado que el teléfono no puede '
+          'verificar (CERTIFICATE_VERIFY_FAILED) y las direcciones de '
+          'respaldo tampoco respondieron. Revisa la conexión o la dirección '
+          'del servidor en Configuraciones.',
+        );
+      } on TimeoutException {
+        throw const AppUpdateException(
+          'El servidor tardó demasiado en responder.',
+        );
+      } catch (e) {
+        if (_cancelled) throw const AppUpdateCancelled();
+        throw AppUpdateException('No se pudo descargar: $e');
+      }
+    }
+    throw const AppUpdateException('No se pudo descargar la actualización.');
+  }
+
+  /// Un intento de descarga contra UNA dirección (con su propio cliente HTTP,
+  /// para que el respaldo no herede una conexión ya rota).
+  static Future<File> _downloadOnce(
+    String url, {
+    required UpdateProgress onProgress,
+    String? fileName,
+  }) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 20);
     _active = client;
@@ -177,6 +268,10 @@ class AppUpdater {
       rethrow;
     } on AppUpdateException {
       rethrow;
+    } on TlsException {
+      // El certificado no se pudo verificar: lo decide el reintento con las
+      // direcciones de respaldo ([download]), no un mensaje aquí.
+      rethrow;
     } on TimeoutException {
       throw const AppUpdateException(
         'El servidor tardó demasiado en responder.',
@@ -196,9 +291,7 @@ class AppUpdater {
     final segs = Uri.tryParse(url)?.pathSegments.where((s) => s.isNotEmpty);
     final name = (segs?.isNotEmpty ?? false) ? segs!.last : '';
     if (name.isEmpty) {
-      return isAndroidPlatform
-          ? 'app-release.apk'
-          : 'app-release.exe';
+      return isAndroidPlatform ? 'app-release.apk' : 'app-release.exe';
     }
     return name;
   }

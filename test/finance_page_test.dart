@@ -17,10 +17,103 @@ import 'package:hardstreet_admin/pages/finance_page.dart';
 ///
 /// Trae un paquete GRATIS sin movimientos ("Sesión gratis", debe ocultarse) y
 /// uno gratis CON un gasto ("Cortesía con gasto", debe verse).
-void _installMockClient({List<Map<String, dynamic>>? posts}) {
+void _installMockClient({
+  List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? estimateCalls,
+}) {
+  // INVERSIONES ESTIMADAS del paquete del catálogo id 1. Son mutables: el
+  // mock agrega, edita y quita igual que el backend y responde con la lista.
+  final estimated = <Map<String, dynamic>>[
+    {
+      'id': 11,
+      'amount': 1000,
+      'description': 'Cuadro 20x24',
+      'created': '2026-10-04T10:00:00',
+    },
+    {
+      'id': 12,
+      'amount': 500,
+      'description': 'Gasolina',
+      'created': '2026-10-03T10:00:00',
+    },
+  ];
+  Map<String, dynamic> estimateOf(int idPackage) {
+    final boda = idPackage == 1;
+    return {
+      'id': idPackage,
+      'name': boda ? 'Boda - Premium' : 'XV Años - Basic',
+      'subtitle': boda ? 'Cobertura premium' : 'Lo esencial',
+      'categoryName': boda ? 'Boda' : 'XV Años',
+      'currency': 'MXN',
+      'price': boda ? 12000 : 5200,
+      'movements': boda
+          ? List<Map<String, dynamic>>.from(estimated)
+          : <Map<String, dynamic>>[],
+    };
+  }
+
   HsApi.client = MockClient((request) async {
     final headers = {'content-type': 'application/json'};
     final path = request.url.path;
+
+    // ESTIMACIÓN (planeación) por paquete del CATÁLOGO.
+    if (path.endsWith('/api/admin/finance-estimates')) {
+      final method = request.method;
+      if (method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'estimatesAvailable': true,
+            'packages': [estimateOf(1), estimateOf(2)],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      final body = request.body.isEmpty
+          ? const <String, dynamic>{}
+          : (jsonDecode(request.body) as Map).cast<String, dynamic>();
+      estimateCalls?.add({'method': method, ...body});
+      if (method == 'POST') {
+        estimated.insert(0, {
+          'id': 100 + estimated.length,
+          'amount': body['amount'],
+          'description': body['description'],
+          'created': '2026-10-10T10:00:00',
+        });
+        final id = (body['idPackage'] as num?)?.toInt() ?? 1;
+        return http.Response(
+          jsonEncode({'ok': true, 'estimate': estimateOf(id)}),
+          201,
+          headers: headers,
+        );
+      }
+      if (method == 'PUT') {
+        final id = (body['movementId'] as num?)?.toInt() ?? 0;
+        final i = estimated.indexWhere((m) => (m['id'] as num) == id);
+        if (i >= 0) {
+          estimated[i] = {
+            ...estimated[i],
+            'amount': body['amount'] ?? estimated[i]['amount'],
+            'description': body['description'] ?? estimated[i]['description'],
+          };
+        }
+        return http.Response(
+          jsonEncode({'ok': true, 'estimate': estimateOf(1)}),
+          200,
+          headers: headers,
+        );
+      }
+      if (method == 'DELETE') {
+        final id = int.tryParse(request.url.queryParameters['id'] ?? '') ?? 0;
+        estimated.removeWhere((m) => (m['id'] as num) == id);
+        return http.Response(
+          jsonEncode({'ok': true, 'estimate': estimateOf(1)}),
+          200,
+          headers: headers,
+        );
+      }
+    }
 
     if (path.endsWith('/api/admin/finance')) {
       if (request.method == 'POST') {
@@ -253,6 +346,7 @@ Future<void> _pumpFinance(
   WidgetTester tester,
   Size size, {
   List<Map<String, dynamic>>? posts,
+  List<Map<String, dynamic>>? estimateCalls,
 }) async {
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
@@ -261,7 +355,7 @@ Future<void> _pumpFinance(
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final previous = HsApi.client;
-  _installMockClient(posts: posts);
+  _installMockClient(posts: posts, estimateCalls: estimateCalls);
   addTearDown(() => HsApi.client = previous);
 
   await tester.pumpWidget(
@@ -323,6 +417,41 @@ void main() {
       expect(totals.gananciaEstimada, 790);
       expect(totals.gananciaReal, 390);
       expect(totals.dineroActual, 390);
+    });
+
+    test('lee los retiros del ahorro', () {
+      final totals = FinanceTotals.fromJson({'ahorro': 1200, 'retiros': 800});
+      expect(totals.ahorro, 1200);
+      expect(totals.retiros, 800);
+    });
+
+    test('suma las inversiones estimadas de un paquete del catálogo', () {
+      final data = FinanceEstimates.fromJson({
+        'estimatesAvailable': true,
+        'packages': [
+          {
+            'id': 4,
+            'name': 'Boda - Premium',
+            'categoryName': 'Boda',
+            'price': 10000,
+            'movements': [
+              {'id': 1, 'amount': 2000},
+              {'id': 2, 'amount': 500},
+            ],
+          },
+          {'id': 5, 'name': 'XV - Basic', 'price': 5200, 'movements': []},
+        ],
+      });
+      final e = data.packages.first;
+      expect(e.inversion, 2500);
+      expect(e.costo, 2500);
+      expect(e.utilidad, 7500);
+      expect(e.margen, 75);
+      expect(e.label, 'Boda - Premium · Boda');
+      expect(data.packages.last.hasEstimate, isFalse);
+      // Totales: 15200 − 2500 = 12700.
+      expect(data.ingreso, 15200);
+      expect(data.utilidad, 12700);
     });
 
     test('deriva los pagos por persona de un backend viejo', () {
@@ -525,6 +654,15 @@ void main() {
       ),
       findsOneWidget,
     );
+    // El "dinero actual del negocio" (que es dinero de los paquetes) ya no
+    // se anuncia como si fuera un fondo disponible.
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('Dinero actual del negocio'),
+      ),
+      findsNothing,
+    );
 
     await tester.enterText(
       find.descendant(
@@ -589,6 +727,200 @@ void main() {
     expect(posts.first['amount'], 2075);
   });
 
+  testWidgets('Ahorro: el diálogo enseña el ahorro, no el dinero actual', (
+    tester,
+  ) async {
+    await _pumpFinance(tester, const Size(1280, 1100));
+
+    await _tap(tester, find.text('Registrar movimiento'));
+    final dialog = find.byType(AlertDialog);
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Ahorro')),
+    );
+
+    expect(find.text('Ahorro actual del negocio'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('Dinero actual'),
+      ),
+      findsNothing,
+    );
+    // El ahorro del negocio según los totales simulados.
+    expect(find.text(r'MXN $3,000'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Sacar del ahorro: baja solo el ahorro', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpFinance(tester, const Size(1280, 1100), posts: posts);
+
+    await _tap(tester, find.text('Registrar movimiento'));
+    final dialog = find.byType(AlertDialog);
+
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Retiros del ahorro')),
+    );
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('baja SOLO el ahorro'),
+      ),
+      findsOneWidget,
+    );
+    // La referencia es el ahorro disponible (3000).
+    expect(find.text('Ahorro actual del negocio'), findsOneWidget);
+
+    await tester.enterText(
+      find.descendant(
+        of: dialog,
+        matching: find.widgetWithText(TextField, 'Monto'),
+      ),
+      '2000',
+    );
+    await tester.pump();
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Sacar')),
+    );
+
+    expect(posts, hasLength(1));
+    expect(posts.first['kind'], 'retiro_ahorro');
+    expect(posts.first['amount'], 2000);
+    expect(
+      posts.first.containsKey('purchasedPackageId'),
+      isFalse,
+      reason: 'un retiro general no manda paquete',
+    );
+  });
+
+  testWidgets('Sacar del ahorro: no deja pasar del ahorro disponible', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpFinance(tester, const Size(1280, 1100), posts: posts);
+
+    await _tap(tester, find.text('Registrar movimiento'));
+    final dialog = find.byType(AlertDialog);
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Retiros del ahorro')),
+    );
+    await tester.enterText(
+      find.descendant(
+        of: dialog,
+        matching: find.widgetWithText(TextField, 'Monto'),
+      ),
+      '5000',
+    );
+    await tester.pump();
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Sacar')),
+    );
+
+    expect(posts, isEmpty);
+    expect(find.textContaining('El ahorro disponible es'), findsOneWidget);
+  });
+
+  testWidgets('Estimación: paquetes del catálogo y su ganancia planeada', (
+    tester,
+  ) async {
+    await _pumpFinance(tester, const Size(1280, 1100));
+
+    await _openTab(tester, 3);
+
+    expect(find.text('GANANCIA ESTIMADA'), findsOneWidget);
+    expect(find.text('Todos los paquetes'), findsOneWidget);
+    // Son paquetes del CATÁLOGO (no los de cada cliente).
+    expect(find.text('Boda - Premium'), findsWidgets);
+    expect(find.text('XV Años - Basic'), findsWidgets);
+    // 12000 + 5200 − (1000 + 500) = 15700, con 91 % de margen.
+    expect(find.text(r'MXN $15,700'), findsWidgets);
+    expect(find.textContaining('91 %'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Estimación: el paquete se desglosa en inversiones', (
+    tester,
+  ) async {
+    final calls = <Map<String, dynamic>>[];
+    await _pumpFinance(tester, const Size(1280, 1100), estimateCalls: calls);
+
+    await _openTab(tester, 3);
+    await _tap(tester, find.text('Boda - Premium').first);
+
+    // El administrador del paquete: sus inversiones estimadas y el total.
+    expect(find.text('INVERSIONES ESTIMADAS'), findsOneWidget);
+    expect(find.textContaining('Cuadro 20x24'), findsOneWidget);
+    expect(find.textContaining('Gasolina'), findsOneWidget);
+    expect(find.text('Agregar inversión'), findsOneWidget);
+    // 12000 − 1500 = 10500.
+    expect(find.text(r'MXN $10,500'), findsWidgets);
+
+    // Se agrega una INVERSIÓN estimada.
+    await _tap(tester, find.text('Agregar inversión'));
+    final form = find.byType(AlertDialog);
+    expect(form, findsOneWidget);
+    expect(
+      find.descendant(of: form, matching: find.text('Inversión')),
+      findsNothing,
+      reason: 'ya no hay selector de tipo: todo es inversión',
+    );
+    await tester.enterText(
+      find.descendant(
+        of: form,
+        matching: find.widgetWithText(TextField, 'Monto'),
+      ),
+      '2500',
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.descendant(
+        of: form,
+        matching: find.widgetWithText(TextField, 'Concepto'),
+      ),
+      'Segundo fotógrafo',
+    );
+    await tester.pump();
+    await _tap(
+      tester,
+      find.descendant(of: form, matching: find.text('Agregar')),
+    );
+
+    expect(calls, hasLength(1));
+    expect(calls.first['method'], 'POST');
+    expect(calls.first['idPackage'], 1);
+    expect(calls.first['amount'], 2500);
+    expect(calls.first.containsKey('kind'), isFalse);
+    // El administrador se actualiza con lo que devolvió el servidor.
+    expect(find.textContaining('Segundo fotógrafo'), findsOneWidget);
+    // 12000 − (1000 + 2500 + 500) = 8000.
+    expect(find.text(r'MXN $8,000'), findsWidgets);
+  });
+
+  testWidgets('Estimación: quitar una inversión estimada', (tester) async {
+    final calls = <Map<String, dynamic>>[];
+    await _pumpFinance(tester, const Size(1280, 1100), estimateCalls: calls);
+
+    await _openTab(tester, 3);
+    await _tap(tester, find.text('Boda - Premium').first);
+
+    // La última × de las inversiones (la primera de la cabecera es Cerrar).
+    await _tap(tester, find.byIcon(Icons.close_rounded).last);
+    expect(
+      find.textContaining('¿Quitar la inversión estimada?'),
+      findsOneWidget,
+    );
+    await _tap(tester, find.text('Quitar'));
+
+    expect(calls, hasLength(1));
+    expect(calls.first['method'], 'DELETE');
+    expect(find.textContaining('Gasolina'), findsNothing);
+  });
+
   testWidgets('Móvil: pestañas, tabla y pagos sin desbordes ni recortes', (
     tester,
   ) async {
@@ -626,6 +958,14 @@ void main() {
     // Pestaña de pagos.
     await _openTab(tester, 2);
     expect(find.text('Carla Méndez'), findsWidgets);
+    expect(tester.takeException(), isNull);
+
+    // Pestaña de estimación (planeación) también en el teléfono.
+    await _openTab(tester, 3);
+    expect(find.text('GANANCIA ESTIMADA'), findsOneWidget);
+    expect(find.text('Boda - Premium'), findsWidgets);
+    await _tap(tester, find.text('Boda - Premium').first);
+    expect(find.text('INVERSIONES ESTIMADAS'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

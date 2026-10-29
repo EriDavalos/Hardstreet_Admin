@@ -15,6 +15,15 @@
 //                 PAQUETES - ahorro apartado - pagos. Los movimientos
 //                 GENERALES (gasto/inversión) se pagan con el ahorro.
 //
+// RETIROS DEL AHORRO (`retiro_ahorro`): sacar dinero de lo apartado. Bajan
+//                 SOLO el ahorro; ni el dinero actual ni los movimientos
+//                 generales cambian.
+//
+// ESTIMACIONES (`FinanceEstimates`, endpoint aparte): planeación FICTICIA por
+//                 paquete del CATÁLOGO (cuánto se invertirá en el paquete y
+//                 cuánto quedaría). No entra en ninguna cuenta de las de
+//                 arriba.
+//
 // Todo dato que falte viene en cero: la UI nunca revienta por un backend
 // viejo o a medias.
 // ==================================================================
@@ -27,6 +36,7 @@ class FinanceTotals {
     this.porCobrar = 0,
     this.disponible = 0,
     this.ahorro = 0,
+    this.retiros = 0,
     this.inversiones = 0,
     this.gastos = 0,
     this.abonoExterno = 0,
@@ -49,9 +59,13 @@ class FinanceTotals {
   /// los movimientos GENERALES los paga el ahorro.
   final num disponible;
 
-  /// Ahorro apartado (dinero del negocio guardado) MENOS los gastos e
-  /// inversiones generales que se pagaron con él.
+  /// Ahorro que QUEDA: lo apartado menos los gastos generales que se pagaron
+  /// con él y menos lo que se SACÓ (`retiros`).
   final num ahorro;
+
+  /// Dinero SACADO del ahorro (`retiro_ahorro`). No afecta al dinero actual:
+  /// ya había salido del negocio al apartarse.
+  final num retiros;
   final num inversiones;
   final num gastos;
 
@@ -101,6 +115,7 @@ class FinanceTotals {
       porCobrar: _num(json['porCobrar']),
       disponible: json['disponible'] != null ? _num(json['disponible']) : real,
       ahorro: ahorro,
+      retiros: _num(json['retiros']),
       inversiones: inversiones,
       gastos: gastos,
       abonoExterno: abonoExterno,
@@ -244,6 +259,146 @@ class FinancePackage {
       gananciaEstimada: json['gananciaEstimada'] != null
           ? n(json['gananciaEstimada'])
           : paid + abonoExterno - inversiones - ahorro,
+    );
+  }
+}
+
+/// UNA INVERSIÓN ESTIMADA de un paquete del CATÁLOGO (planeación).
+///
+/// Todo lo que se captura en la estimación es inversión: es lo que se
+/// DESCUENTA del monto (precio) del paquete.
+class FinanceEstimateMovement {
+  const FinanceEstimateMovement({
+    required this.id,
+    this.amount = 0,
+    this.description = '',
+    this.created = '',
+  });
+
+  final int id;
+  final num amount;
+  final String description;
+
+  /// Fecha tal cual la manda la API (`yyyy-MM-ddTHH:mm:ss`).
+  final String created;
+
+  factory FinanceEstimateMovement.fromJson(Map<String, dynamic> json) {
+    num n(Object? v) => v is num ? v : 0;
+    return FinanceEstimateMovement(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      amount: n(json['amount']),
+      description: (json['description'] ?? '').toString(),
+      created: (json['created'] ?? '').toString(),
+    );
+  }
+}
+
+/// ESTIMACIÓN de UN paquete del CATÁLOGO (pestaña "Estimación").
+///
+/// Dinero de PLANEACIÓN: cuánto se estima INVERTIR en el paquete (cada
+/// inversión se descuenta de su monto) y cuánto quedaría de ganancia. Se
+/// captura con inversiones estimadas, una por una (como el administrador del
+/// paquete del cliente), y no se suma a ninguna cuenta del módulo (ni al
+/// dinero actual, ni al ahorro, ni a los gastos).
+class FinanceEstimate {
+  const FinanceEstimate({
+    required this.id,
+    this.name = '',
+    this.subtitle = '',
+    this.categoryName = '',
+    this.currency = 'MXN',
+    this.price = 0,
+    this.movements = const [],
+  });
+
+  /// Id del paquete del catálogo (`packages.id`).
+  final int id;
+  final String name;
+  final String subtitle;
+  final String categoryName;
+  final String currency;
+
+  /// Precio del paquete (lo que se cobra).
+  final num price;
+
+  /// Las inversiones estimadas, de la más reciente a la más vieja.
+  final List<FinanceEstimateMovement> movements;
+
+  /// La INVERSIÓN estimada: la suma de sus inversiones. Es lo que se
+  /// DESCUENTA del monto (precio) del paquete.
+  num get inversion => movements.fold<num>(0, (sum, m) => sum + m.amount);
+
+  /// Costo estimado = inversión.
+  num get costo => inversion;
+
+  /// Ganancia estimada = precio − costo (puede ser negativa).
+  num get utilidad => price - costo;
+
+  /// Margen sobre el precio (null si el paquete no cuesta nada).
+  num? get margen => price > 0 ? (utilidad / price) * 100 : null;
+
+  /// ¿Ya tiene inversiones estimadas?
+  bool get hasEstimate => movements.isNotEmpty;
+
+  /// Etiqueta corta: "Boda - Premium · Boda".
+  String get label => categoryName.isEmpty ? name : '$name · $categoryName';
+
+  factory FinanceEstimate.fromJson(Map<String, dynamic> json) {
+    num n(Object? v) => v is num ? v : 0;
+    final raw = json['movements'];
+    final movements = raw is List
+        ? raw
+              .whereType<Map>()
+              .map(
+                (e) =>
+                    FinanceEstimateMovement.fromJson(e.cast<String, dynamic>()),
+              )
+              .toList(growable: false)
+        : const <FinanceEstimateMovement>[];
+    return FinanceEstimate(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] ?? '').toString(),
+      subtitle: (json['subtitle'] ?? '').toString(),
+      categoryName: (json['categoryName'] ?? '').toString(),
+      currency: (json['currency'] ?? 'MXN').toString(),
+      price: n(json['price']),
+      movements: movements,
+    );
+  }
+}
+
+/// Respuesta completa de /api/admin/finance-estimates.
+class FinanceEstimates {
+  const FinanceEstimates({this.packages = const [], this.available = true});
+
+  /// TODOS los paquetes del catálogo de la empresa.
+  final List<FinanceEstimate> packages;
+
+  /// ¿La tabla `package_estimates` ya existe? (si no, todo sale en cero).
+  final bool available;
+
+  num get ingreso => packages.fold<num>(0, (sum, e) => sum + e.price);
+  num get inversion => packages.fold<num>(0, (sum, e) => sum + e.inversion);
+  num get utilidad => packages.fold<num>(0, (sum, e) => sum + e.utilidad);
+
+  /// El paquete estimado con ese id (o null).
+  FinanceEstimate? of(int id) {
+    for (final e in packages) {
+      if (e.id == id) return e;
+    }
+    return null;
+  }
+
+  factory FinanceEstimates.fromJson(Map<String, dynamic> json) {
+    final raw = json['packages'];
+    return FinanceEstimates(
+      packages: raw is List
+          ? raw
+                .whereType<Map>()
+                .map((e) => FinanceEstimate.fromJson(e.cast<String, dynamic>()))
+                .toList(growable: false)
+          : const <FinanceEstimate>[],
+      available: json['estimatesAvailable'] != false,
     );
   }
 }
@@ -455,6 +610,7 @@ class FinanceData {
 
   /// Paquetes con dinero o movimientos (los gratis vacíos se omiten).
   final List<FinancePackage> packages;
+
   final List<FinanceMonth> months;
   final List<FinanceMovement> movements;
 

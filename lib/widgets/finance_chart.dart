@@ -16,27 +16,66 @@ import '../hs_format.dart';
 // Sin dependencias externas: todo se dibuja con layout de Flutter.
 // ==================================================================
 
-/// Paleta de finanzas (una sola fuente de verdad).
+/// Paleta de finanzas (la ÚNICA fuente de verdad de los colores del dinero).
+///
+/// El mismo color se usa en el módulo Finanzas, en el tablero y en el
+/// administrador de paquetes del cliente, para que un concepto se reconozca de
+/// un vistazo en cualquier pantalla:
+///
+///   abono          VERDE      dinero que entra del cliente
+///   abono externo  AZUL CLARO pago recibido fuera del paquete
+///   ahorro         AZUL       dinero apartado
+///   inversión      NARANJA    dinero que se mete al paquete
+///   gasto          ROJO       dinero que se va
+///   pagado         ÁMBAR      pagos a colaboradores y empleados
 class FinanceColors {
   FinanceColors._();
 
-  /// Dinero cobrado (abonos).
-  static const positive = Color(0xFF2F6BFF);
+  /// Abonos: dinero cobrado a los clientes. VERDE.
+  static const abono = Color(0xFF16A34A);
 
-  /// Gastos.
-  static const red = Color(0xFFEF4444);
+  /// Abono externo: pago recibido fuera del paquete. Azul CLARO (un tono más
+  /// claro que el azul del ahorro, para no confundirlos).
+  static const abonoExterno = Color(0xFF3B82F6);
 
-  /// Inversión (también es una salida, pero se pinta distinto).
-  static const investment = Color(0xFF1D4ED8);
+  /// Ahorro: dinero apartado. AZUL.
+  static const ahorro = Color(0xFF2F6BFF);
 
-  /// Apartado en el ahorro.
-  static const teal = Color(0xFF0EA5E9);
+  /// Inversión: dinero que se mete al paquete. NARANJA.
+  static const inversion = Color(0xFFF97316);
 
-  /// Pago recibido fuera del paquete.
-  static const blue = Color(0xFF3B82F6);
+  /// Gastos. ROJO.
+  static const gasto = Color(0xFFEF4444);
 
-  /// Falta por cobrar.
-  static const amber = Color(0xFFF59E0B);
+  /// Pagos a colaboradores y empleados. ÁMBAR.
+  static const pagado = Color(0xFFF59E0B);
+
+  /// Falta por cobrar de un paquete. ÁMBAR (el mismo del dinero por entregar).
+  static const porCobrar = Color(0xFFF59E0B);
+
+  // ------------------------------------------------------------------
+  // Alias históricos: mismos valores que los conceptos de arriba. Se
+  // conservan para no tocar cada uso; el nombre nuevo es el que describe el
+  // concepto. NUNCA darles un valor distinto al de su concepto.
+  // ------------------------------------------------------------------
+
+  /// = [abono] (también se usa para saldos a favor).
+  static const positive = abono;
+
+  /// = [gasto].
+  static const red = gasto;
+
+  /// = [inversion].
+  static const investment = inversion;
+
+  /// = [ahorro].
+  static const teal = ahorro;
+
+  /// = [abonoExterno].
+  static const blue = abonoExterno;
+
+  /// = [pagado] (y [porCobrar], que comparten tono).
+  static const amber = pagado;
 }
 
 /// Un cuadro de total (etiqueta + monto + icono + color).

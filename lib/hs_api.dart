@@ -1699,11 +1699,11 @@ class HsApi {
   // ---------------- Finanzas (módulo "Finanzas") ----------------
 
   /// Todo lo monetario del negocio, en una sola llamada:
-  /// `{ currency, totals, packages, months, movements }`.
+  /// `{ currency, totals, general, packages, months, movements, payees }`.
   ///
   /// - `totals`: ganancias (abonos cobrados), porCobrar, facturado,
-  ///   disponible (abonado - gastado - ahorro + abono externo), ahorro,
-  ///   inversiones, gastos y abonoExterno.
+  ///   disponible (abonado - gastado - ahorro + abono externo), ahorro
+  ///   (lo que QUEDA apartado), retiros, inversiones, gastos y abonoExterno.
   /// - `packages`: el dinero de CADA paquete activo, con su cliente.
   /// - `months`: últimos 6 meses (ganancias vs. gastos/inversiones/ahorro).
   /// - `movements`: los movimientos INDIVIDUALES (con paquete y cliente) que
@@ -1716,7 +1716,9 @@ class HsApi {
   }
 
   /// Registra un movimiento DESDE el módulo Finanzas:
-  /// `gasto`, `inversion`, `ahorro` o `abono_externo` (por defecto ahorro).
+  /// `gasto`, `inversion`, `ahorro`, `abono_externo` o `retiro_ahorro` (por
+  /// defecto ahorro). `retiro_ahorro` = SACAR dinero del ahorro: baja solo lo
+  /// apartado, no el dinero actual.
   ///
   /// SIN `purchasedPackageId` el movimiento es GENERAL (del negocio, sin
   /// paquete): es lo que el módulo usa por defecto y no obliga a elegir
@@ -1747,6 +1749,79 @@ class HsApi {
     amount: amount,
     description: description,
   );
+
+  /// SACa dinero del ahorro (sin paquete = del ahorro del NEGOCIO).
+  /// Atajo de [addFinanceMovement] con kind = 'retiro_ahorro'.
+  static Future<void> withdrawSavings({
+    int? purchasedPackageId,
+    required num amount,
+    String description = '',
+  }) => addFinanceMovement(
+    purchasedPackageId: purchasedPackageId,
+    kind: 'retiro_ahorro',
+    amount: amount,
+    description: description,
+  );
+
+  // ---------------- Estimación (planeación) ----------------
+
+  /// ESTIMACIÓN por paquete del CATÁLOGO: todos los paquetes con sus
+  /// movimientos estimados y los totales de cada uno.
+  ///
+  /// Es dinero FICTICIO: no toca el dinero actual, el ahorro ni los gastos.
+  ///
+  /// Endpoint: GET /api/admin/finance-estimates
+  static Future<Map<String, dynamic>> financeEstimates() async {
+    final data = await get('/api/admin/finance-estimates');
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  /// Agrega UNA INVERSIÓN estimada a un paquete del catálogo (es lo que se
+  /// descuenta del monto del paquete).
+  ///
+  /// Devuelve la estimación YA recalculada de ese paquete.
+  /// Endpoint: POST /api/admin/finance-estimates
+  static Future<Map<String, dynamic>> addFinanceEstimateMovement({
+    required int idPackage,
+    required num amount,
+    String description = '',
+  }) async {
+    final data = await post('/api/admin/finance-estimates', {
+      'idPackage': idPackage,
+      'amount': amount,
+      'description': description,
+    });
+    final estimate = (data is Map ? data['estimate'] : null) as Map?;
+    return estimate?.cast<String, dynamic>() ?? const {};
+  }
+
+  /// Edita una INVERSIÓN estimada (monto o concepto).
+  ///
+  /// Endpoint: PUT /api/admin/finance-estimates
+  static Future<Map<String, dynamic>> updateFinanceEstimateMovement({
+    required int movementId,
+    num? amount,
+    String? description,
+  }) async {
+    final data = await put('/api/admin/finance-estimates', {
+      'movementId': movementId,
+      'amount': ?amount,
+      'description': ?description,
+    });
+    final estimate = (data is Map ? data['estimate'] : null) as Map?;
+    return estimate?.cast<String, dynamic>() ?? const {};
+  }
+
+  /// Quita (baja lógica) una INVERSIÓN estimada.
+  ///
+  /// Endpoint: DELETE /api/admin/finance-estimates?id=N
+  static Future<Map<String, dynamic>> deleteFinanceEstimateMovement(
+    int id,
+  ) async {
+    final data = await delete('/api/admin/finance-estimates?id=$id');
+    final estimate = (data is Map ? data['estimate'] : null) as Map?;
+    return estimate?.cast<String, dynamic>() ?? const {};
+  }
 
   // ---------------- Agendas ----------------
 

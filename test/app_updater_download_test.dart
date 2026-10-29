@@ -95,10 +95,7 @@ void main() {
     addTearDown(() => server.close(force: true));
 
     final url = 'http://127.0.0.1:${server.port}/cancelable.exe';
-    final future = AppUpdater.download(
-      url,
-      onProgress: (_, _) {},
-    );
+    final future = AppUpdater.download(url, onProgress: (_, _) {});
 
     // Espera a que la descarga esté en curso y cancela.
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -109,12 +106,99 @@ void main() {
     // No debe quedar ni el .part ni el archivo final.
     final dir = await AppUpdater.updatesDir();
     expect(
-      dir
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.contains('cancelable')),
+      dir.listSync().whereType<File>().where(
+        (f) => f.path.contains('cancelable'),
+      ),
       isEmpty,
       reason: 'la cancelación debe limpiar el .part',
     );
   });
+
+  test('Direcciones de respaldo: el enlace propio gana el HTTP del hub', () {
+    final urls = AppUpdater.downloadCandidates(
+      'https://oriongo.ddns.net/downloads/android/app-release.apk',
+    );
+    expect(
+      urls.first,
+      'https://oriongo.ddns.net/downloads/android/app-release.apk',
+    );
+    expect(
+      urls,
+      contains(
+        'http://oriongo.ddns.net:4100/downloads/android/app-release.apk',
+      ),
+      reason: 'el hub sirve el mismo archivo por HTTP en el puerto 4100',
+    );
+    expect(
+      urls,
+      contains('http://192.168.1.72:4100/downloads/android/app-release.apk'),
+      reason: 'la IP local sirve cuando el router no devuelve la conexión',
+    );
+  });
+
+  test('Direcciones de respaldo: un enlace externo se respeta tal cual', () {
+    expect(AppUpdater.downloadCandidates('https://ejemplo.com/x/app.apk'), [
+      'https://ejemplo.com/x/app.apk',
+    ]);
+    // Un enlace ya HTTP no tiene nada que reintentar.
+    expect(
+      AppUpdater.downloadCandidates('http://oriongo.ddns.net:4100/x.apk'),
+      ['http://oriongo.ddns.net:4100/x.apk'],
+    );
+  });
+
+  test(
+    'Descarga real: si el TLS falla, reintenta por la dirección dada',
+    () async {
+      // Servidor HTTP PLANO: un intento por https contra él muere en el
+      // handshake (HandshakeException), igual que en el teléfono con un
+      // certificado que no se puede verificar.
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final payload = List<int>.filled(2048, 7);
+      server.listen((req) async {
+        req.response.contentLength = payload.length;
+        req.response.add(payload);
+        await req.response.close();
+      });
+      addTearDown(() => server.close(force: true));
+
+      final file = await AppUpdater.download(
+        'https://127.0.0.1:${server.port}/downloads/android/app-release.apk',
+        fileName: 'respaldo.apk',
+        onProgress: (_, _) {},
+        fallbackUrls: [
+          'http://127.0.0.1:${server.port}/downloads/android/app-release.apk',
+        ],
+      );
+
+      expect(await file.length(), payload.length);
+      await file.delete();
+    },
+  );
+
+  test(
+    'Descarga real: TLS fallido sin respaldo explica el certificado',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((req) {
+        req.response.write('ok');
+        req.response.close();
+      });
+      addTearDown(() => server.close(force: true));
+
+      await expectLater(
+        AppUpdater.download(
+          'https://127.0.0.1:${server.port}/x.apk',
+          onProgress: (_, _) {},
+        ),
+        throwsA(
+          isA<AppUpdateException>().having(
+            (e) => e.message,
+            'mensaje',
+            contains('certificado'),
+          ),
+        ),
+      );
+    },
+  );
 }

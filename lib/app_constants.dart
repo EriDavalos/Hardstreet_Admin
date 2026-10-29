@@ -30,7 +30,7 @@ class AppConstants {
   /// pubspec.yaml o pásala con --dart-define=SP_VERSION=x.y.z al compilar.
   static const String buildVersion = String.fromEnvironment(
     'SP_VERSION',
-    defaultValue: '1.2.3',
+    defaultValue: '1.2.4',
   );
 
   /// Override opcional (útil en desarrollo): --dart-define=APP_VERSION=x.y.z

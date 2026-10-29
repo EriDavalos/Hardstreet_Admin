@@ -5,6 +5,7 @@ import '../hs_access.dart';
 import '../hs_api.dart';
 import '../hs_format.dart';
 import '../widgets/common.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/finance_chart.dart';
 import '../widgets/form_dialog.dart';
 import '../widgets/hs_toast.dart';
@@ -35,6 +36,7 @@ String _kindLabel(String kind) => switch (kind) {
   'abono_externo' => 'Abonos externos',
   'inversion' => 'Inversiones',
   'ahorro' => 'Ahorro',
+  'retiro_ahorro' => 'Retiros del ahorro',
   'pago' => 'Pagos',
   _ => 'Gastos',
 };
@@ -44,17 +46,21 @@ IconData _kindIcon(String kind) => switch (kind) {
   'abono_externo' => Icons.account_balance_wallet_outlined,
   'inversion' => Icons.trending_up,
   'ahorro' => Icons.savings_rounded,
+  'retiro_ahorro' => Icons.savings_outlined,
   'pago' => Icons.handshake_outlined,
   _ => Icons.trending_down,
 };
 
+/// Color de cada concepto de dinero: SIEMPRE el de [FinanceColors], el mismo
+/// que usa el administrador de paquetes del cliente.
 Color _kindColor(String kind) => switch (kind) {
-  'abono' => FinanceColors.positive,
-  'abono_externo' => FinanceColors.blue,
-  'inversion' => FinanceColors.investment,
-  'ahorro' => FinanceColors.teal,
-  'pago' => FinanceColors.amber,
-  _ => FinanceColors.red,
+  'abono' => FinanceColors.abono,
+  'abono_externo' => FinanceColors.abonoExterno,
+  'inversion' => FinanceColors.inversion,
+  'ahorro' => FinanceColors.ahorro,
+  'retiro_ahorro' => FinanceColors.ahorro,
+  'pago' => FinanceColors.pagado,
+  _ => FinanceColors.gasto,
 };
 
 /// Tipos que se pueden REGISTRAR desde Finanzas. Los abonos entran por el
@@ -65,6 +71,8 @@ const List<String> _kEditableKinds = [
   'inversion',
   'ahorro',
   'abono_externo',
+  // Sacar dinero del ahorro: baja SOLO lo apartado.
+  'retiro_ahorro',
 ];
 
 /// Iniciales de un nombre (avatar de las personas).
@@ -100,6 +108,13 @@ class _FinancePageState extends State<FinancePage> {
   /// Filas expandidas (paquetes y personas).
   final Set<String> _open = <String>{};
 
+  /// Estimaciones de planeación de los paquetes del CATÁLOGO. No viajan con
+  /// el resumen de finanzas: se piden al abrir su pestaña (y al refrescar).
+  FinanceEstimates _estimateData = const FinanceEstimates();
+  bool _estimatesLoading = false;
+  bool _estimatesLoaded = false;
+  String? _estimatesError;
+
   @override
   void initState() {
     super.initState();
@@ -129,6 +144,41 @@ class _FinancePageState extends State<FinancePage> {
       setState(() {
         _error = 'No se pudieron cargar las finanzas';
         _loading = false;
+      });
+    }
+    // Si la pestaña de estimación ya estaba abierta, se refresca también.
+    if (_estimatesLoaded) await _loadEstimates(silent: true);
+  }
+
+  /// Pide la ESTIMACIÓN de los paquetes del catálogo (planeación).
+  ///
+  /// [silent] = refresco de fondo: no borra la lista que ya se está viendo.
+  Future<void> _loadEstimates({bool silent = false}) async {
+    if (_estimatesLoading) return;
+    setState(() {
+      _estimatesLoading = true;
+      if (!silent) _estimatesError = null;
+    });
+    try {
+      final raw = await HsApi.financeEstimates();
+      if (!mounted) return;
+      setState(() {
+        _estimateData = FinanceEstimates.fromJson(raw);
+        _estimatesLoading = false;
+        _estimatesLoaded = true;
+        _estimatesError = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _estimatesLoading = false;
+        _estimatesError = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _estimatesLoading = false;
+        _estimatesError = 'No se pudo cargar la estimación';
       });
     }
   }
@@ -232,6 +282,7 @@ class _FinancePageState extends State<FinancePage> {
         switch (_tab) {
           1 => _packagesTab(scheme, currency),
           2 => _paymentsTab(scheme, currency),
+          3 => _estimatesTab(scheme, currency),
           _ => _summaryTab(scheme, t, currency),
         },
       ],
@@ -247,6 +298,7 @@ class _FinancePageState extends State<FinancePage> {
       ('Resumen', Icons.dashboard_outlined),
       ('Por paquete', Icons.inventory_2_outlined),
       ('Pagos', Icons.handshake_outlined),
+      ('Estimación', Icons.calculate_outlined),
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -259,7 +311,11 @@ class _FinancePageState extends State<FinancePage> {
               label: tabs[i].$1,
               icon: tabs[i].$2,
               selected: _tab == i,
-              onTap: () => setState(() => _tab = i),
+              onTap: () {
+                setState(() => _tab = i);
+                // La estimación se pide al abrir su pestaña (una sola vez).
+                if (i == 3 && !_estimatesLoaded) _loadEstimates();
+              },
             ),
           ],
         ],
@@ -440,12 +496,20 @@ class _FinancePageState extends State<FinancePage> {
       ),
       _MoneyRow(
         label: 'Ahorro',
-        // Los gastos generales (sin paquete) salen de aquí.
-        note: 'Apartado; los gastos generales salen de aquí',
+        // Los gastos generales (sin paquete) y los retiros salen de aquí.
+        note: 'Apartado; los gastos generales y los retiros salen de aquí',
         amount: t.ahorro,
         icon: _kindIcon('ahorro'),
         tint: FinanceColors.teal,
       ),
+      if (t.retiros > 0)
+        _MoneyRow(
+          label: 'Retiros del ahorro',
+          note: 'Sacado del ahorro; no baja el dinero actual',
+          amount: t.retiros,
+          icon: _kindIcon('retiro_ahorro'),
+          tint: FinanceColors.teal,
+        ),
       _MoneyRow(
         label: 'Pagos',
         note: 'Pagado a colaboradores y empleados',
@@ -1187,6 +1251,350 @@ class _FinancePageState extends State<FinancePage> {
   }
 
   // ---------------------------------------------------------------
+  // Estimación (planeación por paquete del CATÁLOGO)
+  // ---------------------------------------------------------------
+
+  /// Abre el administrador de UN paquete del catálogo: sus INVERSIONES
+  /// estimadas, igual que el administrador del paquete del cliente, pero sin
+  /// dinero real. Al cerrar, la lista se refresca.
+  Future<void> _openEstimate(FinanceEstimate e) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _EstimatePackageDialog(
+        estimate: e,
+        currency: e.currency.trim().isEmpty ? _data.currency : e.currency,
+        canEdit: _canSave,
+      ),
+    );
+    if (!mounted) return;
+    await _loadEstimates(silent: true);
+  }
+
+  /// Pestaña "Estimación": TODOS los paquetes del catálogo con lo que se
+  /// estima INVERTIR (lo que se descuenta de su monto) y la ganancia que
+  /// quedaría. Es dinero FICTICIO de planeación: no se suma al dinero actual,
+  /// ni al ahorro, ni a los gastos.
+  Widget _estimatesTab(ColorScheme scheme, String currency) {
+    if (_estimatesLoading && !_estimatesLoaded) {
+      return const ListSkeleton(lines: 3, cardHeight: 96);
+    }
+    if (_estimatesError != null && !_estimatesLoaded) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 40, color: scheme.error),
+              const SizedBox(height: 10),
+              Text(_estimatesError!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _loadEstimates,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final list = _estimateData.packages;
+    final ingreso = _estimateData.ingreso;
+    final utilidad = _estimateData.utilidad;
+    final margen = ingreso > 0 ? utilidad / ingreso * 100 : null;
+    final tint = utilidad >= 0 ? FinanceColors.positive : FinanceColors.red;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                tint.withValues(alpha: .16),
+                tint.withValues(alpha: .035),
+              ],
+            ),
+            border: Border.all(color: tint.withValues(alpha: .32)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: tint.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(Icons.insights_rounded, size: 18, color: tint),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'GANANCIA ESTIMADA',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: .8,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  if (margen != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: tint.withValues(alpha: .14),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '${margen.toStringAsFixed(0)} %',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: tint,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  hsMoney(utilidad, currency),
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.5,
+                    color: tint,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Se cobra ${hsMoney(ingreso, currency)} − inversión '
+                '${hsMoney(_estimateData.inversion, currency)}. Es una '
+                'estimación: no entra en el dinero actual.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _MiniStat(
+                    label: 'Inversión',
+                    value: hsMoney(_estimateData.inversion, currency),
+                    tint: FinanceColors.investment,
+                    icon: Icons.trending_up,
+                  ),
+                  _MiniStat(
+                    label: 'Paquetes',
+                    value: '${list.length}',
+                    tint: FinanceColors.blue,
+                    icon: Icons.inventory_2_outlined,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (!_estimateData.available) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: FinanceColors.amber.withValues(alpha: .10),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: FinanceColors.amber.withValues(alpha: .30),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: FinanceColors.amber,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Falta crear la tabla de estimaciones (package_estimates). '
+                    'Mientras tanto no se pueden guardar inversiones estimadas.',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Icon(Icons.calculate_outlined, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Todos los paquetes',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            Text(
+              _canSave ? 'Toca un paquete para estimarlo' : 'Solo lectura',
+              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (list.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: EmptyState(
+                icon: Icons.inventory_2_outlined,
+                title: 'Sin paquetes en el catálogo',
+                message:
+                    'Crea paquetes en el módulo Paquetes para estimar lo que '
+                    'invertirás y lo que te quedaría de ganancia.',
+              ),
+            ),
+          )
+        else
+          for (final e in list) ...[
+            _estimateRow(scheme, e, currency),
+            const SizedBox(height: 10),
+          ],
+      ],
+    );
+  }
+
+  Widget _estimateRow(ColorScheme scheme, FinanceEstimate e, String currency) {
+    final tint = e.utilidad >= 0 ? FinanceColors.positive : FinanceColors.red;
+    final margen = e.margen;
+    final count = e.movements.length;
+    final detail = [
+      if (e.categoryName.trim().isNotEmpty) e.categoryName.trim(),
+      if (e.subtitle.trim().isNotEmpty) e.subtitle.trim(),
+    ].join(' · ');
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openEstimate(e),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(
+                  Icons.inventory_2_outlined,
+                  size: 18,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      e.name.isEmpty ? 'Paquete' : e.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      detail.isEmpty ? '—' : detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _MiniStat(
+                          label: 'Precio',
+                          value: hsMoney(e.price, currency),
+                          tint: FinanceColors.blue,
+                          icon: Icons.sell_outlined,
+                        ),
+                        _MiniStat(
+                          label: 'Inversión',
+                          value: hsMoney(e.inversion, currency),
+                          tint: FinanceColors.investment,
+                          icon: Icons.trending_up,
+                        ),
+                        _MiniStat(
+                          label: margen == null
+                              ? 'Ganancia'
+                              : 'Ganancia ${margen.toStringAsFixed(0)} %',
+                          value: hsMoney(e.utilidad, currency),
+                          tint: tint,
+                          icon: Icons.insights_outlined,
+                        ),
+                        _MiniStat(
+                          label: 'Inversiones',
+                          value: '$count',
+                          tint: scheme.primary,
+                          icon: Icons.receipt_long_outlined,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------
   // Pagos a personas
   // ---------------------------------------------------------------
 
@@ -1797,12 +2205,37 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
   }
 
   bool get _isSavings => _kind == 'ahorro';
+
+  /// ¿Se SACA dinero del ahorro? Baja solo lo apartado.
+  bool get _isWithdrawal => _kind == 'retiro_ahorro';
+
+  /// ¿El movimiento toca el AHORRO? (apartar o sacar)
+  bool get _touchesSavings => _isSavings || _isWithdrawal;
   bool get _byPercent => _isSavings && _mode == 'porcentaje';
 
   /// Base del ahorro en porcentaje: el dinero actual del paquete elegido o,
   /// si el movimiento es general, el del negocio.
   num get _baseDisponible => _package?.disponible ?? widget.totals.dineroActual;
   bool get _baseIsGeneral => _package == null;
+
+  /// Monto de referencia del diálogo (el único número que se enseña arriba).
+  ///
+  /// - Ahorro/retiro: lo que HAY en el ahorro (lo que se puede apartar o
+  ///   sacar).
+  /// - Resto con paquete: el dinero actual de ESE paquete (de ahí sale).
+  /// - Resto GENERAL: null. El "dinero actual del negocio" es dinero de los
+  ///   paquetes y no es un fondo con el que se pague un gasto general (ese lo
+  ///   paga el ahorro), así que no se enseña un número que engañe.
+  num? get _referenceAmount {
+    if (_touchesSavings) {
+      return _package?.ahorro ?? widget.totals.ahorro;
+    }
+    return _package?.disponible;
+  }
+
+  String get _referenceLabel => _package == null
+      ? 'Ahorro actual del negocio'
+      : 'Ahorro actual del paquete';
 
   num get _percentValue =>
       num.tryParse(_percent.text.replaceAll(',', '').trim()) ?? 0;
@@ -1837,6 +2270,17 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             : 'Escribe un monto mayor a 0',
       );
       return;
+    }
+    // Un retiro no puede sacar más de lo que hay en el ahorro.
+    if (_isWithdrawal) {
+      final available = _referenceAmount ?? 0;
+      if (amount > available) {
+        setState(
+          () => _error =
+              'El ahorro disponible es ${hsMoney(available, widget.currency)}',
+        );
+        return;
+      }
     }
     setState(() {
       _saving = true;
@@ -1882,15 +2326,28 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
     final amount = _resolved;
     return FormDialog(
       icon: _kindIcon(_kind),
-      title: _isSavings ? 'Abonar al ahorro' : 'Registrar movimiento',
-      subtitle: _baseIsGeneral
+      title: _isSavings
+          ? 'Abonar al ahorro'
+          : _isWithdrawal
+          ? 'Sacar del ahorro'
+          : 'Registrar movimiento',
+      subtitle: _isWithdrawal
+          ? (_baseIsGeneral
+                ? 'Retiro del ahorro del negocio: baja SOLO el ahorro, no el '
+                      'dinero actual'
+                : 'Retiro del ahorro de ESE paquete: no baja su dinero actual')
+          : _baseIsGeneral
           ? (_kind == 'gasto' || _kind == 'inversion'
                 ? 'Movimiento GENERAL: sale del ahorro, no baja el dinero actual'
                 : 'Movimiento GENERAL del negocio (no toca ningún paquete)')
           : 'Se registra en el paquete elegido: baja el dinero de ESE paquete',
       saving: _saving,
       error: _error,
-      saveLabel: _isSavings ? 'Abonar' : 'Registrar',
+      saveLabel: _isSavings
+          ? 'Abonar'
+          : _isWithdrawal
+          ? 'Sacar'
+          : 'Registrar',
       maxWidth: 470,
       onCancel: () => Navigator.of(context).pop(false),
       onSave: _save,
@@ -1962,47 +2419,46 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
             ],
           ),
         ),
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: .08),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withValues(alpha: .30)),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                _baseIsGeneral
-                    ? Icons.storefront_outlined
-                    : Icons.account_balance_wallet_outlined,
-                size: 16,
-                color: color,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _baseIsGeneral
-                      ? 'Dinero actual del negocio (abonado + externo − gastos '
-                            '− inversión − ahorro − pagos)'
-                      : 'Dinero actual del paquete',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              Text(
-                hsMoney(_baseDisponible, widget.currency),
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
+        if (_referenceAmount != null) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: color.withValues(alpha: .30)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _touchesSavings
+                      ? Icons.savings_outlined
+                      : Icons.account_balance_wallet_outlined,
+                  size: 16,
                   color: color,
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _referenceLabel,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Text(
+                  hsMoney(_referenceAmount!, widget.currency),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
         if (_isSavings) ...[
           const SizedBox(height: 12),
           FormSection(
@@ -2114,6 +2570,529 @@ class _FinanceMovementDialogState extends State<_FinanceMovementDialog> {
               labelText: 'Descripción',
               hintText: 'Ej. Renta del estudio, pago de proveedor…',
               alignLabelWithHint: true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ==================================================================
+// ESTIMACIÓN (PLANEACIÓN) · Administrador de un paquete del CATÁLOGO
+//
+// Se agregan sus INVERSIONES estimadas una por una, igual que en el
+// administrador del paquete del cliente, pero con dinero FICTICIO: cada
+// inversión se DESCUENTA del monto del paquete y nada de esto toca el dinero
+// actual, el ahorro ni los gastos.
+// ==================================================================
+
+class _EstimatePackageDialog extends StatefulWidget {
+  const _EstimatePackageDialog({
+    required this.estimate,
+    required this.currency,
+    this.canEdit = true,
+  });
+
+  final FinanceEstimate estimate;
+  final String currency;
+
+  /// Sin permiso de editar Finanzas: solo se consulta.
+  final bool canEdit;
+
+  @override
+  State<_EstimatePackageDialog> createState() => _EstimatePackageDialogState();
+}
+
+class _EstimatePackageDialogState extends State<_EstimatePackageDialog> {
+  late FinanceEstimate _estimate = widget.estimate;
+  bool _busy = false;
+
+  num get _utilidad => _estimate.utilidad;
+  num? get _margen => _estimate.margen;
+  Color get _tint =>
+      _utilidad >= 0 ? FinanceColors.positive : FinanceColors.red;
+
+  Future<void> _add() async {
+    final saved = await showDialog<FinanceEstimate>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _EstimateMovementDialog(
+        idPackage: _estimate.id,
+        packageName: _estimate.name,
+      ),
+    );
+    if (saved != null && mounted) setState(() => _estimate = saved);
+  }
+
+  Future<void> _edit(FinanceEstimateMovement m) async {
+    final saved = await showDialog<FinanceEstimate>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _EstimateMovementDialog(
+        idPackage: _estimate.id,
+        packageName: _estimate.name,
+        movement: m,
+      ),
+    );
+    if (saved != null && mounted) setState(() => _estimate = saved);
+  }
+
+  Future<void> _remove(FinanceEstimateMovement m) async {
+    if (_busy) return;
+    final sure = await confirmDelete(
+      context,
+      title: '¿Quitar la inversión estimada?',
+      message:
+          'Solo se quita de la estimación: no afecta ninguna cuenta. El monto '
+          'del paquete vuelve a contar completo.',
+      confirmLabel: 'Quitar',
+    );
+    if (!sure || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final raw = await HsApi.deleteFinanceEstimateMovement(m.id);
+      if (!mounted) return;
+      setState(() {
+        _estimate = FinanceEstimate.fromJson(raw);
+        _busy = false;
+      });
+    } catch (_) {
+      // El aviso rojo ya lo mostró el cliente de la API.
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final currency = widget.currency;
+    final detail = [
+      if (_estimate.categoryName.trim().isNotEmpty)
+        _estimate.categoryName.trim(),
+      if (_estimate.subtitle.trim().isNotEmpty) _estimate.subtitle.trim(),
+    ].join(' · ');
+    final moves = _estimate.movements;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 560,
+          maxHeight: MediaQuery.sizeOf(context).height * .86,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 6, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.calculate_outlined,
+                      size: 20,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _estimate.name.isEmpty ? 'Paquete' : _estimate.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          detail.isEmpty
+                              ? 'Planeación: no afecta tus cuentas'
+                              : detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    tooltip: 'Cerrar',
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Divider(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: .4),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _tint.withValues(alpha: .08),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _tint.withValues(alpha: .28)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.insights_rounded, size: 18, color: _tint),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'GANANCIA ESTIMADA',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    letterSpacing: .6,
+                                    fontWeight: FontWeight.w800,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    hsMoney(_utilidad, currency),
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      color: _tint,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_margen != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _tint.withValues(alpha: .14),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '${_margen!.toStringAsFixed(0)} %',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: _tint,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _DetailPill(
+                          'Precio',
+                          _estimate.price,
+                          FinanceColors.blue,
+                          currency,
+                        ),
+                        _DetailPill(
+                          'Inversión',
+                          _estimate.inversion,
+                          FinanceColors.investment,
+                          currency,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'INVERSIONES ESTIMADAS',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              letterSpacing: .5,
+                              fontWeight: FontWeight.w800,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          moves.isEmpty
+                              ? 'Sin inversiones'
+                              : '${moves.length} inversión'
+                                    '${moves.length == 1 ? '' : 'es'}',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    if (moves.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Text(
+                          'Todavía no hay inversiones estimadas. Agrega lo que '
+                          'piensas invertir en este paquete: cada una se '
+                          'descuenta de su monto.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    else
+                      for (final m in moves) _movementRow(scheme, m, currency),
+                  ],
+                ),
+              ),
+            ),
+            if (widget.canEdit)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _busy ? null : _add,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Agregar inversión'),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _movementRow(
+    ColorScheme scheme,
+    FinanceEstimateMovement m,
+    String currency,
+  ) {
+    const tint = FinanceColors.investment;
+    final when = hsParseDate(m.created);
+    return InkWell(
+      onTap: widget.canEdit && !_busy ? () => _edit(m) : null,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Row(
+          children: [
+            const Icon(Icons.trending_up, size: 15, color: tint),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    m.description.trim().isEmpty
+                        ? 'Inversión'
+                        : m.description.trim(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    [
+                      'Inversión',
+                      if (when != null) hsShortDate(when),
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              hsMoney(m.amount, currency),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: tint,
+              ),
+            ),
+            if (widget.canEdit)
+              IconButton(
+                onPressed: _busy ? null : () => _remove(m),
+                tooltip: 'Quitar',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.close_rounded, size: 17),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==================================================================
+// Una INVERSIÓN ESTIMADA (agregar / editar) del paquete del catálogo
+// ==================================================================
+
+class _EstimateMovementDialog extends StatefulWidget {
+  const _EstimateMovementDialog({
+    required this.idPackage,
+    required this.packageName,
+    this.movement,
+  });
+
+  final int idPackage;
+  final String packageName;
+
+  /// null = se está agregando uno nuevo.
+  final FinanceEstimateMovement? movement;
+
+  @override
+  State<_EstimateMovementDialog> createState() =>
+      _EstimateMovementDialogState();
+}
+
+class _EstimateMovementDialogState extends State<_EstimateMovementDialog> {
+  static String _plain(num v) =>
+      v == v.truncateToDouble() ? v.toStringAsFixed(0) : v.toString();
+
+  late final TextEditingController _amount = TextEditingController(
+    text: widget.movement == null ? '' : _plain(widget.movement!.amount),
+  );
+  late final TextEditingController _concept = TextEditingController(
+    text: widget.movement?.description ?? '',
+  );
+  bool _saving = false;
+  String? _error;
+
+  bool get _editing => widget.movement != null;
+
+  num get _value => num.tryParse(_amount.text.replaceAll(',', '').trim()) ?? 0;
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _concept.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_value <= 0) {
+      setState(() => _error = 'Escribe un monto mayor a 0');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final concept = _concept.text.trim();
+    try {
+      final raw = _editing
+          ? await HsApi.updateFinanceEstimateMovement(
+              movementId: widget.movement!.id,
+              amount: _value,
+              description: concept,
+            )
+          : await HsApi.addFinanceEstimateMovement(
+              idPackage: widget.idPackage,
+              amount: _value,
+              description: concept,
+            );
+      if (!mounted) return;
+      Navigator.of(context).pop(FinanceEstimate.fromJson(raw));
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.details?.trim().isNotEmpty == true
+              ? '${e.message}: ${e.details}'
+              : e.message;
+          _saving = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo guardar la inversión estimada';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const color = FinanceColors.investment;
+    return FormDialog(
+      icon: Icons.trending_up,
+      title: _editing ? 'Editar inversión' : 'Agregar inversión',
+      subtitle: widget.packageName.isEmpty
+          ? 'Se descuenta del monto del paquete'
+          : '${widget.packageName} · se descuenta de su monto',
+      saving: _saving,
+      error: _error,
+      saveLabel: _editing ? 'Guardar' : 'Agregar',
+      maxWidth: 440,
+      onCancel: () => Navigator.of(context).pop(),
+      onSave: _save,
+      children: [
+        FormSection(
+          label: 'Monto de la inversión',
+          child: TextField(
+            controller: _amount,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Monto',
+              prefixIcon: Icon(Icons.trending_up, size: 20, color: color),
+              helperText: 'Se descuenta del monto del paquete',
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Concepto',
+          child: TextField(
+            controller: _concept,
+            minLines: 1,
+            maxLines: 2,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Concepto',
+              hintText: 'Ej. Gasolina, cuadro 20x24, segundo fotógrafo…',
             ),
           ),
         ),
