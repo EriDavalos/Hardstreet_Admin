@@ -117,8 +117,9 @@ class _ClientsPageState extends State<ClientsPage> {
     if (reset) _page = 1;
     // Página pedida (antes de que el servidor la recorte).
     final asked = _page;
+    // Recarga SILENCIOSA: la lista se queda en pantalla mientras llega la
+    // página nueva (sin esqueleto) al cerrar un modal.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

@@ -146,8 +146,9 @@ class _PrintPageState extends State<PrintPage> {
       _requests.every((r) => _selected[r.id]?.length == r.photos.length);
 
   Future<void> _load() async {
+    // Recarga SILENCIOSA: los envíos se quedan en pantalla mientras llegan
+    // los nuevos (sin esqueleto) al cerrar un modal.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

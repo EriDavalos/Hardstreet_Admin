@@ -121,8 +121,9 @@ class _ActivityPageState extends State<ActivityPage> {
     if (reset) _page = 1;
     // Página pedida (antes de que el servidor la recorte).
     final asked = _page;
+    // Recarga SILENCIOSA: si ya hay datos en pantalla se quedan tal cual
+    // mientras llegan los nuevos (el esqueleto solo se ve al entrar).
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

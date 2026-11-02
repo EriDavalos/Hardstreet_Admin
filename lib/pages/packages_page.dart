@@ -327,8 +327,9 @@ class _PackagesPageState extends State<PackagesPage> {
   }
 
   Future<void> _reload() async {
+    // Recarga SILENCIOSA: el catálogo se queda en pantalla mientras llega el
+    // nuevo (sin esqueleto) al cerrar el formulario de un paquete.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

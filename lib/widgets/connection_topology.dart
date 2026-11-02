@@ -37,6 +37,16 @@ const Color _warnAmber = Color(0xFFD97706);
 const Color _offGrey = Color(0xFF6B7280);
 const Color _idleBlue = Color(0xFF2F6BFF);
 
+/// SIN RESPUESTA: encendido en el Drive pero no contesta. Es el estado más
+/// grave del panel, así que va en **rojo**. Antes compartía el ámbar con el
+/// bloqueo y de un vistazo no se distinguía «está caído» de «está bloqueado».
+const Color _downRed = Color(0xFFDC2626);
+
+/// BLOQUEADO: el servidor **sigue en funcionamiento**; lo que no puede es
+/// trabajar para el Drive porque aquello de lo que depende no responde o está
+/// apagado. Naranja: es un aviso, no una caída.
+const Color _blockedOrange = Color(0xFFEA580C);
+
 /// Un servidor tal como se PINTA: ya mezclados la base, el hub y la salud.
 class NodeView {
   const NodeView({
@@ -132,11 +142,31 @@ class NodeView {
         : 'No contesta: $text';
   }
 
+  /// Color del servidor en el diagrama. La regla de la pantalla es:
+  ///
+  /// · **rojo**    → no responde (está encendido en el Drive pero no contesta);
+  /// · **naranja** → bloqueado por una dependencia caída o apagada: el
+  ///                 servidor sigue corriendo, lo que no puede es servir al
+  ///                 Drive hasta que vuelva el otro;
+  /// · **gris**    → apagado en el Drive;
+  /// · **azul**    → no se pudo comprobar;
+  /// · **verde**   → en línea.
+  ///
+  /// El ROJO manda sobre el naranja: si además de estar bloqueado no contesta,
+  /// lo primero que hay que mirar es que está caído.
   Color get color {
-    if (blocked) return _warnAmber;
     if (!enabled) return _offGrey;
+    if (online == false) return _downRed;
+    if (blocked) return _blockedOrange;
     if (online == null) return _idleBlue;
-    return online! ? _okGreen : _warnAmber;
+    return _okGreen;
+  }
+
+  /// Color del texto de aviso de la card, con la misma regla que [color].
+  Color get noteColor {
+    if (!enabled) return _offGrey;
+    if (online == false) return _downRed;
+    return blocked ? _blockedOrange : _offGrey;
   }
 
   String get latencyLabel {
@@ -206,11 +236,13 @@ class HubView {
     return ms < 1000 ? '$ms ms' : '${(ms / 1000).toStringAsFixed(1)} s';
   }
 
+  /// La card del HUB habla del HUB: rojo solo si NO contesta. Que un
+  /// servidor esté caído se ve en SU card (roja) y en la línea de conteo, no
+  /// pintando de rojo al que sí está respondiendo. Naranja cuando hay
+  /// servidores bloqueados: el hub funciona, pero el Drive va a medias.
   Color get color {
-    if (!online) return const Color(0xFFDC2626);
-    if (blocked > 0 || (totalCount > 0 && onlineCount < totalCount)) {
-      return _warnAmber;
-    }
+    if (!online) return _downRed;
+    if (blocked > 0) return _blockedOrange;
     return _okGreen;
   }
 }
@@ -1151,7 +1183,7 @@ class _NodeCard extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 10,
                                 height: 1.2,
-                                color: node.blocked ? _warnAmber : _offGrey,
+                                color: node.noteColor,
                               ),
                             ),
                           ),
@@ -1318,9 +1350,11 @@ class _HubCard extends StatelessWidget {
                     fontFamily: 'monospace',
                     fontSize: 9.5,
                     fontWeight: FontWeight.w600,
-                    color:
-                        hub.totalCount > 0 && hub.onlineCount < hub.totalCount
-                        ? _warnAmber
+                    color: hub.blocked > 0
+                        ? _blockedOrange
+                        : hub.totalCount > 0 &&
+                              hub.onlineCount < hub.totalCount
+                        ? _downRed
                         : scheme.onSurfaceVariant,
                   ),
                 ),
@@ -1534,11 +1568,11 @@ class _MobileNodeCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11.5,
                   height: 1.3,
-                  color: node.blocked
-                      ? _warnAmber
-                      : (node.enabled && node.online == false
-                            ? scheme.error
-                            : scheme.onSurfaceVariant),
+                  color: node.enabled && node.online == false
+                      ? _downRed
+                      : node.blocked
+                      ? _blockedOrange
+                      : scheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -1959,9 +1993,17 @@ class _TopologyPainter extends CustomPainter {
           selectedId == null ||
           selectedId == node.id ||
           selectedId == target.id;
-      final color = (broken ? _warnAmber : accent).withValues(
-        alpha: focused ? .95 : .55,
-      );
+      // El tramo se pinta como esté el servidor que lo rompe: rojo si alguno
+      // no responde, naranja si solo está bloqueado.
+      final down =
+          (node.enabled && node.online == false) ||
+          (target.enabled && target.online == false);
+      final color = (down
+              ? _downRed
+              : broken
+              ? _blockedOrange
+              : accent)
+          .withValues(alpha: focused ? .95 : .55);
       final paint = Paint()
         ..color = color
         ..strokeWidth = focused ? 2 : 1.2

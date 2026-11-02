@@ -80,13 +80,19 @@ class BackNav {
 /// la sub-vista, volver al módulo de inicio, preguntar antes de salir).
 ///
 /// Con la cadena VACÍA (login, arranque) no interviene: ahí el atrás sigue
-/// siendo del navegador, que es lo esperado antes de entrar al panel.
+/// siendo del navegador, que es lo esperado antes de entrar al panel. Pero si
+/// el panel YA está abierto ([panelIsOpen]) y aun así no hay pasos, tampoco
+/// deja que el framework apague la app: el atrás se queda en el panel.
 class BackNavGuard with WidgetsBindingObserver {
   BackNavGuard._();
 
   static final BackNavGuard instance = BackNavGuard._();
 
   static bool _installed = false;
+
+  /// true mientras el PANEL está en pantalla (lo marca [setWebBackGuard], que
+  /// llama el panel al montarse y al salir).
+  static bool panelIsOpen = false;
 
   /// Alta del guardia (idempotente). Se llama tras el primer frame.
   static void install() {
@@ -97,7 +103,11 @@ class BackNavGuard with WidgetsBindingObserver {
 
   @override
   Future<bool> didPopRoute() async {
-    if (BackNav.isEmpty) return false;
+    // Sin pasos registrados: fuera del panel (login, arranque) el atrás es del
+    // navegador; con el panel abierto, se queda en el panel y la app NO se
+    // cierra (antes, un atrás que nadie atendía apagaba la app: en la web eso
+    // te sacaba al inicio del navegador).
+    if (BackNav.isEmpty) return panelIsOpen;
     BackNav.handle();
     // Atendido: la app no se cierra por un atrás.
     return true;

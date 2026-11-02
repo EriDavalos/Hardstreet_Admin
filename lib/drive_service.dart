@@ -346,6 +346,7 @@ class DriveService extends DriveBase {
       throw 'Ya existe un elemento con ese nombre';
     }
     await (item.isFolder ? Directory(oldPath) : File(oldPath)).rename(newPath);
+    renameLocally(item.name, safe);
     await refresh();
   }
 

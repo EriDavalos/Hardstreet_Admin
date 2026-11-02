@@ -17,6 +17,7 @@ Panel de administración de HardStreet con diseño moderno (sidebar colapsable, 
 | **Mi paquete** | ✅ Módulo del CLIENTE (antes se llamaba "Dashboard Cliente"): su paquete, el checklist de servicios, sus carpetas compartidas y, **por servicio**, la carpeta del Drive, la liga y la **selección de fotos** que él mismo marca. Es un módulo como los demás: si el rol no tiene "Ver" en `my_package` / "Mi paquete", NO aparece en el menú |
 | **Notificaciones** | ✅ Módulo nuevo: **qué roles reciben cada aviso** (agenda próxima, fotos disponibles, envío de fotos, servicio/paquete terminado, impresión lista) y **envío de avisos manuales** a los roles elegidos. Cada aviso lleva su MÓDULO: al tocarlo en la campanita, el panel abre esa pantalla. Requiere la migración `Hardstreet-DB/2026-10-20_notificaciones_ubicaciones.sql` |
 | **Conexión** | ✅ **SOLO el Superadministrador** (usuario 1, rol Superadmin): los servidores del Drive en un **diagrama interactivo** (hub central + cards con estado, versión, prioridad, bibliotecas, espacio, ping y dependencias), con terminal del servicio, reinicio y subida de archivos al proyecto. Ver *Conexión: servidores del Drive* |
+| **Invitaciones** | ✅ Módulo nuevo con el diseño de `ReynaCoot`: **portada de sobre («Abrir invitación»)**, polaroids, cuenta regresiva, familias, detalles, hashtag e itinerario. Plantillas de **XV, bodas y cumpleaños**, color, **foto o vídeo de fondo**, secciones configurables, editor con **vista previa en vivo**, fotos del Drive y **liga pública** (`/i/<liga>`). Requiere las migraciones `2026-10-30_modulo_invitaciones.sql` y `2026-10-31_invitaciones_diseno.sql`, y desplegar el backend |
 | Configuraciones, Reportes | 🚧 Próximamente, pero ya son **módulos con permiso**: solo ofrecen "Ver" y el admin decide qué rol los ve desde Roles. Requiere la migración `Hardstreet-DB/2026-10-18_modulos_conexion_config_reportes.sql`; hasta aplicarla se comportan como antes (visibles) |
 
 ## Modal de paquete (Clientes)
@@ -716,6 +717,58 @@ HTML por sección de punta a punta (documento, editor y guardado) y
 `test/site_preview_server_test.dart` pide el sitio empaquetado por HTTP
 (contenido, tipos MIME, `..` y métodos).
 
+## Módulo Invitaciones
+
+Plantillas de invitaciones para **XV, bodas y cumpleaños** con liga pública
+para el cliente (`/api/admin/invitations`). Requiere las migraciones
+`Hardstreet-DB/2026-10-30_modulo_invitaciones.sql` (tabla, módulo y permisos)
+y `Hardstreet-DB/2026-10-31_invitaciones_diseno.sql` (columna `design`; solo
+hace falta si la tabla ya existía de antes) y desplegar el backend.
+
+El diseño es el de la invitación real de `Hardstreet/ReynaCoot`, portado a
+HTML propio (`lib/invitation_html.dart`):
+
+- **Portada de sobre** — la invitación abre con la tarjeta de sobre y el botón
+  **«Abrir invitación ✨»**, que la descubre con su animación, arranca la
+  música (si hay liga) y enciende la cuenta regresiva.
+- **Tarjeta principal** — guirnalda y esquinas florales en SVG, el nombre en
+  letra manuscrita, la cápsula de fecha (día en círculo, mes y año), hora,
+  tres polaroids con las fotos del Drive, la frase y la cuenta regresiva en
+  vivo.
+- **Secciones** — familias, detalles (con botones de mapa y de confirmar por
+  WhatsApp), banda de hashtag, itinerario con línea de tiempo y pie con la
+  marca de Hardstreet. Cada una se puede **prender o apagar**.
+- **Configurable** — color de acento (12 muestras o el de la plantilla), color
+  de fondo, **foto o vídeo de fondo** (un `.mp4/.webm` se reproduce en bucle),
+  tipografía, hasta 6 fotos del Drive, y el contenido de las secciones
+  (familias, detalles, itinerario, hashtag y música) en el propio editor.
+- **Catálogo** — al crear se elige una plantilla agrupada por ocasión: tres de
+  XV (**Sobre · Reyna** —la de por defecto—, Elegancia, Rosa eterno), dos de
+  boda (Marfil clásica, Jardín) y dos de cumpleaños (Fiesta pop, Dulce). La
+  invitación **no guarda categoría**: la ocasión es solo la etiqueta que hereda
+  de la plantilla para el encabezado.
+- **Vista previa en vivo** — se pinta con el MISMO modelo (`Invitation`) que
+  genera el HTML público, así que lo que se ve es lo que abre el cliente, con
+  un conmutador **Invitación / Portada (sobre)** para revisar cómo se abre. En
+  el celular el editor tiene pestañas *Diseño* / *Vista previa*; en
+  computadora van lado a lado.
+- **Compartir** — la liga se crea al publicar (12 caracteres) y **no cambia**
+  al editar: la que ya se mandó sigue sirviendo. Se puede copiar, abrir o
+  mandar por WhatsApp, y **despublicar** deja la liga sin abrir sin borrar
+  nada.
+- **HTML guardado** — el panel genera el documento completo (sin dependencias
+  más allá de Google Fonts) y el backend lo sirve tal cual en `/i/<liga>`
+  (rewrite de `next.config.ts` hacia `/api/invitations/public`). Solo se sirve
+  si está publicada y activa. Todo el texto del cliente se **escapa**.
+- Las fotos del Drive se marcan como públicas al guardar
+  (`publishPublicPhotos`, ámbito `invitaciones`), porque el cliente abre la
+  liga sin sesión.
+
+Pruebas: `test/invitation_html_test.dart` (catálogo, escape del texto, portada,
+secciones, cuenta regresiva, fondo de vídeo, familias/detalles/itinerario y
+liga) y `test/invitations_page_test.dart` (listado, alta con plantilla,
+guardado con HTML y compartir).
+
 ## Módulo Servicios
 
 Catálogo que se incluye en los paquetes (`/api/admin/services`, permiso
@@ -1168,10 +1221,11 @@ Requiere la migración `Hardstreet-DB/2026-10-26_drive_nodos_active.sql` (añade
 `active` y pasa los antiguos `enabled = 0` a borrados lógicos).
 
 - **Dependencias** — un **modal propio** (ya no dentro de *Editar*): se marcan
-  los servidores de los que éste depende, se ve el resumen («independiente» o
-  «unificado con N servidores») y se guarda. Si la base no tiene todavía la
-  columna `depends_on`, el modal dice qué migración ejecutar en vez de guardar
-  sin avisar.
+  los servidores con los que se enlaza, se ve el resumen («independiente» o
+  «unificado con N servidores») y se guarda. El enlace queda en los **DOS
+  sentidos** (el backend escribe también el otro extremo). Si la base no tiene
+  todavía la columna `depends_on`, el modal dice qué migración ejecutar en vez
+  de guardar sin avisar.
 - **Ver terminal** — el log del servicio (`journalctl -u hardstreet-drive -n
   400`), en una ventana oscura de **solo lectura** con *Actualizar* y
   *Reiniciar servicio*. No es una consola: no se escriben comandos.
@@ -1201,10 +1255,22 @@ en el error de la terminal si falta.
 
 ### Dependencia entre servidores (mantenimiento)
 
-En *⋯ → **Dependencias*** se marcan los servidores de los que éste depende
-(puede ser mutuo). En el diagrama cada dependencia es una **línea entre las dos
-cards** con flecha hacia el servidor del que se depende; si es **mutua**, la
-línea lleva flecha en **ambas puntas** (una sola línea, no dos).
+En *⋯ → **Dependencias*** se marcan los servidores con los que se enlaza. El
+enlace es **siempre mutuo**: al guardar, el otro servidor también queda
+dependiendo de éste (lo escribe el backend en el mismo guardado, para que no
+haya relaciones de un solo lado aunque se llame a la API desde fuera), y al
+desmarcarlo desaparece de los dos. Al **eliminar** un servidor, el enlace se
+quita también del otro extremo: no queda apuntando a uno que ya no existe.
+Los enlaces guardados **antes** de esta regla (de un solo lado) se completan
+solos la primera vez que se abre Conexión: no hay que volver a marcarlos. En
+el diagrama cada dependencia es una **línea entre las dos cards** con flecha en
+**ambas puntas** (una sola línea, no dos).
+
+El color de cada card dice el estado sin leer nada: **verde** en línea,
+**rojo** sin respuesta (encendido en el Drive pero no contesta), **naranja**
+bloqueado —sigue en funcionamiento, pero el Drive no lo usa mientras el otro
+extremo del enlace no responda o esté apagado—, **gris** apagado en el Drive y
+**azul** sin comprobar.
 
 Los servidores relacionados se colocan **juntos**, en la misma fila y del mismo
 lado del HUB (antes podían caer uno arriba y otro abajo y la línea cruzaba la
@@ -1313,34 +1379,53 @@ La prueba `sin PopScope raíz, el guardia evita que la app se cierre` monta el
 Drive SIN el `PopScope` del panel y comprueba que el `popRoute` queda atendido
 (es el valor que, sin guardia, cierra la app).
 
-**Salvavidas del historial (solo web)** — `lib/web_back_guard*.dart`.
-En el navegador el panel vive en UNA entrada de historial que el motor de
-Flutter vuelve a empujar DESPUÉS de cada atrás. En el **teléfono** eso no
-alcanzaba: Chrome descarta las entradas que se empujan *dentro* de la propia
-aacción de atrás (es su defensa contra páginas que secuestran el botón), así
-que el gesto se saltaba esa entrada y la pestaña salía del panel —en Android,
-además, cerraba la pestaña y devolvía al inicio del navegador—. En el APK nunca
-pasó: ahí el atrás es del sistema.
+**Atrás del navegador (solo web)** — `lib/web_back_guard*.dart`.
+En el navegador el panel vive dentro del historial: el motor de Flutter deja
+la entrada de la página (ORIGEN) y la suya («flutter»). Antes se intentaba
+sujetar la pestaña apilando entradas propias (una «reserva»), y eso no podía
+funcionar por dos motivos:
 
-Ahora, con el panel en pantalla (`AdminHome` avisa al montarse), el navegador
-deja una entrada de **salvavidas** debajo de la actual, escrita con la forma que
-el motor reconoce como «la entrada desde la que se llegó a la app»: al pulsar
-atrás se cae en ella, el motor rearma la suya y el gesto llega a la cadena
-(**subir de carpeta dentro del selector de fotos**, cerrar la foto, subir de
-carpeta, volver al módulo, preguntar antes de salir). Dos detalles son los que
-lo hacen funcionar: se empuja en un `setTimeout` (fuera del gesto, que es
-cuando Chrome sí la conserva) y se vuelve a armar con el primer toque del
-usuario.
+* `WidgetsApp` pide `selectSingleEntryHistory`: el motor vive en UNA entrada y,
+  al caer en su «origin», repone su «flutter» **en el mismo sitio**. Cualquier
+  entrada extra encima hace que el atrás siguiente caiga en una «flutter», que
+  el motor interpreta como «el usuario escribió otra URL» (`pushRoute`) y
+  navega por su cuenta: el atrás «salta» de carpeta.
+* En el **teléfono** el navegador descarta los `pushState` hechos dentro del
+  gesto de atrás (su defensa contra páginas que secuestran el botón), así que
+  la reserva se **gastaba** un paso por cada atrás hasta llegar a la página
+  real y salir. En el APK nunca pasó: ahí el atrás es del sistema.
+
+Ahora se usa lo único que impide de verdad que el navegador se mueva en un
+teléfono: la **Navigation API**. Un atrás dentro del mismo documento llega al
+evento `navigate` con `cancelable == true`; al cancelarlo el historial **no se
+mueve** (da igual cuántos atrás des) y el gesto se entrega a la app por el
+MISMO mensaje que manda el motor cuando el atrás es del sistema
+(`flutter/navigation` → `popRoute`), así que cerrar la foto, subir de carpeta,
+volver al módulo y el «¿Salir?» se comportan igual que en el APK.
+
+**Respaldo** (navegadores sin Navigation API, o gestos no cancelables): el
+guardia se instala en `main()`, ANTES de `runApp`, así que su `popstate` queda
+registrado **antes** que el del motor (lo registra el `Navigator`, ya dentro del
+árbol) y corre primero: corta la propagación para que el motor no interprete el
+gesto como un cambio de URL (`pushRoute`) ni se devuelva otra vez (`go(-1)`,
+que era lo que sacaba de la página), repone la entrada y entrega el atrás a la
+app. La reposición se reintenta a los 120 y 700 ms porque el teléfono descarta
+los `pushState` hechos dentro del gesto, y se revisa otra vez al volver a la
+pestaña (ahí se congelan los temporizadores).
 
 Está escrito en **Dart** (`dart:js_interop` + `package:web`, con un stub para
 Android/Windows/iOS), a propósito: viaja dentro de `main.dart.js`, así que basta
 con publicar la build de la web para que el teléfono lo reciba; no depende de
 que también se actualice el `index.html`. En el **login** no se arma: ahí el
-atrás sigue siendo del navegador. Comprobado en Chrome con el **botón atrás
-real** (no `history.back()`), replicando el caso reportado: selector abierto
-dentro de una carpeta → sube un nivel del selector; luego lo cierra; luego sube
-de carpeta en Archivos; luego vuelve al módulo; y cinco atrás seguidos nunca
-sacan de la app.
+atrás sigue siendo del navegador.
+
+Comprobado en un Chrome REAL, con una app montada como el panel (dos carpetas
+abiertas, el visor de foto y un SEGUNDO modal encima) y con el **atrás del
+navegador** (no `history.back()` de JS): cada atrás cierra un solo nivel —
+primero el modal de arriba, luego el visor, luego una carpeta por atrás—,
+`history.length` no cambia en ningún gesto y la pestaña nunca sale. Repetido con
+el camino de la Navigation API desactivado para forzar el respaldo: mismo
+resultado (6 atrás → 6 niveles, historial intacto).
 
 ## Barra de estado de la PWA (instalada desde la web)
 

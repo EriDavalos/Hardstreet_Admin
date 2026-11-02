@@ -615,6 +615,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('editar una agenda: se le puede ASIGNAR el paquete', (
+    tester,
+  ) async {
+    final puts = <Map<String, dynamic>>[];
+    await _pumpAgendas(tester, const Size(1200, 900), puts: puts);
+
+    await tester.ensureVisible(_weekBlock());
+    await tester.pump(const Duration(milliseconds: 300));
+    await _tapPump(tester, _weekBlock());
+    await _tapPump(tester, find.byTooltip('Editar agenda'));
+
+    // El paquete del evento (1) no viene en la lista del cliente: se conserva
+    // como opción y se puede cambiar por uno COMPRADO (10).
+    final picker = find.byKey(const ValueKey('agenda-edit-package'));
+    expect(picker, findsOneWidget);
+    await tester.ensureVisible(picker);
+    await tester.pump();
+    await _tapPump(tester, picker);
+    await _tapPump(tester, find.text('Paquete Aniversario').last);
+
+    await tester.ensureVisible(find.text('Guardar cambios'));
+    await tester.pump();
+    await _tapPump(tester, find.text('Guardar cambios'));
+
+    expect(puts, hasLength(1));
+    expect(puts.first['id'], 1);
+    expect(puts.first['purchasedPackageId'], 10);
+    expect(
+      puts.first['userId'],
+      2,
+      reason: 'el cliente del evento viaja junto con el paquete',
+    );
+    expect(
+      puts.first['serviceId'],
+      5,
+      reason: 'el servicio se conserva si el paquete nuevo lo incluye',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('sin permiso de actualizar, el detalle NO ofrece editar', (
     tester,
   ) async {

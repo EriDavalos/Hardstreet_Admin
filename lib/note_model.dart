@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// Formato aplicado a un rango de texto dentro de un párrafo o tarea.
@@ -27,7 +28,9 @@ class NoteTextRun {
     fontWeight: bold ? FontWeight.w700 : base.fontWeight,
     fontStyle: italic ? FontStyle.italic : base.fontStyle,
     decoration: underline ? TextDecoration.underline : base.decoration,
-    fontFamily: fontFamily.isEmpty ? base.fontFamily : fontFamily,
+    fontFamily: fontFamily.isEmpty
+        ? base.fontFamily
+        : resolveNoteFontFamily(fontFamily),
     fontSize: fontSize > 0 ? fontSize : base.fontSize,
   );
 
@@ -50,6 +53,70 @@ class NoteTextRun {
     fontFamily: (json['fontFamily'] ?? '').toString(),
     fontSize: (json['fontSize'] as num?)?.toDouble() ?? 0,
   );
+}
+
+/// Fuentes del texto de una nota: (clave que se guarda, nombre visible).
+///
+/// Se guardan claves cortas y [resolveNoteFontFamily] las traduce a la familia
+/// REAL de cada plataforma: las genéricas ('serif', 'monospace'…) solo existen
+/// en Android; en Windows, macOS y la web hay que nombrar la fuente o el cambio
+/// de fuente no se ve.
+const List<(String, String)> kNoteFonts = [
+  ('', 'Predeterminada'),
+  ('serif', 'Serif'),
+  ('monospace', 'Monoespaciada'),
+  ('cursive', 'Manuscrita'),
+];
+
+/// Nombre visible de una fuente guardada en la nota.
+String noteFontLabel(String key) {
+  for (final font in kNoteFonts) {
+    if (font.$1 == key) return font.$2;
+  }
+  return kNoteFonts.first.$2;
+}
+
+/// Familia real que se le pide al motor para esa clave.
+String resolveNoteFontFamily(String key) {
+  if (key.isEmpty) return '';
+  final platform = defaultTargetPlatform;
+  final apple =
+      platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+  switch (key) {
+    case 'serif':
+      return platform == TargetPlatform.android ? 'serif' : 'Georgia';
+    case 'monospace':
+      return platform == TargetPlatform.android
+          ? 'monospace'
+          : (apple ? 'Menlo' : 'Consolas');
+    case 'cursive':
+      return platform == TargetPlatform.android
+          ? 'cursive'
+          : (apple ? 'Snell Roundhand' : 'Segoe Script');
+    default:
+      return key;
+  }
+}
+
+/// Tamaños de letra que ofrece la barra (0 = el de la hoja).
+const List<double> kNoteFontSizes = [0, 13, 16, 20, 26];
+
+/// Nombre visible de un tamaño de letra.
+String noteFontSizeLabel(double size) {
+  switch (size) {
+    case 0:
+      return 'Predeterminado';
+    case 13:
+      return 'Pequeña · 13';
+    case 16:
+      return 'Normal · 16';
+    case 20:
+      return 'Grande · 20';
+    case 26:
+      return 'Muy grande · 26';
+    default:
+      return size.toStringAsFixed(0);
+  }
 }
 
 /// TextEditingController que conserva estilo por rango al escribir y al guardar.
@@ -232,6 +299,42 @@ class NoteRichTextController extends TextEditingController {
       if (fontSize != null && s.fontSize != fontSize) return false;
       return true;
     });
+  }
+
+  /// Estilo del carácter donde está el cursor (o del inicio de la selección):
+  /// así la barra enseña la fuente y el tamaño ACTUALES.
+  NoteTextRun? styleAt(TextRange? range) {
+    if (text.isEmpty) return null;
+    final selection = range ?? value.selection;
+    if (!selection.isValid) return null;
+    final offset = (selection.isCollapsed ? selection.end : selection.start)
+        .clamp(0, text.length);
+    final index = (offset >= text.length ? text.length - 1 : offset).clamp(
+      0,
+      _textStyles.length - 1,
+    );
+    if (index < 0) return null;
+    return _textStyles[index];
+  }
+
+  /// Tramo del párrafo (la línea) donde está el cursor: la fuente y el tamaño
+  /// se aplican a la línea entera cuando no hay nada seleccionado, para que el
+  /// cambio se vea al instante.
+  TextRange paragraphRange(TextRange? range) {
+    final selection = range ?? value.selection;
+    final caret = (selection.isValid ? selection.end : text.length).clamp(
+      0,
+      text.length,
+    );
+    var start = caret;
+    var end = caret;
+    while (start > 0 && text.codeUnitAt(start - 1) != 0x0A) {
+      start--;
+    }
+    while (end < text.length && text.codeUnitAt(end) != 0x0A) {
+      end++;
+    }
+    return TextRange(start: start, end: end);
   }
 
   /// Aplica el estilo al texto SELECCIONADO (o a [range]); con el cursor

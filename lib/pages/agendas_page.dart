@@ -226,8 +226,9 @@ class _AgendasPageState extends State<AgendasPage> {
   }
 
   Future<void> _reload() async {
+    // Recarga SILENCIOSA: el calendario y la lista se quedan como están
+    // mientras llegan los datos nuevos (sin esqueleto ni parpadeo).
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {
@@ -3705,10 +3706,11 @@ class _NewAgendaDialogState extends State<_NewAgendaDialog> {
 
 /// EDICIÓN de una agenda ya creada.
 ///
-/// El CLIENTE y el PAQUETE no se cambian aquí (el `PUT` del servidor tampoco
-/// los expone): se edita la fecha/hora, el servicio, las ubicaciones y la
-/// nota. Sirve igual para un evento con paquete que para uno agendado solo a
-/// nombre del cliente.
+/// Se edita la fecha/hora, el servicio, las ubicaciones y la nota, y TAMBIÉN
+/// el PAQUETE del cliente: asignarlo, cambiarlo o quitarlo (antes no se podía
+/// y una agenda creada sin paquete se quedaba así para siempre). El cliente
+/// no se cambia aquí —es otro evento—: los paquetes que se ofrecen son los
+/// comprados por ESE cliente.
 class _EditAgendaDialog extends StatefulWidget {
   const _EditAgendaDialog({required this.agenda});
 
@@ -3727,11 +3729,23 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
   bool _loadingServices = true;
   List<Map<String, dynamic>> _services = const [];
 
+  /// CLIENTE del evento: los paquetes que se ofrecen son los SUYOS.
+  int _userId = 0;
+
+  /// PAQUETE elegido (0 = sin paquete, evento solo del cliente). Empieza con
+  /// el que ya tiene la agenda y se puede cambiar al editar.
+  int _packageId = 0;
+  bool _loadingPackages = true;
+  List<Map<String, dynamic>> _packages = const [];
+
   bool _saving = false;
   String? _error;
 
   int get _id => (widget.agenda['id'] as num?)?.toInt() ?? 0;
-  int get _packageId =>
+
+  /// Paquete con el que la agenda está guardada: el cambio se manda solo si
+  /// de verdad se cambió.
+  int get _originalPackageId =>
       (widget.agenda['purchasedPackageId'] as num?)?.toInt() ?? 0;
 
   /// Las ubicaciones ya capturadas, en orden (sin los huecos vacíos).
@@ -3752,10 +3766,13 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
     final now = DateTime.now();
     _dateTime = parsed ?? DateTime(now.year, now.month, now.day, now.hour + 1);
     _serviceId = (a['serviceId'] as num?)?.toInt() ?? 0;
+    _userId = (a['userId'] as num?)?.toInt() ?? 0;
+    _packageId = _originalPackageId;
     final places = HsPlace.allOf(a);
     _places
       ..clear()
       ..addAll(places.isEmpty ? <HsPlace?>[null] : places);
+    _loadPackages();
     _loadServices();
   }
 
@@ -3787,6 +3804,62 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
       _services = list;
       _loadingServices = false;
     });
+  }
+
+  /// Paquetes COMPRADOS del cliente del evento: los que se pueden asignar.
+  Future<void> _loadPackages() async {
+    if (_userId == 0) {
+      if (mounted) setState(() => _loadingPackages = false);
+      return;
+    }
+    var list = const <Map<String, dynamic>>[];
+    try {
+      final data = await HsApi.clientPackages(_userId);
+      list = ((data['purchasedPackages'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    } catch (_) {
+      // Best effort: sin la lista, el paquete ACTUAL se conserva igual.
+    }
+    if (!mounted) return;
+    setState(() {
+      _packages = list;
+      _loadingPackages = false;
+    });
+  }
+
+  /// Al cambiar el paquete se recargan SUS servicios. El servicio elegido se
+  /// conserva si el paquete nuevo también lo incluye; si no, se suelta (era de
+  /// otro paquete y ya no aplica).
+  Future<void> _pickPackage(int id) async {
+    if (id == _packageId) return;
+    final previousService = _serviceId;
+    setState(() {
+      _packageId = id;
+      _services = const [];
+      _loadingServices = true;
+      _error = null;
+    });
+    await _loadServices();
+    if (!mounted) return;
+    // Lista vacía = no se pudo consultar: se deja el servicio como estaba.
+    if (_services.isNotEmpty &&
+        !_services.any((s) => _serviceIdOf(s) == previousService)) {
+      setState(() => _serviceId = 0);
+    }
+  }
+
+  /// Nombre del paquete elegido (se ve en el subtítulo del diálogo).
+  String get _packageLabel {
+    if (_packageId == 0) return 'Sin paquete';
+    for (final p in _packages) {
+      if (((p['id'] as num?)?.toInt() ?? 0) == _packageId) {
+        return (p['name'] ?? 'Paquete').toString();
+      }
+    }
+    final current = (widget.agenda['packageName'] ?? '').toString().trim();
+    return current.isEmpty ? 'Paquete' : current;
   }
 
   Future<void> _pickDate() async {
@@ -3844,6 +3917,12 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
         'serviceId': _serviceId == 0 ? null : _serviceId,
         'eventDate': hsDateTimeValue(_dateTime),
         'description': _desc.text.trim(),
+        // El PAQUETE solo viaja si cambió (con él se reacomoda el cliente del
+        // evento): editar la nota no toca nada de la asignación.
+        if (_packageId != _originalPackageId) ...{
+          'purchasedPackageId': _packageId == 0 ? null : _packageId,
+          'userId': _userId == 0 ? null : _userId,
+        },
         // Las ubicaciones viajan SIEMPRE (lista vacía = se quitaron): editar
         // una agenda también puede borrarlas, no solo cambiarlas.
         ...HsPlace.listBody(places),
@@ -3874,10 +3953,9 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
   Widget build(BuildContext context) {
     final a = widget.agenda;
     final client = (a['clientName'] ?? '').toString().trim();
-    final package = (a['packageName'] ?? '').toString().trim();
     final subtitle = [
       if (client.isNotEmpty) client,
-      package.isEmpty ? 'Sin paquete' : package,
+      _packageLabel,
     ].join(' · ');
     // El servicio ACTUAL puede no venir en la lista (otro paquete, catálogo
     // cambiado): se agrega como opción para no borrarlo sin querer.
@@ -3942,6 +4020,59 @@ class _EditAgendaDialogState extends State<_EditAgendaDialog> {
               ],
             );
           })(),
+        ),
+        const SizedBox(height: 14),
+        FormSection(
+          label: 'Paquete del cliente (opcional)',
+          child: _loadingPackages
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: LinearProgressIndicator(minHeight: 3),
+                )
+              : _PickerField(
+                  key: const ValueKey('agenda-edit-package'),
+                  label: 'Paquete',
+                  hint: 'Sin paquete (evento del cliente)',
+                  icon: Icons.inventory_2_outlined,
+                  selected: _packageId,
+                  enabled: !_saving,
+                  helper: _userId != 0 && _packages.isEmpty
+                      ? 'Este cliente no tiene paquetes comprados: el evento '
+                            'queda sólo a su nombre.'
+                      : 'Puedes asignarlo, cambiarlo o quitarlo: el servicio '
+                            'se ajusta al paquete elegido.',
+                  options: [
+                    const DropdownMenuItem(
+                      value: 0,
+                      child: Text('Sin paquete (evento del cliente)'),
+                    ),
+                    // El paquete actual puede no venir en la lista (paquete
+                    // cancelado o de otra empresa): se agrega para no perderlo.
+                    if (_packageId != 0 &&
+                        !_packages.any(
+                          (p) =>
+                              ((p['id'] as num?)?.toInt() ?? 0) == _packageId,
+                        ))
+                      DropdownMenuItem(
+                        value: _packageId,
+                        child: Text(
+                          _packageLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    for (final p in _packages)
+                      DropdownMenuItem(
+                        value: (p['id'] as num?)?.toInt() ?? 0,
+                        child: Text(
+                          (p['name'] ?? 'Paquete').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _pickPackage,
+                ),
         ),
         const SizedBox(height: 14),
         FormSection(

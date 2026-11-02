@@ -1531,10 +1531,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
       );
     }
     final total = (_health!['nodes'] as List).length;
+    // El hub contesta; si además algún servidor no responde el estado va en
+    // ROJO (es el que está caído), no en ámbar: el ámbar quedó para el bloqueo.
     return (
       color: total > 0 && _nodesOnline() == total
           ? const Color(0xFF2F9E5B)
-          : Colors.amber,
+          : const Color(0xFFDC2626),
       icon: Icons.hub,
       label: 'Hub conectado',
     );
@@ -2183,7 +2185,8 @@ class _DependenciesDialogState extends State<_DependenciesDialog> {
     return FormDialog(
       icon: Icons.account_tree_outlined,
       title: 'Dependencias de $_name',
-      subtitle: 'Unificar con otros servidores o dejarlo independiente.',
+      subtitle: 'Enlazar con otros servidores (en los dos sentidos) o '
+          'dejarlo independiente.',
       saveLabel: 'Guardar dependencias',
       saving: _saving,
       error: _error,
@@ -2192,11 +2195,13 @@ class _DependenciesDialogState extends State<_DependenciesDialog> {
       onSave: _save,
       children: [
         Text(
-          'Sin marcar ninguno, este servidor es INDEPENDIENTE (diferencia). '
-          'Marcando uno o varios queda UNIFICADO con ellos: si alguno deja de '
-          'responder, se apaga o se quita de la lista, ESTE entra en '
-          'mantenimiento y el Drive lo dice (deja de listar y servir sus '
-          'archivos). Puede ser mutuo (los dos se dependen).',
+          'Sin marcar ninguno, este servidor es INDEPENDIENTE. Al marcar otro '
+          'queda ENLAZADO con él en los DOS sentidos: no hay dependencias de '
+          'un solo lado, el otro servidor también pasa a depender de éste y '
+          'los dos se ven igual en el diagrama. Si cualquiera de los dos deja '
+          'de responder o se apaga en el Drive, el otro queda BLOQUEADO '
+          '(naranja): sigue funcionando, pero el Drive deja de listar y '
+          'servir sus archivos hasta que vuelva.',
           style: TextStyle(
             fontSize: 12,
             height: 1.35,

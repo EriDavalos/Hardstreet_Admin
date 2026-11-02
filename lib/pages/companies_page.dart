@@ -50,8 +50,9 @@ class _CompaniesPageState extends State<CompaniesPage> {
   }
 
   Future<void> _reload() async {
+    // Recarga SILENCIOSA: la lista se queda en pantalla mientras llega la
+    // nueva (sin esqueleto) al cerrar el alta/edición.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

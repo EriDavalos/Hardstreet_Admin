@@ -9,6 +9,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'app_constants.dart';
+import 'invitation_html.dart';
+import 'invitation_model.dart';
 import 'note_model.dart';
 import 'share_permissions.dart';
 import 'site_design.dart';
@@ -1306,6 +1308,69 @@ class HsApi {
   ///
   /// Endpoint: DELETE /api/admin/notes?id=N
   static Future<void> deleteNote(int id) => delete('/api/admin/notes?id=$id');
+
+  // ---------------- Invitaciones ----------------
+
+  /// Invitaciones de la empresa (listado; sin el HTML de la liga).
+  ///
+  /// Endpoint: GET /api/admin/invitations
+  static Future<({List<Invitation> items, bool ready})>
+  invitations() async {
+    final data =
+        (await get('/api/admin/invitations') as Map?) ??
+        const <String, dynamic>{};
+    final items = ((data['invitations'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Invitation.fromJson(e.cast<String, dynamic>()))
+        .where((i) => i.id > 0)
+        .toList();
+    return (items: items, ready: data['ready'] != false);
+  }
+
+  /// Crea (id = 0) o actualiza una invitación y devuelve la guardada.
+  ///
+  /// El HTML de la liga pública se genera AQUÍ, con el MISMO modelo que la
+  /// vista previa; el backend lo guarda tal cual y lo sirve en `/i/<liga>`.
+  ///
+  /// Endpoint: POST / PUT /api/admin/invitations
+  static Future<Invitation> saveInvitation(Invitation invitation) async {
+    final body = <String, dynamic>{
+      ...invitation.toJson(),
+      'html': buildInvitationHtml(invitation),
+    };
+    final raw = await (invitation.id > 0
+        ? put('/api/admin/invitations', body)
+        : post('/api/admin/invitations', body));
+    final data = (raw as Map?) ?? const <String, dynamic>{};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>();
+    if (item == null) throw ApiException('No se pudo guardar la invitación');
+    return Invitation.fromJson(item);
+  }
+
+  /// Publica (crea la liga si falta) o despublica una invitación.
+  ///
+  /// Endpoint: PUT /api/admin/invitations con solo `published`.
+  static Future<Invitation> publishInvitation(
+    int id,
+    bool published,
+  ) async {
+    final raw = await put('/api/admin/invitations', {
+      'id': id,
+      'published': published,
+    });
+    final data = (raw as Map?) ?? const <String, dynamic>{};
+    final item = (data['item'] as Map?)?.cast<String, dynamic>();
+    if (item == null) {
+      throw ApiException('No se pudo cambiar la publicación');
+    }
+    return Invitation.fromJson(item);
+  }
+
+  /// Elimina (baja lógica) una invitación y apaga su liga.
+  ///
+  /// Endpoint: DELETE /api/admin/invitations?id=N
+  static Future<void> deleteInvitation(int id) =>
+      delete('/api/admin/invitations?id=$id');
 
   // ---------------- Diseño del sitio (tarjetas y portada) -------------
 

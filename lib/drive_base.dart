@@ -967,6 +967,36 @@ abstract class DriveBase extends ChangeNotifier {
     return true;
   }
 
+  /// Renombra un elemento EN PANTALLA en cuanto el servidor confirma.
+  ///
+  /// El PATCH puede tardar (el hub habla con el servidor de archivos) y el
+  /// listado vuelve después: mientras tanto la carpeta seguía con el nombre
+  /// viejo y, al tocarla, el servidor ya la tenía con el nuevo («no existe»).
+  /// Se pinta el nombre nuevo antes de pedir el listado: aparece al instante.
+  void renameLocally(String oldName, String newName) {
+    if (oldName == newName) return;
+    final index = _items.indexWhere((e) => e.name == oldName);
+    if (index < 0) return;
+    final old = _items[index];
+    final renamed = DriveItem(
+      name: newName,
+      isFolder: old.isFolder,
+      modified: old.modified,
+      size: old.size,
+      childCount: old.childCount,
+      countKnown: old.countKnown,
+    );
+    final source = _rawListing.any((e) => e.name == oldName)
+        ? _rawListing
+        : _items;
+    _rawListing = source
+        .map((e) => e.name == oldName ? renamed : e)
+        .toList(growable: false);
+    updateItems(_rawListing);
+    _rememberListing(pathLabel, items);
+    notifyListeners();
+  }
+
   /// Último listado CRUDO (sin el alcance compartido aplicado): al recontar hay
   /// que rehacer el filtro desde el original, no desde lo que ya se muestra.
   List<DriveItem> _rawListing = const [];

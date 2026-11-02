@@ -397,6 +397,13 @@ class _DrivePageState extends State<DrivePage>
   final List<_DriveNotice> _notices = [];
   bool _panelOpen = true;
 
+  /// Cuántos trabajos de transferencia había en la última notificación: al
+  /// aparecer uno nuevo se abre la ventanita (aunque estuviera minimizada).
+  int _lastJobCount = 0;
+
+  /// Evita lanzar dos renombrados a la vez (el segundo pediría el nombre viejo).
+  bool _renaming = false;
+
   // ---- Fotos recién subidas --------------------------------------------
   // Copia LOCAL (ruta de origen) por nombre: la cuadrícula la muestra al
   // instante mientras el servidor genera la miniatura, así la foto aparece
@@ -532,6 +539,12 @@ class _DrivePageState extends State<DrivePage>
 
   void _onChange() {
     if (!mounted) return;
+    // Cada subida/descarga nueva abre la ventanita de actividad: el trabajo
+    // sigue en segundo plano, pero el avance se ve sin bloquear la cuadrícula.
+    final jobs =
+        widget.drive.uploadJobs.length + widget.drive.downloadJobs.length;
+    if (jobs > _lastJobCount) _panelOpen = true;
+    _lastJobCount = jobs;
     if (_lastPath.join('/') != widget.drive.path.join('/')) {
       // Cambio de carpeta: limpia selección/ancla/claves y evicta SOLO las
       // miniaturas de la carpeta anterior. (NO clearRam(): borrar toda la
@@ -608,6 +621,9 @@ class _DrivePageState extends State<DrivePage>
       _snack('Tu rol no puede descargar archivos del Drive', error: true);
       return;
     }
+    // La ventanita se abre sola: la descarga corre en segundo plano y su
+    // progreso se ve ahí, sin bloquear la cuadrícula.
+    if (!_panelOpen && mounted) setState(() => _panelOpen = true);
     await downloadDriveSelection(context, drive: widget.drive, items: items);
   });
 
@@ -1231,17 +1247,23 @@ class _DrivePageState extends State<DrivePage>
   }
 
   Future<void> _rename(DriveItem item) async {
+    if (_renaming) {
+      return; // ya hay uno en curso: el nombre viejo podría no existir
+    }
     final name = await _promptText(
       title: item.isFolder ? 'Renombrar carpeta' : 'Renombrar archivo',
       label: 'Nuevo nombre',
       initial: item.name,
     );
     if (name == null || name == item.name) return;
+    _renaming = true;
     try {
       await widget.drive.rename(item, name);
       _snack('Renombrado a "$name"');
     } catch (e) {
       _snack('$e', error: true);
+    } finally {
+      _renaming = false;
     }
   }
 

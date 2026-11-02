@@ -415,8 +415,9 @@ class _SitePageState extends State<SitePage> {
   // ---------------------------------------------------------------
 
   Future<void> _load() async {
+    // Recarga SILENCIOSA: el contenido se queda en pantalla mientras llega
+    // el nuevo (sin esqueleto) al cerrar un modal.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

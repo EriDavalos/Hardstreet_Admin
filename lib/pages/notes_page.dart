@@ -1457,10 +1457,11 @@ class _NoteEditorState extends State<NoteEditor> {
     bool? underline,
     String? fontFamily,
     double? fontSize,
+    TextRange? range,
   }) {
     final target = _formatTarget;
     if (target == null) return;
-    var selection = _formatSelection;
+    var selection = range ?? _formatSelection;
     if (!selection.isValid) selection = target.value.selection;
     target.applyFormat(
       bold: bold,
@@ -1471,9 +1472,14 @@ class _NoteEditorState extends State<NoteEditor> {
       range: selection,
     );
     // Se recuerda el rango elegido: así se puede volver a pulsar (negrita,
-    // cursiva…) sobre la MISMA selección sin que se pierda.
+    // cursiva…) sobre la MISMA selección sin que se pierda. Cuando el rango lo
+    // puso la barra (fuente/tamaño del párrafo) el cursor se queda donde estaba.
     _textTarget = target;
-    _textTargetSelection = selection;
+    if (range == null) {
+      _textTargetSelection = selection is TextSelection
+          ? selection
+          : target.value.selection;
+    }
     _markDirty();
     if (mounted) setState(() {});
   }
@@ -1975,6 +1981,9 @@ class _NoteEditorState extends State<NoteEditor> {
     final target = _formatTarget;
     if (target == null) return const SizedBox.shrink();
     final selection = _formatSelection;
+    final style = target.styleAt(selection);
+    final fontKey = style?.fontFamily ?? '';
+    final fontSize = style?.fontSize ?? 0;
 
     bool enabled({bool? bold, bool? italic, bool? underline}) =>
         target.hasFormat(
@@ -1984,12 +1993,28 @@ class _NoteEditorState extends State<NoteEditor> {
           range: selection,
         );
 
+    // Fuente y tamaño: con texto seleccionado se aplican ahí; con solo el
+    // cursor se aplican al párrafo donde está, así el cambio se VE al instante
+    // (antes solo quedaba armado para lo que se escribiera después y el
+    // control parecía no hacer nada).
+    TextRange paragraph() => selection.isValid && !selection.isCollapsed
+        ? selection
+        : target.paragraphRange(selection);
+
+    final sizeLabel = fontSize <= 0
+        ? 'Auto'
+        : fontSize.toStringAsFixed(fontSize == fontSize.roundToDouble() ? 0 : 1);
+
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: .42),
       borderRadius: BorderRadius.circular(12),
-      child: Padding(
+      // En el celular la barra no cabe entera: se desliza en horizontal en vez
+      // de recortar los últimos controles (que quedaban sin poder tocarse).
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             _formatButton(
               scheme,
@@ -2018,72 +2043,73 @@ class _NoteEditorState extends State<NoteEditor> {
             const SizedBox(width: 4),
             PopupMenuButton<String>(
               tooltip: 'Fuente',
-              onSelected: (value) => _applyFormatToSelection(fontFamily: value),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: '', child: Text('Predeterminada')),
-                PopupMenuItem(value: 'Roboto', child: Text('Roboto')),
-                PopupMenuItem(value: 'serif', child: Text('Serif')),
-                PopupMenuItem(value: 'monospace', child: Text('Monoespaciada')),
+              onSelected: (value) =>
+                  _applyFormatToSelection(fontFamily: value, range: paragraph()),
+              itemBuilder: (_) => [
+                for (final font in kNoteFonts)
+                  PopupMenuItem(
+                    value: font.$1,
+                    child: _menuOption(font.$2, active: font.$1 == fontKey),
+                  ),
               ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.font_download_outlined,
-                      size: 17,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Fuente',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const Icon(Icons.expand_more_rounded, size: 16),
-                  ],
-                ),
+              child: _pickerLabel(
+                scheme,
+                Icons.text_fields_rounded,
+                fontKey.isEmpty ? 'Aa' : noteFontLabel(fontKey),
               ),
             ),
             const SizedBox(width: 4),
             PopupMenuButton<double>(
               tooltip: 'Tamaño de letra',
-              onSelected: (value) => _applyFormatToSelection(fontSize: value),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 12, child: Text('Pequeña · 12')),
-                PopupMenuItem(value: 15.5, child: Text('Normal · 16')),
-                PopupMenuItem(value: 20, child: Text('Grande · 20')),
-                PopupMenuItem(value: 26, child: Text('Muy grande · 26')),
+              onSelected: (value) =>
+                  _applyFormatToSelection(fontSize: value, range: paragraph()),
+              itemBuilder: (_) => [
+                for (final size in kNoteFontSizes)
+                  PopupMenuItem(
+                    value: size,
+                    child: _menuOption(
+                      noteFontSizeLabel(size),
+                      active: size == fontSize,
+                    ),
+                  ),
               ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.format_size_rounded,
-                      size: 17,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Tamaño',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const Icon(Icons.expand_more_rounded, size: 16),
-                  ],
-                ),
-              ),
+              child: _pickerLabel(scheme, Icons.format_size_rounded, sizeLabel),
             ),
           ],
         ),
       ),
     );
   }
+
+  /// Etiqueta de los desplegables: icono + valor ACTUAL (fuente o tamaño).
+  Widget _pickerLabel(ColorScheme scheme, IconData icon, String label) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+            ),
+            const Icon(Icons.expand_more_rounded, size: 16),
+          ],
+        ),
+      );
+
+  /// Opción del desplegable, con palomita en la que está puesta.
+  Widget _menuOption(String label, {required bool active}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(label),
+      if (active) ...[
+        const SizedBox(width: 10),
+        const Icon(Icons.check_rounded, size: 16),
+      ],
+    ],
+  );
 
   Widget _formatButton(
     ColorScheme scheme, {

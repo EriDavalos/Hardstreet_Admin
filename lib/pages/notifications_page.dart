@@ -96,8 +96,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _load() async {
+    // Recarga SILENCIOSA: la lista se queda en pantalla mientras llega la
+    // nueva (sin esqueleto) al cerrar el envío de avisos.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

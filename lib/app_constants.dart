@@ -25,12 +25,24 @@ class AppConstants {
     defaultValue: 'https://apihardstreet.vercel.app',
   );
 
+  /// Base pública del SITIO (la web de la carpeta `Hardstreet`).
+  ///
+  /// Las invitaciones se comparten con la liga del sitio más el código:
+  /// `https://hardstreet.com/?invitation=abc123`. La web reconoce ese
+  /// parámetro y muestra la invitación guardada (Vercel la reescribe al
+  /// HTML público; en local hay un respaldo en `index.html`).
+  /// Override: --dart-define=SITE_URL=https://otro-dominio.com
+  static const String publicSiteBase = String.fromEnvironment(
+    'SITE_URL',
+    defaultValue: 'https://hardstreet.vercel.app',
+  );
+
   /// Versión COMPILADA en el binario (referencia real del .exe/.apk).
   /// El instalador no puede leer pubspec en caliente; mantenla igual a
   /// pubspec.yaml o pásala con --dart-define=SP_VERSION=x.y.z al compilar.
   static const String buildVersion = String.fromEnvironment(
     'SP_VERSION',
-    defaultValue: '1.2.5',
+    defaultValue: '1.2.6',
   );
 
   /// Override opcional (útil en desarrollo): --dart-define=APP_VERSION=x.y.z

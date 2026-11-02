@@ -451,84 +451,58 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
       },
       child: Dialog.fullscreen(
         backgroundColor: const Color(0xFF101014),
-        child: Stack(
-          fit: StackFit.expand,
+        // LA BARRA VA EN SU PROPIA FRANJA, NUNCA ENCIMA DEL VÍDEO.
+        //
+        // El reproductor es una vista del sistema (el navegador integrado de
+        // Windows) o un iframe (en la web): las dos se pintan POR ENCIMA de lo
+        // que Flutter dibuja en el mismo sitio y se quedan con los toques. Con
+        // la barra superpuesta, «Cerrar», «Descargar» y «Pantalla completa»
+        // quedaban tapados y no respondían, y al maximizar desde el propio
+        // vídeo ya no había forma de salir. En una fila propia el vídeo ocupa
+        // solo el resto de la pantalla y sus botones siempre se pueden tocar.
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Positioned.fill(child: _body(item)),
-            if (!_immersive) ...[
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 8, 8, 12),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black87, Colors.transparent],
-                    ),
-                  ),
-                  child: SafeArea(bottom: false, child: _bar(item)),
-                ),
-              ),
-              if (_canMove) ..._arrows(),
-            ] else
-              // Salida visible: con la barra oculta no habría forma de volver
-              // (ESC y ATRÁS también salen).
-              Positioned(
-                top: 0,
-                right: 0,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: _RoundAction(
-                      icon: Icons.fullscreen_exit_rounded,
-                      tooltip: 'Salir de pantalla completa',
-                      onTap: _toggleFullscreen,
-                    ),
-                  ),
-                ),
-              ),
-            if (_playerError != null)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: SafeArea(top: false, child: _errorBar(item)),
-              ),
+            if (_immersive) _immersiveBar() else _topBar(item),
+            Expanded(child: _body(item)),
+            if (_playerError != null) _errorBar(item),
           ],
         ),
       ),
     );
   }
 
-  List<Widget> _arrows() => [
-    Positioned(
-      left: 6,
-      top: 0,
-      bottom: 0,
-      child: Center(
-        child: _RoundAction(
-          icon: Icons.chevron_left,
-          tooltip: 'Anterior',
-          onTap: () => _move(-1),
-        ),
+  /// Barra del visor: archivo, flechas, pantalla completa, descargar y cerrar.
+  Widget _topBar(DriveItem item) => Container(
+    decoration: BoxDecoration(
+      color: const Color(0xFF101014),
+      border: Border(
+        bottom: BorderSide(color: Colors.white.withValues(alpha: .08)),
       ),
     ),
-    Positioned(
-      right: 6,
-      top: 0,
-      bottom: 0,
-      child: Center(
-        child: _RoundAction(
-          icon: Icons.chevron_right,
-          tooltip: 'Siguiente',
-          onTap: () => _move(1),
-        ),
+    padding: const EdgeInsets.fromLTRB(14, 6, 8, 8),
+    child: SafeArea(bottom: false, child: _bar(item)),
+  );
+
+  /// Pantalla completa: queda solo la salida, también en su franja (encima del
+  /// vídeo la taparía el reproductor y no se podría volver).
+  Widget _immersiveBar() => Container(
+    color: const Color(0xFF101014),
+    padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+    child: SafeArea(
+      bottom: false,
+      child: Row(
+        children: [
+          const Spacer(),
+          _RoundAction(
+            icon: Icons.fullscreen_exit_rounded,
+            tooltip: 'Salir de pantalla completa',
+            onTap: _toggleFullscreen,
+          ),
+        ],
       ),
     ),
-  ];
+  );
 
   Widget _body(DriveItem item) {
     final target = _target(item);
@@ -1501,6 +1475,22 @@ class _DriveFileViewerState extends State<DriveFileViewer> {
             ],
           ),
         ),
+        // Las flechas van AQUÍ, no flotando sobre el vídeo: sobre la vista
+        // del reproductor tampoco se podían tocar.
+        if (_canMove) ...[
+          _RoundAction(
+            icon: Icons.chevron_left,
+            tooltip: 'Anterior',
+            onTap: () => _move(-1),
+          ),
+          const SizedBox(width: 6),
+          _RoundAction(
+            icon: Icons.chevron_right,
+            tooltip: 'Siguiente',
+            onTap: () => _move(1),
+          ),
+          const SizedBox(width: 6),
+        ],
         if (_canPreview)
           _RoundAction(
             icon: Icons.fullscreen_rounded,
@@ -1594,6 +1584,9 @@ class _RoundAction extends StatelessWidget {
       child: IconButton(
         tooltip: tooltip,
         onPressed: onTap,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 38, height: 38),
         icon: Icon(icon, size: 20, color: Colors.white),
       ),
     );

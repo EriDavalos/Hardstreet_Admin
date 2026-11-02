@@ -286,6 +286,30 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('con el VISOR abierto, el atrás solo cierra la foto', (
+      tester,
+    ) async {
+      final drive = await _pumpDrive(tester);
+      await tester.tap(find.text('Bodas').first);
+      await _settle(tester);
+      expect(drive.path, ['Bodas']);
+
+      // Se abre la foto y se pulsa ATRÁS (no el botón de cerrar): el visor es
+      // UN paso más, pero no puede gastar también el de la carpeta.
+      await tester.tap(find.text('boda_00.png').first);
+      await _settle(tester);
+      expect(find.byTooltip('Cerrar'), findsWidgets);
+
+      await _pressBack(tester);
+      expect(find.byTooltip('Cerrar'), findsNothing, reason: 'la foto se cierra');
+      expect(
+        drive.path,
+        ['Bodas'],
+        reason: 'y la carpeta se queda donde estaba (sin subir un nivel)',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('sin PopScope raíz, el guardia evita que la app se cierre', (
       tester,
     ) async {

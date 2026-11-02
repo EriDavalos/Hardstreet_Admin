@@ -21,6 +21,7 @@ import 'local_share_agent.dart';
 import 'pages/activity_page.dart';
 import 'pages/admin_pages.dart';
 import 'pages/agendas_page.dart';
+import 'pages/invitations_page.dart';
 import 'pages/notes_page.dart';
 import 'pages/clients_page.dart';
 import 'pages/client_dashboard_page.dart';
@@ -56,6 +57,11 @@ import 'widgets/wheel_fix.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // ATRÁS en la WEB: se instala AQUÍ, antes de `runApp`, para que su
+  // `popstate` quede registrado ANTES que el del motor (lo registra el
+  // `Navigator`, ya dentro del árbol) y pueda quedarse con el gesto. En
+  // Android/Windows/iOS y en las pruebas no hace nada.
+  installWebBackGuard();
   // En el NAVEGADOR, el clic derecho es NUESTRO: abre el menú de la app
   // (Descargar / Renombrar / Eliminar) y no el del navegador con "Inspeccionar"
   // y demás. En escritorio y móvil nativo esta llamada no existe.
@@ -679,6 +685,7 @@ const Map<_Section, String> _kSectionModules = {
   _Section.drive: 'Archivos',
   _Section.sharedFiles: 'Archivos compartidos',
   _Section.agendas: 'Agendas',
+  _Section.invitations: 'Invitaciones',
   _Section.notes: 'Notas',
   _Section.finance: 'Finanzas',
   _Section.storage: 'Almacenamiento',
@@ -706,6 +713,7 @@ const Map<_Section, String> _kSectionKeys = {
   _Section.drive: 'drive',
   _Section.sharedFiles: 'shared_files',
   _Section.agendas: 'schedules',
+  _Section.invitations: 'invitations',
   _Section.notes: 'notes',
   _Section.finance: 'finance',
   _Section.storage: 'storage',
@@ -732,6 +740,7 @@ enum _Section {
   drive,
   sharedFiles,
   agendas,
+  invitations,
   notes,
   finance,
   connection,
@@ -865,12 +874,11 @@ class _AdminHomeState extends State<AdminHome> {
     // El panel se apunta al FINAL de la cadena del atrás: las páginas de los
     // módulos se registran después y por eso se atienden primero.
     BackNav.add(_backStep);
-    // En la WEB, mientras el panel está en pantalla, el navegador deja una
-    // entrada de salvavidas debajo de la actual: así el atrás del teléfono cae
-    // en ella, el motor rearma la suya y el gesto llega a la cadena de arriba
-    // (cerrar la foto, subir de carpeta, volver al módulo) en vez de salirse
-    // de la app. En el login no se arma: allí el atrás sigue siendo del
-    // navegador.
+    // En la WEB, mientras el panel está en pantalla, el atrás del navegador se
+    // intercepta ANTES de que el navegador se mueva (Navigation API, con
+    // respaldo de historial) y se entrega a la cadena de arriba —cerrar la
+    // foto, subir de carpeta, volver al módulo— en vez de sacarte de la app.
+    // En el login no se arma: allí el atrás sigue siendo del navegador.
     setWebBackGuard(enabled: true);
     HsAccess.addListener(_onAccessChanged);
     // En segundo plano el panel conserva la vista; los servicios de
@@ -1116,6 +1124,9 @@ class _AdminHomeState extends State<AdminHome> {
           module == 'print' ||
           // Notas: sin la migración aplicada el backend responde 403.
           module == 'notes' ||
+          // Invitaciones: exige su permiso real; sin la migración aplicada
+          // el backend responde 403.
+          module == 'invitations' ||
           // Notificaciones exige su permiso real: sin la migración aplicada
           // no se ofrece una pantalla que el backend va a rechazar.
           module == 'notifications' ||
@@ -1203,6 +1214,17 @@ class _AdminHomeState extends State<AdminHome> {
         ),
         _Section.agendas,
         'Agendas',
+      ),
+      // INVITACIONES: plantillas para XV, bodas y cumpleaños con liga
+      // pública para el cliente.
+      (
+        const AdminDestination(
+          icon: Icons.mail_outline_rounded,
+          label: 'Invitaciones',
+          header: AdminDestination.headerNone,
+        ),
+        _Section.invitations,
+        'Invitaciones',
       ),
       // NOTAS: bloc personal (texto, listas de actividades y dibujo).
       (
@@ -1512,6 +1534,9 @@ class _AdminHomeState extends State<AdminHome> {
         break;
       case _Section.agendas:
         body = const AgendasPage();
+        break;
+      case _Section.invitations:
+        body = const InvitationsPage();
         break;
       case _Section.notes:
         body = const NotesPage();

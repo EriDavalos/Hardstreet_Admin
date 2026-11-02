@@ -168,7 +168,7 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('muestra el paquete, lo cumplido (checklist) y el Drive', (
+  testWidgets('muestra el paquete, lo cumplido (checklist) y los servicios', (
     tester,
   ) async {
     _installMock();
@@ -192,20 +192,13 @@ void main() {
     expect(find.text('Pendiente'), findsWidgets);
     expect(find.text('Cobertura completa del evento'), findsOneWidget);
 
-    // Secciones clave y acceso al Drive (la primera liga es del drive propio).
+    // Secciones clave. La tarjeta «Mi Drive compartido» se QUITÓ de este
+    // módulo: el drive se ve en «Archivos» y en la carpeta de cada servicio.
     expect(find.text('Tus servicios'), findsOneWidget);
-    expect(find.text('Mi Drive compartido'), findsOneWidget);
-    expect(find.text('Entrar a mi Drive'), findsOneWidget);
-    expect(
-      find.text('Copiar enlace del Drive'),
-      findsNothing,
-      reason: 'la PRIMERA liga es propia → botón "Entrar"',
-    );
-    expect(
-      find.text('Sesión previa'),
-      findsWidgets,
-      reason: 'liga externa: aparece en el checklist y en las ligas',
-    );
+    expect(find.text('Mi Drive compartido'), findsNothing);
+    expect(find.text('Entrar a mi Drive'), findsNothing);
+    expect(find.text('Ver carpetas compartidas'), findsNothing);
+    expect(find.text('Sesión previa'), findsWidgets);
 
     expect(tester.takeException(), isNull);
   });
@@ -230,31 +223,6 @@ void main() {
     );
     // Al estar pagado completo, la portada dice «Liquidado».
     expect(find.text('Liquidado'), findsOneWidget);
-  });
-
-  testWidgets('la carpeta propia entrega la ruta al panel (onOpenDrive)', (
-    tester,
-  ) async {
-    _installMock();
-    final opened = <List<String>>[];
-    await _pumpPage(tester, onOpenDrive: opened.add);
-
-    await _tap(tester, find.text('Entrar a mi Drive'));
-
-    expect(opened, hasLength(1));
-    expect(opened.single, ['clientes', 'boda']);
-  });
-
-  testWidgets('liga externa: se copia al portapapeles con aviso', (
-    tester,
-  ) async {
-    _installMock();
-    await _pumpPage(tester);
-
-    // La liga de Google Drive está en la lista de servicios con liga.
-    await _tap(tester, find.text('Copiar').last);
-
-    expect(find.text('Enlace copiado'), findsOneWidget);
   });
 
   testWidgets('los avisos del estudio se ven en «Novedades»', (tester) async {
@@ -451,7 +419,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('hs-filter-button')), findsWidgets);
     expect(find.text('Tus servicios'), findsOneWidget);
-    expect(find.text('Mi Drive compartido'), findsOneWidget);
+    expect(find.text('Mi Drive compartido'), findsNothing);
     expect(find.text('Cobertura en evento'), findsWidgets);
     expect(tester.takeException(), isNull);
   });

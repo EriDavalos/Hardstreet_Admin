@@ -18,7 +18,6 @@ import '../widgets/hero_photo_banner.dart';
 import '../widgets/hs_search_filter.dart';
 import '../widgets/photo_backdrop.dart';
 import '../widgets/service_photos_sheet.dart';
-import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 
 // ==================================================================
@@ -97,8 +96,9 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
   }
 
   Future<void> _load() async {
+    // Recarga SILENCIOSA: al volver de «Mis fotos» (o de cualquier modal) los
+    // paquetes se quedan en pantalla mientras llegan los datos nuevos.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {
@@ -299,26 +299,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     return null;
   }
 
-  /// Ligas únicas de los servicios del paquete: (servicio, url).
-  List<(String, String)> get _driveLinks {
-    final out = <(String, String)>[];
-    final seen = <String>{};
-    for (final s in _services) {
-      final svc = s['service'];
-      if (svc is! Map) continue;
-      // La liga compartida PARA ESTE SERVICIO del paquete manda; la del
-      // catálogo queda como respaldo de un backend viejo.
-      final url =
-          ((s['shareLink'] ?? '').toString().trim().isNotEmpty
-                  ? s['shareLink']
-                  : svc['url'])
-              .toString()
-              .trim();
-      if (url.isEmpty || !seen.add(url)) continue;
-      out.add(((svc['name'] ?? 'Servicio').toString(), url));
-    }
-    return out;
-  }
 
   Future<void> _copy(String url) async {
     // Aviso INMEDIATO (el portapapeles es cortesía y no debe retrasar el UI).
@@ -335,64 +315,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     }
   }
 
-  /// Lista TODAS las carpetas del Drive compartidas con el cliente (una por
-  /// paquete más las compartidas directamente con él), con un botón para
-  /// abrir cada una. Es la opción «Ver carpetas compartidas» de su Drive.
-  Future<void> _showSharedFolders() async {
-    await showHsModal<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Carpetas compartidas contigo'),
-        content: SizedBox(
-          width: 460,
-          child: _sharedPaths.isEmpty
-              ? const Text(
-                  'Tu fotógrafo todavía no ha compartido ninguna carpeta del '
-                  'Drive contigo. En cuanto la asigne a tus paquetes, la verás '
-                  'aquí y en tu Drive.',
-                  style: TextStyle(fontSize: 12.5, height: 1.4),
-                )
-              : ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _sharedPaths.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final item = _sharedPaths[i];
-                    final path = (item['path'] ?? '').toString();
-                    final label = (item['packageName'] ?? '').toString();
-                    return ListTile(
-                      dense: true,
-                      leading: const Icon(
-                        Icons.folder_shared_outlined,
-                        size: 18,
-                      ),
-                      title: Text(label.isEmpty ? 'Carpeta compartida' : label),
-                      subtitle: Text(
-                        path,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: TextButton(
-                        onPressed: () {
-                          Navigator.of(ctx).pop();
-                          _openShared(path);
-                        },
-                        child: const Text('Abrir'),
-                      ),
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Abre en el drive (sección Archivos) la carpeta compartida de un paquete.
   void _openShared(String path) {
     final segments = path
@@ -400,6 +322,18 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
         .map((s) => s.trim())
         .where((s) => s.isNotEmpty)
         .toList();
+    // El Drive del CLIENTE solo tiene sus carpetas compartidas: si la del
+    // servicio no está entre ellas no se puede abrir. Antes el Drive se
+    // quedaba en la raíz y el cliente veía OTRA carpeta (parecía que «Abrir
+    // carpeta» le llevaba al servicio equivocado). Mejor decirlo claro.
+    final drive = DriveScope.maybeOf(context);
+    if (drive != null && !drive.isInsideShared(segments)) {
+      HsToast.info(
+        'Esta carpeta no está en tu Drive',
+        details: 'Pídele a tu fotógrafo que la comparta contigo.',
+      );
+      return;
+    }
     widget.onOpenDrive?.call(segments);
   }
 
@@ -700,17 +634,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                   const SizedBox(height: 20),
                   _servicesSection(scheme, services),
                 ],
-                const SizedBox(height: 20),
-                _sectionTitle(
-                  scheme,
-                  Icons.folder_copy_outlined,
-                  'Mi Drive compartido',
-                  trailing:
-                      '${_sharedPaths.length} '
-                      '${_sharedPaths.length == 1 ? 'carpeta' : 'carpetas'}',
-                ),
-                const SizedBox(height: 10),
-                _driveCard(scheme),
               ],
             ],
           ),
@@ -2245,12 +2168,14 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
             onPressed: openingPhotos
                 ? null
                 : () => _pickServiceItems(service, name),
+            // MÁS GRANDE que el resto de acciones: es el botón que el cliente
+            // toca de verdad en el teléfono.
             style: FilledButton.styleFrom(
               visualDensity: VisualDensity.compact,
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: const Size(0, 46),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               textStyle: const TextStyle(
-                fontSize: 11.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -2266,7 +2191,7 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
                         : items > 0
                         ? Icons.check_circle_outline_rounded
                         : Icons.photo_library_outlined,
-                    size: 16,
+                    size: 18,
                   ),
             label: Text(
               openingPhotos
@@ -2339,19 +2264,20 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     final folder = showFolder && shareFolder.isNotEmpty
         ? OutlinedButton.icon(
             onPressed: () => _openShared(shareFolder),
+            // Mismo tamaño que «Mis fotos»: en el teléfono van lado a lado.
             style: OutlinedButton.styleFrom(
               visualDensity: VisualDensity.compact,
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: const Size(0, 46),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               textStyle: const TextStyle(
-                fontSize: 11.5,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w700,
               ),
               side: BorderSide(
                 color: scheme.outlineVariant.withValues(alpha: .8),
               ),
             ),
-            icon: const Icon(Icons.folder_open_outlined, size: 16),
+            icon: const Icon(Icons.folder_open_outlined, size: 18),
             label: const Text('Abrir carpeta'),
           )
         : null;
@@ -2564,186 +2490,6 @@ class _ClientDashboardPageState extends State<ClientDashboardPage> {
     );
   }
 
-  /// Acceso al Drive del paquete:
-  ///   1. las carpetas COMPARTIDAS con el cliente (lo que ve en su drive),
-  ///   2. y las ligas de los servicios del paquete (si las hay).
-  Widget _driveCard(ColorScheme scheme) {
-    final links = _driveLinks;
-    final shared = _sharedPaths;
-    if (shared.isEmpty && links.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Row(
-            children: [
-              Icon(
-                Icons.folder_copy_outlined,
-                size: 26,
-                color: scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Aún no se te comparte ninguna carpeta del Drive. Tu '
-                      'fotógrafo la asigna al paquete desde el administrador '
-                      'del paquete y aquí aparecerá tu acceso directo.',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.4,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      onPressed: _showSharedFolders,
-                      icon: const Icon(Icons.folder_copy_outlined, size: 18),
-                      label: const Text('Ver carpetas compartidas'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (shared.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    onPressed: () =>
-                        _openShared((shared.first['path'] ?? '').toString()),
-                    icon: const Icon(Icons.folder_open_outlined, size: 18),
-                    label: const Text('Entrar a mi Drive'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _showSharedFolders,
-                    icon: const Icon(Icons.folder_copy_outlined, size: 18),
-                    label: const Text('Ver carpetas compartidas'),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: Text(
-                shared.length == 1
-                    ? 'Carpeta compartida contigo'
-                    : '${shared.length} carpetas compartidas contigo',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            for (final s in shared)
-              ListTile(
-                dense: true,
-                leading: Icon(
-                  Icons.folder_shared_outlined,
-                  size: 18,
-                  color: scheme.primary,
-                ),
-                title: Text(
-                  (s['packageName'] ?? '').toString().isEmpty
-                      ? 'Carpeta compartida'
-                      : (s['packageName'] ?? '').toString(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                subtitle: Text(
-                  (s['path'] ?? '').toString(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                trailing: TextButton(
-                  onPressed: () => _openShared((s['path'] ?? '').toString()),
-                  child: const Text('Abrir'),
-                ),
-              ),
-          ],
-          if (links.isNotEmpty) ...[
-            if (shared.isNotEmpty)
-              const Divider(height: 1)
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-                child: FilledButton.icon(
-                  onPressed: () => _openLink(links.first.$2),
-                  icon: Icon(
-                    ownDrivePathOf(links.first.$2) != null
-                        ? Icons.folder_open_outlined
-                        : Icons.link,
-                    size: 18,
-                  ),
-                  label: Text(
-                    ownDrivePathOf(links.first.$2) != null
-                        ? 'Entrar a mi Drive'
-                        : 'Copiar enlace del Drive',
-                  ),
-                ),
-              ),
-            for (final (name, url) in links) ...[
-              ListTile(
-                dense: true,
-                leading: Icon(
-                  ownDrivePathOf(url) != null
-                      ? Icons.folder_outlined
-                      : Icons.link,
-                  size: 18,
-                  color: scheme.primary,
-                ),
-                title: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                subtitle: Text(
-                  url,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                trailing: TextButton(
-                  onPressed: () => _openLink(url),
-                  child: Text(ownDrivePathOf(url) != null ? 'Abrir' : 'Copiar'),
-                ),
-              ),
-            ],
-          ],
-          const SizedBox(height: 6),
-        ],
-      ),
-    );
-  }
 }
 
 /// La FOTO del paquete en «Mi paquete»: la del Drive (miniatura), un enlace

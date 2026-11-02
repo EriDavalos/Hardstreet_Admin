@@ -1004,6 +1004,10 @@ class DriveApiService extends DriveBase {
       'name': item.name,
       'newName': name,
     }, method: 'PATCH');
+    // El nombre nuevo se pinta YA: el listado del hub puede tardar y, con el
+    // nombre viejo en pantalla, abrir la carpeta acababa en «no existe»
+    // porque el renombrado ya estaba hecho en el servidor.
+    renameLocally(item.name, name);
     await refresh();
   }
 

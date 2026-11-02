@@ -177,8 +177,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
     // Si el usuario dejó el servicio ENCENDIDO en el switch, se enciende ya
     // (aunque ahora mismo no haya ninguna carpeta compartida a la vista).
     LocalShareAgent.instance.loadManualPreference();
+    // Recarga SILENCIOSA: las carpetas se quedan en pantalla mientras llega
+    // el listado nuevo (sin esqueleto) al cerrar un modal.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

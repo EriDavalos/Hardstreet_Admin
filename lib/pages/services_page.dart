@@ -82,8 +82,9 @@ class _ServicesPageState extends State<ServicesPage> {
     if (reset) _page = 1;
     // Página pedida (antes de que el servidor la recorte).
     final asked = _page;
+    // Recarga SILENCIOSA: el catálogo se queda en pantalla mientras llega la
+    // página nueva (sin esqueleto ni parpadeo al cerrar un modal).
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {

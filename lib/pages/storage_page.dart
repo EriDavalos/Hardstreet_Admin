@@ -63,8 +63,9 @@ class _StoragePageState extends State<StoragePage> {
     // Si el Drive ya sabe que está en mantenimiento, se enseña ese aviso desde
     // el primer frame en vez de pedir cifras que el hub no puede dar.
     final inMaintenance = drive?.maintenance.isNotEmpty ?? false;
+    // Recarga SILENCIOSA: las cifras anteriores se quedan en pantalla
+    // mientras llegan las nuevas (sin esqueleto).
     setState(() {
-      _loading = true;
       _error = null;
       _maintenance = inMaintenance;
       if (inMaintenance) _info = null;

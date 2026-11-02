@@ -58,7 +58,9 @@ Color _kindColor(String kind) => switch (kind) {
   'abono_externo' => FinanceColors.abonoExterno,
   'inversion' => FinanceColors.inversion,
   'ahorro' => FinanceColors.ahorro,
-  'retiro_ahorro' => FinanceColors.ahorro,
+  // Sacar del ahorro es dinero que SALE: mismo icono de la alcancía, pero en
+  // ROJO (como los gastos), para no confundirlo con lo apartado.
+  'retiro_ahorro' => FinanceColors.red,
   'pago' => FinanceColors.pagado,
   _ => FinanceColors.gasto,
 };
@@ -122,8 +124,9 @@ class _FinancePageState extends State<FinancePage> {
   }
 
   Future<void> _reload() async {
+    // Recarga SILENCIOSA: al cerrar «Registrar movimiento» los totales
+    // anteriores se quedan en pantalla mientras llegan los nuevos.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {
@@ -508,7 +511,7 @@ class _FinancePageState extends State<FinancePage> {
           note: 'Sacado del ahorro; no baja el dinero actual',
           amount: t.retiros,
           icon: _kindIcon('retiro_ahorro'),
-          tint: FinanceColors.teal,
+          tint: _kindColor('retiro_ahorro'),
         ),
       _MoneyRow(
         label: 'Pagos',

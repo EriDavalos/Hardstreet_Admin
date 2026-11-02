@@ -50,8 +50,9 @@ class _RolesPageState extends State<RolesPage> {
   }
 
   Future<void> _reload() async {
+    // Recarga SILENCIOSA: los roles se quedan en pantalla mientras llegan los
+    // nuevos (sin esqueleto) al cerrar el editor.
     setState(() {
-      _loading = true;
       _error = null;
     });
     try {
