@@ -23,6 +23,7 @@ class AdminShell extends StatelessWidget {
     this.isCompact = false,
     this.companySelector,
     this.onOpenNotification,
+    this.activityOverlay,
   });
 
   final String title;
@@ -46,6 +47,10 @@ class AdminShell extends StatelessWidget {
   /// En pantallas angostas (celular) se usan controles compactos.
   final bool isCompact;
 
+  /// Panel flotante visible por encima de CUALQUIER módulo (la ventanita de
+  /// actividad del Drive). Va sobre el contenido y debajo del menú lateral.
+  final Widget? activityOverlay;
+
   /// Abre el módulo al que lleva un aviso de la campanita (`target` del
   /// backend). Si es null, el aviso solo se marca como leído.
   final void Function(String target)? onOpenNotification;
@@ -62,168 +67,170 @@ class AdminShell extends StatelessWidget {
       body: SafeArea(
         bottom: false,
         child: Stack(
-        children: [
-          // ===== Contenido (siempre ocupa todo) =====
-          Column(
-            children: [
-              _TopBar(
-                dark: dark,
-                isCompact: isCompact,
-                onToggleTheme: onToggleTheme,
-                onToggleSidebar: onToggleSidebar,
-                userMenu: userMenu,
-                companySelector: companySelector,
-                onOpenNotification: onOpenNotification,
-              ),
-              // En ventana ANGOSTA (celular o panel estrecho) NO va la línea
-              // bajo la barra superior: ahí el contenido empieza con la barra
-              // pegajosa de la ruta del Drive, que tiene el mismo color de la
-              // página, así que el divisor se veía como una raya suelta sobre
-              // las migas. El contenido se separa solo (tarjetas y la barra de
-              // ruta). En escritorio ancho se conserva, como siempre.
-              if (!isCompact)
-                Divider(
-                  height: 1,
-                  color: Theme.of(context).dividerTheme.color,
+          children: [
+            // ===== Contenido (siempre ocupa todo) =====
+            Column(
+              children: [
+                _TopBar(
+                  dark: dark,
+                  isCompact: isCompact,
+                  onToggleTheme: onToggleTheme,
+                  onToggleSidebar: onToggleSidebar,
+                  userMenu: userMenu,
+                  companySelector: companySelector,
+                  onOpenNotification: onOpenNotification,
                 ),
-              ?updateBanner,
-              Expanded(
-                // Transición fluida al cambiar de módulo: el contenido
-                // anterior se desvanece mientras el nuevo entra deslizándose.
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 260),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeIn,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, .02),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
+                // En ventana ANGOSTA (celular o panel estrecho) NO va la línea
+                // bajo la barra superior: ahí el contenido empieza con la barra
+                // pegajosa de la ruta del Drive, que tiene el mismo color de la
+                // página, así que el divisor se veía como una raya suelta sobre
+                // las migas. El contenido se separa solo (tarjetas y la barra de
+                // ruta). En escritorio ancho se conserva, como siempre.
+                if (!isCompact)
+                  Divider(
+                    height: 1,
+                    color: Theme.of(context).dividerTheme.color,
+                  ),
+                ?updateBanner,
+                Expanded(
+                  // Transición fluida al cambiar de módulo: el contenido
+                  // anterior se desvanece mientras el nuevo entra deslizándose.
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeIn,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, .02),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
                     ),
-                  ),
-                  child: KeyedSubtree(
-                    key: ValueKey(title),
-                    child: body,
+                    child: KeyedSubtree(key: ValueKey(title), child: body),
                   ),
                 ),
+              ],
+            ),
+            // ===== Scrim =====
+            AnimatedIgnorePointer(
+              ignoring: !sidebarOpen,
+              child: AnimatedOpacity(
+                opacity: sidebarOpen ? 1 : 0,
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                child: GestureDetector(
+                  onTap: onToggleSidebar,
+                  child: Container(color: Colors.black.withValues(alpha: .45)),
+                ),
               ),
-            ],
-          ),
-          // ===== Scrim =====
-          AnimatedIgnorePointer(
-            ignoring: !sidebarOpen,
-            child: AnimatedOpacity(
-              opacity: sidebarOpen ? 1 : 0,
-              duration: const Duration(milliseconds: 220),
+            ),
+            ?activityOverlay,
+            // ===== Sidebar flotante =====
+            AnimatedSlide(
+              offset: sidebarOpen ? Offset.zero : const Offset(-1.05, 0),
+              duration: const Duration(milliseconds: 240),
               curve: Curves.easeOutCubic,
-              child: GestureDetector(
-                onTap: onToggleSidebar,
-                child: Container(color: Colors.black.withValues(alpha: .45)),
-              ),
-            ),
-          ),
-          // ===== Sidebar flotante =====
-          AnimatedSlide(
-            offset: sidebarOpen ? Offset.zero : const Offset(-1.05, 0),
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
-            child: SizedBox(
-              height: double.infinity,
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  isCompact ? 8 : 12, 10, 0, 10,
-                ),
-                child: Material(
-                  color: isDark ? AppColors.sidebarDark : AppColors.sidebarLight,
-                  borderRadius: BorderRadius.circular(18),
-                  clipBehavior: Clip.antiAlias,
-                  elevation: isDark ? 0 : 6,
-                  shadowColor: Colors.black.withValues(alpha: .25),
-                  child: SizedBox(
-                    width: 264,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Marca
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(18, 18, 12, 4),
-                          child: Row(
-                            children: [
-                              // La marca de la app: el MISMO icono que el
-                              // login y la pantalla de carga (hs_icon.png),
-                              // no un icono de edificio dibujado aparte.
-                              const BrandBadge(
-                                size: 38,
-                                radius: 11,
-                                elevated: false,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'HardStreet',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w800),
-                                    ),
-                                    Text(
-                                      'Panel de administración',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                            color: scheme.onSurfaceVariant,
-                                            fontSize: 11,
-                                          ),
-                                    ),
-                                  ],
+              child: SizedBox(
+                height: double.infinity,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(isCompact ? 8 : 12, 10, 0, 10),
+                  child: Material(
+                    color: isDark
+                        ? AppColors.sidebarDark
+                        : AppColors.sidebarLight,
+                    borderRadius: BorderRadius.circular(18),
+                    clipBehavior: Clip.antiAlias,
+                    elevation: isDark ? 0 : 6,
+                    shadowColor: Colors.black.withValues(alpha: .25),
+                    child: SizedBox(
+                      width: 264,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Marca
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 18, 12, 4),
+                            child: Row(
+                              children: [
+                                // La marca de la app: el MISMO icono que el
+                                // login y la pantalla de carga (hs_icon.png),
+                                // no un icono de edificio dibujado aparte.
+                                const BrandBadge(
+                                  size: 38,
+                                  radius: 11,
+                                  elevated: false,
                                 ),
-                              ),
-                              IconButton(
-                                tooltip: 'Cerrar menú',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: onToggleSidebar,
-                                icon: const Icon(Icons.close, size: 20),
-                              ),
-                            ],
-          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Navegación
-                        Expanded(
-                          child: ListView(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
-                            children: [
-                              for (var i = 0; i < destinations.length; i++)
-                                _NavItem(
-                                  destination: destinations[i],
-                                  selected: i == selectedIndex,
-                                  onTap: () => onSelect(i),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'HardStreet',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                      ),
+                                      Text(
+                                        'Panel de administración',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: scheme.onSurfaceVariant,
+                                              fontSize: 11,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                            ],
+                                IconButton(
+                                  tooltip: 'Cerrar menú',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: onToggleSidebar,
+                                  icon: const Icon(Icons.close, size: 20),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        // Pie
-                        Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: userMenu ?? const SizedBox.shrink(),
-                        ),
-                      ],
+                          const SizedBox(height: 8),
+                          // Navegación
+                          Expanded(
+                            child: ListView(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              children: [
+                                for (var i = 0; i < destinations.length; i++)
+                                  _NavItem(
+                                    destination: destinations[i],
+                                    selected: i == selectedIndex,
+                                    onTap: () => onSelect(i),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          // Pie
+                          Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: userMenu ?? const SizedBox.shrink(),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
         ),
       ),
     );
@@ -286,10 +293,10 @@ class _NavItem extends StatelessWidget {
             child: Text(
               header.toUpperCase(),
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    letterSpacing: 1.1,
-                    fontWeight: FontWeight.w700,
-                  ),
+                color: scheme.onSurfaceVariant,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         Padding(
@@ -303,13 +310,18 @@ class _NavItem extends StatelessWidget {
               onTap: onTap,
               borderRadius: BorderRadius.circular(10),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 11,
+                ),
                 child: Row(
                   children: [
                     Icon(
                       destination.icon,
                       size: 20,
-                      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                      color: selected
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -317,7 +329,9 @@ class _NavItem extends StatelessWidget {
                         destination.label,
                         style: TextStyle(
                           fontSize: 13.5,
-                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
                           color: selected
                               ? scheme.primary
                               : scheme.onSurface.withValues(alpha: .85),

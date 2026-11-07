@@ -17,14 +17,16 @@ void main() {
   test('el catálogo tiene las dos plantillas reales', () {
     expect(kInvitationTemplates.length, 2);
     expect(kInvitationTemplates.first.key, 'sobre-xv');
-    expect(kInvitationTemplates.first.name, 'ReynaCoot');
+    expect(kInvitationTemplates.first.name, 'Rosa Pastel');
     expect(kInvitationTemplates[1].key, 'boda-marfil');
     expect(kInvitationTemplates[1].name, 'Marfil & Oro');
     expect(invitationCatalog().length, 2);
     expect(invitationCatalog().first.templates.length, 1);
-    // Una invitación vieja con otra plantilla cae en ReynaCoot.
+    // Una invitación vieja con otra plantilla cae en Rosa Pastel.
     expect(invitationTemplate('plantilla-borrada').key, 'sobre-xv');
     expect(Invitation.sample('boda-jardin').design.occasion, 'XV');
+    expect(Invitation.sample('sobre-xv').coverStyleKey, 'rosa');
+    expect(Invitation.sample('boda-marfil').coverStyleKey, 'carta');
   });
 
   test('el texto del cliente se ESCAPA en el HTML', () {
@@ -67,12 +69,172 @@ void main() {
     // El CSS y el JS originales viajan dentro del documento (una sola liga).
     expect(html, contains("font-family: 'Great Vibes', cursive;"));
     expect(html, contains('function openInvitation()'));
+    expect(html, contains("envelope.classList.add('opening')"));
     expect(html, contains('function startCountdown()'));
+  });
+
+  test('cada portada tiene una composición distinta', () {
+    final cases = <String, String>{
+      'rosa': 'hs-rosa-arch',
+      'carta': 'hs-carta-stage',
+      'xv': 'hs-xv-number',
+      'noche': 'hs-night-moon',
+      'cortina': 'hs-curtain',
+      'clasica': 'hs-clasica-frame',
+    };
+    for (final entry in cases.entries) {
+      final html = buildInvitationHtml(
+        Invitation.sample('sobre-xv').copyWith(coverStyle: entry.key),
+      );
+      expect(
+        html,
+        contains('hs-presentation hs-scene-${entry.key}'),
+        reason: 'la portada ${entry.key} debe tener su propio escenario',
+      );
+      expect(html, contains(entry.value));
+      expect(
+        html,
+        contains('hs-cover-${entry.key} hs-template-rosa hs-cover-custom'),
+      );
+      expect(html, contains('id="envelope"'));
+      expect(html, contains('onclick="openInvitation()"'));
+    }
+  });
+
+  test('la portada toma la paleta de la plantilla', () {
+    final rosa = buildInvitationHtml(Invitation.sample('sobre-xv'));
+    expect(rosa, contains('--hs-cover-accent: #B76E79'));
+    expect(rosa, contains('--hs-cover-bg: #E8CFCD'));
+
+    final marfil = buildInvitationHtml(Invitation.sample('boda-marfil'));
+    expect(marfil, contains('--hs-cover-accent: #B99A63'));
+    expect(marfil, contains('--hs-cover-bg: #F8F3E7'));
+    expect(marfil, contains('hs-carta-stage'));
+    expect(marfil, contains('hs-carta-flap'));
+    expect(marfil, contains('hs-carta-seal'));
+    expect(marfil, contains("cover.classList.add('opening')"));
+  });
+
+  test('la Carta tiene tres tintes y usa sus propios recursos', () {
+    final marfil = Invitation.sample('boda-marfil');
+    expect(marfil.coverBackdropKey, 'marfil');
+
+    for (final backdrop in kInvitationCoverBackdrops) {
+      final html = buildInvitationHtml(
+        marfil.copyWith(coverBackdrop: backdrop.key, sections: const ['cover']),
+      );
+      expect(
+        html,
+        contains('hs-carta-bg-${backdrop.key}'),
+        reason: 'el tinte ${backdrop.key} debe llegar al HTML',
+      );
+      expect(html, contains('hs-carta-portada'));
+      expect(html, contains('hs-carta-papel'));
+      expect(html, contains('hs-carta-tinte'));
+      expect(html, contains('hs-carta-grano'));
+      expect(html, contains('hs-carta-anillos'));
+      expect(html, contains('hs-carta-flor-esquina'));
+      expect(html, contains('hs-carta-cinta'));
+      expect(html, contains('https://i.imgur.com/EjgjsxW.png'));
+      expect(html, contains('https://i.imgur.com/zuk8cKV.png'));
+      expect(html, contains('https://i.imgur.com/kHfHXdk.png'));
+      expect(html, contains('hs-carta-petalo'));
+      expect(html, contains('hs-carta-tilt'));
+      expect(html, isNot(contains('hs-carta-address')));
+      expect(html, contains('hs-carta-seal'));
+      expect(html, contains('hs-carta-liner'));
+      expect(html, isNot(contains('hs-carta-stack')));
+      expect(html, contains('hs-carta-vineta'));
+      expect(html, contains('hs-carta-destellos'));
+      expect(html, contains('hs-carta-foil'));
+      expect(html, contains('hs-carta-letter-wm'));
+      expect(html, contains('hs-carta-letter-sprig'));
+      expect(html, contains('hs-carta-lazada'));
+      expect(html, contains('hs-carta-rule'));
+      expect(html, contains('hs-carta-tap-line'));
+      expect(html, contains('hs-carta-flap-mark'));
+      expect(html, contains('hs-carta-flap-inner'));
+      expect(html, contains('.envelope.opening .hs-carta-liner'));
+      expect(html, contains('data:image/webp;base64,'));
+      // El sobre es horizontal y descansa girado -45°; la carta vive dentro.
+      expect(html, contains('aspect-ratio: 1.55;'));
+      expect(html, contains('hs-carta-rotor'));
+      expect(html, contains('transform: rotate(-45deg);'));
+      expect(html, contains('hsCartaSprigSway'));
+      expect(html, contains('@keyframes hsCartaCardIn'));
+      expect(html, contains('@keyframes hsCartaCardFloat'));
+      expect(html, contains('@keyframes hsCartaPaperDrift'));
+      expect(html, contains('@keyframes hsCartaFloatSoft'));
+      expect(html, contains('@keyframes hsCartaBloomSway'));
+      expect(html, contains('@keyframes hsCartaFoilSweep'));
+      expect(html, contains('@keyframes hsCartaTwinkle'));
+      expect(html, contains('hs-carta-fold'));
+      expect(html, isNot(contains('hs-carta-cta')));
+      expect(html, isNot(contains('Abrir carta')));
+      expect(html, contains('@keyframes hsCartaRibbonSway'));
+      expect(html, contains('@keyframes hsCartaPetalo'));
+      expect(html, contains('@keyframes hsCartaLetterContent'));
+      expect(html, contains('.envelope.opening .hs-carta-flap'));
+      expect(html, contains('.envelope.opening .hs-carta-letter'));
+      // El escenario debe llenar el sobre; una regla posterior no puede
+      // devolverlo al flujo y encogerlo al tamaño del contenido.
+      expect(
+        RegExp(r'\.hs-scene-carta\s*\{[^}]*position:\s*relative')
+            .hasMatch(html),
+        isFalse,
+      );
+      // La carta cerrada es una pieza completa; al abrirse, el frente no se
+      // recorta: la hoja asoma por el borde superior del sobre.
+      expect(
+        RegExp(r'\.hs-carta-body\s*\{[^}]*inset:\s*0;').hasMatch(html),
+        isTrue,
+      );
+      expect(
+        RegExp(r'\.envelope\.opening \.hs-carta-body').hasMatch(html),
+        isFalse,
+      );
+      final openLetter =
+          RegExp(r'\.envelope\.opening \.hs-carta-letter\s*\{[^}]*\}')
+              .firstMatch(html)
+              ?.group(0) ??
+          '';
+      expect(openLetter, contains('translateY(-72%)'));
+      expect(openLetter, isNot(contains('z-index')));
+      expect(html, contains('animation: hsCartaLetterContent .68s ease both;'));
+      expect(html, contains('animation-delay: .38s;'));
+      // Los recursos viajan dentro del documento: debe seguir cabiendo en la API.
+      expect(html.length, lessThan(2000000));
+    }
+
+    // Un valor desconocido no rompe: la Carta vuelve al marfil clásico.
+    final fallback = buildInvitationHtml(
+      marfil.copyWith(coverBackdrop: 'noche'),
+    );
+    expect(fallback, contains('hs-carta-bg-marfil'));
+    expect(
+      Invitation.fromJson(marfil.copyWith(coverBackdrop: 'jardin').toJson())
+          .coverBackdropKey,
+      'jardin',
+    );
+  });
+
+  test('la carta muestra la frase, la fecha y el lugar', () {
+    final inv = Invitation.sample('boda-marfil').copyWith(
+      timeText: '7:30 PM',
+      placeName: 'Hacienda San Gabriel',
+      sections: const ['cover'],
+    );
+    final html = buildInvitationHtml(inv);
+
+    expect(html, contains('hs-carta-message'));
+    expect(html, contains('Acompáñanos a celebrar'));
+    expect(html, contains('hs-carta-place'));
+    expect(html, contains('7:30 PM · Hacienda San Gabriel'));
   });
 
   test('las secciones apagadas no se dibujan y sin portada abre directo', () {
     final inv = Invitation.sample('sobre-xv')
-        .copyWith(sections: const ['details', 'footer']);
+        .copyWith(sections: const ['details', 'rsvp', 'footer']);
     final html = buildInvitationHtml(inv);
 
     // El sobre sigue en el documento (es el original) pero oculto.
@@ -83,6 +245,39 @@ void main() {
     expect(html, isNot(contains('Itinerario de Actividades')));
     expect(html, isNot(contains('id="days"')));
     expect(html, contains('Confirmar'));
+  });
+
+  test('frase, fotos y confirmación se ocultan como componentes', () {
+    final visible = <String>[
+      for (final s in kInvitationSections)
+        if (!const ['quote', 'photos', 'rsvp'].contains(s.key)) s.key,
+    ];
+    final inv = Invitation.sample('boda-marfil').copyWith(
+      quote: 'Una frase única',
+      photos: const ['https://drive.test/files/foto.jpg'],
+      rsvpPhone: '+52 55 1234 5678',
+      sections: visible,
+    );
+    final html = buildInvitationHtml(inv);
+
+    expect(html, isNot(contains('<section class="mf-quote-section')));
+    expect(html, isNot(contains('<div class="mf-photos">')));
+    expect(html, isNot(contains('<section class="mf-rsvp')));
+    expect(html, isNot(contains('Una frase única')));
+  });
+
+  test('las invitaciones viejas encienden los componentes nuevos', () {
+    final json = Invitation.sample('boda-marfil').toJson();
+    final design = Map<String, dynamic>.from(json['design'] as Map);
+    design['sections'] = ['details', 'footer'];
+    design.remove('sectionVersion');
+    final back = Invitation.fromJson({...json, 'design': design});
+
+    expect(back.sectionOn('quote'), isTrue);
+    expect(back.sectionOn('photos'), isTrue);
+    expect(back.sectionOn('rsvp'), isTrue);
+    expect(back.sectionOn('details'), isTrue);
+    expect(back.sectionOn('families'), isFalse);
   });
 
   test('el acento propio manda; uno inválido deja el rosa original', () {
@@ -213,7 +408,15 @@ void main() {
       bgMedia: 'https://drive.test/video.mp4',
       detailsMedia: 'https://drive.test/detalles.jpg',
       bgColor: '#E8CFCD',
+      coverStyle: 'cortina',
       sections: const ['cover', 'details'],
+      sectionOrder: const [
+        'footer',
+        'details',
+        'families',
+        'itinerary',
+        'hashtag',
+      ],
       hashtag: '#ReynaXV2026',
     );
     final json = inv.toJson();
@@ -221,12 +424,36 @@ void main() {
     expect(design['bgMedia'], 'https://drive.test/video.mp4');
     expect(design['detailsMedia'], 'https://drive.test/detalles.jpg');
     expect(design['bgColor'], '#E8CFCD');
+    expect(design['coverStyle'], 'cortina');
     expect(design['sections'], ['cover', 'details']);
+    expect(design['sectionOrder'], [
+      'footer',
+      'details',
+      'families',
+      'itinerary',
+      'hashtag',
+    ]);
 
     final back = Invitation.fromJson(json);
     expect(back.bgMedia, 'https://drive.test/video.mp4');
     expect(back.detailsMedia, 'https://drive.test/detalles.jpg');
     expect(back.bgColor, '#E8CFCD');
+    expect(back.coverStyle, 'cortina');
+    expect(back.coverStyleKey, 'cortina');
+    expect(back.sectionOrder, [
+      'footer',
+      'details',
+      'families',
+      'itinerary',
+      'hashtag',
+    ]);
+    expect(back.flowSectionOrder, [
+      'footer',
+      'details',
+      'families',
+      'itinerary',
+      'hashtag',
+    ]);
     expect(back.sectionOn('cover'), isTrue);
     expect(back.sectionOn('families'), isFalse);
     expect(back.hashtag, '#ReynaXV2026');
@@ -306,9 +533,7 @@ void main() {
     expect(customHtml, contains('https://drive.test/files/detalles.jpg'));
 
     final detailsVideo = buildInvitationHtml(
-      inv.copyWith(
-        detailsMedia: 'https://drive.test/files/detalles.mp4',
-      ),
+      inv.copyWith(detailsMedia: 'https://drive.test/files/detalles.mp4'),
     );
     expect(
       detailsVideo,
@@ -316,10 +541,13 @@ void main() {
     );
     // Con movimiento reducido la apertura se mantiene completa; solo se
     // apagan los efectos ambientales.
-    expect(html, contains('}, 1450);'));
-    expect(html, contains('}, 2350);'));
+    expect(html, contains('var revealAt = isCarta ? 1850 : 1450;'));
+    expect(html, contains('var hideAt = isCarta ? 2800 : 2350;'));
     expect(html, isNot(contains('reduce ? 850')));
-    expect(html, contains('.env-flap { transition-duration: 1.05s !important; }'));
+    expect(
+      html,
+      contains('.env-flap { transition-duration: 1.05s !important; }'),
+    );
     expect(html, contains('transition-duration: 1.15s !important'));
     // No es la maqueta de ReynaCoot: tiene documento propio.
     expect(html, isNot(contains('main-card')));
@@ -327,6 +555,73 @@ void main() {
     // El acento del editor manda en el dorado.
     final own = inv.copyWith(accent: 'B76E79');
     expect(buildInvitationHtml(own), contains('--gold: #B76E79'));
+  });
+
+  test('el orden de las capas se aplica al HTML de Marfil', () {
+    final inv = Invitation.sample('boda-marfil').copyWith(
+      families: const [
+        InvitationFamily(title: 'Padres', names: ['Ana', 'Luis']),
+      ],
+      details: const [
+        InvitationDetail(title: 'Misa', place: 'Iglesia Santa Úrsula'),
+      ],
+      itinerary: const [InvitationStop(time: '7:30 pm', title: 'Cena')],
+      hashtag: '#AnaYLuis',
+      sectionOrder: const [
+        'footer',
+        'details',
+        'families',
+        'hashtag',
+        'itinerary',
+      ],
+    );
+    final html = buildInvitationHtml(inv);
+    final footer = html.indexOf('<footer class="mf-footer">');
+    final details = html.indexOf('<section class="mf-details-section');
+    final families = html.indexOf('<section class="mf-families-section');
+    final hashtag = html.indexOf('<section class="mf-hashtag section">');
+    final itinerary = html.indexOf('<section class="mf-day-section');
+
+    expect(footer, greaterThanOrEqualTo(0));
+    expect(details, greaterThanOrEqualTo(0));
+    expect(families, greaterThanOrEqualTo(0));
+    expect(hashtag, greaterThanOrEqualTo(0));
+    expect(itinerary, greaterThanOrEqualTo(0));
+    expect(footer, lessThan(details));
+    expect(details, lessThan(families));
+    expect(families, lessThan(hashtag));
+    expect(hashtag, lessThan(itinerary));
+  });
+
+  test('las capas también ordenan el HTML de ReynaCoot', () {
+    final inv = Invitation.sample('sobre-xv').copyWith(
+      families: const [
+        InvitationFamily(title: 'FAMILIA_UNICA', names: ['Ana']),
+      ],
+      details: const [InvitationDetail(title: 'DETALLE_UNICO')],
+      itinerary: const [InvitationStop(time: '7:30', title: 'PROGRAMA_UNICO')],
+      hashtag: '#HASH_UNICO',
+      footerMessage: 'CIERRE_UNICO',
+      sectionOrder: const [
+        'footer',
+        'details',
+        'hashtag',
+        'itinerary',
+        'families',
+      ],
+    );
+    final html = buildInvitationHtml(inv);
+    int at(String value) => html.indexOf(value);
+
+    expect(at('CIERRE_UNICO'), greaterThanOrEqualTo(0));
+    expect(at('DETALLE_UNICO'), greaterThanOrEqualTo(0));
+    expect(at('#HASH_UNICO'), greaterThanOrEqualTo(0));
+    expect(at('PROGRAMA_UNICO'), greaterThanOrEqualTo(0));
+    expect(at('FAMILIA_UNICA'), greaterThanOrEqualTo(0));
+    expect(at('CIERRE_UNICO'), lessThan(at('DETALLE_UNICO')));
+    expect(at('DETALLE_UNICO'), lessThan(at('#HASH_UNICO')));
+    expect(at('#HASH_UNICO'), lessThan(at('PROGRAMA_UNICO')));
+    expect(at('PROGRAMA_UNICO'), lessThan(at('FAMILIA_UNICA')));
   });
 
   test('el ejemplo de XV no repite el arco en el subtítulo', () {
@@ -350,5 +645,51 @@ void main() {
     // La elección viaja en el diseño para reabrir el editor igual.
     final back = Invitation.fromJson(bubbles.toJson());
     expect(back.effect, 'burbujas');
+  });
+
+  test('Marfil & Oro tiene las interacciones de la invitación', () {
+    final inv = Invitation.sample('boda-marfil').copyWith(
+      photos: const [
+        'https://drive.test/files/boda/uno.jpg',
+        'https://drive.test/files/boda/dos.jpg',
+        'https://drive.test/files/boda/tres.jpg',
+      ],
+    );
+    final html = buildInvitationHtml(inv);
+
+    // Portada e inicio con monograma, progreso y pista de scroll.
+    expect(html, contains('id="mf-progress"'));
+    expect(
+      html,
+      contains(
+        '<div class="mf-monogram" aria-hidden="true"><span>AL</span></div>',
+      ),
+    );
+    expect(html, contains('Desliza para descubrir'));
+    expect(html, isNot(contains('{{HERO_MONOGRAM}}')));
+
+    // Fotos con visor completo.
+    expect(html, contains('class="mf-photo" role="button" tabindex="0"'));
+    expect(html, contains('aria-label="Ver foto 1"'));
+    expect(html, contains('class="mf-photo-zoom"'));
+    expect(html, contains('id="mf-lightbox"'));
+    expect(html, contains('id="mf-lightbox-img"'));
+    expect(html, contains('function openMfPhoto'));
+    expect(html, contains('function closeMfPhoto'));
+
+    // Animaciones e interacción al abrir, al hacer scroll y al confirmar.
+    expect(html, contains('function showProgress'));
+    expect(html, contains('function updateProgress'));
+    expect(html, contains('function celebrate'));
+    expect(html, contains('function observeSections'));
+    expect(html, contains('mf-reveal'));
+    expect(html, contains('mf-tick'));
+    expect(html, contains('mf-burst-piece'));
+    expect(
+      html,
+      contains(
+        "document.addEventListener('DOMContentLoaded', initMfInteractions)",
+      ),
+    );
   });
 }

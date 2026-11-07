@@ -196,6 +196,7 @@ const String kReynaCootBody = r'''
   <!-- ENVELOPE COVER -->
   <div class="envelope" id="envelope"{{ENVELOPE_STYLE}} onclick="openInvitation()">
     {{COVER_MEDIA}}
+    {{COVER_DESIGN}}
     <svg class="garland top" viewBox="0 0 400 100"><use href="#garland" /></svg>
     <svg class="corner-svg tl" viewBox="0 0 220 220"><use href="#corner-fl" /></svg>
     <svg class="corner-svg tr" viewBox="0 0 220 220"><use href="#corner-fl" transform="translate(220 0) scale(-1 1)" /></svg>
@@ -259,8 +260,10 @@ const String kReynaCootBody = r'''
       </div>
     </div>
 
-    <!-- ===== FAMILIES ===== -->
-    {{FAMILIES}}{{DETAILS}}{{HASHTAG}}{{ITINERARY}}{{FOOTER}}<!-- THANKS OVERLAY (RSVP) -->
+    <!-- ===== SECCIONES (orden del panel de capas) ===== -->
+    {{FLOW_SECTIONS}}
+
+  <!-- THANKS OVERLAY (RSVP) -->
   <div class="thanks-overlay" id="thanks-overlay" aria-hidden="true">
     <svg class="corner-svg tl" viewBox="0 0 220 220"><use href="#corner-fl" /></svg>
     <svg class="corner-svg tr" viewBox="0 0 220 220"><use href="#corner-fl" transform="translate(220 0) scale(-1 1)" /></svg>
@@ -1151,18 +1154,35 @@ const String kReynaCootJs = r'''
     function openInvitation() {
       const envelope = document.getElementById('envelope');
       const invitation = document.getElementById('invitation');
-      envelope.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
-      envelope.style.opacity = '0';
-      envelope.style.transform = 'scale(0.95)';
+      if (!envelope || envelope.classList.contains('opening')) return;
+      const isCarta = document.body.classList.contains('hs-cover-carta');
+      const revealAt = isCarta ? 2000 : 1750;
+      const hideAt = isCarta ? 2900 : 2650;
+      envelope.classList.add('opening');
       startMusic();
-      setTimeout(() => {
-        envelope.style.display = 'none';
+      // La portada de Carta necesita tiempo para abrir la solapa y sacar la
+      // carta. Las demás portadas también respiran antes de despedirse.
+      let contentOpen = false;
+      const revealContent = () => {
+        if (contentOpen) return;
+        contentOpen = true;
         invitation.classList.add('open');
         window.scrollTo(0, 0);
         observeSections();
         startCountdown();
+      };
+      envelope.style.transition = 'opacity 0.7s ease, transform 0.7s ease';
+      setTimeout(() => {
+        // Carta: la invitación ya está detrás cuando el sobre se desvanece.
+        if (isCarta) revealContent();
+        envelope.style.opacity = '0';
+        envelope.style.transform = isCarta ? 'none' : 'scale(0.96)';
+      }, revealAt);
+      setTimeout(() => {
+        envelope.style.display = 'none';
+        if (!isCarta) revealContent();
         burstConfetti();
-      }, 600);
+      }, hideAt);
     }
 
     // ===== MUSIC =====

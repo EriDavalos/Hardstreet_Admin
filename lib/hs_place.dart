@@ -123,14 +123,23 @@ class PlaceChoice {
   final HsPlace? place;
 }
 
+/// Liga de Google Maps del lugar, o null si no hay nada que buscar.
+///
+/// Con coordenadas apunta al PUNTO EXACTO; sin ellas busca el nombre. La
+/// consulta va codificada para que el `&` del `api=1` no se confunda con otro
+/// parámetro ni con un separador de comandos del sistema.
+String? hsPlaceMapUrl(HsPlace place) {
+  final q = place.hasCoords ? '${place.lat},${place.lng}' : place.name.trim();
+  if (q.isEmpty) return null;
+  return 'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(q)}';
+}
+
 /// Abre el lugar en la app de mapas del equipo (Google Maps).
 ///
 /// Con coordenadas abre el punto exacto; sin ellas busca el nombre. Es el
 /// botón "Abrir mapa" del detalle de la agenda.
 Future<bool> hsOpenPlace(HsPlace place) {
-  final q = place.hasCoords ? '${place.lat},${place.lng}' : place.name.trim();
-  if (q.isEmpty) return Future.value(false);
-  return hsOpenUrl(
-    'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(q)}',
-  );
+  final url = hsPlaceMapUrl(place);
+  if (url == null) return Future.value(false);
+  return hsOpenUrl(url);
 }

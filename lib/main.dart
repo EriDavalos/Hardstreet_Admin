@@ -1592,6 +1592,13 @@ class _AdminHomeState extends State<AdminHome> {
         child: body,
       ),
       companySelector: CompanySelector(onChanged: _onCompanyChanged),
+      // Subidas y descargas del Drive: la ventanita se monta en el armazón
+      // para seguir viéndose al cambiar de módulo (en Archivos, un clic fuera
+      // la pliega como siempre y al minimizarla conserva su encabezado).
+      activityOverlay: DriveActivityHost(
+        drive: _drive,
+        closeOnOutsideTap: _section == _Section.drive,
+      ),
       updateBanner: widget.updateBanner,
       dark: widget.dark,
       onToggleTheme: widget.onToggleTheme,

@@ -465,6 +465,13 @@ enum DriveConn { checking, online, offline }
 /// Operación en curso para los overlays de carga.
 enum DriveBusy { none, uploading, moving, copying, deleting, downloading }
 
+/// Aviso del panel de actividad del Drive (verde = se cumplió, rojo = error).
+class DriveNotice {
+  const DriveNotice(this.text, this.error);
+  final String text;
+  final bool error;
+}
+
 /// Cuántas subidas corren EN PARALELO (pool de trabajadores).
 /// El resto espera su turno en cola, pero TODAS se ven en el panel.
 ///
@@ -884,6 +891,9 @@ abstract class DriveBase extends ChangeNotifier {
     error = null;
     loading = false;
     conn = DriveConn.checking;
+    activityNotices.clear();
+    activityPanelOpen = true;
+    activityPanelBottom = 10;
     updateItems(const []);
     notifyListeners();
   }
@@ -1083,6 +1093,24 @@ abstract class DriveBase extends ChangeNotifier {
   /// Descargas de la sesión (activas, terminadas y con error) — también en
   /// segundo plano: el panel de transferencias las muestra al lado.
   final List<DriveDownloadJob> downloadJobs = [];
+
+  /// Avisos del panel de actividad (verde/rojo). Viven en el DRIVE —y no en
+  /// la página— para que el panel siga viéndose al cambiar de módulo.
+  final List<DriveNotice> activityNotices = [];
+
+  /// ¿El panel de actividad está desplegado? Se conserva al cambiar de módulo;
+  /// minimizado queda como una barra con su encabezado.
+  bool activityPanelOpen = true;
+
+  /// Distancia inferior del panel flotante: 74 cuando la barra de selección
+  /// ocupa el borde (para no taparla), 10 en el resto.
+  double activityPanelBottom = 10;
+
+  /// Drive cuya actividad debe verse en el panel flotante del armazón.
+  /// null = el drive principal. Una carpeta compartida abierta tiene SU PROPIO
+  /// drive ([SharedDrive]) y lo fija aquí mientras está en pantalla.
+  static final ValueNotifier<DriveBase?> activityOverride =
+      ValueNotifier<DriveBase?>(null);
 
   bool get isReady => conn != DriveConn.checking;
 
@@ -1346,6 +1374,8 @@ abstract class DriveBase extends ChangeNotifier {
 
   void addUploadJob(DriveUploadJob job) {
     uploadJobs.insert(0, job);
+    // La subida se ve sin pulsar nada: el panel se despliega solo.
+    activityPanelOpen = true;
     notifyListeners();
   }
 
@@ -1495,12 +1525,48 @@ abstract class DriveBase extends ChangeNotifier {
     if (downloadJobs.length > 30) {
       downloadJobs.removeRange(30, downloadJobs.length);
     }
+    // La descarga se ve sin pulsar nada: el panel se despliega solo.
+    activityPanelOpen = true;
     notifyListeners();
     return job;
   }
 
   /// Aviso de progreso de descarga (bytes recibidos).
   void notifyDownloadProgress() => notifyListeners();
+
+  // ---------- Panel de actividad (compartido entre módulos) ----------
+
+  /// Agrega un aviso al panel y lo despliega (aunque estuviera minimizado).
+  void addActivityNotice(String message, {bool error = false}) {
+    activityNotices.insert(0, DriveNotice(message, error));
+    if (activityNotices.length > 40) activityNotices.removeLast();
+    activityPanelOpen = true;
+    notifyListeners();
+  }
+
+  void clearActivityNotices() {
+    if (activityNotices.isEmpty) return;
+    activityNotices.clear();
+    notifyListeners();
+  }
+
+  void dismissActivityNotice(int index) {
+    if (index < 0 || index >= activityNotices.length) return;
+    activityNotices.removeAt(index);
+    notifyListeners();
+  }
+
+  void setActivityPanelOpen(bool open) {
+    if (activityPanelOpen == open) return;
+    activityPanelOpen = open;
+    notifyListeners();
+  }
+
+  void setActivityPanelBottom(double value) {
+    if (activityPanelBottom == value) return;
+    activityPanelBottom = value;
+    notifyListeners();
+  }
 
   void finishDownloadJob(DriveDownloadJob job, {String? error}) {
     job.status = error == null ? 'done' : 'error';

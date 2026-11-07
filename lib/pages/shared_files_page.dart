@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../app_platform.dart';
 import '../back_nav.dart';
+import '../drive_base.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
 import '../local_share_agent.dart';
@@ -151,6 +152,16 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
 
   @override
   void dispose() {
+    // Al salir del módulo el panel vuelve al drive principal. Se hace en un
+    // microtask para no avisar a los widgets en plena fase de desmontaje.
+    final open = _open;
+    if (open != null && DriveBase.activityOverride.value == open) {
+      scheduleMicrotask(() {
+        if (DriveBase.activityOverride.value == open) {
+          DriveBase.activityOverride.value = null;
+        }
+      });
+    }
     BackNav.remove(_backStep);
     _searchController.dispose();
     _scrollController.dispose();
@@ -488,6 +499,9 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
           hint: _problemHint(status),
         );
       });
+      // La vista vuelve al listado (o al motivo): el panel regresa al drive
+      // principal.
+      DriveBase.activityOverride.value = null;
       return;
     }
 
@@ -506,6 +520,8 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       _openIsMine = mine;
       _openProblem = null;
     });
+    // El panel flotante del armazón sigue a ESTA carpeta mientras esté abierta.
+    DriveBase.activityOverride.value = drive;
     // La PRIMERA carga se pide YA: el Drive no carga por su cuenta, así que
     // sin esto una carpeta CON contenido se abría vacía.
     unawaited(drive.openPath(const []));
@@ -524,6 +540,8 @@ class _SharedFilesPageState extends State<SharedFilesPage> {
       _lastClickPath = null;
       _lastClickAt = null;
     });
+    // De vuelta al listado: el panel vuelve al drive principal.
+    DriveBase.activityOverride.value = null;
     // Lo que pudo cambiar dentro (o el estado del servicio) se pone al día.
     unawaited(_load());
   }

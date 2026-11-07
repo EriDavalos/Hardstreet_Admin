@@ -35,7 +35,8 @@ export 'drive_base.dart'
         driveMaintenanceNotice,
         DriveBusy,
         DriveUploadJob,
-        DriveDownloadJob;
+        DriveDownloadJob,
+        DriveNotice;
 
 /// El Drive está en MANTENIMIENTO (no es un fallo de conexión).
 ///
@@ -67,6 +68,10 @@ class DriveApiService extends DriveBase {
 
   /// Dirección fija de las pruebas (null = la configurada en [DriveHost]).
   final String? _fixedBase;
+
+  /// Dirección para la que ya se comprobó si habla con el HUB (ver
+  /// [_preferHub]). Evita repetir la consulta en cada refresco de carpeta.
+  String? _hubCheckedFor;
 
   /// Se resuelve en cada uso: así el respaldo automático a la red local
   /// cambia las URLs sin recrear el servicio.
@@ -289,6 +294,11 @@ class DriveApiService extends DriveBase {
     loading = true;
     error = null;
     notifyListeners();
+    // El 443 público puede contestar UN servidor de archivos y no el HUB: su
+    // listado es válido (200), así que el respaldo por error nunca se activa
+    // y el Drive enseña solo las carpetas de ese servidor. Antes del primer
+    // listado se comprueba una vez y se cambia al hub si hace falta.
+    await _preferHub();
     // Cuánto tarda el servidor en contestar el listado: la card de estado lo
     // muestra («320 ms») para saber si va vivo o arrastrándose.
     final clock = Stopwatch()..start();
@@ -446,6 +456,63 @@ class DriveApiService extends DriveBase {
       }
     }
     return false;
+  }
+
+  /// ¿Esta salud (`/api/health`) es la de un HUB?
+  ///
+  /// El hub se identifica por `service` (versiones nuevas) o por la lista
+  /// `nodes` de servidores. El servidor de archivos no manda ninguna de las
+  /// dos: su salud es la de UNA máquina.
+  static bool _isHubHealth(Map<String, dynamic> data) =>
+      data['service'] == 'hardstreet-drive-hub' || data['nodes'] is List;
+
+  /// `/api/health` de [url], o `null` si no contesta o no es un objeto JSON.
+  Future<Map<String, dynamic>?> _healthOf(String url) async {
+    try {
+      final r = await client
+          .get(Uri.parse('$url/api/health'))
+          .timeout(const Duration(milliseconds: 2500));
+      if (r.statusCode != 200) return null;
+      final data = jsonDecode(r.body);
+      return data is Map<String, dynamic> ? data : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Se asegura de hablar con el HUB y no con UN servidor de archivos.
+  ///
+  /// El celular entra por el nombre público (HTTPS, 443), que puede contestar
+  /// el nodo que sirve las fotos: ese servidor devuelve su propio catálogo con
+  /// normalidad, así que la app nunca daba error y se quedaba con la mitad del
+  /// árbol («37 fotos» en vez de las 70 que suma el hub). Aquí se pregunta una
+  /// vez por sesión: si la salud no es la de un hub, se prueban las direcciones
+  /// del hub (el mismo nombre por HTTP en el 4100 y la IP local) y se cambia a
+  /// la primera que sí lo sea. Si ninguna responde, todo sigue como estaba:
+  /// un Drive de un solo servidor no pierde nada.
+  Future<void> _preferHub() async {
+    if (_fixedBase != null || _apikey.isEmpty) return;
+    if (_hubCheckedFor == base) return;
+    _hubCheckedFor = base;
+    final current = await _healthOf(base);
+    if (current == null) {
+      // Sin respuesta no se decide nada: el refresco contará el error real y
+      // el próximo intento vuelve a comprobar.
+      _hubCheckedFor = null;
+      return;
+    }
+    if (_isHubHealth(current)) return;
+    // En paralelo: en la red local una de las dos direcciones no existe y no
+    // se debe esperar dos veces a que caduque.
+    final candidates = DriveHost.fallbackCandidates;
+    final probes = await Future.wait(candidates.map(_healthOf));
+    for (var i = 0; i < candidates.length; i++) {
+      final data = probes[i];
+      if (data == null || !_isHubHealth(data)) continue;
+      DriveHost.useFallback(candidates[i]);
+      if (DriveHost.base != base) _hubCheckedFor = DriveHost.base;
+      return;
+    }
   }
 
   /// ¿Nombres ya existen en la carpeta actual del servidor?

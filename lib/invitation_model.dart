@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'app_constants.dart';
+import 'invitation_components/component_catalog.dart';
+import 'invitation_components/templates/invitation_templates.dart';
 
 // ==================================================================
 // INVITACIONES — plantillas, modelo y contenido de la liga pública
@@ -99,11 +101,11 @@ class InvitationTemplate {
 const List<InvitationTemplate> kInvitationTemplates = [
   InvitationTemplate(
     key: 'sobre-xv',
-    name: 'ReynaCoot',
+    name: 'Rosa Pastel',
     occasion: 'XV',
     hint:
-        'La invitación original de ReynaCoot: sobre floral, marco con arco, '
-        'tiara, polaroids, cintas, ilustraciones y confirmación por WhatsApp.',
+        'Sobre floral rosa, marco con arco, tiara, polaroids, cintas e '
+        'ilustraciones. Una portada dulce con confirmación por WhatsApp.',
     bg: Color(0xFFE8CFCD),
     bgAlt: Color(0xFFF3E3E1),
     ink: Color(0xFF5A3F3B),
@@ -187,17 +189,68 @@ const List<String> kInvitationAccents = [
   '22A699',
 ];
 
+/// Las portadas que se pueden combinar con cualquier plantilla.
+///
+/// La portada es independiente del resto del diseño: cambiar de plantilla no
+/// obliga a conservar el mismo sobre, y una portada se puede reutilizar con
+/// otro color, otra animación y otros componentes.
+const List<String> kInvitationCoverStyles = [
+  'rosa',
+  'carta',
+  'xv',
+  'noche',
+  'cortina',
+  'clasica',
+];
+
+/// Fondos de la portada Carta. Son escenas de boda, no solo colores.
+const List<({String key, String label, String hint})>
+kInvitationCoverBackdrops = [
+  (key: 'marfil', label: 'Marfil', hint: 'Papel, rosas y aros dorados'),
+  (key: 'jardin', label: 'Jardín', hint: 'Follaje y luz de jardín'),
+  (key: 'seda', label: 'Seda', hint: 'Champán y pliegues suaves'),
+];
+
 /// Las secciones que se pueden prender/apagar en una invitación.
 const List<({String key, String label})> kInvitationSections = [
   (key: 'cover', label: 'Portada (sobre)'),
   (key: 'countdown', label: 'Cuenta regresiva'),
+  (key: 'quote', label: 'Frase'),
+  (key: 'photos', label: 'Fotos'),
   (key: 'families', label: 'Familias'),
   (key: 'details', label: 'Detalles'),
   (key: 'hashtag', label: 'Hashtag'),
   (key: 'itinerary', label: 'Itinerario'),
+  (key: 'rsvp', label: 'Confirmación'),
   (key: 'footer', label: 'Pie de la invitación'),
   (key: 'music', label: 'Música'),
 ];
+
+/// Las secciones que se pueden mover dentro del flujo de la invitación.
+///
+/// La portada, la cuenta regresiva y la música son capas fijas: la primera
+/// envuelve la página, la segunda vive dentro de la tarjeta principal y la
+/// tercera es el audio de ambiente.
+const List<String> kInvitationFlowSections = [
+  'families',
+  'details',
+  'hashtag',
+  'itinerary',
+  'footer',
+];
+
+/// Lee el orden guardado y descarta claves viejas o repetidas.
+List<String> _sectionOrderFromJson(Object? raw) {
+  final out = <String>[];
+  if (raw is! List) return out;
+  for (final item in raw) {
+    final key = '$item'.trim();
+    if (kInvitationFlowSections.contains(key) && !out.contains(key)) {
+      out.add(key);
+    }
+  }
+  return out;
+}
 
 /// Una familia dentro de la invitación («Papás», «Padrinos»…).
 class InvitationFamily {
@@ -310,6 +363,8 @@ class Invitation {
     this.id = 0,
     this.title = '',
     this.template = 'sobre-xv',
+    this.preset = '',
+    this.componentDesigns = const <String, String>{},
     this.occasion = 'XV',
     this.headline = '',
     this.subheadline = '',
@@ -327,7 +382,10 @@ class Invitation {
     this.detailsMedia = '',
     this.bgColor = '',
     this.effect = '',
+    this.coverStyle = '',
+    this.coverBackdrop = '',
     this.sections = const <String>[],
+    this.sectionOrder = const <String>[],
     this.eventAt = '',
     this.quote = '',
     this.verticalTitle = '',
@@ -356,6 +414,15 @@ class Invitation {
   final String title;
 
   final String template;
+
+  /// La plantilla-compuesta elegida (`kInvitationTemplateRecipes`). Vacío =
+  /// la combinación de fábrica del documento base.
+  final String preset;
+
+  /// Diseños elegidos para cada componente. Las claves que falten usan la
+  /// plantilla o el diseño de fábrica.
+  final Map<String, String> componentDesigns;
+
   final String occasion;
   final String headline;
   final String subheadline;
@@ -391,8 +458,19 @@ class Invitation {
   /// `corazones`, `confeti` o `ninguno`. Vacío = pétalos.
   final String effect;
 
+  /// Estilo de portada (`kInvitationCoverStyles`). Vacío = el de la
+  /// plantilla: Rosa Pastel para la plantilla rosa y Carta para Marfil.
+  final String coverStyle;
+
+  /// Fondo de la portada Carta (`kInvitationCoverBackdrops`). Vacío = marfil.
+  final String coverBackdrop;
+
   /// Secciones activas (`kInvitationSections`). Vacío = todas.
   final List<String> sections;
+
+  /// Orden propio de las secciones móviles (`kInvitationFlowSections`).
+  /// Vacío = el orden original de la plantilla.
+  final List<String> sectionOrder;
 
   /// Fecha y hora del evento para la cuenta regresiva (`2026-10-10T19:30`).
   final String eventAt;
@@ -433,10 +511,26 @@ class Invitation {
       if (url.isNotEmpty && !photos.contains(url)) photos.add(url);
     }
     final design = _designOf(json['design']);
+    final storedSections = <String>[
+      for (final s in (design['sections'] as List?) ?? const [])
+        if ('$s'.trim().isNotEmpty) '$s'.trim(),
+    ];
+    final sectionVersion = (design['sectionVersion'] as num?)?.toInt() ?? 1;
+    final sections = <String>[...storedSections];
+    if (sectionVersion < 2 && sections.isNotEmpty) {
+      // Las invitaciones guardadas antes de los componentes no conocían la
+      // frase, las fotos ni la confirmación: se añaden encendidas para no
+      // hacerlas desaparecer al abrir una invitación vieja.
+      for (final key in const ['quote', 'photos', 'rsvp']) {
+        if (!sections.contains(key)) sections.add(key);
+      }
+    }
     return Invitation(
       id: (json['id'] as num?)?.toInt() ?? 0,
       title: '${json['title'] ?? ''}',
       template: '${json['template'] ?? 'sobre-xv'}',
+      preset: '${design['preset'] ?? ''}'.trim(),
+      componentDesigns: sanitizeComponentDesigns(design['components']),
       occasion: '${json['occasion'] ?? ''}',
       headline: '${json['headline'] ?? ''}',
       subheadline: '${json['subheadline'] ?? ''}',
@@ -454,10 +548,10 @@ class Invitation {
       detailsMedia: '${design['detailsMedia'] ?? ''}'.trim(),
       bgColor: '${design['bgColor'] ?? ''}'.trim(),
       effect: '${design['effect'] ?? ''}'.trim(),
-      sections: [
-        for (final s in (design['sections'] as List?) ?? const [])
-          if ('$s'.trim().isNotEmpty) '$s'.trim(),
-      ],
+      coverStyle: '${design['coverStyle'] ?? ''}'.trim(),
+      coverBackdrop: '${design['coverBackdrop'] ?? ''}'.trim(),
+      sections: sections,
+      sectionOrder: _sectionOrderFromJson(design['sectionOrder']),
       eventAt: '${design['eventAt'] ?? ''}'.trim(),
       quote: '${design['quote'] ?? ''}'.trim(),
       verticalTitle: '${design['verticalTitle'] ?? ''}'.trim(),
@@ -515,7 +609,13 @@ class Invitation {
       'detailsMedia': detailsMedia.trim(),
       'bgColor': bgColor.trim(),
       'effect': effect.trim(),
+      'preset': preset,
+      'components': {for (final e in componentDesigns.entries) e.key: e.value},
+      'coverStyle': coverStyleKey,
+      'coverBackdrop': coverBackdropKey,
       'sections': sections,
+      'sectionVersion': 2,
+      'sectionOrder': sectionOrder,
       'eventAt': eventAt.trim(),
       'quote': quote.trim(),
       'verticalTitle': verticalTitle.trim(),
@@ -539,6 +639,8 @@ class Invitation {
     int? id,
     String? title,
     String? template,
+    String? preset,
+    Map<String, String>? componentDesigns,
     String? occasion,
     String? headline,
     String? subheadline,
@@ -556,7 +658,10 @@ class Invitation {
     String? detailsMedia,
     String? bgColor,
     String? effect,
+    String? coverStyle,
+    String? coverBackdrop,
     List<String>? sections,
+    List<String>? sectionOrder,
     String? eventAt,
     String? quote,
     String? verticalTitle,
@@ -581,6 +686,8 @@ class Invitation {
       id: id ?? this.id,
       title: title ?? this.title,
       template: template ?? this.template,
+      preset: preset ?? this.preset,
+      componentDesigns: componentDesigns ?? this.componentDesigns,
       occasion: occasion ?? this.occasion,
       headline: headline ?? this.headline,
       subheadline: subheadline ?? this.subheadline,
@@ -598,7 +705,10 @@ class Invitation {
       detailsMedia: detailsMedia ?? this.detailsMedia,
       bgColor: bgColor ?? this.bgColor,
       effect: effect ?? this.effect,
+      coverStyle: coverStyle ?? this.coverStyle,
+      coverBackdrop: coverBackdrop ?? this.coverBackdrop,
       sections: sections ?? this.sections,
+      sectionOrder: sectionOrder ?? this.sectionOrder,
       eventAt: eventAt ?? this.eventAt,
       quote: quote ?? this.quote,
       verticalTitle: verticalTitle ?? this.verticalTitle,
@@ -623,6 +733,28 @@ class Invitation {
 
   InvitationTemplate get design => invitationTemplate(template);
 
+  /// La plantilla-compuesta activa. Las invitaciones anteriores a este
+  /// catálogo no tienen `preset`: caen en la combinación de su documento base.
+  InvitationTemplateRecipe get templateRecipe =>
+      templateRecipeForInvitation(preset: preset, template: template);
+
+  /// El diseño efectivo de un componente. La portada sigue guardándose en
+  /// `coverStyle` para no romper las ligas existentes.
+  String componentDesign(String key) {
+    final clean = key.trim().toLowerCase();
+    if (clean == 'cover') return coverStyleKey;
+    final component = invitationComponentForKey(clean);
+    if (component == null) return '';
+    final own = component.design(componentDesigns[clean] ?? '')?.key;
+    if (own != null) {
+      return own;
+    }
+    final fromRecipe = component
+        .design(templateRecipe.components[clean] ?? '')
+        ?.key;
+    return fromRecipe ?? component.fallback;
+  }
+
   /// El acento propio si es válido; si no, el de la plantilla.
   Color get accentColor {
     final own = _colorOf(accent);
@@ -635,6 +767,31 @@ class Invitation {
   Color get backgroundColor {
     final own = _colorOf(bgColor);
     return own ?? design.bg;
+  }
+
+  /// La portada efectiva. Las invitaciones viejas no guardaban este campo:
+  /// las rosas siguen abriendo con su sobre y Marfil conserva su carta.
+  String get coverStyleKey {
+    final clean = coverStyle.trim().toLowerCase();
+    if (kInvitationCoverStyles.contains(clean)) return clean;
+    final recipe = templateRecipe;
+    if (kInvitationCoverStyles.contains(recipe.coverStyle)) {
+      return recipe.coverStyle;
+    }
+    return template.trim() == 'boda-marfil' ? 'carta' : 'rosa';
+  }
+
+  /// El fondo de la Carta efectivo. Las invitaciones viejas caen en marfil.
+  String get coverBackdropKey {
+    final clean = coverBackdrop.trim().toLowerCase();
+    for (final b in kInvitationCoverBackdrops) {
+      if (b.key == clean) return clean;
+    }
+    final recipe = templateRecipe;
+    for (final b in kInvitationCoverBackdrops) {
+      if (b.key == recipe.coverBackdrop) return b.key;
+    }
+    return 'marfil';
   }
 
   /// Tipografía efectiva (propia o de la plantilla).
@@ -660,6 +817,27 @@ class Invitation {
   /// ¿Está prendida la sección [key]?
   bool sectionOn(String key) => sections.isEmpty || sections.contains(key);
 
+  /// El orden efectivo de las secciones móviles.
+  ///
+  /// Marfil usa otro orden original (itinerario antes de detalles); los demás
+  /// documentos siguen el orden de ReynaCoot. Las claves que falten se añaden
+  /// al final para que una invitación vieja nunca pierda una sección.
+  List<String> get flowSectionOrder {
+    final defaults = template.trim() == 'boda-marfil'
+        ? const ['itinerary', 'details', 'families', 'hashtag', 'footer']
+        : const ['families', 'details', 'hashtag', 'itinerary', 'footer'];
+    final ordered = <String>[];
+    for (final key in sectionOrder) {
+      if (kInvitationFlowSections.contains(key) && !ordered.contains(key)) {
+        ordered.add(key);
+      }
+    }
+    for (final key in defaults) {
+      if (!ordered.contains(key)) ordered.add(key);
+    }
+    return ordered;
+  }
+
   /// Liga pública ('' si todavía no se ha publicado).
   ///
   /// Es la WEB del estudio con el código de la invitación:
@@ -669,10 +847,7 @@ class Invitation {
   String get shareUrl {
     final code = slug.trim();
     if (code.isEmpty) return '';
-    final base = AppConstants.publicSiteBase.replaceFirst(
-      RegExp(r'/+$'),
-      '',
-    );
+    final base = AppConstants.publicSiteBase.replaceFirst(RegExp(r'/+$'), '');
     return '$base/?invitation=$code';
   }
 
@@ -692,6 +867,7 @@ class Invitation {
   /// previa mientras se elige plantilla.
   factory Invitation.sample(String templateKey) {
     final t = invitationTemplate(templateKey);
+    final recipe = defaultTemplateRecipeForBase(t.key);
     final (
       :headline,
       :sub,
@@ -761,6 +937,8 @@ class Invitation {
     return Invitation(
       title: headline,
       template: t.key,
+      preset: recipe.key,
+      componentDesigns: templateRecipeComponents(recipe),
       occasion: t.occasion,
       headline: headline,
       subheadline: sub,
@@ -801,6 +979,27 @@ class Invitation {
         InvitationStop(time: '3:00 AM', title: 'Fin del evento'),
       ],
       hashtag: '#${headline.split(' ').first}2026',
+    );
+  }
+
+  /// Una muestra creada a partir de una plantilla-compuesta. Conserva los
+  /// textos de la ocasión de la base y aplica la paleta, la portada y los
+  /// diseños de los componentes de la receta.
+  factory Invitation.samplePreset(String presetKey) {
+    final recipe =
+        invitationTemplateRecipeForKey(presetKey) ??
+        defaultTemplateRecipeForBase('sobre-xv');
+    final base = Invitation.sample(recipe.baseTemplate);
+    return base.copyWith(
+      preset: recipe.key,
+      occasion: recipe.occasion,
+      coverStyle: recipe.coverStyle,
+      coverBackdrop: recipe.coverBackdrop,
+      accent: recipe.accent,
+      bgColor: recipe.bgColor,
+      effect: recipe.effect,
+      font: recipe.font,
+      componentDesigns: templateRecipeComponents(recipe),
     );
   }
 }
@@ -878,7 +1077,9 @@ const List<String> _weekdaysEs = [
 /// La fecha larga en español («Sábado 14 de noviembre de 2026»).
 String invitationDateLabel(DateTime d) {
   final day = _weekdaysEs[d.weekday - 1];
-  final weekday = day.isEmpty ? day : '${day[0].toUpperCase()}${day.substring(1)}';
+  final weekday = day.isEmpty
+      ? day
+      : '${day[0].toUpperCase()}${day.substring(1)}';
   return '$weekday ${d.day} de ${_monthsEs[d.month - 1]} de ${d.year}';
 }
 

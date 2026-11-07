@@ -8,6 +8,9 @@ import '../drive_base.dart' show driveImagePreview, drivePublicUrl;
 import '../drive_scope.dart';
 import '../hs_access.dart';
 import '../hs_api.dart';
+import '../invitation_components/component_catalog.dart';
+import '../invitation_components/templates/custom_invitation_templates.dart';
+import '../invitation_components/templates/invitation_templates.dart';
 import '../invitation_html.dart';
 import '../invitation_model.dart';
 import '../open_html.dart';
@@ -18,6 +21,7 @@ import '../widgets/drive_photo_picker.dart';
 import '../widgets/hs_modal.dart';
 import '../widgets/hs_toast.dart';
 import '../widgets/invitation_preview.dart';
+import '../widgets/invitation_template_dialog.dart';
 
 // ==================================================================
 // MÓDULO INVITACIONES
@@ -27,9 +31,10 @@ import '../widgets/invitation_preview.dart';
 //
 //   · El LISTADO enseña la miniatura de cada invitación, si está publicada
 //     y sus acciones (editar, compartir, publicar, eliminar).
-//   · El EDITOR tiene el formulario y la VISTA PREVIA EN VIVO (en el celular
-//     se pasa de una a otra con las pestañas). La vista previa usa el mismo
-//     modelo que el HTML público, así que no hay sorpresas al compartir.
+//   · El EDITOR es una ventana de trabajo: las herramientas viven en un
+//     riel lateral y la VISTA PREVIA EN VIVO ocupa el lienzo. La vista previa
+//     usa el mismo modelo que el HTML público, así que no hay sorpresas al
+//     compartir.
 //   · COMPARTIR publica la invitación (la liga se crea al publicar) y deja
 //     la dirección lista para copiar, abrir o mandar por WhatsApp.
 //
@@ -65,6 +70,10 @@ class _InvitationsPageState extends State<InvitationsPage> {
 
   Future<void> _load() async {
     setState(() => _error = null);
+    // El catálogo local tiene que estar listo antes de pintar las miniaturas:
+    // una invitación con plantilla propia debe conservar su portada y colores.
+    await InvitationTemplateStore.load();
+    if (!mounted) return;
     try {
       final result = await HsApi.invitations();
       if (!mounted) return;
@@ -95,15 +104,19 @@ class _InvitationsPageState extends State<InvitationsPage> {
   /// Nueva invitación: primero se elige la plantilla y el editor se abre
   /// con una muestra de ese diseño.
   Future<void> _newInvitation() async {
+    await InvitationTemplateStore.load();
+    if (!mounted) return;
     final key = await showHsModal<String>(
       context: context,
       builder: (_) => const _TemplateChooser(),
     );
     if (key == null || !mounted) return;
-    await _edit(Invitation.sample(key));
+    await _edit(Invitation.samplePreset(key));
   }
 
   Future<void> _edit(Invitation invitation) async {
+    await InvitationTemplateStore.load();
+    if (!mounted) return;
     final saved = await showHsModal<Invitation>(
       context: context,
       builder: (_) => _InvitationEditor(invitation: invitation),
@@ -378,7 +391,7 @@ class _InvitationsPageState extends State<InvitationsPage> {
                           const SizedBox(height: 3),
                           Text(
                             [
-                              inv.design.name,
+                              inv.templateRecipe.name,
                               if (inv.dateText.trim().isNotEmpty)
                                 inv.dateText.trim(),
                             ].join(' · '),
@@ -546,45 +559,45 @@ class _StatusChip extends StatelessWidget {
 /// El HTML original trae pétalos; estos son los que se pueden elegir en su
 /// lugar. `petalos` es el valor por defecto (una invitación vieja sin efecto
 /// guardado también se ve así).
-const List<({String key, String label, String hint, IconData icon})>
-_effects = [
-  (
-    key: 'petalos',
-    label: 'Pétalos',
-    hint: 'Flotan y caen suave',
-    icon: Icons.local_florist_outlined,
-  ),
-  (
-    key: 'burbujas',
-    label: 'Burbujas',
-    hint: 'Suben y brillan',
-    icon: Icons.bubble_chart_outlined,
-  ),
-  (
-    key: 'destellos',
-    label: 'Destellos',
-    hint: 'Estrellas doradas',
-    icon: Icons.auto_awesome_outlined,
-  ),
-  (
-    key: 'corazones',
-    label: 'Corazones',
-    hint: 'Flotan con latido',
-    icon: Icons.favorite_border_rounded,
-  ),
-  (
-    key: 'confeti',
-    label: 'Confeti',
-    hint: 'Fiesta que gira',
-    icon: Icons.celebration_outlined,
-  ),
-  (
-    key: 'ninguno',
-    label: 'Sin efectos',
-    hint: 'Solo el diseño',
-    icon: Icons.block_outlined,
-  ),
-];
+const List<({String key, String label, String hint, IconData icon})> _effects =
+    [
+      (
+        key: 'petalos',
+        label: 'Pétalos',
+        hint: 'Flotan y caen suave',
+        icon: Icons.local_florist_outlined,
+      ),
+      (
+        key: 'burbujas',
+        label: 'Burbujas',
+        hint: 'Suben y brillan',
+        icon: Icons.bubble_chart_outlined,
+      ),
+      (
+        key: 'destellos',
+        label: 'Destellos',
+        hint: 'Estrellas doradas',
+        icon: Icons.auto_awesome_outlined,
+      ),
+      (
+        key: 'corazones',
+        label: 'Corazones',
+        hint: 'Flotan con latido',
+        icon: Icons.favorite_border_rounded,
+      ),
+      (
+        key: 'confeti',
+        label: 'Confeti',
+        hint: 'Fiesta que gira',
+        icon: Icons.celebration_outlined,
+      ),
+      (
+        key: 'ninguno',
+        label: 'Sin efectos',
+        hint: 'Solo el diseño',
+        icon: Icons.block_outlined,
+      ),
+    ];
 
 class _InvitationEditor extends StatefulWidget {
   const _InvitationEditor({required this.invitation});
@@ -604,6 +617,82 @@ const List<String> _bgPalette = [
   'EDE9F7',
   '1B1030',
   '0B1220',
+];
+
+/// Las portadas disponibles. Son independientes de la plantilla: el mismo
+/// sobre se puede combinar con flores, papel, noche o terciopelo.
+const List<({String key, String label, String hint, IconData icon})> _covers = [
+  (
+    key: 'rosa',
+    label: 'Rosa Pastel',
+    hint: 'Arco floral, pétalos y brillo suave.',
+    icon: Icons.local_florist_outlined,
+  ),
+  (
+    key: 'carta',
+    label: 'Carta',
+    hint: 'Papel doblado, sello de cera y caligrafía.',
+    icon: Icons.mail_outline,
+  ),
+  (
+    key: 'xv',
+    label: 'Portada de XV',
+    hint: 'Corona, el número 15, listones y confeti.',
+    icon: Icons.workspace_premium_outlined,
+  ),
+  (
+    key: 'noche',
+    label: 'Noche estrellada',
+    hint: 'Luna, constelaciones y aire de gala.',
+    icon: Icons.auto_awesome,
+  ),
+  (
+    key: 'cortina',
+    label: 'Cortina',
+    hint: 'Terciopelo, luces y apertura de teatro.',
+    icon: Icons.theaters_outlined,
+  ),
+  (
+    key: 'clasica',
+    label: 'Clásica',
+    hint: 'Monograma, doble marco y papel fino.',
+    icon: Icons.diamond_outlined,
+  ),
+];
+
+/// Las herramientas del editor. El riel lateral y el encabezado del panel
+/// usan la misma lista para no desincronizarse.
+const List<({IconData icon, String label, String hint})> _editorTools = [
+  (
+    icon: Icons.edit_note_rounded,
+    label: 'Datos',
+    hint: 'Textos, fecha y lugar',
+  ),
+  (
+    icon: Icons.widgets_outlined,
+    label: 'Items',
+    hint: 'Arrastra, edita y ordena',
+  ),
+  (
+    icon: Icons.palette_outlined,
+    label: 'Diseño',
+    hint: 'Plantilla, color y efectos',
+  ),
+  (
+    icon: Icons.photo_library_outlined,
+    label: 'Fotos',
+    hint: 'Polaroids y fondos',
+  ),
+  (
+    icon: Icons.article_outlined,
+    label: 'Contenido',
+    hint: 'Familias, detalles y música',
+  ),
+  (
+    icon: Icons.ios_share_rounded,
+    label: 'Publicar',
+    hint: 'Liga y visibilidad',
+  ),
 ];
 
 class _InvitationEditorState extends State<_InvitationEditor> {
@@ -638,22 +727,38 @@ class _InvitationEditorState extends State<_InvitationEditor> {
   late final TextEditingController _music;
 
   late String _template;
+  late String _preset;
+  late Map<String, String> _componentDesigns;
   late String _accent;
   late String _font;
   late String _bgColor;
   late String _effect;
+  late String _coverStyle;
+  late String _coverBackdrop;
   late List<String> _sections;
+  late List<String> _sectionOrder;
   late List<String> _photos;
   late bool _published;
+
+  /// El componente que se está inspeccionando en el panel «Componentes».
+  String? _selectedLayer;
 
   bool _saving = false;
   String? _error;
 
-  /// Pestaña del formulario: datos, diseño, fotos, contenido o publicar.
+  /// Herramienta activa del editor.
   int _designTab = 0;
 
-  /// En el celular: formulario (0) o vista previa (1).
-  int _tab = 0;
+  /// Estado del panel lateral. `null` significa automático: abierto en
+  /// escritorio y cerrado en pantallas angostas para que la vista previa
+  /// tenga todo el espacio.
+  bool? _panelOpen;
+
+  /// El lienzo alterna entre una vista de teléfono y una de computadora.
+  bool _previewDesktop = false;
+
+  /// Pestaña del lienzo: 0 = Portada, 1 = Invitación, 2 = Todo.
+  int _canvasTab = 2;
 
   bool get _editing => widget.invitation.id > 0;
 
@@ -691,11 +796,18 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     _hashtag = TextEditingController(text: inv.hashtag);
     _music = TextEditingController(text: inv.musicUrl);
     _template = inv.template;
+    _preset = inv.preset;
+    _componentDesigns = {
+      for (final c in kInvitationComponents) c.key: inv.componentDesign(c.key),
+    };
     _accent = inv.accent;
     _font = inv.font;
     _bgColor = inv.bgColor;
     _effect = inv.effect;
+    _coverStyle = inv.coverStyleKey;
+    _coverBackdrop = inv.coverBackdropKey;
     _sections = List<String>.of(inv.sections);
+    _sectionOrder = List<String>.of(inv.flowSectionOrder);
     _photos = List<String>.of(inv.photos.take(3), growable: true);
     _published = inv.published;
   }
@@ -748,6 +860,8 @@ class _InvitationEditorState extends State<_InvitationEditor> {
   Invitation get _current => widget.invitation.copyWith(
     title: _title.text,
     template: _template,
+    preset: _preset,
+    componentDesigns: {..._componentDesigns, 'cover': _coverStyle},
     occasion: _occasionText.text,
     headline: _headline.text,
     subheadline: _subheadline.text,
@@ -768,7 +882,10 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     detailsMedia: _detailsMedia.text,
     bgColor: _bgColor,
     effect: _effect,
+    coverStyle: _coverStyle,
+    coverBackdrop: _coverBackdrop,
     sections: _sections,
+    sectionOrder: _sectionOrder,
     eventAt: _eventAt.text,
     quote: _quote.text,
     verticalTitle: _verticalTitle.text,
@@ -787,6 +904,104 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     musicUrl: _music.text,
     published: _published,
   );
+
+  /// Aplica una plantilla-compuesta sin tocar los textos, las fotos ni las
+  /// listas de la invitación. La plantilla solo cambia la base visual, la
+  /// portada y los diseños de los componentes.
+  void _applyTemplateRecipe(InvitationTemplateRecipe recipe) {
+    setState(() {
+      _template = recipe.baseTemplate;
+      _preset = recipe.key;
+      _coverStyle = recipe.coverStyle;
+      _coverBackdrop = recipe.coverBackdrop.isEmpty
+          ? 'marfil'
+          : recipe.coverBackdrop;
+      _accent = recipe.accent;
+      _bgColor = recipe.bgColor;
+      _effect = recipe.effect;
+      _font = recipe.font;
+      _componentDesigns = templateRecipeComponents(recipe);
+    });
+  }
+
+  Future<void> _changeTemplate() async {
+    await InvitationTemplateStore.load();
+    if (!mounted) return;
+    final key = await showHsModal<String>(
+      context: context,
+      builder: (_) => const _TemplateChooser(),
+    );
+    if (key == null || !mounted) return;
+    final recipe = invitationTemplateRecipeForKey(key);
+    if (recipe != null) _applyTemplateRecipe(recipe);
+  }
+
+  /// Una foto del diseño que hay ahora en el lienzo. Es lo que se guarda
+  /// cuando el usuario crea o actualiza una plantilla.
+  InvitationTemplateRecipe _templateSnapshot({
+    required String key,
+    required String name,
+    required String occasion,
+    required String hint,
+  }) {
+    String hex(String value) => value.trim().replaceAll('#', '').toUpperCase();
+    return InvitationTemplateRecipe(
+      key: key,
+      name: name,
+      occasion: occasion,
+      hint: hint,
+      baseTemplate: _template,
+      coverStyle: _coverStyle,
+      coverBackdrop: _coverBackdrop,
+      accent: hex(_accent),
+      bgColor: hex(_bgColor),
+      effect: _effect.trim().toLowerCase(),
+      font: _font.trim().toLowerCase(),
+      components: {
+        for (final component in kInvitationComponents)
+          if (component.key != 'cover')
+            component.key:
+                _componentDesigns[component.key] ?? component.fallback,
+      },
+      custom: true,
+    );
+  }
+
+  /// Guarda el diseño actual como plantilla nueva o actualiza la que está
+  /// aplicada. La plantilla se conserva en este equipo; la invitación y su
+  /// liga pública no cambian.
+  Future<void> _saveCurrentAsTemplate({bool overwrite = false}) async {
+    if (_saving) return;
+    final current = templateRecipeForInvitation(
+      preset: _preset,
+      template: _template,
+    );
+    final existing = overwrite ? InvitationTemplateStore.find(_preset) : null;
+    final snapshot = _templateSnapshot(
+      key: existing?.key ?? '',
+      name: existing?.name ?? '${current.name} personalizada',
+      occasion: existing?.occasion ?? current.occasion,
+      hint:
+          existing?.hint ??
+          'Diseño creado desde el editor y guardado en este equipo.',
+    );
+    final picked = await showHsModal<InvitationTemplateRecipe>(
+      context: context,
+      builder: (_) => InvitationTemplateRecipeDialog(
+        title: existing == null ? 'Guardar plantilla' : 'Editar plantilla',
+        source: snapshot,
+        editing: existing != null,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await InvitationTemplateStore.save(picked);
+    if (!mounted) return;
+    setState(() => _preset = picked.key);
+    HsToast.success(
+      existing == null ? 'Plantilla creada' : 'Plantilla actualizada',
+      details: 'Se guardó en este equipo y ya aparece en el catálogo.',
+    );
+  }
 
   /// Abre en el navegador el HTML que se va a guardar (el de la liga),
   /// para revisarlo tal cual. En la web la vista previa del panel ya es la
@@ -840,7 +1055,10 @@ class _InvitationEditorState extends State<_InvitationEditor> {
         _error =
             'Escribe los nombres del evento (o el título de la '
             'invitación) antes de guardar.';
-        _tab = 0;
+        _designTab = 0;
+        // Si el panel estaba recogido, se abre para enseñar el campo que
+        // hay que completar.
+        _panelOpen = true;
       });
       return;
     }
@@ -878,37 +1096,29 @@ class _InvitationEditorState extends State<_InvitationEditor> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final size = MediaQuery.sizeOf(context);
-    final wide = size.width >= 900;
-    final height = (size.height * .92).clamp(360.0, 860.0);
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 900;
+    // En una laptop angosta el lienzo manda: el panel se abre al tocar una
+    // herramienta, pero no arranca robándole ancho a la vista previa.
+    final panelOpen = _panelOpen ?? width >= 1100;
+
+    // Ventana de trabajo completa: sin márgenes ni tarjeta flotante. El
+    // lienzo de la invitación es el protagonista y las herramientas viven
+    // en el borde izquierdo.
     return Dialog(
-      insetPadding: EdgeInsets.all(size.width < kHsPhoneWidth ? 0 : 22),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      insetPadding: EdgeInsets.zero,
+      shape: const RoundedRectangleBorder(),
       clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1160),
-        child: SizedBox(
-          height: height,
+      backgroundColor: scheme.surface,
+      child: SizedBox.expand(
+        child: SafeArea(
           child: Column(
             children: [
-              _header(scheme),
-              const Divider(height: 1),
+              _header(scheme, panelOpen: panelOpen),
+              if (_error != null) _errorBanner(scheme),
               Expanded(
-                child: wide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 5, child: _form(scheme)),
-                          VerticalDivider(
-                            width: 1,
-                            color: scheme.outlineVariant.withValues(alpha: .5),
-                          ),
-                          Expanded(flex: 6, child: _preview()),
-                        ],
-                      )
-                    : _tabs(scheme),
+                child: _workspace(scheme, wide: wide, panelOpen: panelOpen),
               ),
-              _footer(scheme),
             ],
           ),
         ),
@@ -916,105 +1126,813 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     );
   }
 
-  Widget _header(ColorScheme scheme) {
-    final t = invitationTemplate(_template);
-    return Padding(
-      padding: EdgeInsets.fromLTRB(18, 14, 8, 12),
+  Widget _header(ColorScheme scheme, {required bool panelOpen}) {
+    final recipe = templateRecipeForInvitation(
+      preset: _preset,
+      template: _template,
+    );
+    final compact = MediaQuery.sizeOf(context).width < 720;
+    return Container(
+      key: const ValueKey('invitation-editor-header'),
+      height: compact ? 58 : 66,
+      padding: EdgeInsets.fromLTRB(compact ? 4 : 14, 6, compact ? 8 : 14, 6),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: .55),
+          ),
+        ),
+      ),
       child: Row(
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.mail_outline_rounded,
-              size: 20,
-              color: scheme.primary,
-            ),
+          IconButton(
+            tooltip: 'Cerrar editor',
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded, size: 21),
           ),
-          const SizedBox(width: 12),
+          if (!compact) ...[
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.mail_outline_rounded,
+                size: 20,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(width: 11),
+          ],
           Expanded(
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   _editing ? 'Editar invitación' : 'Nueva invitación',
-                  style: const TextStyle(
-                    fontSize: 16,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 13.5 : 15.5,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 Text(
-                  '${t.name} · ${t.occasion}',
+                  '${recipe.name} · ${recipe.occasion}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: compact ? 9.5 : 10.5,
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
+          if (!compact) ...[
+            _StatusChip(published: _published),
+            const SizedBox(width: 8),
+          ],
           IconButton(
-            tooltip: 'Ver la invitación real',
-            onPressed: _saving ? null : _openInBrowser,
-            icon: const Icon(Icons.open_in_new_rounded, size: 19),
+            tooltip: panelOpen
+                ? 'Ocultar herramientas'
+                : 'Mostrar herramientas',
+            style: IconButton.styleFrom(
+              backgroundColor: panelOpen
+                  ? scheme.primary.withValues(alpha: .10)
+                  : null,
+            ),
+            onPressed: _saving
+                ? null
+                : () => setState(() => _panelOpen = !panelOpen),
+            icon: Icon(
+              Icons.tune_rounded,
+              size: 20,
+              color: panelOpen ? scheme.primary : null,
+            ),
+          ),
+          if (!compact)
+            IconButton(
+              tooltip: 'Ver la invitación real',
+              onPressed: _saving ? null : _openInBrowser,
+              icon: const Icon(Icons.open_in_new_rounded, size: 19),
+            ),
+          if (compact)
+            IconButton.filled(
+              key: const ValueKey('invitation-save'),
+              tooltip: _saving ? 'Guardando…' : 'Guardar invitación',
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined, size: 19),
+            )
+          else ...[
+            const SizedBox(width: 4),
+            FilledButton.icon(
+              key: const ValueKey('invitation-save'),
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined, size: 18),
+              label: Text(_saving ? 'Guardando…' : 'Guardar invitación'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBanner(ColorScheme scheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+      color: scheme.errorContainer,
+      child: Row(
+        children: [
+          Icon(
+            Icons.error_outline_rounded,
+            size: 17,
+            color: scheme.onErrorContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _error!,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.3,
+                color: scheme.onErrorContainer,
+              ),
+            ),
           ),
           IconButton(
-            tooltip: 'Cerrar',
-            onPressed: _saving ? null : () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close_rounded),
+            tooltip: 'Cerrar aviso',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _error = null),
+            icon: Icon(
+              Icons.close_rounded,
+              size: 16,
+              color: scheme.onErrorContainer,
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// En el celular: formulario y vista previa en pestañas.
-  Widget _tabs(ColorScheme scheme) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+  /// El espacio de trabajo: riel de herramientas, panel de ajustes y un
+  /// lienzo grande con la invitación. En pantallas angostas el panel se
+  /// abre encima del lienzo para no robarle ancho a la vista previa.
+  Widget _workspace(
+    ColorScheme scheme, {
+    required bool wide,
+    required bool panelOpen,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final panelWidth = (constraints.maxWidth * .29)
+            .clamp(380.0, 440.0)
+            .toDouble();
+        if (wide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _toolRail(scheme, compact: false),
+              if (panelOpen)
+                SizedBox(width: panelWidth, child: _toolPanel(scheme)),
+              VerticalDivider(
+                width: 1,
+                color: scheme.outlineVariant.withValues(alpha: .5),
+              ),
+              Expanded(child: _canvas(scheme)),
+            ],
+          );
+        }
+
+        // El ancho del panel flotante nunca tapa el riel.
+        final overlayWidth = constraints.maxWidth < 466
+            ? constraints.maxWidth - 66
+            : 400.0;
+        return Stack(
+          children: [
+            Positioned.fill(left: 66, child: _canvas(scheme, compact: true)),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: _toolRail(scheme, compact: true),
+            ),
+            if (panelOpen) ...[
+              Positioned.fill(
+                left: 66,
+                child: GestureDetector(
+                  onTap: () => setState(() => _panelOpen = false),
+                  child: Container(color: Colors.black.withValues(alpha: .28)),
+                ),
+              ),
+              Positioned(
+                left: 66,
+                top: 0,
+                bottom: 0,
+                width: overlayWidth,
+                child: Material(
+                  elevation: 16,
+                  color: scheme.surface,
+                  child: _toolPanel(scheme),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  /// Riel vertical de herramientas, con el borde izquierdo de la ventana.
+  Widget _toolRail(ColorScheme scheme, {required bool compact}) {
+    return Container(
+      key: const ValueKey('invitation-tool-rail'),
+      width: compact ? 66 : 82,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .16),
+        border: Border(
+          right: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: .55),
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          if (!compact) ...[
+            const SizedBox(height: 10),
+            Icon(
+              Icons.grid_view_rounded,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'EDITOR',
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 7),
+          ] else
+            const SizedBox(height: 6),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 5 : 7,
+                vertical: 2,
+              ),
+              children: [
+                for (var i = 0; i < _editorTools.length; i++)
+                  _toolRailItem(scheme, index: i, compact: compact),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolRailItem(
+    ColorScheme scheme, {
+    required int index,
+    required bool compact,
+  }) {
+    final tool = _editorTools[index];
+    final selected = _designTab == index;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: selected
+            ? scheme.primary.withValues(alpha: .12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          key: ValueKey('invitation-tab-$index'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: _saving
+              ? null
+              : () => setState(() {
+                  _designTab = index;
+                  _panelOpen = true;
+                }),
+          child: Container(
+            padding: EdgeInsets.symmetric(vertical: compact ? 7 : 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary.withValues(alpha: .38)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  tool.icon,
+                  size: compact ? 18 : 20,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tool.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 8.5 : 9.5,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// El panel de la herramienta activa, con su cabecera y el formulario.
+  Widget _toolPanel(ColorScheme scheme) {
+    final tool = _editorTools[_designTab.clamp(0, _editorTools.length - 1)];
+    return Container(
+      key: const ValueKey('invitation-tool-panel'),
+      color: scheme.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 11, 6, 9),
+            child: Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(tool.icon, size: 17, color: scheme.primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        tool.label,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        tool.hint,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Ocultar herramientas',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() => _panelOpen = false),
+                  icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                ),
+              ],
+            ),
+          ),
+          Divider(
+            height: 1,
+            color: scheme.outlineVariant.withValues(alpha: .5),
+          ),
+          Expanded(child: _form(scheme)),
+        ],
+      ),
+    );
+  }
+
+  /// El lienzo central: la vista previa ocupa todo el espacio disponible.
+  Widget _canvas(ColorScheme scheme, {bool compact = false}) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final canvasColor = dark
+        ? const Color(0xFF0A0F18)
+        : const Color(0xFFE9E5DE);
+    return Container(
+      key: const ValueKey('invitation-canvas'),
+      color: canvasColor,
+      child: Column(
+        children: [
+          Container(
+            height: compact ? 38 : 44,
+            padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 16),
+            decoration: BoxDecoration(
+              color: scheme.surface.withValues(alpha: .74),
+              border: Border(
+                bottom: BorderSide(
+                  color: scheme.outlineVariant.withValues(alpha: .45),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.visibility_outlined,
+                  size: 15,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  compact ? 'VISTA PREVIA' : 'VISTA PREVIA EN VIVO',
+                  style: TextStyle(
+                    fontSize: compact ? 8.5 : 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.2,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2F9E5B),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const Spacer(),
+                if (!compact) ...[
+                  Flexible(
+                    child: Text(
+                      _current.templateRecipe.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                _previewDeviceSwitch(scheme),
+              ],
+            ),
+          ),
+          _canvasTabs(scheme, compact: compact),
+          Expanded(child: _canvasPreviews(scheme, compact: compact)),
+        ],
+      ),
+    );
+  }
+
+  /// Portada, Invitación y Todo son tres vistas del mismo documento. Así la
+  /// portada puede ocupar el lienzo completo en vez de quedar en una columna
+  /// pequeña al lado de la invitación.
+  Widget _canvasTabs(ColorScheme scheme, {required bool compact}) {
+    return Container(
+      height: compact ? 38 : 43,
+      padding: EdgeInsets.fromLTRB(compact ? 7 : 14, 4, compact ? 7 : 14, 4),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .62),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: .45),
+          ),
+        ),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 390),
           child: Row(
             children: [
-              Expanded(
-                child: SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(
-                      value: 0,
-                      icon: Icon(Icons.edit_outlined, size: 16),
-                      label: Text('Editar'),
-                    ),
-                    ButtonSegment(
-                      value: 1,
-                      icon: Icon(Icons.visibility_outlined, size: 16),
-                      label: Text('Vista previa'),
-                    ),
-                  ],
-                  selected: {_tab},
-                  showSelectedIcon: false,
-                  onSelectionChanged: _saving
-                      ? null
-                      : (v) => setState(() => _tab = v.first),
-                ),
+              _canvasTabButton(
+                scheme,
+                index: 0,
+                keyName: 'invitation-canvas-tab-cover',
+                icon: Icons.mark_email_unread_outlined,
+                label: 'Portada',
+                compact: compact,
+              ),
+              const SizedBox(width: 5),
+              _canvasTabButton(
+                scheme,
+                index: 1,
+                keyName: 'invitation-canvas-tab-invitation',
+                icon: Icons.article_outlined,
+                label: 'Invitación',
+                compact: compact,
+              ),
+              const SizedBox(width: 5),
+              _canvasTabButton(
+                scheme,
+                index: 2,
+                keyName: 'invitation-canvas-tab-all',
+                icon: Icons.view_agenda_outlined,
+                label: 'Todo',
+                compact: compact,
               ),
             ],
           ),
         ),
-        Expanded(child: _tab == 0 ? _form(scheme) : _preview()),
-      ],
+      ),
     );
   }
 
-  Widget _preview() {
-    return InvitationPreview(
-      key: const ValueKey('invitation-preview'),
-      invitation: _current,
-      maxWidth: 440,
-      allowCover: true,
+  Widget _canvasTabButton(
+    ColorScheme scheme, {
+    required int index,
+    required String keyName,
+    required IconData icon,
+    required String label,
+    required bool compact,
+  }) {
+    final selected = _canvasTab == index;
+    return Expanded(
+      child: Material(
+        color: selected
+            ? scheme.primary.withValues(alpha: .13)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          key: ValueKey(keyName),
+          borderRadius: BorderRadius.circular(9),
+          onTap: _saving ? null : () => setState(() => _canvasTab = index),
+          child: Container(
+            height: compact ? 27 : 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary.withValues(alpha: .40)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: compact ? 13 : 15,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 9 : 10.5,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      color: selected
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// El lienzo cambia de vista sin recargar el editor. «Todo» abre el mismo
+  /// documento público desde el sobre, para revisar la experiencia completa.
+  Widget _canvasPreviews(ColorScheme scheme, {required bool compact}) {
+    final tab = _canvasTab.clamp(0, 2);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        compact ? 6 : 14,
+        compact ? 6 : 10,
+        compact ? 6 : 14,
+        compact ? 6 : 14,
+      ),
+      child: _previewFrame(
+        scheme,
+        compact: compact,
+        child: switch (tab) {
+          0 => _coverPreview(),
+          2 => _preview(allowCover: true, startAtCover: true),
+          _ => _preview(allowCover: false),
+        },
+      ),
+    );
+  }
+
+  Widget _previewFrame(
+    ColorScheme scheme, {
+    required bool compact,
+    required Widget child,
+  }) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(compact ? 12 : 18),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .65)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .12),
+            blurRadius: 26,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _coverPreview() {
+    // La portada sigue el mismo conmutador que la invitación: en teléfono se
+    // dibuja en un lienzo de 430 px y en computadora ocupa todo el marco. Es
+    // solo una vista: no debe abrir la invitación ni cambiar de documento al
+    // hacer clic. La edición se hace desde los diseños de Items.
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final scheme = Theme.of(context).colorScheme;
+          final width = constraints.maxWidth;
+          final height = constraints.maxHeight;
+          final phoneWidth = width < 430 ? width : 430.0;
+          final phoneHeight = height < 900 ? height : 900.0;
+          final preview = InvitationPreview(
+            key: const ValueKey('invitation-cover-preview'),
+            invitation: _current,
+            allowCover: true,
+            coverOnly: true,
+          );
+          if (_previewDesktop) return preview;
+          return Center(
+            child: Container(
+              width: phoneWidth,
+              height: phoneHeight,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: scheme.outlineVariant.withValues(alpha: .75),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .18),
+                    blurRadius: 26,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: preview,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// El conmutador entre la vista de teléfono y la de computadora.
+  Widget _previewDeviceSwitch(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .28),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _previewDeviceButton(
+            scheme,
+            key: 'invitation-device-phone',
+            icon: Icons.smartphone_rounded,
+            tooltip: 'Vista de teléfono',
+            desktop: false,
+          ),
+          _previewDeviceButton(
+            scheme,
+            key: 'invitation-device-desktop',
+            icon: Icons.desktop_windows_rounded,
+            tooltip: 'Vista de computadora',
+            desktop: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _previewDeviceButton(
+    ColorScheme scheme, {
+    required String key,
+    required IconData icon,
+    required String tooltip,
+    required bool desktop,
+  }) {
+    final selected = _previewDesktop == desktop;
+    return IconButton(
+      key: ValueKey(key),
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 30, height: 26),
+      style: IconButton.styleFrom(
+        backgroundColor: selected ? scheme.surface : Colors.transparent,
+        foregroundColor: selected ? scheme.primary : scheme.onSurfaceVariant,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      ),
+      onPressed: _saving
+          ? null
+          : () => setState(() => _previewDesktop = desktop),
+      icon: Icon(icon, size: 16),
+    );
+  }
+
+  Widget _preview({bool allowCover = true, bool startAtCover = false}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scheme = Theme.of(context).colorScheme;
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+        final phoneWidth = width < 430 ? width : 430.0;
+        final phoneHeight = height < 900 ? height : 900.0;
+        final preview = InvitationPreview(
+          key: const ValueKey('invitation-preview'),
+          invitation: _current,
+          maxWidth: _previewDesktop ? width : phoneWidth,
+          allowCover: allowCover,
+          startAtCover: startAtCover,
+          editable: true,
+          selectedSection: _selectedLayer,
+          onSelectSection: _selectCanvasSection,
+          onEditSection: _editCanvasSection,
+          onRemoveSection: _hideCanvasSection,
+          onDropComponent: _dropCanvasComponent,
+        );
+        if (_previewDesktop) return preview;
+        // En la vista de teléfono se dibuja un lienzo de 430 × 900 (o el
+        // espacio disponible si la ventana es más chica) para que la
+        // invitación se lea como en un móvil real.
+        return Center(
+          child: Container(
+            width: phoneWidth,
+            height: phoneHeight,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .75),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .18),
+                  blurRadius: 26,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: preview,
+          ),
+        );
+      },
     );
   }
 
@@ -1202,6 +2120,541 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     );
   }
 
+  /// La etiqueta visible de una portada.
+  String _coverLabel(String key) {
+    for (final c in _covers) {
+      if (c.key == key) return c.label;
+    }
+    return _covers.first.label;
+  }
+
+  /// Las tarjetas de portada. Son miniaturas de color, no imágenes: así el
+  /// selector no depende de archivos externos y se puede abrir sin conexión.
+  Widget _coverStylesBlock(ColorScheme scheme) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final c in _covers)
+          _coverCard(
+            scheme,
+            key: c.key,
+            label: c.label,
+            hint: c.hint,
+            icon: c.icon,
+            selected: _coverStyle == c.key,
+          ),
+      ],
+    );
+  }
+
+  String _backdropLabel(String key) {
+    for (final b in kInvitationCoverBackdrops) {
+      if (b.key == key) return b.label;
+    }
+    return kInvitationCoverBackdrops.first.label;
+  }
+
+  /// Los tres fondos de la Carta. La miniatura anticipa la escena:
+  /// marfil clásico, jardín verde o seda champán.
+  Widget _cartaBackdropBlock(ColorScheme scheme) {
+    final t = invitationTemplate(_template);
+    final accent = colorOfHex(_accent) ?? t.accent;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final b in kInvitationCoverBackdrops)
+          SizedBox(
+            width: 112,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: ValueKey('invitation-carta-backdrop-${b.key}'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: _saving
+                    ? null
+                    : () => setState(() => _coverBackdrop = b.key),
+                child: Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _coverBackdrop == b.key
+                          ? accent
+                          : scheme.outlineVariant.withValues(alpha: .7),
+                      width: _coverBackdrop == b.key ? 1.6 : 1,
+                    ),
+                    color: scheme.surface,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 56,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: switch (b.key) {
+                              'jardin' => const [
+                                Color(0xFFDCE6D8),
+                                Color(0xFFF6F0E5),
+                                Color(0xFF8EA183),
+                              ],
+                              'seda' => const [
+                                Color(0xFFF7EAD8),
+                                Color(0xFFD8B98E),
+                                Color(0xFFB08C60),
+                              ],
+                              _ => const [
+                                Color(0xFFFFFCF5),
+                                Color(0xFFF1E4D1),
+                                Color(0xFFD8C3A6),
+                              ],
+                            },
+                          ),
+                        ),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              left: 8,
+                              bottom: 7,
+                              child: Icon(
+                                Icons.local_florist,
+                                size: 18,
+                                color: b.key == 'jardin'
+                                    ? const Color(0xFF5C7154)
+                                    : accent.withValues(alpha: .75),
+                              ),
+                            ),
+                            Positioned(
+                              right: 7,
+                              top: 6,
+                              child: Icon(
+                                Icons.circle_outlined,
+                                size: 13,
+                                color: const Color(0xFFB99A63),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        b.label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: _coverBackdrop == b.key
+                              ? accent
+                              : scheme.onSurface,
+                        ),
+                      ),
+                      Text(
+                        b.hint,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 8.5,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// La miniatura usa la paleta de la plantilla elegida, no colores fijos:
+  /// así Rosa Pastel enseña sus rosas y Marfil & Oro sus dorados.
+  List<Color> _coverPreviewColors(String key) {
+    final t = invitationTemplate(_template);
+    final accent = colorOfHex(_accent) ?? t.accent;
+    final bg = t.bg;
+    final pale = Color.lerp(t.panel, bg, .28)!;
+    final deep = Color.lerp(Color.lerp(bg, accent, .42)!, Colors.black, .42)!;
+    return switch (key) {
+      'carta' => [t.panel, Color.lerp(t.panel, bg, .55)!],
+      'xv' => [Color.lerp(pale, Colors.white, .25)!, bg],
+      'noche' => [deep, Color.lerp(deep, Colors.black, .48)!],
+      'cortina' => [Color.lerp(deep, accent, .18)!, deep],
+      'clasica' => [t.panel, pale],
+      _ => [Color.lerp(t.panel, Colors.white, .25)!, bg],
+    };
+  }
+
+  /// Cada miniatura tiene una composición distinta. No es solo un color:
+  /// se reconoce la carta, el 15, el arco floral, la luna, el telón o el
+  /// monograma antes de elegirla.
+  Widget _coverThumb(String key, List<Color> colors) {
+    final base = colors.last;
+    final dark = base.computeLuminance() < .4;
+    final occasion = _occasionText.text.trim().isEmpty
+        ? invitationTemplate(_template).occasion
+        : _occasionText.text.trim();
+    final isXV =
+        occasion.toLowerCase().contains('xv') ||
+        occasion.toLowerCase().contains('quince');
+    final fg = dark ? const Color(0xFFF8ECD2) : const Color(0xFF5A403B);
+    final accent = dark
+        ? const Color(0xFFE7C98B)
+        : (colorOfHex(_accent) ?? invitationTemplate(_template).accent);
+    Widget stars({int count = 5}) => Stack(
+      children: [
+        for (var i = 0; i < count; i++)
+          Positioned(
+            left: 8.0 + (i * 23) % 90,
+            top: 5.0 + (i * 13) % 34,
+            child: Icon(
+              i.isEven ? Icons.star_rounded : Icons.auto_awesome,
+              size: i % 3 == 0 ? 5 : 3.5,
+              color: const Color(0xFFF3DCA6),
+            ),
+          ),
+      ],
+    );
+    Widget miniPaper() => Center(
+      child: Container(
+        width: 52,
+        height: 38,
+        padding: const EdgeInsets.fromLTRB(7, 5, 7, 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFCF5),
+          border: Border.all(color: accent.withValues(alpha: .45)),
+          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 4)],
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(height: 1, width: 30, color: fg.withValues(alpha: .25)),
+              const SizedBox(height: 4),
+              Text(
+                'Para ti',
+                style: TextStyle(
+                  fontFamily: 'serif',
+                  fontSize: 6.5,
+                  fontStyle: FontStyle.italic,
+                  color: fg.withValues(alpha: .8),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(height: 1, width: 20, color: fg.withValues(alpha: .18)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: colors,
+        ),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: dark ? .18 : .55),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: switch (key) {
+        'carta' => Stack(
+          fit: StackFit.expand,
+          children: [
+            miniPaper(),
+            Positioned(
+              right: 25,
+              bottom: 4,
+              child: Container(
+                width: 13,
+                height: 13,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent,
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x55000000), blurRadius: 3),
+                  ],
+                ),
+                child: Icon(Icons.favorite, size: 6, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        'xv' => Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              top: 2,
+              child: Icon(Icons.workspace_premium, size: 10, color: accent),
+            ),
+            Text(
+              isXV ? '15' : '✦',
+              style: TextStyle(
+                fontFamily: 'serif',
+                fontSize: 27,
+                height: .95,
+                fontWeight: FontWeight.w700,
+                color: accent,
+                shadows: const [
+                  Shadow(color: Color(0x22000000), blurRadius: 2),
+                ],
+              ),
+            ),
+            Positioned(
+              bottom: 3,
+              child: Container(
+                width: 44,
+                padding: const EdgeInsets.symmetric(vertical: 1.5),
+                color: accent.withValues(alpha: .8),
+                child: Text(
+                  isXV ? 'MIS XV' : 'CELEBRA',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 4.5,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        'noche' => Stack(
+          fit: StackFit.expand,
+          children: [
+            stars(count: 7),
+            Positioned(
+              top: 7,
+              right: 9,
+              child: Container(
+                width: 17,
+                height: 17,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFF3DFAF),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: .35),
+                      blurRadius: 10,
+                      spreadRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Center(
+              child: Text(
+                'NOCHE',
+                style: TextStyle(
+                  fontSize: 5.5,
+                  letterSpacing: 2.4,
+                  fontWeight: FontWeight.w700,
+                  color: fg.withValues(alpha: .82),
+                ),
+              ),
+            ),
+          ],
+        ),
+        'cortina' => Stack(
+          fit: StackFit.expand,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: 29,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.black.withValues(alpha: .45),
+                      accent.withValues(alpha: .28),
+                      Colors.black.withValues(alpha: .25),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Container(
+                width: 29,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.black.withValues(alpha: .25),
+                      accent.withValues(alpha: .28),
+                      Colors.black.withValues(alpha: .45),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Center(
+              child: Icon(Icons.theaters_outlined, size: 19, color: accent),
+            ),
+          ],
+        ),
+        'clasica' => Center(
+          child: Container(
+            width: 58,
+            height: 38,
+            decoration: BoxDecoration(
+              border: Border.all(color: accent.withValues(alpha: .7)),
+            ),
+            child: Container(
+              margin: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                border: Border.all(color: accent.withValues(alpha: .35)),
+              ),
+              child: Center(
+                child: Text(
+                  'AB',
+                  style: TextStyle(
+                    fontFamily: 'serif',
+                    fontSize: 14,
+                    letterSpacing: 1.5,
+                    color: fg.withValues(alpha: .82),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        _ => Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned(
+              left: 23,
+              right: 23,
+              top: 5,
+              bottom: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: accent.withValues(alpha: .38)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(50),
+                  ),
+                ),
+              ),
+            ),
+            Center(
+              child: Icon(
+                Icons.local_florist_outlined,
+                size: 16,
+                color: accent.withValues(alpha: .72),
+              ),
+            ),
+            Positioned(
+              bottom: 5,
+              left: 7,
+              child: Icon(Icons.auto_awesome, size: 5, color: accent),
+            ),
+            Positioned(
+              top: 7,
+              right: 8,
+              child: Icon(Icons.auto_awesome, size: 6, color: accent),
+            ),
+          ],
+        ),
+      },
+    );
+  }
+
+  Widget _coverCard(
+    ColorScheme scheme, {
+    required String key,
+    required String label,
+    required String hint,
+    required IconData icon,
+    required bool selected,
+  }) {
+    final narrow = MediaQuery.sizeOf(context).width < 560;
+    final colors = _coverPreviewColors(key);
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        key: ValueKey('invitation-cover-$key'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: _saving ? null : () => setState(() => _coverStyle = key),
+        child: Container(
+          width: narrow ? 144 : 164,
+          padding: const EdgeInsets.fromLTRB(9, 9, 9, 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? scheme.primary.withValues(alpha: .12)
+                : scheme.surfaceContainerHighest.withValues(alpha: .18),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? scheme.primary.withValues(alpha: .65)
+                  : scheme.outlineVariant.withValues(alpha: .55),
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _coverThumb(key, colors),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: selected ? scheme.primary : scheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
+                    size: 14,
+                    color: selected ? scheme.primary : scheme.outline,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                hint,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  height: 1.25,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _effectCard(
     ColorScheme scheme, {
     required String key,
@@ -1281,8 +2734,11 @@ class _InvitationEditorState extends State<_InvitationEditor> {
   /// La plantilla aplicada. Se elige al crear la invitación; aquí se muestra
   /// con su miniatura para confirmar el diseño con el que se guardará.
   Widget _templatePicker(ColorScheme scheme) {
-    final t = invitationTemplate(_template);
-    final sample = Invitation.sample(t.key);
+    final recipe = templateRecipeForInvitation(
+      preset: _preset,
+      template: _template,
+    );
+    final sample = Invitation.samplePreset(recipe.key);
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1334,8 +2790,7 @@ class _InvitationEditorState extends State<_InvitationEditor> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        '${kInvitationTemplates.indexWhere((x) => x.key == t.key) + 1} '
-                        'de ${kInvitationTemplates.length}',
+                        '${kInvitationComponents.length} componentes',
                         style: TextStyle(
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
@@ -1353,7 +2808,7 @@ class _InvitationEditorState extends State<_InvitationEditor> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  t.name,
+                  recipe.name,
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
@@ -1361,7 +2816,7 @@ class _InvitationEditorState extends State<_InvitationEditor> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  t.occasion,
+                  recipe.occasion,
                   style: TextStyle(
                     fontSize: 10.5,
                     color: scheme.onSurfaceVariant,
@@ -1369,8 +2824,8 @@ class _InvitationEditorState extends State<_InvitationEditor> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  t.hint,
-                  maxLines: 2,
+                  recipe.hint,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 10.5,
@@ -1396,6 +2851,42 @@ class _InvitationEditorState extends State<_InvitationEditor> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 4),
+                OutlinedButton.icon(
+                  key: const ValueKey('invitation-change-template'),
+                  onPressed: _saving ? null : _changeTemplate,
+                  icon: const Icon(
+                    Icons.dashboard_customize_outlined,
+                    size: 16,
+                  ),
+                  label: const Text('Cambiar plantilla'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  key: const ValueKey('invitation-template-save-design'),
+                  onPressed: _saving
+                      ? null
+                      : () => _saveCurrentAsTemplate(overwrite: recipe.custom),
+                  icon: Icon(
+                    recipe.custom
+                        ? Icons.save_rounded
+                        : Icons.bookmark_add_outlined,
+                    size: 15,
+                  ),
+                  label: Text(
+                    recipe.custom
+                        ? 'Actualizar esta plantilla'
+                        : 'Guardar como plantilla',
+                    style: const TextStyle(fontSize: 10.5),
+                  ),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
                 ),
               ],
             ),
@@ -1552,28 +3043,10 @@ class _InvitationEditorState extends State<_InvitationEditor> {
           FilterChip(
             key: ValueKey('invitation-section-${s.key}'),
             label: Text(s.label),
-            selected: _sections.isEmpty || _sections.contains(s.key),
+            selected: _sectionVisible(s.key),
             onSelected: _saving
                 ? null
-                : (on) {
-                    setState(() {
-                      final all = kInvitationSections
-                          .map((e) => e.key)
-                          .toList();
-                      final active = _sections.isEmpty
-                          ? all
-                          : List<String>.of(_sections);
-                      if (on) {
-                        active.add(s.key);
-                      } else {
-                        active.remove(s.key);
-                      }
-                      // Todo prendido = "sin restricciones" (todas).
-                      _sections = active.length == all.length
-                          ? const <String>[]
-                          : active;
-                    });
-                  },
+                : (on) => setState(() => _toggleSection(s.key, on)),
             visualDensity: VisualDensity.compact,
             labelStyle: const TextStyle(fontSize: 11),
           ),
@@ -1581,114 +3054,981 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     );
   }
 
-  Widget _form(ColorScheme scheme) {
-    return Column(
-      children: [
-        _formTabs(scheme),
-        Expanded(
-          child: ListView(
-            key: PageStorageKey<String>('invitation-form-$_designTab'),
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
-            children: switch (_designTab) {
-              1 => _designChildren(scheme),
-              2 => _photosChildren(scheme),
-              3 => _contentChildren(scheme),
-              4 => _publishChildren(scheme),
-              _ => _basicsChildren(scheme),
-            },
-          ),
-        ),
-      ],
-    );
+  bool _sectionVisible(String key) =>
+      _sections.isEmpty || _sections.contains(key);
+
+  /// Prende o apaga una sección conservando el atajo "vacío = todas".
+  void _toggleSection(String key, bool on) {
+    final all = [for (final s in kInvitationSections) s.key];
+    final active = _sections.isEmpty ? [...all] : List<String>.of(_sections);
+    if (on) {
+      if (!active.contains(key)) active.add(key);
+    } else {
+      // Una invitación sin ninguna sección no tendría sentido; además el
+      // modelo usa la lista vacía para decir «todas».
+      if (active.length <= 1) return;
+      active.remove(key);
+    }
+    _sections = active.length == all.length ? const <String>[] : active;
   }
 
-  /// Las pestañas del editor.
-  ///
-  /// Antes el formulario era una lista larguísima: para cambiar un color
-  /// había que bajar por textos, fotos, familias y detalles. Ahora cada grupo
-  /// de ajustes vive en su pestaña y la vista previa sigue a la derecha, así
-  /// se diseña sin perder de vista el resultado.
-  Widget _formTabs(ColorScheme scheme) {
-    const tabs = [
-      (icon: Icons.edit_note_rounded, label: 'Datos'),
-      (icon: Icons.palette_outlined, label: 'Diseño'),
-      (icon: Icons.photo_library_outlined, label: 'Fotos'),
-      (icon: Icons.article_outlined, label: 'Contenido'),
-      (icon: Icons.ios_share_rounded, label: 'Publicar'),
+  void _moveLayer(int index, int delta) {
+    final next = index + delta;
+    if (index < 0 || next < 0 || next >= _sectionOrder.length) return;
+    setState(() {
+      final moved = _sectionOrder.removeAt(index);
+      _sectionOrder.insert(next, moved);
+    });
+  }
+
+  void _openLayerSettings(String key) {
+    final target = switch (key) {
+      'cover' => 2,
+      'countdown' || 'rsvp' => 0,
+      'photos' => 3,
+      _ => 4,
+    };
+    setState(() {
+      _designTab = target;
+      _panelOpen = true;
+    });
+  }
+
+  /// Selecciona un bloque desde el lienzo sin sacar al usuario de él.
+  void _selectCanvasSection(String key) {
+    if (_saving) return;
+    setState(() => _selectedLayer = key);
+  }
+
+  /// El lápiz del bloque: abre el formulario que corresponde a ese ítem.
+  void _editCanvasSection(String key) {
+    if (_saving) return;
+    setState(() {
+      _selectedLayer = key;
+      _panelOpen = true;
+    });
+    _openLayerSettings(key);
+  }
+
+  /// El bote de basura no borra los textos: oculta el ítem y lo deja en la
+  /// biblioteca de Items para volver a insertarlo.
+  void _hideCanvasSection(String key) {
+    if (_saving) return;
+    setState(() {
+      _toggleSection(key, false);
+      if (_selectedLayer == key) _selectedLayer = null;
+    });
+  }
+
+  /// Suelta un ítem del panel en una zona del lienzo. Acepta componentes
+  /// nuevos (`new:`), bloques que ya estaban en el flujo (`move:`) y diseños
+  /// del catálogo (`design:details:lista`).
+  void _dropCanvasComponent(String payload, String? beforeKey) {
+    if (_saving) return;
+    final sep = payload.indexOf(':');
+    if (sep <= 0) return;
+    final kind = payload.substring(0, sep);
+    final rest = payload.substring(sep + 1).trim();
+
+    if (kind == 'design') {
+      final designSep = rest.indexOf(':');
+      if (designSep <= 0) return;
+      final key = rest.substring(0, designSep).trim();
+      final design = rest.substring(designSep + 1).trim();
+      final component = invitationComponentForKey(key);
+      if (component == null || component.design(design) == null) return;
+      setState(() {
+        _componentDesigns[key] = design;
+        if (key == 'cover') _coverStyle = design;
+        if (!_sectionVisible(key)) _toggleSection(key, true);
+        if (component.flow) {
+          if (!_sectionOrder.contains(key)) _sectionOrder.add(key);
+          if (beforeKey != key) {
+            final oldIndex = _sectionOrder.indexOf(key);
+            if (oldIndex >= 0) _sectionOrder.removeAt(oldIndex);
+            var target = beforeKey == null
+                ? _sectionOrder.length
+                : _sectionOrder.indexOf(beforeKey);
+            if (target < 0) target = _sectionOrder.length;
+            _sectionOrder.insert(target, key);
+          }
+        }
+        _selectedLayer = key;
+      });
+      return;
+    }
+
+    final key = rest;
+    if (!kFlowInvitationComponents.contains(key)) return;
+    if (beforeKey == key) return;
+    setState(() {
+      if (!_sectionOrder.contains(key)) _sectionOrder.add(key);
+      if (!_sectionVisible(key)) _toggleSection(key, true);
+      final oldIndex = _sectionOrder.indexOf(key);
+      if (oldIndex >= 0) _sectionOrder.removeAt(oldIndex);
+      var target = beforeKey == null
+          ? _sectionOrder.length
+          : _sectionOrder.indexOf(beforeKey);
+      if (target < 0) target = _sectionOrder.length;
+      _sectionOrder.insert(target, key);
+      _selectedLayer = key;
+    });
+  }
+
+  String _sectionLabelFor(String key) {
+    for (final s in kInvitationSections) {
+      if (s.key == key) return s.label;
+    }
+    return key;
+  }
+
+  IconData _sectionIcon(String key) => switch (key) {
+    'cover' => Icons.mark_email_unread_outlined,
+    'countdown' => Icons.timer_outlined,
+    'quote' => Icons.format_quote_rounded,
+    'photos' => Icons.photo_camera_back_outlined,
+    'families' => Icons.groups_2_outlined,
+    'details' => Icons.event_note_outlined,
+    'hashtag' => Icons.tag_rounded,
+    'itinerary' => Icons.route_outlined,
+    'rsvp' => Icons.mark_email_read_outlined,
+    'footer' => Icons.favorite_border_rounded,
+    'music' => Icons.music_note_outlined,
+    _ => Icons.layers_outlined,
+  };
+
+  String _layerSubtitle(String key) => switch (key) {
+    'cover' => 'Portada ${_coverLabel(_coverStyle)}',
+    'countdown' =>
+      _eventAt.text.trim().isEmpty
+          ? 'Sin fecha: no se verá'
+          : 'Cuenta regresiva',
+    'quote' =>
+      _quote.text.trim().isEmpty
+          ? 'Usa el mensaje de la tarjeta'
+          : 'Frase de la tarjeta',
+    'photos' =>
+      '${_photos.where((p) => p.trim().isNotEmpty).length} de 3 polaroids',
+    'families' => 'Padres, padrinos y familia',
+    'details' => 'Lugar, fecha y vestimenta',
+    'hashtag' => 'Etiqueta para compartir',
+    'itinerary' => 'Momentos del día',
+    'rsvp' =>
+      _phone.text.trim().isEmpty
+          ? 'Sin número de WhatsApp'
+          : 'Confirmación por WhatsApp',
+    'footer' => 'Cierre de la invitación',
+    'music' =>
+      _music.text.trim().isEmpty ? 'Sin liga de música' : 'Audio de fondo',
+    _ => 'Sección',
+  };
+
+  String _layerDescription(String key) => switch (key) {
+    'cover' =>
+      'La portada que recibe al invitado. Puedes cambiar entre '
+          'Rosa Pastel, Carta, Noche estrellada y Cortina.',
+    'countdown' =>
+      'El reloj con días, horas, minutos y segundos hasta el evento.',
+    'quote' => 'La frase destacada dentro de la tarjeta principal.',
+    'photos' =>
+      'Las polaroids con los recuerdos de la pareja o la quinceañera.',
+    'families' => 'Las tarjetas de padres, padrinos y personas que acompañan.',
+    'details' =>
+      'Las tarjetas de lugar, fecha, vestimenta y demás indicaciones.',
+    'hashtag' => 'La etiqueta que invita a compartir las fotos del evento.',
+    'itinerary' => 'El programa del día, con sus horarios y momentos.',
+    'rsvp' => 'La tarjeta para confirmar la asistencia por WhatsApp.',
+    'footer' => 'El mensaje de cierre y el crédito de Hardstreet.',
+    'music' => 'El audio de ambiente y su botón de reproducción.',
+    _ => 'Un componente de la invitación.',
+  };
+
+  /// El panel de componentes: biblioteca, visibilidad, orden e inspección.
+  List<Widget> _layersChildren(ColorScheme scheme) {
+    final hidden = [
+      for (final s in kInvitationSections)
+        if (!_sectionVisible(s.key)) s,
     ];
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: .5),
+    return [
+      _introCard(
+        scheme,
+        icon: Icons.widgets_outlined,
+        title: 'Componentes de la invitación',
+        text:
+            'Cada objeto (portada, familias, detalles, itinerario…) reúne '
+            'todos sus diseños en un mismo grupo. Toca uno para aplicarlo o '
+            'arrástralo a la invitación para insertarlo con ese diseño. No se '
+            'pierden los textos ni las fotos.',
+      ),
+      const SizedBox(height: 12),
+      _layersTemplateCard(scheme),
+      const SizedBox(height: 14),
+      _sectionLabel('TODOS LOS DISEÑOS, POR COMPONENTE', scheme),
+      const SizedBox(height: 4),
+      Text(
+        'El catálogo completo de la invitación. Cada tarjeta se puede '
+        'seleccionar y arrastrar al lienzo.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.35,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 8),
+      _componentDesignCatalog(scheme),
+      const SizedBox(height: 18),
+      _sectionLabel('BIBLIOTECA DE COMPONENTES', scheme),
+      const SizedBox(height: 4),
+      Text(
+        'Los componentes ocultos quedan aquí, listos para volver a la '
+        'invitación con un toque.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.35,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 8),
+      if (hidden.isEmpty)
+        Text(
+          'Todos los componentes están activos en esta invitación.',
+          style: TextStyle(
+            fontSize: 10.5,
+            height: 1.35,
+            color: scheme.onSurfaceVariant,
+          ),
+        )
+      else
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final s in hidden)
+              Draggable<String>(
+                data: 'new:${s.key}',
+                feedback: _dragFeedback(scheme, s.label),
+                child: ActionChip(
+                  key: ValueKey('invitation-add-component-${s.key}'),
+                  avatar: Icon(
+                    _sectionIcon(s.key),
+                    size: 15,
+                    color: scheme.primary,
+                  ),
+                  label: Text(s.label),
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() {
+                          _toggleSection(s.key, true);
+                          _selectedLayer = s.key;
+                        }),
+                ),
+              ),
+          ],
+        ),
+      const SizedBox(height: 18),
+      _sectionLabel('ITEMS ARRASTRABLES', scheme),
+      const SizedBox(height: 4),
+      Text(
+        'Arrastra un ítem de esta lista y suéltalo en la invitación para '
+        'insertarlo o moverlo. También puedes usar las flechas del inspector. '
+        'El orden se guarda y se aplica a la liga.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.35,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 8),
+      for (final key in _sectionOrder) ...[
+        _layerTile(scheme, key),
+        const SizedBox(height: 7),
+      ],
+      const SizedBox(height: 16),
+      _sectionLabel('COMPONENTES FIJOS', scheme),
+      const SizedBox(height: 4),
+      Text(
+        'La portada, la cuenta regresiva, la frase, las fotos, la '
+        'confirmación y la música tienen un lugar propio en el diseño.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.35,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 8),
+      for (final key in const [
+        'cover',
+        'countdown',
+        'quote',
+        'photos',
+        'rsvp',
+        'music',
+      ]) ...[_fixedLayerTile(scheme, key), const SizedBox(height: 7)],
+      if (_selectedLayer != null) ...[
+        const SizedBox(height: 5),
+        _layerInspector(scheme),
+      ],
+      const SizedBox(height: 12),
+      Text(
+        'Los componentes fijos no se reordenan para no romper el ritmo de '
+        'la invitación; puedes ocultarlos y restaurarlos desde la biblioteca.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.35,
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+    ];
+  }
+
+  /// Una tarjeta de diseño. Se puede tocar para aplicarla o arrastrar para
+  /// insertar el componente (con ese diseño) en el lienzo.
+  Widget _componentDesignTile(
+    ColorScheme scheme,
+    InvitationComponent component,
+    InvitationComponentDesign design,
+    String current,
+  ) {
+    final selected = current == design.key;
+    final color = selected
+        ? scheme.primary
+        : scheme.outlineVariant.withValues(alpha: .70);
+    final itemKey = component.key == 'cover'
+        ? 'invitation-item-cover-${design.key}'
+        : 'invitation-item-design-${component.key}-${design.key}';
+    return SizedBox(
+      width: 106,
+      child: Draggable<String>(
+        data: 'design:${component.key}:${design.key}',
+        feedback: _dragFeedback(scheme, '${component.label} · ${design.label}'),
+        child: Material(
+          color: selected
+              ? scheme.primary.withValues(alpha: .08)
+              : scheme.surface,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            key: ValueKey(itemKey),
+            borderRadius: BorderRadius.circular(10),
+            onTap: _saving
+                ? null
+                : () => _chooseComponentDesign(component.key, design.key),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 56),
+              padding: const EdgeInsets.fromLTRB(7, 6, 6, 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color, width: selected ? 1.5 : 1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (component.key == 'cover')
+                        Container(
+                          width: 15,
+                          height: 15,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            gradient: LinearGradient(
+                              colors: _coverPreviewColors(design.key),
+                            ),
+                          ),
+                        )
+                      else
+                        Icon(
+                          Icons.drag_indicator_rounded,
+                          size: 13,
+                          color: selected
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          design.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            color: selected ? scheme.primary : scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      if (selected)
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 13,
+                          color: scheme.primary,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    design.hint,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      height: 1.25,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+    );
+  }
+
+  Widget _dragFeedback(ColorScheme scheme, String label) {
+    return Material(
+      elevation: 8,
+      color: scheme.primaryContainer,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            for (var i = 0; i < tabs.length; i++) ...[
-              if (i > 0) const SizedBox(width: 6),
-              _formTab(
-                scheme,
-                index: i,
-                icon: tabs[i].icon,
-                label: tabs[i].label,
+            Icon(
+              Icons.drag_indicator_rounded,
+              size: 15,
+              color: scheme.onPrimaryContainer,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: scheme.onPrimaryContainer,
               ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _formTab(
-    ColorScheme scheme, {
-    required int index,
-    required IconData icon,
-    required String label,
-  }) {
-    final selected = _designTab == index;
-    return Material(
-      color: selected
-          ? scheme.primary.withValues(alpha: .14)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        key: ValueKey('invitation-tab-$index'),
-        borderRadius: BorderRadius.circular(999),
-        onTap: _saving ? null : () => setState(() => _designTab = index),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: selected
-                  ? scheme.primary.withValues(alpha: .55)
-                  : scheme.outlineVariant.withValues(alpha: .55),
-            ),
-          ),
-          child: Row(
+  /// La plantilla-compuesta activa, con acceso al catálogo completo y a
+  /// guardar el diseño actual como plantilla propia.
+  Widget _layersTemplateCard(ColorScheme scheme) {
+    final recipe = templateRecipeForInvitation(
+      preset: _preset,
+      template: _template,
+    );
+    final custom = recipe.custom;
+    return Container(
+      key: const ValueKey('invitation-applied-template'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 9),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.primary.withValues(alpha: .24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
               Icon(
-                icon,
-                size: 15,
-                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                Icons.dashboard_customize_outlined,
+                size: 18,
+                color: scheme.primary,
               ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      recipe.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      '${kInvitationComponents.length} componentes · '
+                      '${recipe.occasion}${custom ? ' · TUYA' : ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                key: const ValueKey('invitation-template-change'),
+                onPressed: _saving ? null : _changeTemplate,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text('Cambiar'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          OutlinedButton.icon(
+            key: const ValueKey('invitation-template-save'),
+            onPressed: _saving
+                ? null
+                : () => _saveCurrentAsTemplate(overwrite: custom),
+            icon: Icon(
+              custom ? Icons.save_rounded : Icons.bookmark_add_outlined,
+              size: 15,
+            ),
+            label: Text(
+              custom ? 'Actualizar plantilla' : 'Guardar como plantilla',
+              style: const TextStyle(fontSize: 10.5),
+            ),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Catálogo completo: un grupo por componente, con todos sus diseños a la
+  /// vista. No hay acordeones: el usuario ve todo lo disponible de una vez.
+  Widget _componentDesignCatalog(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('invitation-design-catalog'),
+      children: [
+        for (var i = 0; i < kInvitationComponents.length; i++) ...[
+          _componentDesignCard(scheme, kInvitationComponents[i]),
+          if (i < kInvitationComponents.length - 1) const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _componentDesignCard(
+    ColorScheme scheme,
+    InvitationComponent component,
+  ) {
+    final current = component.key == 'cover'
+        ? _coverStyle
+        : (_componentDesigns[component.key] ?? component.fallback);
+    final active = _sectionVisible(component.key);
+    return Container(
+      key: ValueKey('invitation-design-group-${component.key}'),
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(component.icon, size: 15, color: scheme.primary),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              Expanded(
+                child: Text(
+                  component.label,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: active
+                      ? scheme.primary.withValues(alpha: .09)
+                      : scheme.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: active
+                        ? scheme.primary.withValues(alpha: .28)
+                        : scheme.outlineVariant.withValues(alpha: .55),
+                  ),
+                ),
+                child: Text(
+                  active ? 'EN LA INVITACIÓN' : 'OCULTO',
+                  style: TextStyle(
+                    fontSize: 7.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .4,
+                    color: active ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 2),
+          Text(
+            component.hint,
+            style: TextStyle(
+              fontSize: 9.5,
+              height: 1.3,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final design in component.designs)
+                _componentDesignTile(scheme, component, design, current),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Aplica un diseño desde el catálogo y se asegura de que el componente
+  /// esté presente en la invitación. En los componentes de flujo conserva
+  /// su posición actual (o lo agrega al final si estaba oculto).
+  void _chooseComponentDesign(String key, String design) {
+    if (_saving) return;
+    final component = invitationComponentForKey(key);
+    if (component == null || component.design(design) == null) return;
+    setState(() {
+      _componentDesigns[key] = design;
+      if (key == 'cover') _coverStyle = design;
+      if (!_sectionVisible(key)) _toggleSection(key, true);
+      if (component.flow && !_sectionOrder.contains(key)) {
+        _sectionOrder.add(key);
+      }
+      _selectedLayer = key;
+    });
+  }
+
+  Widget _layerTile(ColorScheme scheme, String key) {
+    final visible = _sectionVisible(key);
+    final selected = _selectedLayer == key;
+    return Container(
+      key: ValueKey('invitation-layer-$key'),
+      margin: const EdgeInsets.only(bottom: 7),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primary.withValues(alpha: .08)
+            : scheme.surface,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: selected
+              ? scheme.primary.withValues(alpha: .70)
+              : scheme.outlineVariant.withValues(alpha: .70),
         ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: _saving ? null : () => setState(() => _selectedLayer = key),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+            child: Row(
+              children: [
+                Draggable<String>(
+                  data: 'move:$key',
+                  feedback: _dragFeedback(scheme, _sectionLabelFor(key)),
+                  child: Tooltip(
+                    message: 'Arrastrar a la invitación',
+                    child: Padding(
+                      key: ValueKey('invitation-drag-$key'),
+                      padding: const EdgeInsets.all(6),
+                      child: Icon(
+                        Icons.drag_indicator_rounded,
+                        size: 18,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  key: ValueKey('invitation-toggle-$key'),
+                  tooltip: visible ? 'Ocultar capa' : 'Mostrar capa',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() => _toggleSection(key, !visible)),
+                  icon: Icon(
+                    visible
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    size: 18,
+                    color: visible ? scheme.primary : scheme.outline,
+                  ),
+                ),
+                Icon(
+                  _sectionIcon(key),
+                  size: 17,
+                  color: visible ? scheme.onSurface : scheme.outline,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _sectionLabelFor(key),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: visible
+                              ? scheme.onSurface
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      Text(
+                        visible ? _layerSubtitle(key) : 'Oculta',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(
+                    Icons.check_circle_rounded,
+                    size: 16,
+                    color: scheme.primary,
+                  ),
+                IconButton(
+                  key: ValueKey('invitation-edit-$key'),
+                  tooltip: 'Abrir ajustes del componente',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          setState(() => _selectedLayer = key);
+                          _openLayerSettings(key);
+                        },
+                  icon: Icon(
+                    Icons.tune_rounded,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fixedLayerTile(ColorScheme scheme, String key) {
+    final visible = _sectionVisible(key);
+    final selected = _selectedLayer == key;
+    return Container(
+      key: ValueKey('invitation-fixed-layer-$key'),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primary.withValues(alpha: .06)
+            : scheme.surfaceContainerHighest.withValues(alpha: .18),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: selected
+              ? scheme.primary.withValues(alpha: .60)
+              : scheme.outlineVariant.withValues(alpha: .60),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: _saving ? null : () => setState(() => _selectedLayer = key),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 15,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: ValueKey('invitation-toggle-$key'),
+                  tooltip: visible ? 'Ocultar capa' : 'Mostrar capa',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() => _toggleSection(key, !visible)),
+                  icon: Icon(
+                    visible
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    size: 18,
+                    color: visible ? scheme.primary : scheme.outline,
+                  ),
+                ),
+                Icon(
+                  _sectionIcon(key),
+                  size: 17,
+                  color: visible ? scheme.onSurface : scheme.outline,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _sectionLabelFor(key),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: visible
+                              ? scheme.onSurface
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      Text(
+                        visible ? _layerSubtitle(key) : 'Oculta',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  'FIJO',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .6,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                IconButton(
+                  key: ValueKey('invitation-edit-$key'),
+                  tooltip: 'Abrir ajustes del componente',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          setState(() => _selectedLayer = key);
+                          _openLayerSettings(key);
+                        },
+                  icon: Icon(
+                    Icons.tune_rounded,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _layerInspector(ColorScheme scheme) {
+    final key = _selectedLayer!;
+    final index = _sectionOrder.indexOf(key);
+    final movable = index >= 0;
+    return Container(
+      key: const ValueKey('invitation-layer-inspector'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.primary.withValues(alpha: .30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'COMPONENTE SELECCIONADO',
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.1,
+              color: scheme.primary,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _sectionLabelFor(key),
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _layerDescription(key),
+            style: TextStyle(
+              fontSize: 10.5,
+              height: 1.35,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: _saving ? null : () => _openLayerSettings(key),
+                icon: const Icon(Icons.tune_rounded, size: 16),
+                label: const Text('Abrir ajustes'),
+              ),
+              if (movable) ...[
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Subir capa',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving || index == 0
+                      ? null
+                      : () => _moveLayer(index, -1),
+                  icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 19),
+                ),
+                IconButton(
+                  tooltip: 'Bajar capa',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving || index == _sectionOrder.length - 1
+                      ? null
+                      : () => _moveLayer(index, 1),
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 19),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _form(ColorScheme scheme) {
+    // `SingleChildScrollView` mantiene montados todos los ítems del panel:
+    // son pocos y así el arrastre, las claves y los atajos no dependen de si
+    // el usuario ya hizo scroll.
+    return SingleChildScrollView(
+      key: PageStorageKey<String>('invitation-form-$_designTab'),
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: switch (_designTab) {
+          1 => _layersChildren(scheme),
+          2 => _designChildren(scheme),
+          3 => _photosChildren(scheme),
+          4 => _contentChildren(scheme),
+          5 => _publishChildren(scheme),
+          _ => _basicsChildren(scheme),
+        },
       ),
     );
   }
@@ -1861,22 +4201,44 @@ class _InvitationEditorState extends State<_InvitationEditor> {
           'derecha se actualiza al instante.',
     ),
     const SizedBox(height: 14),
-    _sectionLabel('PLANTILLA', scheme),
+    _sectionLabel('PLANTILLA COMPUESTA', scheme),
     const SizedBox(height: 8),
     _templatePicker(scheme),
     const SizedBox(height: 6),
     Text(
-      'Por ahora hay una plantilla; las demás aparecerán en este mismo '
-      'selector.',
+      'La plantilla define la base. La portada, los colores, la animación y '
+      'los componentes se combinan libremente.',
       style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
     ),
+    const SizedBox(height: 16),
+    _sectionLabel('PORTADA', scheme),
+    const SizedBox(height: 4),
+    Text(
+      'Elige cómo recibe el invitado la invitación. La portada funciona con '
+      'las dos plantillas y conserva el texto y el fondo que elijas.',
+      style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+    ),
+    const SizedBox(height: 8),
+    _coverStylesBlock(scheme),
+    if (_coverStyle == 'carta') ...[
+      const SizedBox(height: 12),
+      _sectionLabel('FONDO DE LA CARTA', scheme),
+      const SizedBox(height: 4),
+      Text(
+        'Tres escenas de boda con flores, aros y papelería. Se mueven '
+        'suavemente en la invitación publicada.',
+        style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+      ),
+      const SizedBox(height: 8),
+      _cartaBackdropBlock(scheme),
+    ],
     const SizedBox(height: 16),
     _sectionLabel('COLORES', scheme),
     const SizedBox(height: 8),
     _accentColorCard(scheme),
     _bgColorCard(scheme),
     const SizedBox(height: 4),
-    _sectionLabel('FONDO Y PORTADA', scheme),
+    _sectionLabel('FONDO', scheme),
     const SizedBox(height: 8),
     _backgroundBlock(scheme),
     if (_template == 'boda-marfil') ...[
@@ -1960,8 +4322,8 @@ class _InvitationEditorState extends State<_InvitationEditor> {
       icon: Icons.format_color_fill_rounded,
       title: 'Color de fondo',
       hint:
-          'Página, secciones y sobre. Las tarjetas se quedan claras para que '
-          'el texto se lea.',
+          'Página y secciones. La portada usa el diseño que elijas y la '
+          'paleta de la plantilla; las tarjetas se quedan claras.',
       current: current,
       usingTemplate: usingTemplate,
       templateLabel: 'Usar el fondo de la plantilla',
@@ -2411,13 +4773,6 @@ class _InvitationEditorState extends State<_InvitationEditor> {
       'Abre el HTML que se guarda, tal como lo verá el cliente.',
       style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
     ),
-    if (_error != null) ...[
-      const SizedBox(height: 12),
-      Text(
-        _error!,
-        style: TextStyle(fontSize: 12, color: scheme.error, height: 1.35),
-      ),
-    ],
   ];
 
   Widget _summaryCard(ColorScheme scheme) {
@@ -2426,7 +4781,13 @@ class _InvitationEditorState extends State<_InvitationEditor> {
         ? kInvitationSections.length
         : _sections.length;
     final rows = <(String, String)>[
-      ('Plantilla', invitationTemplate(_template).name),
+      (
+        'Plantilla',
+        templateRecipeForInvitation(preset: _preset, template: _template).name,
+      ),
+      ('Portada', _coverLabel(_coverStyle)),
+      if (_coverStyle == 'carta')
+        ('Fondo de carta', _backdropLabel(_coverBackdrop)),
       (
         'Acento',
         _accent.trim().isEmpty ? 'De la plantilla' : _accent.toUpperCase(),
@@ -2435,10 +4796,7 @@ class _InvitationEditorState extends State<_InvitationEditor> {
         'Fondo',
         _bgColor.trim().isEmpty ? 'De la plantilla' : _bgColor.toUpperCase(),
       ),
-      (
-        'Animación',
-        _effects.firstWhere((e) => e.key == _effectKey).label,
-      ),
+      ('Animación', _effects.firstWhere((e) => e.key == _effectKey).label),
       ('Polaroids', '$photos de 3'),
       ('Secciones', '$sections de ${kInvitationSections.length}'),
       ('Estado', _published ? 'Publicada' : 'Borrador'),
@@ -2756,47 +5114,6 @@ class _InvitationEditorState extends State<_InvitationEditor> {
     );
   }
 
-  Widget _footer(ColorScheme scheme) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(
-          top: BorderSide(color: scheme.outlineVariant.withValues(alpha: .5)),
-        ),
-      ),
-      child: Row(
-        children: [
-          Text(
-            _editing ? 'Editando' : 'Sin guardar',
-            style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
-          ),
-          const Spacer(),
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            key: const ValueKey('invitation-save'),
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.save_outlined, size: 18),
-            label: Text(_saving ? 'Guardando…' : 'Guardar invitación'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _sectionLabel(String text, ColorScheme scheme) => Padding(
     padding: const EdgeInsets.only(top: 2, bottom: 2),
     child: Row(
@@ -2810,13 +5127,17 @@ class _InvitationEditorState extends State<_InvitationEditor> {
           ),
         ),
         const SizedBox(width: 8),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 9.5,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w800,
-            color: scheme.onSurface,
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 9.5,
+              letterSpacing: 2,
+              fontWeight: FontWeight.w800,
+              color: scheme.onSurface,
+            ),
           ),
         ),
         const SizedBox(width: 10),
@@ -3393,16 +5714,87 @@ class _ShareDialogState extends State<_ShareDialog> {
   }
 }
 
-/// El catálogo que se abre al crear una invitación: se elige el diseño base
-/// y el editor arranca con una muestra de esa plantilla y sus textos.
-class _TemplateChooser extends StatelessWidget {
+/// El catálogo que se abre al crear una invitación o al cambiarla: cada
+/// tarjeta es una combinación de componentes ya armada.
+class _TemplateChooser extends StatefulWidget {
   const _TemplateChooser();
+
+  @override
+  State<_TemplateChooser> createState() => _TemplateChooserState();
+}
+
+class _TemplateChooserState extends State<_TemplateChooser> {
+  bool _busy = false;
+
+  List<InvitationTemplateRecipe> get _recipes => allInvitationTemplateRecipes;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    await InvitationTemplateStore.load();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _createTemplate() async {
+    if (_busy) return;
+    final basis = _recipes.first;
+    final picked = await showHsModal<InvitationTemplateRecipe>(
+      context: context,
+      builder: (_) => InvitationTemplateRecipeDialog(
+        title: 'Nueva plantilla',
+        source: basis.copyWith(key: '', name: 'Mi plantilla', custom: true),
+        editing: false,
+        choices: _recipes,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _busy = true);
+    await InvitationTemplateStore.save(picked);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    HsToast.success('Plantilla creada', details: picked.name);
+  }
+
+  Future<void> _deleteTemplate(InvitationTemplateRecipe recipe) async {
+    if (_busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('¿Eliminar la plantilla?'),
+        content: Text(
+          'Se quitará «${recipe.name}» del catálogo de este equipo. Las '
+          'invitaciones que ya la usan conservan su diseño y sus datos.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await InvitationTemplateStore.delete(recipe.key);
+    if (!mounted) return;
+    setState(() {});
+    HsToast.info('Plantilla eliminada', details: recipe.name);
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final wide = MediaQuery.sizeOf(context).width >= 720;
-    final cards = [for (final t in kInvitationTemplates) _card(context, t)];
+    final cards = [for (final t in _recipes) _card(context, t)];
+    final customCount = _recipes.where((r) => r.custom).length;
     return Dialog(
       insetPadding: EdgeInsets.all(
         MediaQuery.sizeOf(context).width < kHsPhoneWidth ? 0 : 22,
@@ -3410,76 +5802,94 @@ class _TemplateChooser extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
+        constraints: const BoxConstraints(maxWidth: 860),
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.dashboard_customize_outlined,
-                    size: 20,
-                    color: scheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Elige una plantilla',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        'Las dos se personalizan igual: textos, fecha, fotos, '
-                        'colores y animación.',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Cerrar',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (wide)
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (var i = 0; i < cards.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 12),
-                    Expanded(child: cards[i]),
-                  ],
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.dashboard_customize_outlined,
+                      size: 20,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Elige una plantilla',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          '${_recipes.length} combinaciones de componentes. '
+                          'Se personalizan igual: textos, fecha, fotos, '
+                          'colores y animación.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cerrar',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
                 ],
-              )
-            else
-              Column(
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  for (var i = 0; i < cards.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 12),
-                    cards[i],
-                  ],
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('template-create'),
+                    onPressed: _busy ? null : _createTemplate,
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('Nueva plantilla'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  Text(
+                    customCount == 0
+                        ? 'Crea tu propia combinación y guárdala en este equipo.'
+                        : customCount == 1
+                        ? '1 plantilla tuya · guardada en este equipo'
+                        : '$customCount plantillas tuyas · guardadas en este equipo',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  for (final card in cards)
+                    SizedBox(width: wide ? 196 : double.infinity, child: card),
                 ],
               ),
             ],
@@ -3489,7 +5899,7 @@ class _TemplateChooser extends StatelessWidget {
     );
   }
 
-  Widget _card(BuildContext context, InvitationTemplate t) {
+  Widget _card(BuildContext context, InvitationTemplateRecipe t) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
       key: ValueKey('template-${t.key}'),
@@ -3523,7 +5933,7 @@ class _TemplateChooser extends StatelessWidget {
                       width: 360,
                       height: 480,
                       child: InvitationPreview(
-                        invitation: Invitation.sample(t.key),
+                        invitation: Invitation.samplePreset(t.key),
                         compact: true,
                       ),
                     ),
@@ -3541,6 +5951,8 @@ class _TemplateChooser extends StatelessWidget {
                       Expanded(
                         child: Text(
                           t.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w800,
@@ -3557,7 +5969,7 @@ class _TemplateChooser extends StatelessWidget {
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          t.occasion,
+                          t.custom ? 'TUYA' : t.occasion,
                           style: TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w700,
@@ -3565,6 +5977,29 @@ class _TemplateChooser extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (t.custom)
+                        PopupMenuButton<String>(
+                          key: ValueKey('template-menu-${t.key}'),
+                          tooltip: 'Opciones de ${t.name}',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 28,
+                            height: 28,
+                          ),
+                          iconSize: 17,
+                          icon: const Icon(Icons.more_horiz_rounded),
+                          onSelected: (action) {
+                            if (action == 'delete') {
+                              _deleteTemplate(t);
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Eliminar'),
+                            ),
+                          ],
+                        ),
                     ],
                   ),
                   const SizedBox(height: 4),

@@ -61,12 +61,7 @@ void main() {
             'lat': 4.711,
             'lng': -74.072,
           },
-          {
-            'position': 2,
-            'location': 'Salón Real',
-            'lat': 4.8,
-            'lng': -74.1,
-          },
+          {'position': 2, 'location': 'Salón Real', 'lat': 4.8, 'lng': -74.1},
         ],
       });
       expect(places.map((p) => p.name), ['Hacienda San José', 'Salón Real']);
@@ -79,6 +74,27 @@ void main() {
       expect(places.first.name, 'Salón Real');
       expect(HsPlace.allOf(null), isEmpty);
       expect(HsPlace.allOf(const <String, dynamic>{}), isEmpty);
+    });
+
+    test('la liga del mapa lleva el punto exacto, no solo el nombre', () {
+      final url = hsPlaceMapUrl(
+        const HsPlace(name: 'Hacienda', lat: 21.09, lng: -89.57),
+      );
+      expect(url, isNotNull);
+      final uri = Uri.parse(url!);
+      expect(uri.host, 'www.google.com');
+      expect(uri.queryParameters['api'], '1');
+      expect(
+        uri.queryParameters['query'],
+        '21.09,-89.57',
+        reason: 'el & de api=1 no debe comerse el punto en Windows',
+      );
+    });
+
+    test('sin coordenadas busca por nombre; sin nada no hay liga', () {
+      final byName = hsPlaceMapUrl(const HsPlace(name: 'Hacienda San José'));
+      expect(Uri.parse(byName!).queryParameters['query'], 'Hacienda San José');
+      expect(hsPlaceMapUrl(const HsPlace(name: '   ')), isNull);
     });
 
     test('el cuerpo de VARIAS ubicaciones descarta las vacías y conserva el '
@@ -153,11 +169,7 @@ void main() {
               width: 700,
               child: HsPlaceMapPreview(
                 places: const [
-                  HsPlace(
-                    name: 'Hacienda San José',
-                    lat: 4.711,
-                    lng: -74.0721,
-                  ),
+                  HsPlace(name: 'Hacienda San José', lat: 4.711, lng: -74.0721),
                   // Sin coordenadas: no se pinta (pero conserva su número 2).
                   HsPlace(name: 'Salón Real'),
                   HsPlace(name: 'Casa', lat: 4.75, lng: -74.03),
@@ -227,11 +239,7 @@ void main() {
               width: 700,
               child: HsPlaceMapPreview(
                 places: const [
-                  HsPlace(
-                    name: 'Hacienda San José',
-                    lat: 4.711,
-                    lng: -74.0721,
-                  ),
+                  HsPlace(name: 'Hacienda San José', lat: 4.711, lng: -74.0721),
                 ],
               ),
             ),
@@ -270,11 +278,7 @@ void main() {
               width: 700,
               child: HsPlaceMapPreview(
                 places: const [
-                  HsPlace(
-                    name: 'Hacienda San José',
-                    lat: 4.711,
-                    lng: -74.0721,
-                  ),
+                  HsPlace(name: 'Hacienda San José', lat: 4.711, lng: -74.0721),
                 ],
               ),
             ),
@@ -306,11 +310,7 @@ void main() {
           body: SingleChildScrollView(
             child: HsPlacesField(
               places: const [
-                HsPlace(
-                  name: 'Hacienda San José',
-                  lat: 4.711,
-                  lng: -74.0721,
-                ),
+                HsPlace(name: 'Hacienda San José', lat: 4.711, lng: -74.0721),
                 // La segunda todavía está vacía: al abrirla se ve la primera.
                 null,
               ],

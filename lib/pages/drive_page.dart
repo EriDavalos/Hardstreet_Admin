@@ -391,15 +391,8 @@ class _DrivePageState extends State<DrivePage>
   List<String> _clipboardNames = const [];
 
   // ---- Panel inferior de actividad ---------------------------------
-  // Avisos de operaciones (éxito en VERDE, error en ROJO) que viven en la
-  // ventanita inferior derecha junto a subidas y descargas. Se puede
-  // ocultar (minimizar) y se reabre solo cuando llega un aviso nuevo.
-  final List<_DriveNotice> _notices = [];
-  bool _panelOpen = true;
-
-  /// Cuántos trabajos de transferencia había en la última notificación: al
-  /// aparecer uno nuevo se abre la ventanita (aunque estuviera minimizada).
-  int _lastJobCount = 0;
+  // Avisos y estado del panel viven en el DRIVE (DriveBase), no aquí: así la
+  // ventanita sigue viéndose al cambiar de módulo (ver DriveActivityHost).
 
   /// Evita lanzar dos renombrados a la vez (el segundo pediría el nombre viejo).
   bool _renaming = false;
@@ -481,8 +474,9 @@ class _DrivePageState extends State<DrivePage>
       return false;
     }
     final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent)
+    if (route != null && !route.isCurrent) {
       return false; // hay un diálogo abierto
+    }
 
     if (event.logicalKey == LogicalKeyboardKey.escape &&
         (_selectMode || _selected.isNotEmpty)) {
@@ -539,12 +533,6 @@ class _DrivePageState extends State<DrivePage>
 
   void _onChange() {
     if (!mounted) return;
-    // Cada subida/descarga nueva abre la ventanita de actividad: el trabajo
-    // sigue en segundo plano, pero el avance se ve sin bloquear la cuadrícula.
-    final jobs =
-        widget.drive.uploadJobs.length + widget.drive.downloadJobs.length;
-    if (jobs > _lastJobCount) _panelOpen = true;
-    _lastJobCount = jobs;
     if (_lastPath.join('/') != widget.drive.path.join('/')) {
       // Cambio de carpeta: limpia selección/ancla/claves y evicta SOLO las
       // miniaturas de la carpeta anterior. (NO clearRam(): borrar toda la
@@ -621,9 +609,8 @@ class _DrivePageState extends State<DrivePage>
       _snack('Tu rol no puede descargar archivos del Drive', error: true);
       return;
     }
-    // La ventanita se abre sola: la descarga corre en segundo plano y su
-    // progreso se ve ahí, sin bloquear la cuadrícula.
-    if (!_panelOpen && mounted) setState(() => _panelOpen = true);
+    // La ventanita se abre sola al registrar la descarga (DriveBase), así el
+    // progreso se ve aunque el usuario cambie de módulo.
     await downloadDriveSelection(context, drive: widget.drive, items: items);
   });
 
@@ -1176,11 +1163,9 @@ class _DrivePageState extends State<DrivePage>
   /// El panel se reabre solo si estaba oculto.
   void _snack(String message, {bool error = false}) {
     if (!mounted) return;
-    setState(() {
-      _notices.insert(0, _DriveNotice(message, error));
-      if (_notices.length > 40) _notices.removeLast();
-      _panelOpen = true;
-    });
+    // El aviso vive en el drive: el panel puede estar montado en el armazón
+    // (otro módulo) y se entera igual.
+    widget.drive.addActivityNotice(message, error: error);
   }
 
   void _showErrors(List<String> errors) {
@@ -2152,6 +2137,15 @@ class _DrivePageState extends State<DrivePage>
       return DriveMaintenanceView(drive: drive, onRetry: drive.refresh);
     }
 
+    // Con la barra de selección abajo, el panel de actividad sube para no
+    // taparla (como hacía cuando vivía dentro de esta página).
+    final panelBottom = (_selectMode && _selected.isNotEmpty) ? 74.0 : 10.0;
+    if (drive.activityPanelBottom != panelBottom) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) drive.setActivityPanelBottom(panelBottom);
+      });
+    }
+
     final imagesCount = drive.items.where((i) => !i.isFolder).length;
     final foldersCount = drive.items.where((i) => i.isFolder).length;
 
@@ -2482,22 +2476,6 @@ class _DrivePageState extends State<DrivePage>
                 ),
               ),
             ),
-          // ===== Capa de fuera de la ventanita de actividad =====
-          // Con la ventanita ABIERTA se pone delante del contenido (la misma
-          // idea que el panel de la campanita de avisos): un clic de FUERA la
-          // cierra y NUNCA llega a la cuadrícula —antes, tocar alrededor de la
-          // ventanita seleccionaba o abría las fotos de detrás. Va por DEBAJO de
-          // la barra de selección para que esa barra siga funcionando.
-          if (_panelOpen &&
-              (drive.uploadJobs.isNotEmpty ||
-                  drive.downloadJobs.isNotEmpty ||
-                  _notices.isNotEmpty))
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _panelOpen = false),
-              ),
-            ),
           // ===== Barra de acciones de selección =====
           // Solo existe cuando hay selección: sin estado oculto que robe clics.
           if (_selectMode && _selected.isNotEmpty)
@@ -2533,26 +2511,6 @@ class _DrivePageState extends State<DrivePage>
               top: 6,
               left: hPad,
               child: _BusyChip(label: drive.busyLabel),
-            ),
-          // ===== Panel inferior de transferencias y avisos (ocultable) =====
-          // Subidas, descargas y notificaciones (verde/rojo) viven juntos en
-          // una ventanita abajo a la derecha, con botón para minimizarla.
-          if (drive.uploadJobs.isNotEmpty ||
-              drive.downloadJobs.isNotEmpty ||
-              _notices.isNotEmpty)
-            Positioned(
-              right: hPad,
-              bottom: (_selectMode && _selected.isNotEmpty) ? 74 : 10,
-              child: _ActivityPanel(
-                open: _panelOpen,
-                drive: drive,
-                notices: _notices,
-                onToggle: () => setState(() => _panelOpen = !_panelOpen),
-                onClearNotices: () => setState(() => _notices.clear()),
-                onDismissNotice: (i) => setState(() {
-                  if (i >= 0 && i < _notices.length) _notices.removeAt(i);
-                }),
-              ),
             ),
         ],
       ),
@@ -5108,14 +5066,6 @@ class _BusyChip extends StatelessWidget {
 /// con miniatura, barra de progreso y % — sin bloquear la pantalla.
 /// Escucha al drive DIRECTAMENTE (AnimatedBuilder sobre el ChangeNotifier)
 /// para refrescar en tiempo real con cada bloque de bytes que avanza.
-/// Aviso del panel inferior de actividad: texto + si marcó error
-/// (rojo) o se cumplió (verde).
-class _DriveNotice {
-  _DriveNotice(this.text, this.error);
-  final String text;
-  final bool error;
-}
-
 /// Ventanita inferior derecha del Drive: transferencias (subidas y
 /// descargas) JUNTO CON los avisos de notificación (verde/rojo). Se puede
 /// ocultar (minimiza a una pastilla) y se reabre con un clic o solo al
@@ -5132,7 +5082,7 @@ class _ActivityPanel extends StatelessWidget {
 
   final bool open;
   final DriveBase drive;
-  final List<_DriveNotice> notices;
+  final List<DriveNotice> notices;
   final VoidCallback onToggle;
   final VoidCallback onClearNotices;
 
@@ -5147,57 +5097,163 @@ class _ActivityPanel extends StatelessWidget {
     final uploads = uploadJobs.length;
     final downloads = drive.downloadJobs.length;
 
-    // ---- Oculta: pastilla compacta para volver a abrirla ----
+    // ---- Oculta: barra con el MISMO encabezado del panel ----
+    // Antes quedaba una pastilla diminuta y no se veía el avance. Ahora se
+    // conserva el encabezado (icono, título, resumen y progreso) para que la
+    // carga siga siendo legible minimizada o en otro módulo.
     if (!open) {
+      final working =
+          uploadJobs.any((j) => j.status == 'uploading') ||
+          drive.downloadJobs.any((j) => j.status == 'downloading');
+      final done = uploadJobs.where((j) => j.status == 'done').length;
+      final pct = uploads > 0 ? (done / uploads).clamp(0.0, 1.0) : null;
       final parts = [
         if (uploads > 0) '$uploads foto${uploads == 1 ? '' : 's'}',
         if (downloads > 0) '$downloads descarga${downloads == 1 ? '' : 's'}',
         if (notices.isNotEmpty)
           '${notices.length} aviso${notices.length == 1 ? '' : 's'}',
       ];
-      return Material(
-        key: const ValueKey('activity_pill'),
-        elevation: 10,
-        shadowColor: Colors.black.withValues(alpha: .28),
-        borderRadius: BorderRadius.circular(999),
-        color: scheme.surface,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: onToggle,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 20,
-                  height: 20,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .16),
-                    shape: BoxShape.circle,
+      final width = (MediaQuery.sizeOf(context).width - 40).clamp(280.0, 400.0);
+      return SizedBox(
+        width: width,
+        child: Material(
+          key: const ValueKey('activity_pill'),
+          elevation: 14,
+          shadowColor: Colors.black.withValues(alpha: .32),
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          color: scheme.surface,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .5),
+              ),
+            ),
+            child: InkWell(
+              onTap: onToggle,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          scheme.primary.withValues(alpha: .14),
+                          scheme.primary.withValues(alpha: .01),
+                        ],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: .15),
+                                borderRadius: BorderRadius.circular(11),
+                                border: Border.all(
+                                  color: scheme.primary.withValues(alpha: .28),
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.notifications_active_outlined,
+                                size: 18,
+                                color: scheme.primary,
+                              ),
+                            ),
+                            if (working)
+                              Positioned(
+                                right: -1,
+                                top: -1,
+                                child: Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2F6BFF),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: scheme.surface,
+                                      width: 1.6,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                children: [
+                                  const Text(
+                                    'Actividad',
+                                    style: TextStyle(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  if (working) ...[
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'en curso',
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF2F6BFF)
+                                            .withValues(alpha: .95),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              Text(
+                                parts.join(' · '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (working && pct != null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '${(pct * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.unfold_more_rounded,
+                          size: 20,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
                   ),
-                  child: Icon(
-                    Icons.bolt_rounded,
-                    size: 13,
-                    color: scheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  parts.join(' · '),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  Icons.unfold_more_rounded,
-                  size: 15,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ],
+                  if (working)
+                    LinearProgressIndicator(value: pct, minHeight: 3),
+                ],
+              ),
             ),
           ),
         ),
@@ -5423,12 +5479,85 @@ class _ActivityPanel extends StatelessWidget {
   }
 }
 
+/// Coloca el panel de actividad POR ENCIMA del módulo que se esté viendo.
+///
+/// Vive en el armazón (no dentro de la página de Archivos) para que una
+/// subida o descarga siga viéndose al cambiar de módulo. Comparte el estado
+/// con el panel del Drive ([DriveBase.activityPanelOpen] y sus avisos), así
+/// que al volver a Archivos se encuentra tal como se dejó.
+class DriveActivityHost extends StatelessWidget {
+  const DriveActivityHost({
+    super.key,
+    required this.drive,
+    this.closeOnOutsideTap = false,
+  });
+
+  final DriveBase drive;
+
+  /// En el módulo Archivos, un clic fuera pliega el panel (como siempre).
+  /// En los demás módulos NO se pone una capa que bloquee la pantalla: el
+  /// panel solo se pliega con su botón.
+  final bool closeOnOutsideTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      // Una carpeta compartida abierta tiene SU PROPIO drive: mientras está a
+      // la vista, el panel muestra ese (avisos y transferencias incluidos).
+      child: ValueListenableBuilder<DriveBase?>(
+        valueListenable: DriveBase.activityOverride,
+        builder: (context, override, _) {
+          final activeDrive = override ?? drive;
+          return AnimatedBuilder(
+            animation: activeDrive,
+            builder: (context, _) {
+              final hasJobs =
+                  activeDrive.uploadJobs.isNotEmpty ||
+                  activeDrive.downloadJobs.isNotEmpty;
+              if (!hasJobs && activeDrive.activityNotices.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Stack(
+                children: [
+                  if (closeOnOutsideTap && activeDrive.activityPanelOpen)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => activeDrive.setActivityPanelOpen(false),
+                      ),
+                    ),
+                  Positioned(
+                    right: 16,
+                    bottom: closeOnOutsideTap
+                        ? activeDrive.activityPanelBottom
+                        : 10,
+                    child: _ActivityPanel(
+                      open: activeDrive.activityPanelOpen,
+                      drive: activeDrive,
+                      notices: activeDrive.activityNotices,
+                      onToggle: () => activeDrive.setActivityPanelOpen(
+                        !activeDrive.activityPanelOpen,
+                      ),
+                      onClearNotices: activeDrive.clearActivityNotices,
+                      onDismissNotice: activeDrive.dismissActivityNotice,
+                    ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// Un aviso del panel: recuadro tintado (verde/rojo), icono, texto y ✕ para
 /// descartarlo sin borrar los demás.
 class _NoticeRow extends StatelessWidget {
   const _NoticeRow({required this.notice, this.onDismiss});
 
-  final _DriveNotice notice;
+  final DriveNotice notice;
   final VoidCallback? onDismiss;
 
   @override

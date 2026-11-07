@@ -7,8 +7,9 @@ import 'package:hardstreet_admin/drive_service.dart';
 import 'package:hardstreet_admin/pages/drive_page.dart';
 
 void main() {
-  testWidgets('Panel de subidas: conteo, tiempo real y barra global',
-      (WidgetTester tester) async {
+  testWidgets('Panel de subidas: conteo, tiempo real y barra global', (
+    WidgetTester tester,
+  ) async {
     late Directory tmp;
     late Directory src;
     await tester.runAsync(() async {
@@ -28,11 +29,21 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(child: DrivePage(drive: drive)),
+              DriveActivityHost(drive: drive, closeOnOutsideTap: true),
+            ],
+          ),
+        ),
+      ),
     );
     // El constructor dispara refresh(); dejar que termine el I/O real.
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)));
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
 
     // Estado inicial: sin panel (no hay jobs).
     expect(find.text('Mi Drive'), findsOneWidget);
@@ -90,8 +101,9 @@ void main() {
     expect(find.byKey(const ValueKey('uploads_card')), findsNothing);
   });
 
-  testWidgets('Un lote de 100 fotos: se ven (y cuentan) todas, no 30',
-      (WidgetTester tester) async {
+  testWidgets('Un lote de 100 fotos: se ven (y cuentan) todas, no 30', (
+    WidgetTester tester,
+  ) async {
     late Directory tmp;
     await tester.runAsync(() async {
       tmp = await Directory.systemTemp.createTemp('hardstreet_batch_test');
@@ -102,22 +114,34 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(child: DrivePage(drive: drive)),
+              DriveActivityHost(drive: drive, closeOnOutsideTap: true),
+            ],
+          ),
+        ),
+      ),
     );
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)));
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
 
     // Un lote de 100 fotos, TODAS registradas de una (como hace el drive al
     // subir una selección grande): ninguna puede perderse de la lista.
     final batch = drive.newUploadBatch();
     for (var i = 0; i < 100; i++) {
-      drive.addUploadJob(DriveUploadJob(
-        id: 'u$i',
-        name: 'foto-$i.jpg',
-        thumb: '',
-        total: 10,
-        batch: batch,
-      ));
+      drive.addUploadJob(
+        DriveUploadJob(
+          id: 'u$i',
+          name: 'foto-$i.jpg',
+          thumb: '',
+          total: 10,
+          batch: batch,
+        ),
+      );
     }
     await tester.pump();
 
@@ -133,11 +157,17 @@ void main() {
     }
     await tester.pump();
 
-    expect(drive.uploadJobs.length, 100,
-        reason: 'las fotos del lote no se pueden soltar de la lista');
+    expect(
+      drive.uploadJobs.length,
+      100,
+      reason: 'las fotos del lote no se pueden soltar de la lista',
+    );
     expect(drive.uploadJobs.where((j) => j.status == 'uploading').length, 69);
-    expect(find.text('Subiendo 69 fotos…'), findsNothing,
-        reason: 'el encabezado cuenta el lote COMPLETO (100), no las activas');
+    expect(
+      find.text('Subiendo 69 fotos…'),
+      findsNothing,
+      reason: 'el encabezado cuenta el lote COMPLETO (100), no las activas',
+    );
     expect(find.text('Subiendo 100 fotos…'), findsOneWidget);
     expect(find.text('31 de 100 fotos'), findsOneWidget);
     expect(find.text('31% subidas'), findsOneWidget);
@@ -153,16 +183,13 @@ void main() {
     expect(find.text('100/100 fotos'), findsOneWidget);
   });
 
-  testWidgets('Fila con error: muestra el motivo y el botón Resubir',
-      (WidgetTester tester) async {
-    final job = DriveUploadJob(
-      id: 'j1',
-      name: 'falla.jpg',
-      thumb: '',
-      total: 100,
-    )
-      ..status = 'error'
-      ..error = 'HTTP 500';
+  testWidgets('Fila con error: muestra el motivo y el botón Resubir', (
+    WidgetTester tester,
+  ) async {
+    final job =
+        DriveUploadJob(id: 'j1', name: 'falla.jpg', thumb: '', total: 100)
+          ..status = 'error'
+          ..error = 'HTTP 500';
     var resubidas = 0;
 
     await tester.pumpWidget(
@@ -179,5 +206,69 @@ void main() {
     await tester.tap(find.text('Resubir'));
     await tester.pump();
     expect(resubidas, 1, reason: 'Resubir debe reintentar ese archivo');
+  });
+
+  testWidgets('la ventanita sigue visible al cambiar de módulo', (
+    tester,
+  ) async {
+    late Directory tmp;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('hardstreet_activity_module');
+    });
+    addTearDown(() => tmp.delete(recursive: true));
+
+    final drive = DriveService.testRoot(tmp);
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    var inDrive = true;
+    late StateSetter changeSection;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              changeSection = setState;
+              return Stack(
+                children: [
+                  if (inDrive)
+                    Positioned.fill(child: DrivePage(drive: drive))
+                  else
+                    const Center(child: Text('Otro módulo')),
+                  // El armazón monta el panel SIEMPRE, fuera de la página.
+                  DriveActivityHost(drive: drive),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+
+    final job = DriveUploadJob(
+      id: 'persistente',
+      name: 'sigue-subiendo.jpg',
+      thumb: '',
+      total: 100,
+    )..sent = 25;
+    drive.addUploadJob(job);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('uploads_card')), findsOneWidget);
+
+    // Cambia de módulo: la página del Drive se desmonta, el panel NO.
+    changeSection(() => inDrive = false);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Otro módulo'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('uploads_card')),
+      findsOneWidget,
+      reason: 'la carga se sigue viendo fuera de Archivos',
+    );
+    expect(find.text('Subiendo 1 foto…'), findsOneWidget);
+
+    drive.finishUploadJob(job);
   });
 }

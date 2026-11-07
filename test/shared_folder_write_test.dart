@@ -10,6 +10,7 @@ import 'package:hardstreet_admin/drive_base.dart';
 import 'package:hardstreet_admin/drive_scope.dart';
 import 'package:hardstreet_admin/hs_api.dart';
 import 'package:hardstreet_admin/local_share_service.dart';
+import 'package:hardstreet_admin/pages/drive_page.dart';
 import 'package:hardstreet_admin/pages/shared_files_page.dart';
 import 'package:hardstreet_admin/share_permissions.dart';
 
@@ -30,9 +31,10 @@ class _FakeDrive extends DriveBase {
   @override
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
   @override
-  Future<int> uploadFromPaths(List<String> sources,
-          {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
   @override
   Future<void> createFolder(String name) async {}
   @override
@@ -41,16 +43,18 @@ class _FakeDrive extends DriveBase {
   Future<void> delete(DriveItem item) async {}
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
   @override
   Future<void> retryUpload(String jobId) async {}
 }
@@ -72,71 +76,73 @@ class _Server {
   };
 
   LocalShareService service() => LocalShareService(
-        baseUrl: 'http://drive.test',
-        client: MockClient((request) async {
-          final p = request.url.path;
-          calls.add('${request.method} $p');
-          const headers = {'content-type': 'application/json'};
-          if (p == '/api/local/status') {
-            return http.Response(
-              jsonEncode({
-                'available': true,
-                'servedFrom': 'server',
-                'permissions': {
-                  'view': true,
-                  'edit': true,
-                  'create': true,
-                  'download': true,
-                },
-              }),
-              200,
-              headers: headers,
-            );
-          }
-          if (p == '/api/local/list') {
-            final path = request.url.queryParameters['path'] ?? '';
-            return http.Response(
-              jsonEncode({
-                'local': false,
-                'path': path,
-                'folders': tree[path] ?? const [],
-              }),
-              200,
-              headers: headers,
-            );
-          }
-          if (p == '/api/local/item' && request.method == 'PATCH') {
-            final b = jsonDecode(request.body) as Map<String, dynamic>;
-            final rel = '${b['path']}'.split('/');
-            final dir = rel.sublist(0, rel.length - 1).join('/');
-            final name = rel.last;
-            final list = tree[dir] ?? [];
-            final i = list.indexWhere((e) => e['name'] == name);
-            if (i >= 0) list[i] = {...list[i], 'name': '${b['name']}'};
-            return http.Response(jsonEncode({'ok': true}), 200,
-                headers: headers);
-          }
-          if (p == '/api/local/move') {
-            if (moveError != null) {
-              return http.Response(
-                jsonEncode({'error': moveError}),
-                403,
-                headers: headers,
-              );
-            }
-            return http.Response(
-              jsonEncode({'ok': true, 'moved': 1, 'errors': const []}),
-              200,
-              headers: headers,
-            );
-          }
-          return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
-        }),
-      );
+    baseUrl: 'http://drive.test',
+    client: MockClient((request) async {
+      final p = request.url.path;
+      calls.add('${request.method} $p');
+      const headers = {'content-type': 'application/json'};
+      if (p == '/api/local/status') {
+        return http.Response(
+          jsonEncode({
+            'available': true,
+            'servedFrom': 'server',
+            'permissions': {
+              'view': true,
+              'edit': true,
+              'create': true,
+              'download': true,
+            },
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      if (p == '/api/local/list') {
+        final path = request.url.queryParameters['path'] ?? '';
+        return http.Response(
+          jsonEncode({
+            'local': false,
+            'path': path,
+            'folders': tree[path] ?? const [],
+          }),
+          200,
+          headers: headers,
+        );
+      }
+      if (p == '/api/local/item' && request.method == 'PATCH') {
+        final b = jsonDecode(request.body) as Map<String, dynamic>;
+        final rel = '${b['path']}'.split('/');
+        final dir = rel.sublist(0, rel.length - 1).join('/');
+        final name = rel.last;
+        final list = tree[dir] ?? [];
+        final i = list.indexWhere((e) => e['name'] == name);
+        if (i >= 0) list[i] = {...list[i], 'name': '${b['name']}'};
+        return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+      }
+      if (p == '/api/local/move') {
+        if (moveError != null) {
+          return http.Response(
+            jsonEncode({'error': moveError}),
+            403,
+            headers: headers,
+          );
+        }
+        return http.Response(
+          jsonEncode({'ok': true, 'moved': 1, 'errors': const []}),
+          200,
+          headers: headers,
+        );
+      }
+      return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
+    }),
+  );
 }
 
 void main() {
-  setUp(() => HsApi.client = http.Client());
+  setUp(() {
+    HsApi.client = http.Client();
+    DriveBase.activityOverride.value = null;
+  });
   tearDown(() {
     HsApi.client = http.Client();
     debugLocalShareService = null;
@@ -182,10 +188,22 @@ void main() {
 
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final drive = _FakeDrive();
     await tester.pumpWidget(
       DriveScope(
-        drive: _FakeDrive(),
-        child: const MaterialApp(home: Scaffold(body: SharedFilesPage())),
+        drive: drive,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                const Positioned.fill(child: SharedFilesPage()),
+                // El panel de avisos vive en el armazón (como en la app), no
+                // dentro de la página: se monta aquí para verlo en el test.
+                DriveActivityHost(drive: drive, closeOnOutsideTap: true),
+              ],
+            ),
+          ),
+        ),
       ),
     );
     await tester.pump();
@@ -200,13 +218,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 800));
   }
 
-  testWidgets('renombrar una imagen compartida conserva su extensión',
-      (tester) async {
+  testWidgets('renombrar una imagen compartida conserva su extensión', (
+    tester,
+  ) async {
     final server = _Server();
     await pumpModule(tester, server);
 
-    await tester.tap(find.text('foto.jpg'),
-        kind: PointerDeviceKind.mouse, buttons: kSecondaryButton);
+    await tester.tap(
+      find.text('foto.jpg'),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryButton,
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Renombrar'), findsOneWidget);
@@ -216,7 +238,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.enterText(
       find.byWidgetPredicate(
-          (w) => w is TextField && w.decoration?.labelText == 'Nuevo nombre'),
+        (w) => w is TextField && w.decoration?.labelText == 'Nuevo nombre',
+      ),
       'otra',
     );
     await tester.tap(find.text('Guardar'));
@@ -224,12 +247,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 800));
 
     expect(server.calls, contains('PATCH /api/local/item'));
-    expect(find.text('otra.jpg'), findsOneWidget,
-        reason: 'la imagen se quedó sin extensión (desapareció del listado)');
+    expect(
+      find.text('otra.jpg'),
+      findsOneWidget,
+      reason: 'la imagen se quedó sin extensión (desapareció del listado)',
+    );
   });
 
-  testWidgets('si el servidor rechaza MOVER, el módulo lo dice',
-      (tester) async {
+  testWidgets('si el servidor rechaza MOVER, el módulo lo dice', (
+    tester,
+  ) async {
     final server = _Server(moveError: 'No tienes permiso para editar');
     await pumpModule(tester, server);
 
@@ -244,8 +271,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 800));
 
     expect(server.calls, contains('POST /api/local/move'));
-    expect(find.textContaining('No tienes permiso'), findsWidgets,
-        reason: 'el fallo del movimiento se perdió en silencio');
+    expect(
+      find.textContaining('No tienes permiso'),
+      findsWidgets,
+      reason: 'el fallo del movimiento se perdió en silencio',
+    );
   });
 
   test('los permisos del servidor del drive mandan al abrir', () {
