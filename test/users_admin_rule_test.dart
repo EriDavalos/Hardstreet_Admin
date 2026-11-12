@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/users_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/users/pages/users_page.dart';
 
 // ==================================================================
 // REGLA DEL ROL MÁS ALTO + FILTROS del módulo Usuarios

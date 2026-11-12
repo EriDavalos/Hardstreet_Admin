@@ -4,9 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
-import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_media_viewer.dart';
 
 // ==================================================================
 // ARCHIVOS QUE NO SON FOTOS EN EL DRIVE

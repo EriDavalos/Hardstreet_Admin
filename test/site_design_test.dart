@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/site_design.dart';
-import 'package:hardstreet_admin/widgets/package_designer.dart';
+import 'package:hardstreet_admin/modules/site/models/site_design.dart';
+import 'package:hardstreet_admin/modules/packages/widgets/package_designer.dart';
 
 // ==================================================================
 // DISEÑO DEL SITIO — el panel y la web deben ver LO MISMO
@@ -34,8 +34,11 @@ bool get _webAvailable => File(_siteJsPath).existsSync();
 Map<String, dynamic> readWebDesignDefaults() {
   final text = File(_siteJsPath).readAsStringSync();
   final marker = text.indexOf('SITE_DESIGN_DEFAULT = {');
-  expect(marker, greaterThanOrEqualTo(0),
-      reason: 'site.js debería declarar SITE_DESIGN_DEFAULT');
+  expect(
+    marker,
+    greaterThanOrEqualTo(0),
+    reason: 'site.js debería declarar SITE_DESIGN_DEFAULT',
+  );
   final start = text.indexOf('{', marker);
   var depth = 0;
   var end = -1;
@@ -81,30 +84,33 @@ Future<void> _pumpDesigner(
   await tester.binding.setSurfaceSize(size);
   addTearDown(tester.view.reset);
   addTearDown(() => tester.binding.setSurfaceSize(null));
-  await tester.pumpWidget(MaterialApp(
-    // Texto grande (como en un teléfono configurado así): el modal tiene que
-    // seguir cabiendo entero.
-    builder: textScale == 1
-        ? null
-        : (ctx, child) => MediaQuery(
-            data: MediaQuery.of(ctx).copyWith(
-              textScaler: TextScaler.linear(textScale),
+  await tester.pumpWidget(
+    MaterialApp(
+      // Texto grande (como en un teléfono configurado así): el modal tiene que
+      // seguir cabiendo entero.
+      builder: textScale == 1
+          ? null
+          : (ctx, child) => MediaQuery(
+              data: MediaQuery.of(ctx)
+                  .copyWith(textScaler: TextScaler.linear(textScale)),
+              child: child!,
             ),
-            child: child!,
+      home: Builder(
+        builder: (ctx) => Scaffold(
+          body: ElevatedButton(
+            onPressed: () async {
+              final d = await showPackageDesigner(
+                ctx,
+                design: SiteDesign.defaults,
+              );
+              onSaved?.call(d);
+            },
+            child: const Text('abrir'),
           ),
-    home: Builder(
-      builder: (ctx) => Scaffold(
-        body: ElevatedButton(
-          onPressed: () async {
-            final d = await showPackageDesigner(ctx,
-                design: SiteDesign.defaults);
-            onSaved?.call(d);
-          },
-          child: const Text('abrir'),
         ),
       ),
     ),
-  ));
+  );
 }
 
 /// Baja por los controles hasta que el widget exista (el ListView es perezoso:
@@ -129,23 +135,31 @@ void main() {
       final panel = SiteDesign.defaults.toJson();
 
       // Mismas CLAVES (si alguien agrega un campo en un lado, falla aquí).
-      expect((web['card'] as Map).keys.toSet(),
-          (panel['card'] as Map).keys.toSet(),
-          reason: 'El diseño de tarjetas tiene campos distintos en cada lado');
-      expect((web['tiers'] as Map).keys.toSet(),
-          (panel['tiers'] as Map).keys.toSet());
+      expect(
+        (web['card'] as Map).keys.toSet(),
+        (panel['card'] as Map).keys.toSet(),
+        reason: 'El diseño de tarjetas tiene campos distintos en cada lado',
+      );
+      expect(
+        (web['tiers'] as Map).keys.toSet(),
+        (panel['tiers'] as Map).keys.toSet(),
+      );
       for (final key in (web['tiers'] as Map).keys) {
-        expect(((web['tiers'] as Map)[key] as Map).keys.toSet(),
-            ((panel['tiers'] as Map)[key] as Map).keys.toSet(),
-            reason: 'El tier "$key" tiene campos distintos en cada lado');
+        expect(
+          ((web['tiers'] as Map)[key] as Map).keys.toSet(),
+          ((panel['tiers'] as Map)[key] as Map).keys.toSet(),
+          reason: 'El tier "$key" tiene campos distintos en cada lado',
+        );
       }
 
       // Y mismos VALORES.
       expect(web['card'], panel['card']);
       expect(web['tiers'], panel['tiers']);
       expect((web['brand'] as Map)['gold'], (panel['brand'] as Map)['gold']);
-      expect((web['brand'] as Map)['goldLight'],
-          (panel['brand'] as Map)['goldLight']);
+      expect(
+        (web['brand'] as Map)['goldLight'],
+        (panel['brand'] as Map)['goldLight'],
+      );
     });
 
     test('los tiers del diseño son los que usa la web', () {
@@ -176,13 +190,15 @@ void main() {
 
   group('lectura tolerante del diseño guardado', () {
     test('texto JSON válido', () {
-      final d = SiteDesign.fromJsonText(jsonEncode({
-        'brand': {'gold': '#123456'},
-        'card': {'radius': 4, 'showPrice': false, 'priceLabel': 'Inversión'},
-        'tiers': {
-          'premium': {'accent': '#111111', 'badgeFilled': false},
-        },
-      }));
+      final d = SiteDesign.fromJsonText(
+        jsonEncode({
+          'brand': {'gold': '#123456'},
+          'card': {'radius': 4, 'showPrice': false, 'priceLabel': 'Inversión'},
+          'tiers': {
+            'premium': {'accent': '#111111', 'badgeFilled': false},
+          },
+        }),
+      );
       expect(d.gold, '#123456');
       expect(d.card.radius, 4);
       expect(d.card.showPrice, isFalse);
@@ -195,12 +211,18 @@ void main() {
     });
 
     test('basura, null o vacío → defaults', () {
-      expect(SiteDesign.fromJsonText(null).card.columns,
-          SiteDesign.defaults.card.columns);
-      expect(SiteDesign.fromJsonText('{no es json').card.radius,
-          SiteDesign.defaults.card.radius);
-      expect(SiteDesign.fromJsonText('[1,2,3]').card.radius,
-          SiteDesign.defaults.card.radius);
+      expect(
+        SiteDesign.fromJsonText(null).card.columns,
+        SiteDesign.defaults.card.columns,
+      );
+      expect(
+        SiteDesign.fromJsonText('{no es json').card.radius,
+        SiteDesign.defaults.card.radius,
+      );
+      expect(
+        SiteDesign.fromJsonText('[1,2,3]').card.radius,
+        SiteDesign.defaults.card.radius,
+      );
     });
 
     test('el ida y vuelta por JSON no pierde nada', () {
@@ -210,22 +232,27 @@ void main() {
   });
 
   group('diseñador de tarjetas', () {
-    testWidgets('abre, deja editar la paleta de un tier y devuelve el diseño',
-        (tester) async {
+    testWidgets('abre, deja editar la paleta de un tier y devuelve el diseño', (
+      tester,
+    ) async {
       SiteDesign? result;
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(
-          builder: (ctx) => Scaffold(
-            body: ElevatedButton(
-              onPressed: () async {
-                result = await showPackageDesigner(ctx,
-                    design: SiteDesign.defaults);
-              },
-              child: const Text('abrir'),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () async {
+                  result = await showPackageDesigner(
+                    ctx,
+                    design: SiteDesign.defaults,
+                  );
+                },
+                child: const Text('abrir'),
+              ),
             ),
           ),
         ),
-      ));
+      );
 
       await tester.tap(find.text('abrir'));
       await tester.pumpAndSettle();
@@ -257,33 +284,37 @@ void main() {
     });
 
     testWidgets(
-        'la vista previa (card y fila) enseña el tier que se está ajustando',
-        (tester) async {
-      await _pumpDesigner(tester, size: const Size(1300, 950));
-      await tester.tap(find.text('abrir'));
-      await tester.pumpAndSettle();
+      'la vista previa (card y fila) enseña el tier que se está ajustando',
+      (tester) async {
+        await _pumpDesigner(tester, size: const Size(1300, 950));
+        await tester.tap(find.text('abrir'));
+        await tester.pumpAndSettle();
 
-      // De entrada la muestra va en Premium, en la CARD y en la FILA…
-      expect(find.text('PREMIUM'), findsOneWidget);
-      expect(find.text('Boda Full'), findsNWidgets(2));
-      // …y al abrir la pestaña de Gold, la CARD y la FILA se pintan con Gold
-      // (antes la fila salía siempre en Gold y la tarjeta siempre en Premium).
-      await tester.tap(find.byKey(const ValueKey('design-tab-gold')));
-      await tester.pumpAndSettle();
-      expect(find.text('PREMIUM'), findsNothing);
-      expect(find.text('GOLD'), findsOneWidget);
-      expect(find.text('XV Años Gold'), findsNWidgets(2));
+        // De entrada la muestra va en Premium, en la CARD y en la FILA…
+        expect(find.text('PREMIUM'), findsOneWidget);
+        expect(find.text('Boda Full'), findsNWidgets(2));
+        // …y al abrir la pestaña de Gold, la CARD y la FILA se pintan con Gold
+        // (antes la fila salía siempre en Gold y la tarjeta siempre en Premium).
+        await tester.tap(find.byKey(const ValueKey('design-tab-gold')));
+        await tester.pumpAndSettle();
+        expect(find.text('PREMIUM'), findsNothing);
+        expect(find.text('GOLD'), findsOneWidget);
+        expect(find.text('XV Años Gold'), findsNWidgets(2));
 
-      // Y se puede mirar otro tier sin dejar de ajustar el que se edita.
-      await tester.tap(find.byKey(const ValueKey('design-preview-tier-basic')));
-      await tester.pumpAndSettle();
-      expect(find.text('BASIC'), findsOneWidget);
-      expect(find.text('Sesión Básica'), findsNWidgets(2));
-      expect(tester.takeException(), isNull);
-    });
+        // Y se puede mirar otro tier sin dejar de ajustar el que se edita.
+        await tester.tap(
+          find.byKey(const ValueKey('design-preview-tier-basic')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('BASIC'), findsOneWidget);
+        expect(find.text('Sesión Básica'), findsNWidgets(2));
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets('la foto y la animación elegidas se ven y se guardan',
-        (tester) async {
+    testWidgets('la foto y la animación elegidas se ven y se guardan', (
+      tester,
+    ) async {
       SiteDesign? result;
       await _pumpDesigner(
         tester,
@@ -319,8 +350,9 @@ void main() {
       expect(result!.card.animStagger, SiteDesign.defaults.card.animStagger);
     });
 
-    testWidgets('el degradado de la foto se personaliza (color y dirección)',
-        (tester) async {
+    testWidgets('el degradado de la foto se personaliza (color y dirección)', (
+      tester,
+    ) async {
       SiteDesign? result;
       await _pumpDesigner(
         tester,
@@ -352,10 +384,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       // Y la vista previa del degradado está a la vista.
-      expect(
-        find.byKey(const ValueKey('design-fade-preview')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('design-fade-preview')), findsOneWidget);
 
       await tester.tap(find.text('Guardar diseño'));
       await tester.pumpAndSettle();
@@ -413,15 +442,13 @@ void main() {
       expect(result, isNotNull);
       // El círculo movió el ángulo: manda sobre la dirección guardada.
       expect(result!.card.imageFadeAngle, isNot(-1));
-      expect(
-        result!.card.imageFadeAngle,
-        inInclusiveRange(0, 359),
-      );
+      expect(result!.card.imageFadeAngle, inInclusiveRange(0, 359));
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('las paradas del desvanecido se ARRASTRAN sobre la tarjeta',
-        (tester) async {
+    testWidgets('las paradas del desvanecido se ARRASTRAN sobre la tarjeta', (
+      tester,
+    ) async {
       SiteDesign? result;
       await _pumpDesigner(tester, onSaved: (d) => result = d);
       await tester.tap(find.text('abrir'));
@@ -462,9 +489,7 @@ void main() {
 
       // Tocar la muestra del color "Dorado" abre la paleta (antes el cuadrito
       // no se podía tocar y no salía ninguna paleta).
-      final swatch = find.byKey(
-        const ValueKey('design-color-swatch-Dorado'),
-      );
+      final swatch = find.byKey(const ValueKey('design-color-swatch-Dorado'));
       await _scrollTo(tester, swatch);
       await tester.tap(swatch);
       await tester.pumpAndSettle();
@@ -495,9 +520,7 @@ void main() {
           imageFadeAngle: 200,
         ),
       );
-      final vuelta = SiteDesign.fromJsonText(
-        jsonEncode(conSombra.toJson()),
-      );
+      final vuelta = SiteDesign.fromJsonText(jsonEncode(conSombra.toJson()));
       expect(vuelta.card.imageShadow, .45);
       // Un valor absurdo se acota, no revienta la tarjeta.
       final raro = SiteDesign.fromJsonText(
@@ -519,9 +542,7 @@ void main() {
       expect(base.imageShadowAngle, 0);
       final movida = base.copyWith(imageMode: 'bg', imageShadowAngle: 90);
       final vuelta = SiteDesign.fromJsonText(
-        jsonEncode(
-          SiteDesign.defaults.copyWith(card: movida).toJson(),
-        ),
+        jsonEncode(SiteDesign.defaults.copyWith(card: movida).toJson()),
       );
       expect(vuelta.card.imageShadowAngle, 90);
 
@@ -545,8 +566,7 @@ void main() {
       expect(hsShadowCssDeg(-90), 270);
     });
 
-    test('un diseño guardado ANTES de la sombra la estrena con los defaults',
-        () {
+    test('un diseño guardado ANTES de la sombra la estrena con los defaults', () {
       // Guardado con la versión vieja (sin las paradas): el degradado negro se
       // enciende solo, en vez de quedarse apagado para siempre.
       final viejo = SiteDesign.fromJsonText(
@@ -570,23 +590,26 @@ void main() {
     });
 
     test('el velo guardado se lee tolerante (color raro → default)', () {
-      final d = SiteDesign.fromJsonText(jsonEncode({
-        'card': {'imageFadeColor': 'no-es-color', 'imageFadeFrom': 'lateral'},
-      }));
+      final d = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {'imageFadeColor': 'no-es-color', 'imageFadeFrom': 'lateral'},
+        }),
+      );
       expect(d.card.imageFadeColor, SiteDesign.defaults.card.imageFadeColor);
       expect(d.card.imageFadeFrom, SiteDesign.defaults.card.imageFadeFrom);
       // Direcciones nuevas (las 8) y ángulo: se leen y se normalizan.
-      final nuevo = SiteDesign.fromJsonText(jsonEncode({
-        'card': {
-          'imageFadeFrom': 'topLeft',
-          'imageFadeAngle': 400,
-        },
-      }));
+      final nuevo = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {'imageFadeFrom': 'topLeft', 'imageFadeAngle': 400},
+        }),
+      );
       expect(nuevo.card.imageFadeFrom, 'topLeft');
       expect(nuevo.card.imageFadeAngle, 40); // 400 % 360
-      final libre = SiteDesign.fromJsonText(jsonEncode({
-        'card': {'imageFadeAngle': -1},
-      }));
+      final libre = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {'imageFadeAngle': -1},
+        }),
+      );
       expect(libre.card.imageFadeAngle, -1); // sigue a la dirección
       expect(
         SiteDesign.fromJsonText(
@@ -627,15 +650,17 @@ void main() {
       expect(vuelta.card.cardBgAngle, 40); // 400 % 360
 
       // Valores absurdos: se acotan y el fin nunca queda antes que el inicio.
-      final raro = SiteDesign.fromJsonText(jsonEncode({
-        'card': {
-          'imageMode': 'fade',
-          'imageFadeStart': 1.4,
-          'imageFadeEnd': -2,
-          'cardBgAngle': -30,
-          'cardBgFrom': 'no-es-color',
-        },
-      }));
+      final raro = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {
+            'imageMode': 'fade',
+            'imageFadeStart': 1.4,
+            'imageFadeEnd': -2,
+            'cardBgAngle': -30,
+            'cardBgFrom': 'no-es-color',
+          },
+        }),
+      );
       expect(raro.card.imageFadeStart, .95);
       expect(raro.card.imageFadeEnd, 1);
       expect(raro.card.cardBgAngle, 135);
@@ -643,9 +668,15 @@ void main() {
     });
 
     test('un modo de foto o de animación desconocido cae al default', () {
-      final d = SiteDesign.fromJsonText(jsonEncode({
-        'card': {'imageMode': 'flotando', 'animMode': 'explotar', 'animMs': 'raro'},
-      }));
+      final d = SiteDesign.fromJsonText(
+        jsonEncode({
+          'card': {
+            'imageMode': 'flotando',
+            'animMode': 'explotar',
+            'animMs': 'raro',
+          },
+        }),
+      );
       expect(d.card.imageMode, SiteDesign.defaults.card.imageMode);
       expect(d.card.animMode, SiteDesign.defaults.card.animMode);
       expect(d.card.animMs, SiteDesign.defaults.card.animMs);
@@ -668,10 +699,7 @@ void main() {
       final fin = find.byKey(const ValueKey('design-fade-end'));
       await _scrollTo(tester, fin);
       expect(fin, findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('design-fade-start')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('design-fade-start')), findsOneWidget);
 
       // El fondo se puede poner en degradado: aparece el segundo color.
       final fondo = find.text('Fondo en degradado');
@@ -698,31 +726,34 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('la tarjeta se previsualiza EN el modal (sin abrir el navegador)',
-        (tester) async {
-      await _pumpDesigner(tester, size: const Size(1300, 950));
-      await tester.tap(find.text('abrir'));
-      await tester.pumpAndSettle();
+    testWidgets(
+      'la tarjeta se previsualiza EN el modal (sin abrir el navegador)',
+      (tester) async {
+        await _pumpDesigner(tester, size: const Size(1300, 950));
+        await tester.tap(find.text('abrir'));
+        await tester.pumpAndSettle();
 
-      // El antiguo botón de "Ver en el navegador" ya no está.
-      expect(find.byKey(const ValueKey('design-open-browser')), findsNothing);
-      expect(find.text('Ver en el navegador'), findsNothing);
-      // La vista previa (la tarjeta) sigue dentro del modal.
-      expect(find.text('Así se verá en la web'), findsOneWidget);
-      expect(find.byKey(const ValueKey('design-open-html')), findsOneWidget);
+        // El antiguo botón de "Ver en el navegador" ya no está.
+        expect(find.byKey(const ValueKey('design-open-browser')), findsNothing);
+        expect(find.text('Ver en el navegador'), findsNothing);
+        // La vista previa (la tarjeta) sigue dentro del modal.
+        expect(find.text('Así se verá en la web'), findsOneWidget);
+        expect(find.byKey(const ValueKey('design-open-html')), findsOneWidget);
 
-      // El HTML de la tarjeta se puede revisar sin salir del panel.
-      await tester.tap(find.byKey(const ValueKey('design-open-html')));
-      await tester.pumpAndSettle();
-      expect(find.text('HTML de la tarjeta'), findsOneWidget);
-      expect(find.byType(SelectableText), findsWidgets);
-      await tester.tap(find.text('Cerrar'));
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-    });
+        // El HTML de la tarjeta se puede revisar sin salir del panel.
+        await tester.tap(find.byKey(const ValueKey('design-open-html')));
+        await tester.pumpAndSettle();
+        expect(find.text('HTML de la tarjeta'), findsOneWidget);
+        expect(find.byType(SelectableText), findsWidgets);
+        await tester.tap(find.text('Cerrar'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets('la SOMBRA NEGRA también se ajusta en Fondo degradado',
-        (tester) async {
+    testWidgets('la SOMBRA NEGRA también se ajusta en Fondo degradado', (
+      tester,
+    ) async {
       await _pumpDesigner(tester, size: const Size(1300, 950));
       await tester.tap(find.text('abrir'));
       await tester.pumpAndSettle();
@@ -742,57 +773,64 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('en el CELULAR el diseñador se abre en pestañas y sin desbordes',
-        (tester) async {
-      await _pumpDesigner(
-        tester,
-        size: const Size(390, 780),
-        onSaved: (_) {},
-      );
-      await tester.tap(find.text('abrir'));
-      await tester.pumpAndSettle();
+    testWidgets(
+      'en el CELULAR el diseñador se abre en pestañas y sin desbordes',
+      (tester) async {
+        await _pumpDesigner(
+          tester,
+          size: const Size(390, 780),
+          onSaved: (_) {},
+        );
+        await tester.tap(find.text('abrir'));
+        await tester.pumpAndSettle();
 
-      // Pantalla angosta: controles y vista previa van en pestañas.
-      expect(find.text('Diseño'), findsOneWidget);
-      expect(find.text('Vista previa'), findsOneWidget);
-      expect(tester.takeException(), isNull);
+        // Pantalla angosta: controles y vista previa van en pestañas.
+        expect(find.text('Diseño'), findsOneWidget);
+        expect(find.text('Vista previa'), findsOneWidget);
+        expect(tester.takeException(), isNull);
 
-      await tester.tap(find.text('Vista previa'));
-      await tester.pumpAndSettle();
-      expect(find.text('Así se verá en la web'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
+        await tester.tap(find.text('Vista previa'));
+        await tester.pumpAndSettle();
+        expect(find.text('Así se verá en la web'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets(
-        'en el CELULAR con texto grande el diseñador llena la pantalla y se ve el pie',
-        (tester) async {
-      await _pumpDesigner(
-        tester,
-        size: const Size(360, 640),
-        textScale: 1.3,
-        onSaved: (_) {},
-      );
-      await tester.tap(find.text('abrir'));
-      await tester.pumpAndSettle();
+      'en el CELULAR con texto grande el diseñador llena la pantalla y se ve el pie',
+      (tester) async {
+        await _pumpDesigner(
+          tester,
+          size: const Size(360, 640),
+          textScale: 1.3,
+          onSaved: (_) {},
+        );
+        await tester.tap(find.text('abrir'));
+        await tester.pumpAndSettle();
 
-      // Sin márgenes: la superficie del modal llega a los bordes.
-      final surface = find
-          .descendant(of: find.byType(Dialog), matching: find.byType(Material))
-          .first;
-      expect(tester.getRect(surface), const Rect.fromLTRB(0, 0, 360, 640));
+        // Sin márgenes: la superficie del modal llega a los bordes.
+        final surface = find
+            .descendant(
+              of: find.byType(Dialog),
+              matching: find.byType(Material),
+            )
+            .first;
+        expect(tester.getRect(surface), const Rect.fromLTRB(0, 0, 360, 640));
 
-      // Y el pie se VE: antes, con el texto grande, “Guardar diseño” quedaba
-      // 102 px por debajo de la pantalla.
-      expect(find.text('Guardar diseño'), findsOneWidget);
-      expect(
-        tester.getRect(find.text('Guardar diseño')).bottom,
-        lessThan(640),
-      );
-      expect(tester.takeException(), isNull);
-    });
+        // Y el pie se VE: antes, con el texto grande, “Guardar diseño” quedaba
+        // 102 px por debajo de la pantalla.
+        expect(find.text('Guardar diseño'), findsOneWidget);
+        expect(
+          tester.getRect(find.text('Guardar diseño')).bottom,
+          lessThan(640),
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets('la SOMBRA se mueve ARRASTRÁNDOLA también en Fondo degradado',
-        (tester) async {
+    testWidgets('la SOMBRA se mueve ARRASTRÁNDOLA también en Fondo degradado', (
+      tester,
+    ) async {
       SiteDesign? result;
       await _pumpDesigner(tester, onSaved: (d) => result = d);
       await tester.tap(find.text('abrir'));
@@ -830,24 +868,29 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('cancelar no devuelve diseño (no se guarda nada)',
-        (tester) async {
+    testWidgets('cancelar no devuelve diseño (no se guarda nada)', (
+      tester,
+    ) async {
       SiteDesign? result;
       var closed = false;
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(
-          builder: (ctx) => Scaffold(
-            body: ElevatedButton(
-              onPressed: () async {
-                result = await showPackageDesigner(ctx,
-                    design: SiteDesign.defaults);
-                closed = true;
-              },
-              child: const Text('abrir'),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () async {
+                  result = await showPackageDesigner(
+                    ctx,
+                    design: SiteDesign.defaults,
+                  );
+                  closed = true;
+                },
+                child: const Text('abrir'),
+              ),
             ),
           ),
         ),
-      ));
+      );
 
       await tester.tap(find.text('abrir'));
       await tester.pumpAndSettle();

@@ -6,10 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/note_model.dart';
-import 'package:hardstreet_admin/pages/notes_page.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/notes/models/note_model.dart';
+import 'package:hardstreet_admin/modules/notes/pages/notes_page.dart';
 
 /// MÓDULO NOTAS: documento con título de una línea, bloques insertados
 /// (texto, actividades y dibujo), guardado, visibilidad y solo lectura.

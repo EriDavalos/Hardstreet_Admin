@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/widgets/brand_badge.dart';
+import 'package:hardstreet_admin/modules/auth/widgets/brand_badge.dart';
 
 // ==================================================================
 // LA MARCA DE LA APP (barra lateral, login y pantalla de carga)

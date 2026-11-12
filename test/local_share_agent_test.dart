@@ -7,9 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/app_settings.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/local_share_agent.dart';
+import 'package:hardstreet_admin/app/app_settings.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_agent.dart';
 
 /// El AGENTE de carpetas compartidas: es lo que hace que una carpeta de ESTA
 /// computadora (p. ej. C:\Fotos) se pueda ver desde otros usuarios, sin abrir

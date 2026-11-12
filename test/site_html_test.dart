@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/pages/site_page.dart';
-import 'package:hardstreet_admin/web_content.dart';
-import 'package:hardstreet_admin/widgets/site_html_editor.dart';
-import 'package:hardstreet_admin/widgets/site_html_preview.dart';
+import 'package:hardstreet_admin/modules/site/pages/site_page.dart';
+import 'package:hardstreet_admin/modules/site/models/web_content.dart';
+import 'package:hardstreet_admin/modules/site/widgets/site_html_editor.dart';
+import 'package:hardstreet_admin/modules/site/widgets/site_html_preview.dart';
 
 // ==================================================================
 // HTML PROPIO DE CADA SECCIÓN (módulo "Sitio web")
@@ -40,10 +40,10 @@ class FakeSiteApi implements SiteContentApi {
 
   @override
   Future<SiteContext> context() async => const SiteContext(
-        categories: [(key: 'boda', name: 'Boda')],
-        gold: '#C9A96E',
-        stored: false,
-      );
+    categories: [(key: 'boda', name: 'Boda')],
+    gold: '#C9A96E',
+    stored: false,
+  );
 }
 
 /// Doble de la vista previa: guarda lo último que le pidieron pintar.
@@ -81,27 +81,29 @@ Future<Future<String?>> openEditor(
   await tester.binding.setSurfaceSize(const Size(1200, 800));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   late Future<String?> result;
-  await tester.pumpWidget(MaterialApp(
-    home: Scaffold(
-      body: Builder(
-        builder: (context) => Center(
-          child: TextButton(
-            onPressed: () {
-              result = showSiteHtmlEditor(
-                context,
-                sectionId: 'hero',
-                sectionLabel: 'Portada',
-                sectionTemplate: 'hero',
-                initialHtml: initialHtml,
-                previewBuilder: previewBuilder,
-              );
-            },
-            child: const Text('abrir editor'),
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () {
+                result = showSiteHtmlEditor(
+                  context,
+                  sectionId: 'hero',
+                  sectionLabel: 'Portada',
+                  sectionTemplate: 'hero',
+                  initialHtml: initialHtml,
+                  previewBuilder: previewBuilder,
+                );
+              },
+              child: const Text('abrir editor'),
+            ),
           ),
         ),
       ),
     ),
-  ));
+  );
   await tester.tap(find.text('abrir editor'));
   await tester.pumpAndSettle();
   return result;
@@ -112,10 +114,7 @@ void main() {
     test('viaja de ida y vuelta y descarta lo vacío', () {
       const code = '<div class="hero-content"><h1>Hola</h1></div>';
       final doc = SiteContent.fromJson({
-        'html': {
-          'hero': code,
-          'about': '   ',
-        },
+        'html': {'hero': code, 'about': '   '},
       });
       expect(doc.htmlOf('hero'), code);
       expect(doc.htmlOf('about'), '');
@@ -145,8 +144,10 @@ void main() {
       expect(back.html, copy.html);
       expect(back, copy);
       // Sin HTML, la clave ni siquiera viaja (no engordamos el documento).
-      expect(const SiteExtraSection(id: 'x', key: 'hero').toJson(),
-          isNot(contains('html')));
+      expect(
+        const SiteExtraSection(id: 'x', key: 'hero').toJson(),
+        isNot(contains('html')),
+      );
     });
 
     test('lo que no es un mapa de HTML se ignora', () {
@@ -162,11 +163,13 @@ void main() {
   });
 
   group('editor de HTML', () {
-    testWidgets('lo tecleado se devuelve con "Usar este HTML"',
-        (tester) async {
+    testWidgets('lo tecleado se devuelve con "Usar este HTML"', (tester) async {
       final fake = FakePreview();
-      final result = await openEditor(tester,
-          initialHtml: '', previewBuilder: fake.build);
+      final result = await openEditor(
+        tester,
+        initialHtml: '',
+        previewBuilder: fake.build,
+      );
 
       await tester.enterText(
         find.byKey(const ValueKey('site-html-code')),
@@ -184,11 +187,15 @@ void main() {
       expect(await result, '<h2 class="section-title">Nueva portada</h2>');
     });
 
-    testWidgets('los botones insertan etiquetas que el sitio ya estiliza',
-        (tester) async {
+    testWidgets('los botones insertan etiquetas que el sitio ya estiliza', (
+      tester,
+    ) async {
       final fake = FakePreview();
-      final result =
-          await openEditor(tester, initialHtml: '', previewBuilder: fake.build);
+      final result = await openEditor(
+        tester,
+        initialHtml: '',
+        previewBuilder: fake.build,
+      );
 
       await tester.tap(find.text('Título'));
       await tester.pump();
@@ -204,8 +211,11 @@ void main() {
 
     testWidgets('vaciarlo devuelve la sección a sus campos', (tester) async {
       final fake = FakePreview();
-      final result = await openEditor(tester,
-          initialHtml: '<p>Algo</p>', previewBuilder: fake.build);
+      final result = await openEditor(
+        tester,
+        initialHtml: '<p>Algo</p>',
+        previewBuilder: fake.build,
+      );
 
       await tester.tap(find.text('Quitar HTML'));
       await tester.pump();
@@ -216,11 +226,16 @@ void main() {
 
     testWidgets('cancelar no toca nada', (tester) async {
       final fake = FakePreview();
-      final result = await openEditor(tester,
-          initialHtml: '<p>Algo</p>', previewBuilder: fake.build);
+      final result = await openEditor(
+        tester,
+        initialHtml: '<p>Algo</p>',
+        previewBuilder: fake.build,
+      );
 
       await tester.enterText(
-          find.byKey(const ValueKey('site-html-code')), '<p>Otro</p>');
+        find.byKey(const ValueKey('site-html-code')),
+        '<p>Otro</p>',
+      );
       await tester.tap(find.text('Cancelar'));
       await tester.pumpAndSettle();
       expect(await result, isNull);
@@ -235,30 +250,33 @@ void main() {
     }) async {
       await tester.binding.setSurfaceSize(const Size(1500, 8000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: SitePage(
-            api: api,
-            supported: true,
-            previewBuilder: previewBuilder,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SitePage(
+              api: api,
+              supported: true,
+              previewBuilder: previewBuilder,
+            ),
           ),
         ),
-      ));
+      );
       await tester.pumpAndSettle();
     }
 
     Finder cardOf(String key) => find.byKey(ValueKey('site-section-$key'));
 
     Future<void> expand(WidgetTester tester, String key) async {
-      final edit =
-          find.descendant(of: cardOf(key), matching: find.text('Editar'));
+      final edit = find.descendant(
+        of: cardOf(key),
+        matching: find.text('Editar'),
+      );
       if (edit.evaluate().isEmpty) return;
       await tester.tap(edit);
       await tester.pumpAndSettle();
     }
 
-    testWidgets('el HTML de la sección se escribe y se guarda',
-        (tester) async {
+    testWidgets('el HTML de la sección se escribe y se guarda', (tester) async {
       final api = FakeSiteApi();
       final fake = FakePreview();
       await pumpPage(tester, api: api, previewBuilder: fake.build);

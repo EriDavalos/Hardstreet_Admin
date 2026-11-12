@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
 
 /// Drive de prueba con un árbol FIJO de carpetas (sin red).
 class _FakeDrive extends DriveBase {
@@ -40,9 +40,10 @@ class _FakeDrive extends DriveBase {
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
 
   @override
-  Future<int> uploadFromPaths(List<String> sources,
-          {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
 
   @override
   Future<void> createFolder(String name) async {}
@@ -55,18 +56,20 @@ class _FakeDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
 
   @override
   Future<void> retryUpload(String jobId) async {}
@@ -129,8 +132,11 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
     }
 
     if (p.endsWith('/api/admin/agendas')) {
-      return http.Response(jsonEncode({'agendas': const []}), 200,
-          headers: headers);
+      return http.Response(
+        jsonEncode({'agendas': const []}),
+        200,
+        headers: headers,
+      );
     }
 
     if (p.endsWith('/api/admin/package-progress')) {
@@ -171,8 +177,10 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
   });
 }
 
-Future<void> _pump(WidgetTester tester,
-    {required List<Map<String, dynamic>> posts}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  required List<Map<String, dynamic>> posts,
+}) async {
   const size = Size(1250, 940);
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
@@ -210,18 +218,18 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-Finder _inDialog(String text) => find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.text(text),
-    );
+Finder _inDialog(String text) =>
+    find.descendant(of: find.byType(AlertDialog), matching: find.text(text));
 
 void main() {
   group('sameDrivePath (lo único que impide compartir)', () {
     test('la misma carpeta, sin importar mayúsculas ni separadores', () {
       expect(sameDrivePath('ReynaCoot', 'ReynaCoot'), isTrue);
       expect(sameDrivePath('Reynacoot', 'ReynaCoot'), isTrue);
-      expect(sameDrivePath(r'\ReynaCoot\SesionPrevia\', 'ReynaCoot/SesionPrevia'),
-          isTrue);
+      expect(
+        sameDrivePath(r'\ReynaCoot\SesionPrevia\', 'ReynaCoot/SesionPrevia'),
+        isTrue,
+      );
     });
 
     test('una carpeta DENTRO de otra es otra carpeta: se puede compartir', () {
@@ -278,8 +286,10 @@ void main() {
     });
 
     test('normaliza barras, espacios y puntos', () {
-      expect(drivePathNormalize(r'\ReynaCoot\SesionPrevia\'),
-          'ReynaCoot/SesionPrevia');
+      expect(
+        drivePathNormalize(r'\ReynaCoot\SesionPrevia\'),
+        'ReynaCoot/SesionPrevia',
+      );
       expect(drivePathsOverlap('  ReynaCoot  ', './ReynaCoot/'), isTrue);
       // Los '..' se DESCARTAN, no se resuelven hacia arriba (la misma regla
       // que aplica el backend al guardar la ruta compartida).
@@ -289,9 +299,9 @@ void main() {
     });
   });
 
-  testWidgets(
-      'la pestaña Drive NO lista el drive general del cliente',
-      (tester) async {
+  testWidgets('la pestaña Drive NO lista el drive general del cliente', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pump(tester, posts: posts);
 
@@ -303,9 +313,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'no deja compartir LA MISMA carpeta que la de otro paquete',
-      (tester) async {
+  testWidgets('no deja compartir LA MISMA carpeta que la de otro paquete', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pump(tester, posts: posts);
 

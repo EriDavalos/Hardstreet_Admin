@@ -6,9 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/admin_pages.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/dashboard/pages/admin_pages.dart';
 import 'package:hardstreet_admin/widgets/common.dart';
 
 /// Drive remoto de mentira: al tablero solo le interesa el espacio ocupado.

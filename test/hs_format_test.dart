@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/hs_format.dart';
+import 'package:hardstreet_admin/core/utils/hs_format.dart';
 
 void main() {
   group('hsThousands / hsMoney', () {
@@ -39,8 +39,10 @@ void main() {
 
   group('hsParseDate', () {
     test('acepta el formato de la API', () {
-      expect(hsParseDate('2026-10-10T18:00:00'),
-          DateTime(2026, 10, 10, 18, 0, 0));
+      expect(
+        hsParseDate('2026-10-10T18:00:00'),
+        DateTime(2026, 10, 10, 18, 0, 0),
+      );
     });
 
     test('devuelve null para valores vacíos o inválidos', () {

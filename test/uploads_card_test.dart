@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 void main() {
   testWidgets('Panel de subidas: conteo, tiempo real y barra global', (

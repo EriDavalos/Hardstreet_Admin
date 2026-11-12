@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../hs_api.dart';
-import '../widgets/hs_toast.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Selector de EMPRESA ACTIVA (solo Superadministrador).
 ///

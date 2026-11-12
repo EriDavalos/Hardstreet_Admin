@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 // Los nombres de las ubicaciones del mapa se ven en un TOOLTIP al pasar el
 // mouse (o mantener el dedo). En modo oscuro el fondo era blanco al 12 % y el

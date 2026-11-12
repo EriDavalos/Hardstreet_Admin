@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
-import 'package:hardstreet_admin/widgets/hero_photo_banner.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/modules/clients/widgets/hero_photo_banner.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Drive de prueba: carpetas y ARCHIVOS fijos, sin red. El selector de fotos

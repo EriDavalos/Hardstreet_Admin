@@ -7,9 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/connection_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/pages/connection_page.dart';
 
 // ==================================================================
 // SERVIDORES DEL DRIVE EN EL PANEL (Drive federado) — módulo Conexión

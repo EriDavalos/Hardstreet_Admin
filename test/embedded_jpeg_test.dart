@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/embedded_jpeg.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/core/platform/embedded_jpeg.dart';
 
 /// Arma un JPEG "de mentira" con la MISMA estructura de segmentos que uno
 /// real (SOI, comentario, SOS con datos comprimidos y EOI). No hace falta que

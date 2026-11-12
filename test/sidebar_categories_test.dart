@@ -7,13 +7,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
-import 'package:hardstreet_admin/pages/admin_pages.dart';
-import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/modules/dashboard/pages/admin_pages.dart';
+import 'package:hardstreet_admin/modules/clients/pages/client_dashboard_page.dart';
 
 Map<String, dynamic> _mod(
   String key,
@@ -22,16 +22,15 @@ Map<String, dynamic> _mod(
   int? categoryOrder,
   String? categoryName,
   List<String> actions = const ['read'],
-}) =>
-    {
-      'key': key,
-      'name': name,
-      'order': order,
-      'categoryKey': categoryName?.toLowerCase(),
-      'categoryName': categoryName,
-      'categoryOrder': categoryOrder,
-      'actions': actions,
-    };
+}) => {
+  'key': key,
+  'name': name,
+  'order': order,
+  'categoryKey': categoryName?.toLowerCase(),
+  'categoryName': categoryName,
+  'categoryOrder': categoryOrder,
+  'actions': actions,
+};
 
 /// Mock del backend: TODOS los módulos con su categoría/orden, EXCEPTO Roles
 /// (que existe pero SIN "Ver": debe desaparecer del menú) y "Mi paquete"
@@ -46,32 +45,77 @@ void _installMock({bool miPaqueteRead = true, bool dashboardRead = true}) {
         jsonEncode({
           'isAdmin': false,
           'modules': [
-            _mod('dashboard', 'Dashboard',
-                order: 1, actions: dashboardRead ? const ['read'] : const []),
+            _mod(
+              'dashboard',
+              'Dashboard',
+              order: 1,
+              actions: dashboardRead ? const ['read'] : const [],
+            ),
             // El módulo del cliente: se llama "Mi paquete" (antes "Dashboard
             // Cliente") y exige "Ver" como cualquier otro.
-            _mod('my_package', 'Mi paquete',
-                order: 2,
-                actions: miPaqueteRead ? const ['read'] : const []),
-            _mod('drive', 'Archivos',
-                order: 3, categoryOrder: 1, categoryName: 'Operación'),
-            _mod('schedules', 'Agendas',
-                order: 4, categoryOrder: 1, categoryName: 'Operación'),
-            _mod('finance', 'Finanzas',
-                order: 5, categoryOrder: 1, categoryName: 'Operación'),
-            _mod('rols', 'Roles',
-                order: 6,
-                categoryOrder: 2,
-                categoryName: 'Administración',
-                actions: const []),
-            _mod('users', 'Usuarios',
-                order: 7, categoryOrder: 2, categoryName: 'Administración'),
-            _mod('clients', 'Clientes',
-                order: 8, categoryOrder: 2, categoryName: 'Administración'),
-            _mod('packages', 'Paquetes',
-                order: 9, categoryOrder: 2, categoryName: 'Administración'),
-            _mod('storage', 'Almacenamiento',
-                order: 6, categoryOrder: 1, categoryName: 'Operación'),
+            _mod(
+              'my_package',
+              'Mi paquete',
+              order: 2,
+              actions: miPaqueteRead ? const ['read'] : const [],
+            ),
+            _mod(
+              'drive',
+              'Archivos',
+              order: 3,
+              categoryOrder: 1,
+              categoryName: 'Operación',
+            ),
+            _mod(
+              'schedules',
+              'Agendas',
+              order: 4,
+              categoryOrder: 1,
+              categoryName: 'Operación',
+            ),
+            _mod(
+              'finance',
+              'Finanzas',
+              order: 5,
+              categoryOrder: 1,
+              categoryName: 'Operación',
+            ),
+            _mod(
+              'rols',
+              'Roles',
+              order: 6,
+              categoryOrder: 2,
+              categoryName: 'Administración',
+              actions: const [],
+            ),
+            _mod(
+              'users',
+              'Usuarios',
+              order: 7,
+              categoryOrder: 2,
+              categoryName: 'Administración',
+            ),
+            _mod(
+              'clients',
+              'Clientes',
+              order: 8,
+              categoryOrder: 2,
+              categoryName: 'Administración',
+            ),
+            _mod(
+              'packages',
+              'Paquetes',
+              order: 9,
+              categoryOrder: 2,
+              categoryName: 'Administración',
+            ),
+            _mod(
+              'storage',
+              'Almacenamiento',
+              order: 6,
+              categoryOrder: 1,
+              categoryName: 'Operación',
+            ),
           ],
         }),
         200,
@@ -90,8 +134,9 @@ void _installMock({bool miPaqueteRead = true, bool dashboardRead = true}) {
 }
 
 void main() {
-  testWidgets('el menú agrupa por categoría, ordena y oculta sin "Ver"',
-      (tester) async {
+  testWidgets('el menú agrupa por categoría, ordena y oculta sin "Ver"', (
+    tester,
+  ) async {
     late Directory tmp;
     await tester.runAsync(() async {
       tmp = await Directory.systemTemp.createTemp('hardstreet_sidebar_test');
@@ -112,11 +157,7 @@ void main() {
       DriveScope(
         drive: DriveService.testRoot(tmp),
         child: MaterialApp(
-          home: AdminHome(
-            dark: false,
-            onToggleTheme: () {},
-            onLogout: () {},
-          ),
+          home: AdminHome(dark: false, onToggleTheme: () {}, onLogout: () {}),
         ),
       ),
     );
@@ -166,8 +207,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('"Mi paquete" es un módulo más: sin "Ver" se oculta del menú',
-      (tester) async {
+  testWidgets('"Mi paquete" es un módulo más: sin "Ver" se oculta del menú', (
+    tester,
+  ) async {
     late Directory tmp;
     await tester.runAsync(() async {
       tmp = await Directory.systemTemp.createTemp('hardstreet_my_package');
@@ -188,11 +230,7 @@ void main() {
       DriveScope(
         drive: DriveService.testRoot(tmp),
         child: MaterialApp(
-          home: AdminHome(
-            dark: false,
-            onToggleTheme: () {},
-            onLogout: () {},
-          ),
+          home: AdminHome(dark: false, onToggleTheme: () {}, onLogout: () {}),
         ),
       ),
     );
@@ -217,8 +255,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('al entrar se abre el PRIMER módulo permitido, no el Dashboard',
-      (tester) async {
+  testWidgets('al entrar se abre el PRIMER módulo permitido, no el Dashboard', (
+    tester,
+  ) async {
     late Directory tmp;
     await tester.runAsync(() async {
       tmp = await Directory.systemTemp.createTemp('hardstreet_start_section');
@@ -240,11 +279,7 @@ void main() {
       DriveScope(
         drive: DriveService.testRoot(tmp),
         child: MaterialApp(
-          home: AdminHome(
-            dark: false,
-            onToggleTheme: () {},
-            onLogout: () {},
-          ),
+          home: AdminHome(dark: false, onToggleTheme: () {}, onLogout: () {}),
         ),
       ),
     );

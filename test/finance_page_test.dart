@@ -6,9 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/finance_data.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/finance_page.dart';
+import 'package:hardstreet_admin/modules/finance/models/finance_data.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/finance/pages/finance_page.dart';
 
 /// Finanzas falsas:
 ///   totales: abonado 18000, gastos 2400, inversión 800, ahorro 3000,
@@ -687,7 +687,7 @@ void main() {
     );
   });
 
-  testWidgets('Ahorro por porcentaje: se calcula sobre el DINERO ACTUAL', (
+  testWidgets('Ahorro con calculadora de porcentaje sobre el DINERO ACTUAL', (
     tester,
   ) async {
     final posts = <Map<String, dynamic>>[];
@@ -696,25 +696,35 @@ void main() {
     await _tap(tester, find.text('Registrar movimiento'));
     final dialog = find.byType(AlertDialog);
 
-    // Se elige AHORRO y el modo porcentaje.
+    // Se elige AHORRO: un solo campo de monto, sin pestañas.
     await _tap(
       tester,
       find.descendant(of: dialog, matching: find.text('Ahorro')),
     );
+    expect(
+      find.descendant(of: dialog, matching: find.text('Cantidad')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.text('Porcentaje')),
+      findsNothing,
+    );
     await _tap(
       tester,
-      find.descendant(of: dialog, matching: find.text('Porcentaje')),
+      find.descendant(of: dialog, matching: find.text('Calcular porcentaje')),
     );
     await tester.enterText(
-      find.descendant(
-        of: dialog,
-        matching: find.widgetWithText(TextField, 'Porcentaje'),
-      ),
+      find.byKey(const ValueKey('finance-saving-percent')),
       '25',
     );
     await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('25 % de'), findsOneWidget);
 
     // 25 % de 8300 = 2075. Sin paquete, la base es el negocio entero.
+    await _tap(
+      tester,
+      find.descendant(of: dialog, matching: find.text('Usar monto')),
+    );
     expect(find.text('Se ahorrarán del negocio'), findsOneWidget);
     expect(find.text(r'MXN $2,075'), findsWidgets);
 

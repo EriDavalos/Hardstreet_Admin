@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/widgets/hero_photo_banner.dart';
+import 'package:hardstreet_admin/modules/clients/widgets/hero_photo_banner.dart';
 
 /// Pinta una "foto" de tamaño fijo (10x10): si el banner la deja así,
 /// significaría que la foto NO llena el banner. El banner debe estirarla.

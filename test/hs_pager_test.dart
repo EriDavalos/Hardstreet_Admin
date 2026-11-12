@@ -166,8 +166,11 @@ void main() {
       expect(find.text('30'), findsOneWidget);
       final label = tester.getRect(find.text('Página 2 de 7'));
       final size = tester.getRect(find.byKey(const ValueKey('hs-pager-size')));
-      expect(size.center.dy, closeTo(label.center.dy, 8),
-          reason: 'el tamaño va en la MISMA fila que las flechas');
+      expect(
+        size.center.dy,
+        closeTo(label.center.dy, 8),
+        reason: 'el tamaño va en la MISMA fila que las flechas',
+      );
     });
   });
 }

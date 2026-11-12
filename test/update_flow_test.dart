@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/app_updater.dart';
+import 'package:hardstreet_admin/app/app_updater.dart';
 import 'package:hardstreet_admin/widgets/force_update_dialog.dart';
 
 /// Tamaño legible para los textos del modal (25 MB / 100 MB).
@@ -17,23 +17,25 @@ Future<void> _openDialog(
   required bool optional,
   String url = 'http://example.com/HardstreetAdmin-setup.exe',
 }) async {
-  await tester.pumpWidget(MaterialApp(
-    home: Builder(
-      builder: (ctx) => Center(
-        child: FilledButton(
-          onPressed: () => ForceUpdateDialog.show(
-            ctx,
-            currentVersion: '1.0.0',
-            requiredVersion: '1.5.0',
-            notes: 'Cambios importantes',
-            downloadUrl: url,
-            optional: optional,
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (ctx) => Center(
+          child: FilledButton(
+            onPressed: () => ForceUpdateDialog.show(
+              ctx,
+              currentVersion: '1.0.0',
+              requiredVersion: '1.5.0',
+              notes: 'Cambios importantes',
+              downloadUrl: url,
+              optional: optional,
+            ),
+            child: const Text('abrir'),
           ),
-          child: const Text('abrir'),
         ),
       ),
     ),
-  ));
+  );
   await tester.tap(find.text('abrir'));
   await tester.pumpAndSettle();
 }
@@ -45,36 +47,41 @@ void main() {
     AppUpdater.installFn = AppUpdater.install;
   });
 
-  testWidgets('Obligatorio: barra de progreso con MB y porcentaje, luego instala', (tester) async {
-    final pending = Completer<File>();
-    File? installed;
-    AppUpdater.downloadFn = (url, {fileName, required onProgress}) {
-      onProgress(_mb25, _mb100);
-      return pending.future;
-    };
-    AppUpdater.installFn = (file) async => installed = file;
+  testWidgets(
+    'Obligatorio: barra de progreso con MB y porcentaje, luego instala',
+    (tester) async {
+      final pending = Completer<File>();
+      File? installed;
+      AppUpdater.downloadFn = (url, {fileName, required onProgress}) {
+        onProgress(_mb25, _mb100);
+        return pending.future;
+      };
+      AppUpdater.installFn = (file) async => installed = file;
 
-    await _openDialog(tester, optional: false);
-    expect(find.text('Actualización requerida'), findsOneWidget);
-    expect(find.text('Descargar e instalar (.exe)'), findsOneWidget);
-    expect(find.text('Cambios importantes'), findsOneWidget);
+      await _openDialog(tester, optional: false);
+      expect(find.text('Actualización requerida'), findsOneWidget);
+      expect(find.text('Descargar e instalar (.exe)'), findsOneWidget);
+      expect(find.text('Cambios importantes'), findsOneWidget);
 
-    await tester.tap(find.text('Descargar e instalar (.exe)'));
-    await tester.pump();
+      await tester.tap(find.text('Descargar e instalar (.exe)'));
+      await tester.pump();
 
-    // Fase descargando: barra con progreso Y texto con MB + porcentaje.
-    expect(find.text('Descargando actualización'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
-    expect(find.text('25.0 MB de 100.0 MB (25%)'), findsOneWidget);
+      // Fase descargando: barra con progreso Y texto con MB + porcentaje.
+      expect(find.text('Descargando actualización'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('25.0 MB de 100.0 MB (25%)'), findsOneWidget);
 
-    // Termina la descarga → instala (installFn registrado, sin salir de la app).
-    final fake = File('C:/tmp/fake-update.exe');
-    pending.complete(fake);
-    await tester.pumpAndSettle();
-    expect(installed, same(fake));
-  });
+      // Termina la descarga → instala (installFn registrado, sin salir de la app).
+      final fake = File('C:/tmp/fake-update.exe');
+      pending.complete(fake);
+      await tester.pumpAndSettle();
+      expect(installed, same(fake));
+    },
+  );
 
-  testWidgets('La barra de progreso ocupa el ancho del modal (420px)', (tester) async {
+  testWidgets('La barra de progreso ocupa el ancho del modal (420px)', (
+    tester,
+  ) async {
     final pending = Completer<File>();
     AppUpdater.downloadFn = (url, {fileName, required onProgress}) {
       onProgress(_mb25, _mb100);
@@ -88,18 +95,20 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: ForceUpdateDialog(
-            currentVersion: '1.0.0',
-            requiredVersion: '2.0.0',
-            notes: '',
-            downloadUrl: 'http://example.com/setup.exe',
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: ForceUpdateDialog(
+              currentVersion: '1.0.0',
+              requiredVersion: '2.0.0',
+              notes: '',
+              downloadUrl: 'http://example.com/setup.exe',
+            ),
           ),
         ),
       ),
-    ));
+    );
     await tester.tap(find.text('Descargar e instalar (.exe)'));
     await tester.pump();
 
@@ -114,7 +123,9 @@ void main() {
     expect(bar.height, 8);
   });
 
-  testWidgets('Opcional: Cancelar durante la descarga vuelve al inicio', (tester) async {
+  testWidgets('Opcional: Cancelar durante la descarga vuelve al inicio', (
+    tester,
+  ) async {
     final pending = Completer<File>();
     AppUpdater.downloadFn = (url, {fileName, required onProgress}) {
       onProgress(_mb25, _mb100);
@@ -122,7 +133,11 @@ void main() {
     };
     AppUpdater.installFn = (file) async {};
 
-    await _openDialog(tester, optional: true, url: 'http://example.com/setup.exe');
+    await _openDialog(
+      tester,
+      optional: true,
+      url: 'http://example.com/setup.exe',
+    );
     expect(find.text('Actualización disponible'), findsOneWidget);
 
     await tester.tap(find.text('Descargar e instalar (.exe)'));
@@ -141,7 +156,9 @@ void main() {
     expect(find.text('Descargar e instalar (.exe)'), findsOneWidget);
   });
 
-  testWidgets('Obligatorio: sin botón Cancelar durante la descarga', (tester) async {
+  testWidgets('Obligatorio: sin botón Cancelar durante la descarga', (
+    tester,
+  ) async {
     final pending = Completer<File>();
     AppUpdater.downloadFn = (url, {fileName, required onProgress}) {
       onProgress(_mb25, _mb100);
@@ -158,7 +175,9 @@ void main() {
     expect(find.text('Cancelar'), findsNothing);
   });
 
-  testWidgets('Obligatorio: la ventana no se puede cerrar con Esc', (tester) async {
+  testWidgets('Obligatorio: la ventana no se puede cerrar con Esc', (
+    tester,
+  ) async {
     AppUpdater.downloadFn = (url, {fileName, required onProgress}) async {
       throw const AppUpdateCancelled();
     };
@@ -172,7 +191,9 @@ void main() {
     expect(find.text('Actualización requerida'), findsOneWidget);
   });
 
-  testWidgets('Error de descarga: mensaje del servidor y Reintentar funciona', (tester) async {
+  testWidgets('Error de descarga: mensaje del servidor y Reintentar funciona', (
+    tester,
+  ) async {
     var attempts = 0;
     AppUpdater.downloadFn = (url, {fileName, required onProgress}) async {
       attempts++;
@@ -200,7 +221,9 @@ void main() {
     expect(find.text('Instalación iniciada'), findsOneWidget);
   });
 
-  testWidgets('Sin URL de descarga: botón deshabilitado con aviso', (tester) async {
+  testWidgets('Sin URL de descarga: botón deshabilitado con aviso', (
+    tester,
+  ) async {
     await _openDialog(tester, optional: false, url: '');
     // El botón existe pero DESHABILITADO (onPressed: null).
     final button = tester.widget<FilledButton>(

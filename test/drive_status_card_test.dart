@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_host.dart';
-import 'package:hardstreet_admin/widgets/drive_status_card.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_host.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_status_card.dart';
 
 /// Drive mínimo para probar la card (no habla con ningún servidor).
 class _FakeDrive extends DriveBase {

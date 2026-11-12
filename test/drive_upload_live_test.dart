@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 import 'package:hardstreet_admin/widgets/anim.dart';
 
 /// PNG 1x1 válido: se puede decodificar de verdad.
@@ -39,16 +39,20 @@ void main() {
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 80)));
+      () => Future<void>.delayed(const Duration(milliseconds: 80)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  testWidgets('la foto recién subida entra ya puesta, con su miniatura',
-      (tester) async {
+  testWidgets('la foto recién subida entra ya puesta, con su miniatura', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(body: DrivePage(drive: drive)),
+      ),
     );
     await settle(tester);
 
@@ -67,18 +71,23 @@ void main() {
     expect(find.text('nueva.png'), findsOneWidget);
 
     // 2. Y con su imagen, no un hueco: se pinta el archivo recién guardado.
-    final thumbs = find.byWidgetPredicate((w) =>
-        w is Image &&
-        w.image is FileImage &&
-        (w.image as FileImage).file.path.endsWith('nueva.png'));
+    final thumbs = find.byWidgetPredicate(
+      (w) =>
+          w is Image &&
+          w.image is FileImage &&
+          (w.image as FileImage).file.path.endsWith('nueva.png'),
+    );
     expect(thumbs, findsOneWidget);
 
     // 3. Nada de animación de entrada para lo que llega por una subida:
     //    la única animación es la de la imagen al bajar (y la de deslizar).
-    final reveals =
-        tester.widgetList<ScrollReveal>(find.byType(ScrollReveal)).toList();
+    final reveals = tester
+        .widgetList<ScrollReveal>(find.byType(ScrollReveal))
+        .toList();
     expect(reveals.where((r) => r.animate), isEmpty);
 
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 40)));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 40)),
+    );
   });
 }

@@ -4,8 +4,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/print_models.dart';
-import 'package:hardstreet_admin/widgets/print_preview.dart';
+import 'package:hardstreet_admin/modules/print/models/print_models.dart';
+import 'package:hardstreet_admin/modules/print/widgets/print_preview.dart';
 
 // ==================================================================
 // EL DIÁLOGO DE RECORTE, TAL COMO LO USA EL USUARIO

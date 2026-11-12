@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/packages_page.dart';
-import 'package:hardstreet_admin/widgets/drive_thumb.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/packages/pages/packages_page.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_thumb.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
 
 // ==================================================================
@@ -113,13 +113,15 @@ void _installMock() {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       _updated.add(body);
       return http.Response(
-        jsonEncode({'ok': true, 'message': 'Categoría actualizada exitosamente'}),
+        jsonEncode({
+          'ok': true,
+          'message': 'Categoría actualizada exitosamente',
+        }),
         200,
         headers: headers,
       );
     }
-    if (path.endsWith('/api/admin/categories') &&
-        request.method == 'DELETE') {
+    if (path.endsWith('/api/admin/categories') && request.method == 'DELETE') {
       _deleted.add(request.url.queryParameters['id'] ?? '');
       return http.Response(
         jsonEncode({
@@ -291,8 +293,10 @@ void main() {
     // La categoría sin paquetes lo explica en vez de quedarse en blanco.
     await _tap(tester, find.textContaining('BAUTIZO'));
     expect(
-      find.text('No hay paquetes que coincidan. Crea el primero con el botón '
-          '"Nuevo paquete".'),
+      find.text(
+        'No hay paquetes que coincidan. Crea el primero con el botón '
+        '"Nuevo paquete".',
+      ),
       findsOneWidget,
     );
     await _tap(tester, find.byIcon(Icons.arrow_back_rounded));
@@ -422,7 +426,8 @@ void main() {
     // El diálogo abre con lo que ya tenía la categoría.
     expect(find.text('Personalizar categoría'), findsWidgets);
     expect(
-      tester.widget<TextField>(find.byKey(const ValueKey('category-name')))
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('category-name')))
           .controller!
           .text,
       isNotEmpty,

@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/notifications_page.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/notifications/pages/notifications_page.dart';
 
 /// Eventos del módulo tal como los manda /api/admin/notifications.
 List<Map<String, dynamic>> _events() => [
@@ -160,13 +160,13 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('notif-roles-agenda-proxima')));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('¿Quién recibe «Avisar a fechas próximas a agenda»?'),
-        findsOneWidget);
+    expect(
+      find.text('¿Quién recibe «Avisar a fechas próximas a agenda»?'),
+      findsOneWidget,
+    );
 
     // Agregar Admin a Cliente + Colaborador.
-    await tester.tap(
-      find.byKey(const ValueKey('notif-role-agenda-proxima-1')),
-    );
+    await tester.tap(find.byKey(const ValueKey('notif-role-agenda-proxima-1')));
     await tester.pump();
     await tester.tap(find.text('Guardar'));
     await tester.pump();

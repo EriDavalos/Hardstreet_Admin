@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/version_checker.dart';
+import 'package:hardstreet_admin/app/version_checker.dart';
 
 /// Dónde se descarga la actualización: DEL HUB, que es el único servidor del
 /// Drive al que la app tiene que llegar (él busca el nodo que tenga el APK o

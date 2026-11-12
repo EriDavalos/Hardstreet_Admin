@@ -1,8 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/app_constants.dart';
-import 'package:hardstreet_admin/app_settings.dart';
-import 'package:hardstreet_admin/drive_base.dart' show drivePublicUrl;
-import 'package:hardstreet_admin/drive_host.dart';
+import 'package:hardstreet_admin/app/app_constants.dart';
+import 'package:hardstreet_admin/app/app_settings.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart'
+    show drivePublicUrl;
+import 'package:hardstreet_admin/modules/drive/services/drive_host.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// La dirección del drive es AJUSTABLE: en la red de la oficina el nombre
@@ -83,7 +84,10 @@ void main() {
 
   test('el respaldo público usa el puerto del HUB (no el del nodo)', () {
     // El respaldo por HTTP del MISMO nombre apunta al puerto del hub.
-    expect(DriveHost.publicHttp, 'http://oriongo.ddns.net:${DriveHost.hubPort}');
+    expect(
+      DriveHost.publicHttp,
+      'http://oriongo.ddns.net:${DriveHost.hubPort}',
+    );
     // El respaldo local también es el hub: el puerto 4000 es del servidor de
     // archivos y solo lo alcanza el hub, nunca el teléfono.
     expect(DriveHost.lanFallback, 'http://192.168.1.72:${DriveHost.hubPort}');

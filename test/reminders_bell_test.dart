@@ -3,9 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/reminders_service.dart';
-import 'package:hardstreet_admin/widgets/reminders_bell.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/notifications/services/reminders_service.dart';
+import 'package:hardstreet_admin/modules/notifications/widgets/reminders_bell.dart';
 
 /// Monta la campanita dentro de un MaterialApp mínimo, con el servicio
 /// precargado (sin red) para poder verificar el badge y el diálogo.
@@ -15,11 +15,13 @@ Future<void> _pumpBell(WidgetTester tester, {int unread = 0}) async {
   // servidor y, sin este mock, el TestWidgetsFlutterBinding devolvería 400 y
   // rompería el diálogo.
   final previousClient = HsApi.client;
-  HsApi.client = MockClient((_) async => http.Response(
-        '{"ok":true,"unread":0}',
-        200,
-        headers: {'content-type': 'application/json'},
-      ));
+  HsApi.client = MockClient(
+    (_) async => http.Response(
+      '{"ok":true,"unread":0}',
+      200,
+      headers: {'content-type': 'application/json'},
+    ),
+  );
   addTearDown(() => HsApi.client = previousClient);
 
   service.seedForTest([
@@ -52,7 +54,9 @@ Future<void> _pumpBell(WidgetTester tester, {int unread = 0}) async {
     ),
   );
   await tester.pump();
-}/// Iconos dentro de la fila de un aviso.
+}
+
+/// Iconos dentro de la fila de un aviso.
 ///
 /// La fila lleva clave por ORIGEN + ID: los ids de la agenda y de los avisos
 /// del equipo (envíos a impresión) viven en tablas distintas y pueden coincidir.
@@ -61,10 +65,12 @@ List<IconData?> _rowIcons(
   int id, {
   String source = 'event',
 }) => tester
-    .widgetList<Icon>(find.descendant(
-      of: find.byKey(ValueKey('reminder-$source-$id')),
-      matching: find.byType(Icon),
-    ))
+    .widgetList<Icon>(
+      find.descendant(
+        of: find.byKey(ValueKey('reminder-$source-$id')),
+        matching: find.byType(Icon),
+      ),
+    )
     .map((i) => i.icon)
     .toList();
 
@@ -73,8 +79,9 @@ void main() {
 
   tearDown(() => service.reset());
 
-  testWidgets('badge cuenta los avisos NO leídos (y oculta si no hay)',
-      (tester) async {
+  testWidgets('badge cuenta los avisos NO leídos (y oculta si no hay)', (
+    tester,
+  ) async {
     await _pumpBell(tester, unread: 0);
     // Sin no leídos: no debe salir ningún badge con número.
     expect(find.text('1'), findsNothing);
@@ -89,8 +96,9 @@ void main() {
     expect(find.text('9+'), findsOneWidget);
   });
 
-  testWidgets('al tocar la campanita se abre el PANEL con los avisos',
-      (tester) async {
+  testWidgets('al tocar la campanita se abre el PANEL con los avisos', (
+    tester,
+  ) async {
     await _pumpBell(tester, unread: 2);
 
     await tester.tap(find.byType(RemindersBell));
@@ -100,8 +108,11 @@ void main() {
     // (junto a la campanita) sin tapar el resto de la pantalla.
     expect(find.byType(Dialog), findsNothing);
     final panel = tester.getRect(find.text('Avisos de eventos'));
-    expect(panel.top, lessThan(160),
-        reason: 'el panel queda anclado arriba, bajo la barra superior');
+    expect(
+      panel.top,
+      lessThan(160),
+      reason: 'el panel queda anclado arriba, bajo la barra superior',
+    );
 
     expect(find.text('Avisos de eventos'), findsOneWidget);
     expect(find.text('Aviso 1'), findsOneWidget);
@@ -110,8 +121,9 @@ void main() {
     expect(find.text('Marcar leídos'), findsOneWidget);
   });
 
-  testWidgets('"Marcar leídos" deja las filas leÍDAS y oculta la acción',
-      (tester) async {
+  testWidgets('"Marcar leídos" deja las filas leÍDAS y oculta la acción', (
+    tester,
+  ) async {
     await _pumpBell(tester, unread: 2);
     expect(find.text('2'), findsOneWidget);
 
@@ -142,8 +154,9 @@ void main() {
     expect(find.text('Avisos de eventos'), findsNothing);
   });
 
-  testWidgets('un aviso de impresión llega a la campanita y se marca leído',
-      (tester) async {
+  testWidgets('un aviso de impresión llega a la campanita y se marca leído', (
+    tester,
+  ) async {
     final service = RemindersService.instance;
     // Lo que devuelve GET /api/reminders: los envíos a impresión viajan
     // mezclados con la agenda, marcados con `source: 'print'`.
@@ -151,8 +164,11 @@ void main() {
     final previousClient = HsApi.client;
     HsApi.client = MockClient((request) async {
       if (request.method == 'PUT') bodies.add(request.body);
-      return http.Response('{"ok":true,"unread":0}', 200,
-          headers: {'content-type': 'application/json'});
+      return http.Response(
+        '{"ok":true,"unread":0}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
     });
     addTearDown(() => HsApi.client = previousClient);
 
@@ -172,10 +188,7 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
-          body: Align(
-            alignment: Alignment.topRight,
-            child: RemindersBell(),
-          ),
+          body: Align(alignment: Alignment.topRight, child: RemindersBell()),
         ),
       ),
     );
@@ -196,15 +209,19 @@ void main() {
     expect(service.unread, 0);
   });
 
-  testWidgets('un aviso del módulo Notificaciones ABRE su módulo al tocarlo',
-      (tester) async {
+  testWidgets('un aviso del módulo Notificaciones ABRE su módulo al tocarlo', (
+    tester,
+  ) async {
     final service = RemindersService.instance;
     final bodies = <String>[];
     final previousClient = HsApi.client;
     HsApi.client = MockClient((request) async {
       if (request.method == 'PUT') bodies.add(request.body);
-      return http.Response('{"ok":true,"unread":0}', 200,
-          headers: {'content-type': 'application/json'});
+      return http.Response(
+        '{"ok":true,"unread":0}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
     });
     addTearDown(() => HsApi.client = previousClient);
 
@@ -250,16 +267,19 @@ void main() {
     expect(find.text('Avisos de eventos'), findsNothing);
   });
 
-  testWidgets(
-      'una novedad del paquete llega a la campanita y abre Mi paquete',
-      (tester) async {
+  testWidgets('una novedad del paquete llega a la campanita y abre Mi paquete', (
+    tester,
+  ) async {
     final service = RemindersService.instance;
     final bodies = <String>[];
     final previousClient = HsApi.client;
     HsApi.client = MockClient((request) async {
       if (request.method == 'PUT') bodies.add(request.body);
-      return http.Response('{"ok":true,"unread":0}', 200,
-          headers: {'content-type': 'application/json'});
+      return http.Response(
+        '{"ok":true,"unread":0}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
     });
     addTearDown(() => HsApi.client = previousClient);
 

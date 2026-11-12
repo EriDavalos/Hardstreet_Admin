@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../hs_access.dart';
-import '../theme.dart';
-import 'anim.dart';
-import 'hs_modal.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/app/theme.dart';
+
+import 'package:hardstreet_admin/widgets/anim.dart';
+import 'package:hardstreet_admin/widgets/hs_modal.dart';
 
 /// Paleta dorada de la marca (idéntica a la web: --gold / --gold-light) y el
 /// fondo oscuro del "flyer" con el que se representan los paquetes.

@@ -1,8 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/note_model.dart';
-import 'package:hardstreet_admin/note_selection.dart';
+import 'package:hardstreet_admin/modules/notes/models/note_model.dart';
+import 'package:hardstreet_admin/modules/notes/models/note_selection.dart';
 
 /// SELECCIÓN EN NOTAS: un tramo puede empezar y terminar a la mitad de un
 /// párrafo; lo que se queda a la mitad conserva las letras que no se eligieron.

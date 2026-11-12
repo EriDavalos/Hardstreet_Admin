@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 /// El widget de eventos vive FUERA de la app (pantalla de inicio de Android y
 /// panel de escritorio de Windows), así que cada plataforma lleva su propia
@@ -13,8 +13,7 @@ import 'package:hardstreet_admin/theme.dart';
 ///   Android -> android/app/src/main/res/values/colors.xml
 ///   Windows -> windows/runner/event_widget.cpp (paletas kLight / kDark)
 
-const String _androidColors =
-    'android/app/src/main/res/values/colors.xml';
+const String _androidColors = 'android/app/src/main/res/values/colors.xml';
 const String _windowsCpp = 'windows/runner/event_widget.cpp';
 
 /// Colores declarados en un colors.xml (nombre -> color).
@@ -22,8 +21,7 @@ Map<String, Color> _readAndroid(String xml) {
   final out = <String, Color>{};
   final re = RegExp(r'<color name="([^"]+)">#([0-9A-Fa-f]{6})</color>');
   for (final m in re.allMatches(xml)) {
-    out[m.group(1)!] =
-        Color(0xFF000000 | int.parse(m.group(2)!, radix: 16));
+    out[m.group(1)!] = Color(0xFF000000 | int.parse(m.group(2)!, radix: 16));
   }
   return out;
 }
@@ -75,9 +73,7 @@ void main() {
     final card = theme.cardColor;
     // Las líneas del tema oscuro son blanco al 8 % (se aplanan sobre la
     // tarjeta); la pastilla es la marca al 8 % en claro y al 16 % en oscuro.
-    final line = isDark
-        ? _over(Colors.white, card, .08)
-        : theme.dividerColor;
+    final line = isDark ? _over(Colors.white, card, .08) : theme.dividerColor;
     final badge = _over(scheme.primary, card, isDark ? .16 : .08);
     return {
       'card': card,
@@ -111,46 +107,88 @@ void main() {
       return ((v >> 16) & 0xFF) + ((v >> 8) & 0xFF) + (v & 0xFF);
     }
 
-    expect(lum(colors['event_widget_bg']!),
-        lessThan(lum(lightExpected['card']!)),
-        reason: 'la tarjeta clara va más oscura que el blanco de la app');
-    expect(lum(colors['event_widget_bg_dark']!),
-        lessThan(lum(darkExpected['card']!)),
-        reason: 'la tarjeta oscura va más oscura que la de la app');
+    expect(
+      lum(colors['event_widget_bg']!),
+      lessThan(lum(lightExpected['card']!)),
+      reason: 'la tarjeta clara va más oscura que el blanco de la app',
+    );
+    expect(
+      lum(colors['event_widget_bg_dark']!),
+      lessThan(lum(darkExpected['card']!)),
+      reason: 'la tarjeta oscura va más oscura que la de la app',
+    );
     for (final f in ['event_widget_bg.xml', 'event_widget_bg_dark.xml']) {
-      final svg = File('android/app/src/main/res/drawable/$f').readAsStringSync();
-      expect(svg.contains('<stroke'), isFalse,
-          reason: '$f ya no dibuja borde');
+      final svg = File('android/app/src/main/res/drawable/$f')
+          .readAsStringSync();
+      expect(svg.contains('<stroke'), isFalse, reason: '$f ya no dibuja borde');
     }
 
-    same(colors['event_widget_accent']!, lightExpected['brand']!,
-        'Acento claro');
-    same(colors['event_widget_accent_dark']!, darkExpected['brand']!,
-        'Acento oscuro');
-    same(colors['event_widget_title']!, lightExpected['text']!,
-        'Titular claro');
-    same(colors['event_widget_title_dark']!, darkExpected['text']!,
-        'Titular oscuro');
-    same(colors['event_widget_muted']!, lightExpected['muted']!,
-        'Secundario claro');
-    same(colors['event_widget_muted_dark']!, darkExpected['muted']!,
-        'Secundario oscuro');
-    same(colors['event_widget_time']!, lightExpected['accent']!,
-        'Hora clara');
-    same(colors['event_widget_time_dark']!, darkExpected['accent']!,
-        'Hora oscura');
-    same(colors['event_widget_divider']!, lightExpected['divider']!,
-        'Línea clara');
-    same(colors['event_widget_divider_dark']!, darkExpected['divider']!,
-        'Línea oscura');
-    same(colors['event_widget_badge']!, lightExpected['badge_bg']!,
-        'Contador claro');
-    same(colors['event_widget_badge_dark']!, darkExpected['badge_bg']!,
-        'Contador oscuro');
-    same(colors['event_widget_add_bg']!, lightExpected['add_bg']!,
-        'Botón Agregar claro');
-    same(colors['event_widget_add_bg_dark']!, darkExpected['add_bg']!,
-        'Botón Agregar oscuro');
+    same(
+      colors['event_widget_accent']!,
+      lightExpected['brand']!,
+      'Acento claro',
+    );
+    same(
+      colors['event_widget_accent_dark']!,
+      darkExpected['brand']!,
+      'Acento oscuro',
+    );
+    same(
+      colors['event_widget_title']!,
+      lightExpected['text']!,
+      'Titular claro',
+    );
+    same(
+      colors['event_widget_title_dark']!,
+      darkExpected['text']!,
+      'Titular oscuro',
+    );
+    same(
+      colors['event_widget_muted']!,
+      lightExpected['muted']!,
+      'Secundario claro',
+    );
+    same(
+      colors['event_widget_muted_dark']!,
+      darkExpected['muted']!,
+      'Secundario oscuro',
+    );
+    same(colors['event_widget_time']!, lightExpected['accent']!, 'Hora clara');
+    same(
+      colors['event_widget_time_dark']!,
+      darkExpected['accent']!,
+      'Hora oscura',
+    );
+    same(
+      colors['event_widget_divider']!,
+      lightExpected['divider']!,
+      'Línea clara',
+    );
+    same(
+      colors['event_widget_divider_dark']!,
+      darkExpected['divider']!,
+      'Línea oscura',
+    );
+    same(
+      colors['event_widget_badge']!,
+      lightExpected['badge_bg']!,
+      'Contador claro',
+    );
+    same(
+      colors['event_widget_badge_dark']!,
+      darkExpected['badge_bg']!,
+      'Contador oscuro',
+    );
+    same(
+      colors['event_widget_add_bg']!,
+      lightExpected['add_bg']!,
+      'Botón Agregar claro',
+    );
+    same(
+      colors['event_widget_add_bg_dark']!,
+      darkExpected['add_bg']!,
+      'Botón Agregar oscuro',
+    );
   });
 
   test('Windows: el panel conserva la identidad de la app y se despega del '
@@ -170,31 +208,52 @@ void main() {
     // (1) Los textos y la marca SIGUEN siendo los del tema: el panel se ve
     //     como la app, no "parecido".
     for (final key in ['brand', 'accent', 'text', 'muted']) {
-      expect(_hex(panelLight[key]!), _hex(lightExpected[key]!),
-          reason: 'kLight.$key del panel vs. la app');
-      expect(_hex(panelDark[key]!), _hex(darkExpected[key]!),
-          reason: 'kDark.$key del panel vs. la app');
+      expect(
+        _hex(panelLight[key]!),
+        _hex(lightExpected[key]!),
+        reason: 'kLight.$key del panel vs. la app',
+      );
+      expect(
+        _hex(panelDark[key]!),
+        _hex(darkExpected[key]!),
+        reason: 'kDark.$key del panel vs. la app',
+      );
     }
 
     // (2) El fondo del panel va MÁS OSCURO que la tarjeta del tema (así el
     //     panel se distingue del escritorio, que es lo que pidió el usuario).
-    expect(lum(panelLight['card']!), lessThan(lum(lightExpected['card']!)),
-        reason: 'el panel claro debe ir más oscuro que la tarjeta blanca');
-    expect(lum(panelDark['card']!), lessThan(lum(darkExpected['card']!)),
-        reason: 'el panel oscuro debe ir más oscuro que la tarjeta de la app');
+    expect(
+      lum(panelLight['card']!),
+      lessThan(lum(lightExpected['card']!)),
+      reason: 'el panel claro debe ir más oscuro que la tarjeta blanca',
+    );
+    expect(
+      lum(panelDark['card']!),
+      lessThan(lum(darkExpected['card']!)),
+      reason: 'el panel oscuro debe ir más oscuro que la tarjeta de la app',
+    );
 
     // (3) Las líneas del listado no se confunden con el fondo.
     for (final key in ['divider', 'separator']) {
-      expect(_hex(panelLight[key]!), isNot(_hex(panelLight['card']!)),
-          reason: 'kLight.$key debe leerse sobre el fondo');
-      expect(_hex(panelDark[key]!), isNot(_hex(panelDark['card']!)),
-          reason: 'kDark.$key debe leerse sobre el fondo');
+      expect(
+        _hex(panelLight[key]!),
+        isNot(_hex(panelLight['card']!)),
+        reason: 'kLight.$key debe leerse sobre el fondo',
+      );
+      expect(
+        _hex(panelDark[key]!),
+        isNot(_hex(panelDark['card']!)),
+        reason: 'kDark.$key debe leerse sobre el fondo',
+      );
     }
 
     // (4) SIN borde dibujado: la línea sobre las esquinas redondeadas se
     //     recortaba y se veía sucia. El redondeo lo hace la región de ventana.
-    expect(cpp.contains('CreatePen(PS_SOLID, 1, c.border)'), isFalse,
-        reason: 'el panel ya no dibuja borde sobre el redondeo');
+    expect(
+      cpp.contains('CreatePen(PS_SOLID, 1, c.border)'),
+      isFalse,
+      reason: 'el panel ya no dibuja borde sobre el redondeo',
+    );
   });
 
   test('el widget de Android NO tiene carpeta values-night (no sigue al '
@@ -209,9 +268,14 @@ void main() {
     // primer frame). Si apareciera un colors.xml con -night, el widget pasaría
     // a seguir al tema del teléfono en vez del de la app.
     for (final d in night) {
-      final files = d.listSync().map((f) => f.path.split(RegExp(r'[/\\]')).last);
-      expect(files, isNot(contains('colors.xml')),
-          reason: 'un colors.xml en values-night pisaría el modo de la app');
+      final files = d.listSync().map(
+        (f) => f.path.split(RegExp(r'[/\\]')).last,
+      );
+      expect(
+        files,
+        isNot(contains('colors.xml')),
+        reason: 'un colors.xml en values-night pisaría el modo de la app',
+      );
     }
   });
 }

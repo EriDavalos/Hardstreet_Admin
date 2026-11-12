@@ -2,10 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/pages/site_page.dart';
-import 'package:hardstreet_admin/web_content.dart';
-import 'package:hardstreet_admin/web_sections.dart';
-import 'package:hardstreet_admin/widgets/site_section_preview.dart';
+import 'package:hardstreet_admin/modules/site/pages/site_page.dart';
+import 'package:hardstreet_admin/modules/site/models/web_content.dart';
+import 'package:hardstreet_admin/modules/site/models/web_sections.dart';
+import 'package:hardstreet_admin/modules/site/widgets/site_section_preview.dart';
 
 // ==================================================================
 // MÓDULO SITIO WEB (diseñador por SECCIONES)
@@ -73,11 +73,8 @@ class FakeSiteApi implements SiteContentApi {
   }
 
   @override
-  Future<SiteContext> context() async => SiteContext(
-        categories: categories,
-        gold: gold,
-        stored: dbHasContent,
-      );
+  Future<SiteContext> context() async =>
+      SiteContext(categories: categories, gold: gold, stored: dbHasContent);
 }
 
 void main() {
@@ -88,18 +85,26 @@ void main() {
         return;
       }
       final html = readHtml();
-      expect(hooksOf(html, 'data-hs'),
-          kSiteTexts.map((f) => f.key).toSet(),
-          reason: 'Los textos del panel y los ganchos del HTML deben ser los mismos');
-      expect(hooksOf(html, 'data-hs-img'),
-          kSiteImages.map((f) => f.key).toSet(),
-          reason: 'Las imágenes del panel y los ganchos del HTML deben ser los mismos');
+      expect(
+        hooksOf(html, 'data-hs'),
+        kSiteTexts.map((f) => f.key).toSet(),
+        reason:
+            'Los textos del panel y los ganchos del HTML deben ser los mismos',
+      );
+      expect(
+        hooksOf(html, 'data-hs-img'),
+        kSiteImages.map((f) => f.key).toSet(),
+        reason: 'Las imágenes del panel y los ganchos del HTML deben ser los mismos',
+      );
       // La portada tiene una sección OCULTA (`custom`) que es la plantilla
       // interna de la que se clonan las "Secciones libres" del panel: no es
       // una sección del catálogo (sus copias viajan en `extraSections`).
       final sections = hooksOf(html, 'data-hs-section')..remove('custom');
-      expect(sections, kSiteSections.map((f) => f.key).toSet(),
-          reason: 'Las secciones del panel y los ganchos del HTML deben ser los mismos');
+      expect(
+        sections,
+        kSiteSections.map((f) => f.key).toSet(),
+        reason: 'Las secciones del panel y los ganchos del HTML deben ser los mismos',
+      );
     });
 
     test('los valores de fábrica son los que trae el HTML', () {
@@ -110,9 +115,13 @@ void main() {
       final html = normalizedHtml();
       for (final f in kSiteTexts) {
         for (final part in f.def.split('|')) {
-          expect(html.contains(part.trim()), isTrue,
-              reason: 'El texto de fábrica de "${f.key}" no está en el HTML: '
-                  '"${part.trim()}"');
+          expect(
+            html.contains(part.trim()),
+            isTrue,
+            reason:
+                'El texto de fábrica de "${f.key}" no está en el HTML: '
+                '"${part.trim()}"',
+          );
         }
       }
       // Las imágenes se declaran en el HTML… salvo los fondos (hero y divisor),
@@ -120,9 +129,13 @@ void main() {
       final css = File('../Hardstreet/index.css').readAsStringSync();
       for (final f in kSiteImages) {
         final where = f.background ? css : html;
-        expect(where.contains(f.def), isTrue,
-            reason: 'La imagen de fábrica de "${f.key}" no está en '
-                '${f.background ? 'index.css' : 'index.html'}: ${f.def}');
+        expect(
+          where.contains(f.def),
+          isTrue,
+          reason:
+              'La imagen de fábrica de "${f.key}" no está en '
+              '${f.background ? 'index.css' : 'index.html'}: ${f.def}',
+        );
       }
     });
 
@@ -136,7 +149,10 @@ void main() {
       }
       // Y los textos de dos líneas lo declaran (si no, se perdería el énfasis).
       expect(kSiteTexts.firstWhere((f) => f.key == 'hero_title').lines, isTrue);
-      expect(kSiteTexts.firstWhere((f) => f.key == 'hero_eyebrow').lines, isFalse);
+      expect(
+        kSiteTexts.firstWhere((f) => f.key == 'hero_eyebrow').lines,
+        isFalse,
+      );
     });
   });
 
@@ -149,7 +165,10 @@ void main() {
       final json = doc.toJson();
       expect(json.containsKey('images'), isFalse);
       expect(json['texts'], {'hero_cta': 'Reservar'});
-      expect((json['sections'] as Map)['contact'], {'visible': false, 'order': 1});
+      expect((json['sections'] as Map)['contact'], {
+        'visible': false,
+        'order': 1,
+      });
       expect(SiteContent.empty.toJson(), isEmpty);
       expect(SiteContent.empty.isEmpty, isTrue);
     });
@@ -178,8 +197,10 @@ void main() {
       // Y de vuelta: se lee tal cual (una sección sin props no los inventa).
       final back = SiteContent.fromJson(json);
       expect(back.propsOf('about')['stats'], isA<List>());
-      expect((back.propsOf('about')['stats'] as List).single,
-          {'value': 12, 'label': 'Bodas'});
+      expect((back.propsOf('about')['stats'] as List).single, {
+        'value': 12,
+        'label': 'Bodas',
+      });
       expect(back.propsOf('hero'), isEmpty);
     });
 
@@ -228,9 +249,13 @@ void main() {
     }) async {
       await tester.binding.setSurfaceSize(size);
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: SitePage(api: api, supported: supported)),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SitePage(api: api, supported: supported),
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
     }
 
@@ -254,8 +279,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('en plataformas sin soporte avisa y no pide datos',
-        (tester) async {
+    testWidgets('en plataformas sin soporte avisa y no pide datos', (
+      tester,
+    ) async {
       final api = FakeSiteApi();
       await pumpPage(tester, api: api, supported: false);
 
@@ -263,8 +289,9 @@ void main() {
       expect(api.saves, isEmpty);
     });
 
-    testWidgets('cada sección es una tarjeta con su miniatura y sus campos',
-        (tester) async {
+    testWidgets('cada sección es una tarjeta con su miniatura y sus campos', (
+      tester,
+    ) async {
       final api = FakeSiteApi();
       await pumpPage(tester, api: api);
 
@@ -272,28 +299,45 @@ void main() {
       expect(cardOf('hero'), findsOneWidget);
       expect(
         find.descendant(
-            of: cardOf('hero'), matching: find.byType(SiteSectionPreview)),
+          of: cardOf('hero'),
+          matching: find.byType(SiteSectionPreview),
+        ),
         findsOneWidget,
       );
       // La miniatura muestra el titular actual (las dos líneas del HTML).
-      expect(find.descendant(of: cardOf('hero'), matching: find.text('Capturando')),
-          findsOneWidget);
-      expect(find.descendant(of: cardOf('hero'), matching: find.text('Momentos Únicos')),
-          findsOneWidget);
+      expect(
+        find.descendant(of: cardOf('hero'), matching: find.text('Capturando')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: cardOf('hero'),
+          matching: find.text('Momentos Únicos'),
+        ),
+        findsOneWidget,
+      );
       // Y sus etiquetas de plantilla / orden.
-      expect(find.descendant(of: cardOf('hero'), matching: find.text('Plantilla')),
-          findsOneWidget);
-      expect(find.descendant(of: cardOf('hero'), matching: find.text('1')),
-          findsOneWidget);
+      expect(
+        find.descendant(of: cardOf('hero'), matching: find.text('Plantilla')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: cardOf('hero'), matching: find.text('1')),
+        findsOneWidget,
+      );
 
       // Al desplegarla aparecen sus campos de texto.
       await expand(tester, 'hero');
       expect(find.widgetWithText(TextField, 'Titular'), findsOneWidget);
-      expect(find.widgetWithText(TextField, 'Fondo de la portada'), findsOneWidget);
+      expect(
+        find.widgetWithText(TextField, 'Fondo de la portada'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('la miniatura se puede ver EN GRANDE dentro del módulo',
-        (tester) async {
+    testWidgets('la miniatura se puede ver EN GRANDE dentro del módulo', (
+      tester,
+    ) async {
       final api = FakeSiteApi();
       await pumpPage(tester, api: api);
 
@@ -312,8 +356,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('carga lo guardado, avisa de cambios y guarda lo editado',
-        (tester) async {
+    testWidgets('carga lo guardado, avisa de cambios y guarda lo editado', (
+      tester,
+    ) async {
       final api = FakeSiteApi(
         stored: const SiteContent(texts: {'hero_cta': 'Reservar'}),
       );
@@ -361,7 +406,9 @@ void main() {
 
       await tester.enterText(firstValue, '48');
       await tester.enterText(
-          find.byKey(const ValueKey('about-stat-0-label')), 'Bodas');
+        find.byKey(const ValueKey('about-stat-0-label')),
+        'Bodas',
+      );
       await tester.pumpAndSettle();
 
       // Un número más: se agrega a la lista.
@@ -371,16 +418,17 @@ void main() {
       expect(lastValue, findsOneWidget);
       await tester.enterText(lastValue, '7');
       await tester.enterText(
-          find.byKey(const ValueKey('about-stat-3-label')), 'Estudios');
+        find.byKey(const ValueKey('about-stat-3-label')),
+        'Estudios',
+      );
       await tester.pumpAndSettle();
 
       await save(tester);
 
-      final stats =
-          (api.saves.single.sectionOf('about').props['stats'] as List)
-              .cast<Map>()
-              .map((m) => m.cast<String, dynamic>())
-              .toList();
+      final stats = (api.saves.single.sectionOf('about').props['stats'] as List)
+          .cast<Map>()
+          .map((m) => m.cast<String, dynamic>())
+          .toList();
       expect(stats, hasLength(4));
       expect(stats.first, {'value': 48, 'label': 'Bodas'});
       expect(stats.last, {'value': 7, 'label': 'Estudios'});
@@ -388,8 +436,9 @@ void main() {
       expect(stats[1], {'value': 4, 'label': 'Años Exp.'});
     });
 
-    testWidgets('la galería guarda las fotos de cada categoría',
-        (tester) async {
+    testWidgets('la galería guarda las fotos de cada categoría', (
+      tester,
+    ) async {
       final api = FakeSiteApi();
       await pumpPage(tester, api: api);
 
@@ -403,7 +452,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(
         find.descendant(
-            of: find.byType(AlertDialog), matching: find.byType(TextField)),
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
         'images/banner.jpg',
       );
       await tester.tap(find.text('Agregar'));
@@ -430,15 +481,23 @@ void main() {
 
       // La portada baja un puesto (su flecha de bajar) y se oculta.
       final hero = cardOf('hero');
-      await tester.tap(find.descendant(
-          of: hero, matching: find.byIcon(Icons.keyboard_arrow_down_rounded)));
+      await tester.tap(
+        find.descendant(
+          of: hero,
+          matching: find.byIcon(Icons.keyboard_arrow_down_rounded),
+        ),
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.descendant(of: hero, matching: find.byType(Switch)));
+      await tester.tap(
+        find.descendant(of: hero, matching: find.byType(Switch)),
+      );
       await tester.pumpAndSettle();
 
       // El aviso de la tarjeta lo dice.
-      expect(find.descendant(of: hero, matching: find.text('Oculta')),
-          findsOneWidget);
+      expect(
+        find.descendant(of: hero, matching: find.text('Oculta')),
+        findsOneWidget,
+      );
 
       await save(tester);
       final saved = api.saves.single;
@@ -451,17 +510,22 @@ void main() {
       expect(saved.texts, isEmpty);
     });
 
-    testWidgets('una sección oculta no pierde lo que tenía escrito',
-        (tester) async {
+    testWidgets('una sección oculta no pierde lo que tenía escrito', (
+      tester,
+    ) async {
       // Un titular propio (distinto del de fábrica: lo igual al HTML no viaja).
       final api = FakeSiteApi(
-        stored: const SiteContent(texts: {'packages_title': 'Paquetes a tu medida'}),
+        stored: const SiteContent(
+          texts: {'packages_title': 'Paquetes a tu medida'},
+        ),
       );
       await pumpPage(tester, api: api);
 
       // Se oculta y se guarda: la sección viaja como oculta, con su texto.
       final packages = cardOf('packages');
-      await tester.tap(find.descendant(of: packages, matching: find.byType(Switch)));
+      await tester.tap(
+        find.descendant(of: packages, matching: find.byType(Switch)),
+      );
       await tester.pumpAndSettle();
       await save(tester);
 
@@ -470,7 +534,9 @@ void main() {
       expect(api.saves.single.sectionOf('packages').props, isEmpty);
 
       // Y al volver a encenderla, el texto sigue igual (no se perdió nada).
-      await tester.tap(find.descendant(of: packages, matching: find.byType(Switch)));
+      await tester.tap(
+        find.descendant(of: packages, matching: find.byType(Switch)),
+      );
       await tester.pumpAndSettle();
       await save(tester);
 
@@ -479,22 +545,30 @@ void main() {
       // En el primer guardado la base quedó con contenido: a partir de ahí los
       // guardados van COMPLETOS, así que las opciones de la sección viajan con
       // sus valores de fábrica (los que la web usaba hasta ahora).
-      expect(api.saves.last.sectionOf('packages').props,
-          siteSectionDefaults('packages'));
+      expect(
+        api.saves.last.sectionOf('packages').props,
+        siteSectionDefaults('packages'),
+      );
       // El campo del titular también lo sigue mostrando.
       await expand(tester, 'packages');
-      expect(find.widgetWithText(TextField, 'Paquetes a tu medida'), findsOneWidget);
+      expect(
+        find.widgetWithText(TextField, 'Paquetes a tu medida'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('con la base vacía avisa y sube TODO el contenido actual',
-        (tester) async {
+    testWidgets('con la base vacía avisa y sube TODO el contenido actual', (
+      tester,
+    ) async {
       // La web está usando su HTML: el módulo lo dice y ofrece pasar lo que hay
       // a la base de datos (que es lo que hace que la web lo lea de ahí).
       final api = FakeSiteApi();
       await pumpPage(tester, api: api);
 
-      expect(find.text('La base de datos todavía no tiene el contenido'),
-          findsOneWidget);
+      expect(
+        find.text('La base de datos todavía no tiene el contenido'),
+        findsOneWidget,
+      );
       expect(find.text('En el HTML del sitio'), findsOneWidget);
 
       await tester.tap(find.text('Guardar lo actual en la base'));
@@ -507,17 +581,20 @@ void main() {
       final saved = api.saves.single;
       expect(saved.texts, hasLength(kSiteTexts.length));
       expect(saved.images, hasLength(kSiteImages.length));
-      expect(saved.textOf('hero_title'),
-          kSiteTexts.firstWhere((f) => f.key == 'hero_title').def);
+      expect(
+        saved.textOf('hero_title'),
+        kSiteTexts.firstWhere((f) => f.key == 'hero_title').def,
+      );
       // Y las secciones con sus opciones de fábrica (los números de "Sobre
       // nosotros", por ejemplo).
-      expect(
-          (saved.sectionOf('about').props['stats'] as List), hasLength(3));
+      expect((saved.sectionOf('about').props['stats'] as List), hasLength(3));
       expect(saved.sectionOf('hero').visible, isTrue);
 
       // Después de subirlo, el aviso desaparece y el encabezado lo dice.
-      expect(find.text('La base de datos todavía no tiene el contenido'),
-          findsNothing);
+      expect(
+        find.text('La base de datos todavía no tiene el contenido'),
+        findsNothing,
+      );
       expect(find.text('En la base de datos'), findsOneWidget);
     });
 
@@ -535,7 +612,9 @@ void main() {
 
       await expand(tester, 'hero');
       await tester.enterText(
-          find.widgetWithText(TextField, 'Titular'), 'Bodas que|se recuerdan');
+        find.widgetWithText(TextField, 'Titular'),
+        'Bodas que|se recuerdan',
+      );
       await tester.pumpAndSettle();
       await save(tester);
 

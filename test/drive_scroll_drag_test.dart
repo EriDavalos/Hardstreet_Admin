@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/app_platform.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/app/app_platform.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 // ==================================================================
 // DRIVE EN EL CELULAR: SCROLLEAR NO ARRASTRA CARPETAS

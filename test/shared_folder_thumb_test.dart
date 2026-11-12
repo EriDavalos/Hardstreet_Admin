@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/local_share_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
-import 'package:hardstreet_admin/share_permissions.dart';
-import 'package:hardstreet_admin/shared_drive.dart';
-import 'package:hardstreet_admin/widgets/drive_thumb.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
+import 'package:hardstreet_admin/core/models/share_permissions.dart';
+import 'package:hardstreet_admin/modules/drive/services/shared_drive.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_thumb.dart';
 
 // ==================================================================
 // LA TARJETA DE UN VÍDEO EN UNA CARPETA COMPARTIDA

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/widgets/drive_folder_picker.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_folder_picker.dart';
 
 // ==================================================================
 // HARD STREET ADMIN — Selector de carpeta del Drive

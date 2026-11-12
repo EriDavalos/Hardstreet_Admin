@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
 
 void main() {
   group('DriveService (sistema de archivos temporal)', () {
@@ -12,10 +12,13 @@ void main() {
     late String srcBase;
 
     setUp(() async {
-      final tmp = await Directory.systemTemp.createTemp('hardstreet_drive_test');
+      final tmp = await Directory.systemTemp.createTemp(
+        'hardstreet_drive_test',
+      );
       drive = DriveService.testRoot(tmp);
-      final srcTmp =
-          await Directory.systemTemp.createTemp('hardstreet_drive_src');
+      final srcTmp = await Directory.systemTemp.createTemp(
+        'hardstreet_drive_src',
+      );
       srcBase = srcTmp.path;
     });
 
@@ -45,7 +48,9 @@ void main() {
     });
 
     test('lista los archivos de cualquier tipo (no solo imágenes)', () async {
-      await drive.uploadFromPaths([srcFile('foto.png', [9]).path]);
+      await drive.uploadFromPaths([
+        srcFile('foto.png', [9]).path,
+      ]);
       final txt = File([srcBase, 'notas.txt'].join('/'))
         ..writeAsStringSync('hola');
       await drive.uploadFromPaths([txt.path]);
@@ -91,11 +96,15 @@ void main() {
     });
 
     test('moveItems mueve archivos y carpetas a otra carpeta', () async {
-      await drive.uploadFromPaths([srcFile('a.jpg', [1]).path]);
+      await drive.uploadFromPaths([
+        srcFile('a.jpg', [1]).path,
+      ]);
       await drive.createFolder('Destino');
       await drive.createFolder('Sub');
       await drive.openFolder('Sub');
-      await drive.uploadFromPaths([srcFile('deep.jpg', [2]).path]);
+      await drive.uploadFromPaths([
+        srcFile('deep.jpg', [2]).path,
+      ]);
       await drive.goUp();
 
       final res = await drive.moveItems(['a.jpg', 'Sub'], ['Destino']);
@@ -122,12 +131,13 @@ void main() {
       expect(res.moved, 1);
       expect(res.errors, isEmpty);
       await drive.openFolder('Destino');
-      expect(drive.items.map((i) => i.name),
-          containsAll(['a.jpg', 'a (1).jpg']));
+      expect(
+        drive.items.map((i) => i.name),
+        containsAll(['a.jpg', 'a (1).jpg']),
+      );
     });
 
-    test('moveItems no permite mover una carpeta dentro de sí misma',
-        () async {
+    test('moveItems no permite mover una carpeta dentro de sí misma', () async {
       await drive.createFolder('Carpeta');
       final res = await drive.moveItems(['Carpeta'], ['Carpeta']);
       expect(res.moved, 0);
@@ -136,10 +146,14 @@ void main() {
     });
 
     test('copyItems copia archivos y carpetas recursivamente', () async {
-      await drive.uploadFromPaths([srcFile('b.png', [1]).path]);
+      await drive.uploadFromPaths([
+        srcFile('b.png', [1]).path,
+      ]);
       await drive.createFolder('Sub');
       await drive.openFolder('Sub');
-      await drive.uploadFromPaths([srcFile('deep.jpg', [2]).path]);
+      await drive.uploadFromPaths([
+        srcFile('deep.jpg', [2]).path,
+      ]);
       await drive.goUp();
       await drive.createFolder('Destino');
 
@@ -156,73 +170,84 @@ void main() {
       expect(drive.items.map((i) => i.name), contains('deep.jpg'));
     });
 
-    test('copyItems no permite copiar una carpeta dentro de sí misma',
-        () async {
-      await drive.createFolder('Carpeta');
-      final res = await drive.copyItems(['Carpeta'], ['Carpeta']);
-      expect(res.copied, 0);
-      expect(res.errors, isNotEmpty);
-    });
+    test(
+      'copyItems no permite copiar una carpeta dentro de sí misma',
+      () async {
+        await drive.createFolder('Carpeta');
+        final res = await drive.copyItems(['Carpeta'], ['Carpeta']);
+        expect(res.copied, 0);
+        expect(res.errors, isNotEmpty);
+      },
+    );
 
     test('deleteItems elimina archivos y carpetas en lote', () async {
-      await drive.uploadFromPaths([srcFile('a.jpg', [1]).path]);
+      await drive.uploadFromPaths([
+        srcFile('a.jpg', [1]).path,
+      ]);
       await drive.createFolder('Sub');
       await drive.openFolder('Sub');
-      await drive.uploadFromPaths([srcFile('deep.jpg', [2]).path]);
+      await drive.uploadFromPaths([
+        srcFile('deep.jpg', [2]).path,
+      ]);
       await drive.goUp();
 
       // "inexistente.jpg" se ignora silenciosamente
-      final res =
-          await drive.deleteItems(['a.jpg', 'Sub', 'inexistente.jpg']);
+      final res = await drive.deleteItems(['a.jpg', 'Sub', 'inexistente.jpg']);
       expect(res.deleted, 2);
       expect(res.errors, isEmpty);
       expect(drive.items, isEmpty);
     });
 
-    test('uploadFromPaths crea uploadJobs con conteo y estados correctos',
-        () async {
-      var notified = 0;
-      drive.addListener(() => notified++);
+    test(
+      'uploadFromPaths crea uploadJobs con conteo y estados correctos',
+      () async {
+        var notified = 0;
+        drive.addListener(() => notified++);
 
-      final saved = await drive
-          .uploadFromPaths([srcFile('a.jpg', [1]).path,
-                            srcFile('b.jpg', [2, 3]).path]);
-      expect(saved, 2);
+        final saved = await drive.uploadFromPaths([
+          srcFile('a.jpg', [1]).path,
+          srcFile('b.jpg', [2, 3]).path,
+        ]);
+        expect(saved, 2);
 
-      // Hubo notificaciones en tiempo real (add, progreso y/o fin).
-      expect(notified, greaterThanOrEqualTo(2));
-      // Al terminar: 2 trabajos, ambos 'done' y con sent = total.
-      expect(drive.uploadJobs.length, 2);
-      expect(
-        drive.uploadJobs.every((j) => j.status == 'done'),
-        isTrue,
-        reason: 'todos los jobs deben terminar en done',
-      );
-      for (final j in drive.uploadJobs) {
-        expect(j.sent, j.total,
-            reason: 'el progreso de ${j.name} debe llegar al 100%');
-      }
-      final done =
-          drive.uploadJobs.where((j) => j.status == 'done').length;
-      final active =
-          drive.uploadJobs.where((j) => j.status == 'uploading').length;
-      expect(done, 2);
-      expect(active, 0);
-    });
+        // Hubo notificaciones en tiempo real (add, progreso y/o fin).
+        expect(notified, greaterThanOrEqualTo(2));
+        // Al terminar: 2 trabajos, ambos 'done' y con sent = total.
+        expect(drive.uploadJobs.length, 2);
+        expect(
+          drive.uploadJobs.every((j) => j.status == 'done'),
+          isTrue,
+          reason: 'todos los jobs deben terminar en done',
+        );
+        for (final j in drive.uploadJobs) {
+          expect(
+            j.sent,
+            j.total,
+            reason: 'el progreso de ${j.name} debe llegar al 100%',
+          );
+        }
+        final done = drive.uploadJobs.where((j) => j.status == 'done').length;
+        final active = drive.uploadJobs
+            .where((j) => j.status == 'uploading')
+            .length;
+        expect(done, 2);
+        expect(active, 0);
+      },
+    );
 
-    test('retryUpload (Resubir) vuelve a subir un archivo que falló',
-        () async {
+    test('retryUpload (Resubir) vuelve a subir un archivo que falló', () async {
       // Trabajo con error cuyo origen todavía no existe: la subida se cortó
       // y el archivo original se perdió.
       final missingPath = [srcBase, 'tarde.jpg'].join('/');
-      final job = DriveUploadJob(
-        id: 'j1',
-        name: 'tarde.jpg',
-        thumb: missingPath,
-        total: 3,
-      )
-        ..status = 'error'
-        ..error = 'conexión cortada';
+      final job =
+          DriveUploadJob(
+              id: 'j1',
+              name: 'tarde.jpg',
+              thumb: missingPath,
+              total: 3,
+            )
+            ..status = 'error'
+            ..error = 'conexión cortada';
       drive.addUploadJob(job);
 
       await drive.retryUpload('j1');

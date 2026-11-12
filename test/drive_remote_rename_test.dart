@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
 
 /// Renombrar en el DRIVE DEL SERVIDOR.
 ///
@@ -25,11 +25,7 @@ void main() {
           : (jsonDecode(request.body) as Map).cast<String, dynamic>();
       const headers = {'content-type': 'application/json'};
       if (request.url.path == '/api/items') {
-        return http.Response(
-          jsonEncode({'ok': true}),
-          200,
-          headers: headers,
-        );
+        return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
       }
       // El listado de la carpeta (lo pide el refresco posterior).
       return http.Response(
@@ -48,7 +44,10 @@ void main() {
 
     expect(method, 'PATCH', reason: 'el servidor expone PATCH, no POST');
     expect(path, '/api/items');
-    expect(body?['newName'], 'otra.jpg',
-        reason: 'sin la extensión la imagen desaparece del Drive');
+    expect(
+      body?['newName'],
+      'otra.jpg',
+      reason: 'sin la extensión la imagen desaparece del Drive',
+    );
   });
 }

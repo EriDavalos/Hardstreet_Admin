@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 /// Tipo de aviso: define el color y el icono de la notificación.
 ///   success → verde           (la operación salió bien)

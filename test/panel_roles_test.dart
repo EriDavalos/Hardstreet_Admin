@@ -6,8 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/login_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/auth/pages/login_page.dart';
 
 // ==================================================================
 // ENTRADA AL PANEL POR ROL

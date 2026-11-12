@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/local_share_service.dart';
-import 'package:hardstreet_admin/widgets/local_share_browser.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_service.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/local_share_browser.dart';
 
 /// Servidor del drive falso: responde SOLO a /api/local/list, con un árbol
 /// fijo, y lleva la cuenta de las rutas pedidas.
@@ -15,38 +15,41 @@ class _DriveMock {
   final called = <String>[];
 
   LocalShareService service() => LocalShareService(
-        baseUrl: 'http://drive.test',
-        client: MockClient((request) async {
-          called.add(request.url.path);
-          final path = request.url.queryParameters['path'] ?? '';
-          Map<String, dynamic> body;
-          switch (path) {
-            case '':
-              body = {
-                'local': true,
-                'path': '',
-                'folders': [
-                  {'name': 'Bodas', 'isFolder': true},
-                  {'name': 'foto.jpg', 'isFolder': false, 'size': 1024},
-                ],
-              };
-              break;
-            case 'Bodas':
-              body = {
-                'local': true,
-                'path': 'Bodas',
-                'folders': [
-                  {'name': 'Ana', 'isFolder': true},
-                ],
-              };
-              break;
-            default:
-              body = {'local': true, 'path': path, 'folders': const []};
-          }
-          return http.Response(jsonEncode(body), 200,
-              headers: {'content-type': 'application/json'});
-        }),
+    baseUrl: 'http://drive.test',
+    client: MockClient((request) async {
+      called.add(request.url.path);
+      final path = request.url.queryParameters['path'] ?? '';
+      Map<String, dynamic> body;
+      switch (path) {
+        case '':
+          body = {
+            'local': true,
+            'path': '',
+            'folders': [
+              {'name': 'Bodas', 'isFolder': true},
+              {'name': 'foto.jpg', 'isFolder': false, 'size': 1024},
+            ],
+          };
+          break;
+        case 'Bodas':
+          body = {
+            'local': true,
+            'path': 'Bodas',
+            'folders': [
+              {'name': 'Ana', 'isFolder': true},
+            ],
+          };
+          break;
+        default:
+          body = {'local': true, 'path': path, 'folders': const []};
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
       );
+    }),
+  );
 }
 
 Future<void> _open(WidgetTester tester, LocalShareService service) async {
@@ -80,14 +83,18 @@ Future<void> _open(WidgetTester tester, LocalShareService service) async {
 void main() {
   tearDown(() => HsSession.token = null);
 
-  testWidgets('lista la carpeta local y se puede NAVEGAR sin editar nada',
-      (tester) async {
+  testWidgets('lista la carpeta local y se puede NAVEGAR sin editar nada', (
+    tester,
+  ) async {
     final mock = _DriveMock();
     await _open(tester, mock.service());
 
     // Cabecera: el nombre y de quién es (solo lectura).
     expect(find.text(r'D:\Eventos\2026'), findsOneWidget);
-    expect(find.text('Compartida por Yusef Ali · solo lectura'), findsOneWidget);
+    expect(
+      find.text('Compartida por Yusef Ali · solo lectura'),
+      findsOneWidget,
+    );
     // Contenido: una carpeta y una imagen.
     expect(find.text('Bodas'), findsOneWidget);
     expect(find.text('foto.jpg'), findsOneWidget);
@@ -108,8 +115,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('si el servidor del drive falla ofrece reintentar',
-      (tester) async {
+  testWidgets('si el servidor del drive falla ofrece reintentar', (
+    tester,
+  ) async {
     final service = LocalShareService(
       baseUrl: 'http://drive.test',
       client: MockClient((_) async => http.Response('boom', 500)),

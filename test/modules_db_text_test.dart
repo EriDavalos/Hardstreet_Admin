@@ -6,10 +6,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/app_settings.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/settings_page.dart';
+import 'package:hardstreet_admin/app/app_settings.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/settings/pages/settings_page.dart';
 
 // ==================================================================
 // NOMBRE Y DESCRIPCIÓN DE LOS MÓDULOS DESDE LA BASE DE DATOS

@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
 
 /// Catálogo falso con DOS paquetes: así el diálogo tiene que dejar elegir.
@@ -56,11 +56,7 @@ void _installMock({required List<Map<String, dynamic>> posts}) {
     }
 
     if (path.endsWith('/api/admin/agendas')) {
-      return http.Response(
-        jsonEncode({'agendas': []}),
-        200,
-        headers: headers,
-      );
+      return http.Response(jsonEncode({'agendas': []}), 200, headers: headers);
     }
 
     return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
@@ -114,35 +110,36 @@ Finder get _cancelButton => find.byKey(const ValueKey('assign-price-cancel'));
 Finder get _priceField => find.byKey(const ValueKey('assign-price-field'));
 
 void main() {
-  testWidgets('la vista lista los paquetes en tarjetas compactas con su precio', (
-    tester,
-  ) async {
-    await _openAssign(tester, posts: []);
+  testWidgets(
+    'la vista lista los paquetes en tarjetas compactas con su precio',
+    (tester) async {
+      await _openAssign(tester, posts: []);
 
-    // Todas las tarjetas del catálogo, con su precio.
-    expect(find.text('Boda - Basic'), findsOneWidget);
-    expect(find.text('Cobertura esencial'), findsOneWidget);
-    expect(find.text('Boda - Premium'), findsOneWidget);
-    expect(find.text('MXN \$6,500'), findsOneWidget);
-    expect(find.text('MXN \$12,000'), findsOneWidget);
+      // Todas las tarjetas del catálogo, con su precio.
+      expect(find.text('Boda - Basic'), findsOneWidget);
+      expect(find.text('Cobertura esencial'), findsOneWidget);
+      expect(find.text('Boda - Premium'), findsOneWidget);
+      expect(find.text('MXN \$6,500'), findsOneWidget);
+      expect(find.text('MXN \$12,000'), findsOneWidget);
 
-    // Sin paquete elegido todavía no se decide el precio: solo se avisa que
-    // al asignar se preguntará.
-    expect(find.text('¿Quieres mantener el precio?'), findsNothing);
-    expect(
-      find.textContaining('Al asignar te preguntaremos si lo mantienes'),
-      findsNothing,
-    );
+      // Sin paquete elegido todavía no se decide el precio: solo se avisa que
+      // al asignar se preguntará.
+      expect(find.text('¿Quieres mantener el precio?'), findsNothing);
+      expect(
+        find.textContaining('Al asignar te preguntaremos si lo mantienes'),
+        findsNothing,
+      );
 
-    await _tap(tester, find.byKey(const ValueKey('assign-pkg-3')));
+      await _tap(tester, find.byKey(const ValueKey('assign-pkg-3')));
 
-    // Elegido: se explica el precio del catálogo y que se preguntará por él.
-    expect(
-      find.textContaining('Precio del catálogo: MXN \$6,500'),
-      findsOneWidget,
-    );
-    expect(_priceField, findsNothing);
-  });
+      // Elegido: se explica el precio del catálogo y que se preguntará por él.
+      expect(
+        find.textContaining('Precio del catálogo: MXN \$6,500'),
+        findsOneWidget,
+      );
+      expect(_priceField, findsNothing);
+    },
+  );
 
   testWidgets('mantener el precio: la pregunta sale antes de asignar y '
       'Aceptar asigna SIN precio especial', (tester) async {
@@ -303,11 +300,7 @@ void main() {
           headers: headers,
         );
       }
-      return http.Response(
-        jsonEncode({'agendas': []}),
-        200,
-        headers: headers,
-      );
+      return http.Response(jsonEncode({'agendas': []}), 200, headers: headers);
     });
     addTearDown(() => HsApi.client = previous);
 

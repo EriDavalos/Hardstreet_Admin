@@ -5,13 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart'
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart'
     show DriveApiService, DriveMaintenance;
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/pages/storage_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/modules/drive/pages/storage_page.dart';
 
 /// Drive de prueba: devuelve lo que el servidor contestaría en /api/space.
 class _FakeDrive extends DriveBase {

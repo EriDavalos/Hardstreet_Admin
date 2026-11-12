@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
-import 'hs_modal.dart';
+import 'package:hardstreet_admin/app/theme.dart';
+
+import 'package:hardstreet_admin/widgets/hs_modal.dart';
 
 /// Diálogo de formulario ESTÁNDAR del panel (usuarios, clientes, roles,
 /// paquetes y permisos):

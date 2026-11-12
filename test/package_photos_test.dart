@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/packages_page.dart';
-import 'package:hardstreet_admin/widgets/drive_thumb.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/packages/pages/packages_page.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_thumb.dart';
 
 // ==================================================================
 // HARD STREET ADMIN — La FOTO del paquete en el catálogo del panel
@@ -119,32 +119,35 @@ void main() {
   setUp(() => HsSession.token = 'token-de-prueba');
   tearDown(() => HsSession.clear());
 
-  testWidgets('la tarjeta pinta la FOTO real del paquete (la misma que la web)',
-      (tester) async {
-    await _pump(tester);
+  testWidgets(
+    'la tarjeta pinta la FOTO real del paquete (la misma que la web)',
+    (tester) async {
+      await _pump(tester);
 
-    final thumbs = tester
-        .widgetList<DriveThumb>(find.byType(DriveThumb))
-        .where((t) => t.source.contains('/thumb/'))
-        .toList();
-    expect(thumbs, isNotEmpty, reason: 'la foto del paquete no se pintó');
+      final thumbs = tester
+          .widgetList<DriveThumb>(find.byType(DriveThumb))
+          .where((t) => t.source.contains('/thumb/'))
+          .toList();
+      expect(thumbs, isNotEmpty, reason: 'la foto del paquete no se pintó');
 
-    final photo = thumbs.first;
-    expect(
-      photo.source,
-      contains('/thumb/Boda/Ana/Fiesta/IMG_3196%20Mejorado.jpg'),
-      reason: 'la foto se pide al servidor del drive, no a una URL inventada',
-    );
-    expect(photo.source, contains('w=640'));
-    // El token va en la query (Image.network no manda cabeceras) y es lo que
-    // dice al servidor en qué CARPETA DE EMPRESA buscar la foto.
-    expect(
-      photo.source,
-      contains('apikey=token-de-prueba'),
-      reason: 'sin el token, la foto de una empresa se busca en la raíz (404)',
-    );
-    expect(photo.isRemote, isTrue);
-  });
+      final photo = thumbs.first;
+      expect(
+        photo.source,
+        contains('/thumb/Boda/Ana/Fiesta/IMG_3196%20Mejorado.jpg'),
+        reason: 'la foto se pide al servidor del drive, no a una URL inventada',
+      );
+      expect(photo.source, contains('w=640'));
+      // El token va en la query (Image.network no manda cabeceras) y es lo que
+      // dice al servidor en qué CARPETA DE EMPRESA buscar la foto.
+      expect(
+        photo.source,
+        contains('apikey=token-de-prueba'),
+        reason:
+            'sin el token, la foto de una empresa se busca en la raíz (404)',
+      );
+      expect(photo.isRemote, isTrue);
+    },
+  );
 
   testWidgets('un paquete SIN foto se ve limpio (no inventa foto)', (
     tester,

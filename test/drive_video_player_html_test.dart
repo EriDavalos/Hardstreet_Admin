@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_media_viewer.dart';
 
 // ==================================================================
 // EL REPRODUCTOR DE VÍDEO DEL VISOR
@@ -482,26 +482,30 @@ void main() {
     skip: node == null ? 'node no está instalado' : false,
   );
 
-  test('ejecutado de verdad: sin duración total, adelantar no reinicia el tiempo', () {
-    final dir = Directory.systemTemp.createTempSync('hs_no_total');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final html = debugDrivePlayerHtml(
-      DriveViewTarget(
-        item: const DriveItem(name: 'boda.mp4', isFolder: false),
-        source: 'https://drive.test/files/boda.mp4?view=1&play=low',
-        isRemote: true,
-      ),
-    );
-    final script = RegExp(r'<script>([\s\S]*)</script>')
-        .firstMatch(html)
-        ?.group(1);
-    expect(script, isNotNull);
-    final js = File('${dir.path}/no_total.mjs')
-      ..writeAsStringSync('$_harnessHead\n$script\n$_lightNoTotalTail');
-    final r = Process.runSync(node!, [js.path]);
-    expect(r.exitCode, 0, reason: 'sin total: ${r.stdout}${r.stderr}');
-    expect('${r.stdout}', contains('OK'));
-  }, skip: node == null ? 'node no está instalado' : false);
+  test(
+    'ejecutado de verdad: sin duración total, adelantar no reinicia el tiempo',
+    () {
+      final dir = Directory.systemTemp.createTempSync('hs_no_total');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final html = debugDrivePlayerHtml(
+        DriveViewTarget(
+          item: const DriveItem(name: 'boda.mp4', isFolder: false),
+          source: 'https://drive.test/files/boda.mp4?view=1&play=low',
+          isRemote: true,
+        ),
+      );
+      final script = RegExp(r'<script>([\s\S]*)</script>')
+          .firstMatch(html)
+          ?.group(1);
+      expect(script, isNotNull);
+      final js = File('${dir.path}/no_total.mjs')
+        ..writeAsStringSync('$_harnessHead\n$script\n$_lightNoTotalTail');
+      final r = Process.runSync(node!, [js.path]);
+      expect(r.exitCode, 0, reason: 'sin total: ${r.stdout}${r.stderr}');
+      expect('${r.stdout}', contains('OK'));
+    },
+    skip: node == null ? 'node no está instalado' : false,
+  );
 
   test('ejecutado de verdad: un fallo del reencodado cae al original', () {
     final dir = Directory.systemTemp.createTempSync('hs_fallback');
@@ -559,35 +563,47 @@ void main() {
     expect('${r.stdout}', contains('OK'));
   }, skip: node == null ? 'node no está instalado' : false);
 
-  test('ejecutado de verdad: arranque automático (mudo si bloquean el sonido)', () {
-    final dir = Directory.systemTemp.createTempSync('hs_autoplay');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final html = debugDrivePlayerHtml(target('boda.mp4'));
-    final script = RegExp(r'<script>([\s\S]*)</script>')
-        .firstMatch(html)
-        ?.group(1);
-    expect(script, isNotNull);
-    final js = File('${dir.path}/autoplay.mjs')
-      ..writeAsStringSync('$_harnessHead\n$script\n$_autoplayTail');
-    final r = Process.runSync(node!, [js.path]);
-    expect(r.exitCode, 0, reason: 'autoplay: ${r.stdout}${r.stderr}');
-    expect('${r.stdout}', contains('OK'));
-  }, skip: node == null ? 'node no está instalado' : false);
+  test(
+    'ejecutado de verdad: arranque automático (mudo si bloquean el sonido)',
+    () {
+      final dir = Directory.systemTemp.createTempSync('hs_autoplay');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final html = debugDrivePlayerHtml(target('boda.mp4'));
+      final script = RegExp(r'<script>([\s\S]*)</script>')
+          .firstMatch(html)
+          ?.group(1);
+      expect(script, isNotNull);
+      final js = File('${dir.path}/autoplay.mjs')
+        ..writeAsStringSync('$_harnessHead\n$script\n$_autoplayTail');
+      final r = Process.runSync(node!, [js.path]);
+      expect(r.exitCode, 0, reason: 'autoplay: ${r.stdout}${r.stderr}');
+      expect('${r.stdout}', contains('OK'));
+    },
+    skip: node == null ? 'node no está instalado' : false,
+  );
 
-  test('ejecutado de verdad: la pantalla completa se pide al iframe o a la página', () {
-    final dir = Directory.systemTemp.createTempSync('hs_fs');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final html = debugDrivePlayerHtml(target('boda.mp4'));
-    final script = RegExp(r'<script>([\s\S]*)</script>')
-        .firstMatch(html)
-        ?.group(1);
-    expect(script, isNotNull);
-    final js = File('${dir.path}/fullscreen.mjs')
-      ..writeAsStringSync('$_harnessHead\n$script\n$_fullscreenTail');
-    final r = Process.runSync(node!, [js.path]);
-    expect(r.exitCode, 0, reason: 'pantalla completa: ${r.stdout}${r.stderr}');
-    expect('${r.stdout}', contains('OK'));
-  }, skip: node == null ? 'node no está instalado' : false);
+  test(
+    'ejecutado de verdad: la pantalla completa se pide al iframe o a la página',
+    () {
+      final dir = Directory.systemTemp.createTempSync('hs_fs');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final html = debugDrivePlayerHtml(target('boda.mp4'));
+      final script = RegExp(r'<script>([\s\S]*)</script>')
+          .firstMatch(html)
+          ?.group(1);
+      expect(script, isNotNull);
+      final js = File('${dir.path}/fullscreen.mjs')
+        ..writeAsStringSync('$_harnessHead\n$script\n$_fullscreenTail');
+      final r = Process.runSync(node!, [js.path]);
+      expect(
+        r.exitCode,
+        0,
+        reason: 'pantalla completa: ${r.stdout}${r.stderr}',
+      );
+      expect('${r.stdout}', contains('OK'));
+    },
+    skip: node == null ? 'node no está instalado' : false,
+  );
 
   test('el audio usa su tarjeta y el aviso correcto', () {
     final html = debugDrivePlayerHtml(target('tema.mp3'));

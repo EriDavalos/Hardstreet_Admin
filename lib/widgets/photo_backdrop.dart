@@ -2,7 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 /// FONDO DE LA VISTA con la foto que se está viendo, DESENFOCADA.
 ///

@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_downloader.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/local_share_service.dart';
-import 'package:hardstreet_admin/share_permissions.dart';
-import 'package:hardstreet_admin/shared_drive.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_downloader.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_service.dart';
+import 'package:hardstreet_admin/core/models/share_permissions.dart';
+import 'package:hardstreet_admin/modules/drive/services/shared_drive.dart';
 
 // ==================================================================
 // DESCARGAR (Y VER) ARCHIVOS DE UNA CARPETA COMPARTIDA

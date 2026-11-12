@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/app_settings.dart';
-import 'package:hardstreet_admin/pages/settings_page.dart';
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/app/app_settings.dart';
+import 'package:hardstreet_admin/modules/settings/pages/settings_page.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// La personalización del módulo Configuraciones: el tema (sistema / claro /

@@ -403,6 +403,8 @@ class MainActivity : FlutterActivity() {
     private fun mimeOf(name: String): String =
         when (name.substringAfterLast('.', "").lowercase()) {
             "zip" -> "application/zip"
+            "pdf" -> "application/pdf"
+            "tif", "tiff" -> "image/tiff"
             "png" -> "image/png"
             "gif" -> "image/gif"
             "webp" -> "image/webp"

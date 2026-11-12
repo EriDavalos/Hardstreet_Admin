@@ -7,11 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 /// PNG 1x1 válido: los archivos del drive se decodifican de verdad.
 final Uint8List _png = base64Decode(
@@ -96,7 +96,10 @@ Future<void> _pumpPhone(
 
   final drive = DriveService.testRoot(tmp);
   await tester.pumpWidget(
-    MaterialApp(theme: theme, home: Scaffold(body: DrivePage(drive: drive))),
+    MaterialApp(
+      theme: theme,
+      home: Scaffold(body: DrivePage(drive: drive)),
+    ),
   );
   await _settle(tester);
   addTearDown(() {
@@ -115,7 +118,10 @@ void main() {
     expect(search, findsOneWidget);
     final before = tester.getTopLeft(search).dy;
 
-    await tester.drag(find.byType(CustomScrollView).first, const Offset(0, -260));
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -260),
+    );
     await tester.pump(const Duration(milliseconds: 400));
 
     final after = tester.getTopLeft(search).dy;
@@ -140,7 +146,10 @@ void main() {
     expect(find.byIcon(Icons.add_rounded), findsOneWidget);
 
     // Al bajar sigue a la vista (no viaja con el encabezado).
-    await tester.drag(find.byType(CustomScrollView).first, const Offset(0, -300));
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, -300),
+    );
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byTooltip('Agregar'), findsOneWidget);
 
@@ -171,9 +180,14 @@ void main() {
     );
 
     final box =
-        tester.widget<DecoratedBox>(
-          find.descendant(of: fab, matching: find.byType(DecoratedBox)).first,
-        ).decoration as BoxDecoration;
+        tester
+                .widget<DecoratedBox>(
+                  find
+                      .descendant(of: fab, matching: find.byType(DecoratedBox))
+                      .first,
+                )
+                .decoration
+            as BoxDecoration;
     expect(box.shape, BoxShape.circle);
     expect(box.border, isNull, reason: 'el botón ya no lleva contorno');
   });
@@ -210,14 +224,20 @@ void main() {
       findsNothing,
       reason: 'el encabezado del módulo sí se va con el scroll',
     );
-    final pinnedY = tester.getTopLeft(
-      find.descendant(
-        of: find.byKey(const ValueKey('drive-crumbs')),
-        matching: find.text('Mi Drive'),
-      ),
-    ).dy;
+    final pinnedY = tester
+        .getTopLeft(
+          find.descendant(
+            of: find.byKey(const ValueKey('drive-crumbs')),
+            matching: find.text('Mi Drive'),
+          ),
+        )
+        .dy;
     expect(pinnedY, lessThan(crumbY), reason: 'la barra subió a pegarse');
-    expect(pinnedY, inInclusiveRange(0, 80), reason: 'sigue a la vista, arriba');
+    expect(
+      pinnedY,
+      inInclusiveRange(0, 80),
+      reason: 'sigue a la vista, arriba',
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -307,9 +327,11 @@ void main() {
 
     final crumbs = find.byKey(const ValueKey('drive-crumbs'));
     expect(crumbs, findsOneWidget);
-    final crumbY = tester.getTopLeft(
-      find.descendant(of: crumbs, matching: find.text('Mi Drive')),
-    ).dy;
+    final crumbY = tester
+        .getTopLeft(
+          find.descendant(of: crumbs, matching: find.text('Mi Drive')),
+        )
+        .dy;
 
     await tester.drag(
       find.byType(CustomScrollView).first,

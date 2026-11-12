@@ -22,13 +22,17 @@ class HsScrollBehavior extends MaterialScrollBehavior {
 
   @override
   Widget buildScrollbar(
-      BuildContext context, Widget child, ScrollableDetails details) {
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     final withScrollbar = super.buildScrollbar(context, child, details);
     final controller = details.controller;
     if (controller == null) return withScrollbar;
     return _HorizontalWheelFallback(
       controller: controller,
-      reversed: details.direction == AxisDirection.up ||
+      reversed:
+          details.direction == AxisDirection.up ||
           details.direction == AxisDirection.left,
       child: withScrollbar,
     );
@@ -71,8 +75,10 @@ class _HorizontalWheelFallbackState extends State<_HorizontalWheelFallback> {
     // Misma semántica que un avance vertical: +dx = hacia abajo (invertido
     // si el eje del scrollable está reversed, como hace el Scrollable).
     final delta = widget.reversed ? -d.dx : d.dx;
-    final target = (position.pixels + delta)
-        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    final target = (position.pixels + delta).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
     if (target == position.pixels) return;
 
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {

@@ -6,13 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/local_share_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
-import 'package:hardstreet_admin/pages/shared_files_page.dart';
-import 'package:hardstreet_admin/share_permissions.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/pages/shared_files_page.dart';
+import 'package:hardstreet_admin/core/models/share_permissions.dart';
 
 /// Escritura DENTRO de una carpeta compartida (renombrar, mover).
 ///

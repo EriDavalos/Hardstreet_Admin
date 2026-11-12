@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/app_settings.dart';
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/app/app_settings.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

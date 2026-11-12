@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/notification_sound.dart';
-import 'package:hardstreet_admin/package_notifications_service.dart';
-import 'package:hardstreet_admin/reminder_notifications_native.dart';
+import 'package:hardstreet_admin/modules/notifications/services/notification_sound.dart';
+import 'package:hardstreet_admin/modules/packages/services/package_notifications_service.dart';
+import 'package:hardstreet_admin/modules/notifications/services/reminder_notifications_native.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ==================================================================

@@ -4,8 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart' show Rect, Size;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/print_export.dart';
-import 'package:hardstreet_admin/print_models.dart';
+import 'package:hardstreet_admin/modules/print/services/print_export.dart';
+import 'package:hardstreet_admin/modules/print/models/print_models.dart';
 
 const _landscape = PrintFormat(id: 1, name: '4x6', width: 4, height: 6);
 const _square = PrintFormat(id: 2, name: '1x1', width: 1, height: 1);
@@ -58,8 +58,14 @@ void main() {
     test('una foto horizontal se recorta en horizontal por defecto', () {
       const crop = PrintCrop();
       // 4x6 es vertical (ratio 4/6); la foto apaisada manda: 6/4.
-      expect(crop.ratioFor(_landscape, const Size(300, 200)), closeTo(1.5, .001));
-      final r = crop.sourceRect(const Size(300, 200), crop.ratioFor(_landscape, const Size(300, 200)));
+      expect(
+        crop.ratioFor(_landscape, const Size(300, 200)),
+        closeTo(1.5, .001),
+      );
+      final r = crop.sourceRect(
+        const Size(300, 200),
+        crop.ratioFor(_landscape, const Size(300, 200)),
+      );
       expect(r.width, 300);
       expect(r.height, 200);
     });
@@ -121,11 +127,7 @@ void main() {
       expect(PrintCrop.fromJson('no es un mapa'), isNull);
       expect(PrintCrop.fromJson({'x': .5}), isNull);
 
-      final clamped = PrintCrop.fromJson({
-        'x': 4,
-        'y': -1,
-        'zoom': 99,
-      })!;
+      final clamped = PrintCrop.fromJson({'x': 4, 'y': -1, 'zoom': 99})!;
       expect(clamped.focusX, 1);
       expect(clamped.focusY, 0);
       expect(clamped.zoom, 8);

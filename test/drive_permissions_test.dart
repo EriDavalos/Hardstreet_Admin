@@ -8,10 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido: los archivos del drive se decodifican de verdad.
 final Uint8List _png = base64Decode(
@@ -48,7 +48,8 @@ void _installMock(List<String> actions) {
 Future<void> settle(WidgetTester tester) async {
   await tester.pump();
   await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 60)));
+    () => Future<void>.delayed(const Duration(milliseconds: 60)),
+  );
   await tester.pump(const Duration(milliseconds: 400));
 }
 
@@ -75,7 +76,9 @@ Future<void> _pumpDrive(WidgetTester tester, List<String> actions) async {
 
   final drive = DriveService.testRoot(tmp);
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+    MaterialApp(
+      home: Scaffold(body: DrivePage(drive: drive)),
+    ),
   );
   await settle(tester);
   addTearDown(() {
@@ -84,14 +87,18 @@ Future<void> _pumpDrive(WidgetTester tester, List<String> actions) async {
 }
 
 Future<void> _rightClick(WidgetTester tester, Finder finder) async {
-  await tester.tap(finder,
-      kind: PointerDeviceKind.mouse, buttons: kSecondaryButton);
+  await tester.tap(
+    finder,
+    kind: PointerDeviceKind.mouse,
+    buttons: kSecondaryButton,
+  );
   await settle(tester);
 }
 
 void main() {
-  testWidgets('rol con solo "Ver": sin crear, editar, eliminar ni descargar',
-      (tester) async {
+  testWidgets('rol con solo "Ver": sin crear, editar, eliminar ni descargar', (
+    tester,
+  ) async {
     await _pumpDrive(tester, const ['read']);
 
     // Nada de crear: ni carpeta ni subir imágenes.
@@ -107,9 +114,16 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('rol completo: las acciones del Drive están disponibles',
-      (tester) async {
-    await _pumpDrive(tester, const ['read', 'create', 'update', 'delete', 'download']);
+  testWidgets('rol completo: las acciones del Drive están disponibles', (
+    tester,
+  ) async {
+    await _pumpDrive(tester, const [
+      'read',
+      'create',
+      'update',
+      'delete',
+      'download',
+    ]);
 
     expect(find.text('Nueva carpeta'), findsOneWidget);
     expect(find.text('Subir archivos'), findsOneWidget);

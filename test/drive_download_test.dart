@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_api_service.dart';
-import 'package:hardstreet_admin/drive_downloader.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_downloader.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido (los bytes que NO deben perderse por el camino).
 final Uint8List _png = base64Decode(
@@ -87,16 +87,18 @@ void main() {
         const ['Clientes'],
       );
 
-      expect(files.map((f) => f.item.name),
-          ['beso.jpg', 'portada.jpg', 'suelta.jpg']);
+      expect(files.map((f) => f.item.name), [
+        'beso.jpg',
+        'portada.jpg',
+        'suelta.jpg',
+      ]);
       // Cada archivo sabe DE QUÉ carpeta sale (si no, bajaría el homónimo
       // de la carpeta que el drive tuviera abierta).
       expect(files.first.folder, ['Clientes', 'Boda', 'ceremonia']);
       expect(files.last.folder, ['Clientes']);
     });
 
-    test('no sobrescribe: agrega " (1)" cuando el nombre ya existe',
-        () async {
+    test('no sobrescribe: agrega " (1)" cuando el nombre ya existe', () async {
       final dir = await Directory.systemTemp.createTemp('hs_dl_names');
       addTearDown(() {
         if (dir.existsSync()) dir.deleteSync(recursive: true);
@@ -111,8 +113,7 @@ void main() {
     });
   });
 
-  group('descarga individual: el ZIP del backend no debe guardarse tal cual',
-      () {
+  group('descarga individual: el ZIP del backend no debe guardarse tal cual', () {
     test('extrae el archivo cuando el ZIP trae UNA sola entrada', () {
       final zip = _zipOf({'foto.png': _png});
       expect(extractSingleFile(zip, 'foto.png'), equals(_png));
@@ -123,24 +124,24 @@ void main() {
     });
 
     test('un ZIP con varias entradas (carpeta) se deja como ZIP', () {
-      final zip = _zipOf({
-        'uno.png': _png,
-        'dos.png': _png,
-      });
+      final zip = _zipOf({'uno.png': _png, 'dos.png': _png});
       expect(extractSingleFile(zip, 'carpeta'), isNull);
     });
 
-    test('fetchDriveBytes devuelve la IMAGEN, no el ZIP, para 1 archivo',
-        () async {
-      final drive = _FakeApiDrive(_zipOf({'foto.png': _png}));
-      final bytes = await fetchDriveBytes(
-        drive,
-        const [DriveItem(name: 'foto.png', isFolder: false)],
-        onProgress: (_, _) {},
-      );
-      expect(bytes, equals(_png),
-          reason: 'guardar el ZIP con extensión .png corrompía el archivo');
-    });
+    test(
+      'fetchDriveBytes devuelve la IMAGEN, no el ZIP, para 1 archivo',
+      () async {
+        final drive = _FakeApiDrive(_zipOf({'foto.png': _png}));
+        final bytes = await fetchDriveBytes(drive, const [
+          DriveItem(name: 'foto.png', isFolder: false),
+        ], onProgress: (_, _) {});
+        expect(
+          bytes,
+          equals(_png),
+          reason: 'guardar el ZIP con extensión .png corrompía el archivo',
+        );
+      },
+    );
 
     test('la descarga pide la carpeta DE LA QUE sale la foto', () async {
       // El selector de fotos navega por su cuenta: si la carpeta no viajara con
@@ -207,11 +208,11 @@ void main() {
       expect(find.text('2 KB'), findsOneWidget);
     });
 
-    testWidgets('con error: muestra el motivo y ofrece reintentar',
-        (tester) async {
+    testWidgets('con error: muestra el motivo y ofrece reintentar', (
+      tester,
+    ) async {
       var retried = false;
-      final j = job('error')
-        ..error = 'El archivo ya no existe';
+      final j = job('error')..error = 'El archivo ya no existe';
       await pumpTile(tester, j, onRetry: () => retried = true);
 
       expect(find.textContaining('El archivo ya no existe'), findsOneWidget);
@@ -220,14 +221,17 @@ void main() {
       expect(retried, isTrue);
     });
 
-    testWidgets('el drive avisa del progreso y cierra el trabajo',
-        (tester) async {
+    testWidgets('el drive avisa del progreso y cierra el trabajo', (
+      tester,
+    ) async {
       final drive = _FakeApiDrive(_zipOf({'foto.png': _png}));
       var notifications = 0;
       drive.addListener(() => notifications++);
 
-      final j = drive.startDownload('foto.png',
-          items: const [DriveItem(name: 'foto.png', isFolder: false)]);
+      final j = drive.startDownload(
+        'foto.png',
+        items: const [DriveItem(name: 'foto.png', isFolder: false)],
+      );
       expect(drive.downloadJobs, contains(j));
       expect(j.status, 'downloading');
 
@@ -257,20 +261,24 @@ void main() {
       const channel = MethodChannel('hardstreet/downloads');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
-        calls.add(call);
-        // El lado nativo COPIA ese archivo: aquí se comprueba que existe y que
-        // lleva los bytes correctos (nada de pasar megabytes por el canal).
-        final args = (call.arguments as Map).cast<String, dynamic>();
-        final bytes = File(args['path'] as String).readAsBytesSync();
-        expect(bytes, equals(_png));
-        return 'Descargas/foto.png';
-      });
-      addTearDown(() => TestDefaultBinaryMessengerBinding.instance
-          .defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null));
+            calls.add(call);
+            // El lado nativo COPIA ese archivo: aquí se comprueba que existe y que
+            // lleva los bytes correctos (nada de pasar megabytes por el canal).
+            final args = (call.arguments as Map).cast<String, dynamic>();
+            final bytes = File(args['path'] as String).readAsBytesSync();
+            expect(bytes, equals(_png));
+            return 'Descargas/foto.png';
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
 
-      final where = await saveToAndroidDownloads(_png, 'foto.png',
-          tempDir: dir.path);
+      final where = await saveToAndroidDownloads(
+        _png,
+        'foto.png',
+        tempDir: dir.path,
+      );
 
       expect(calls.single.method, 'save');
       expect((calls.single.arguments as Map)['name'], 'foto.png');

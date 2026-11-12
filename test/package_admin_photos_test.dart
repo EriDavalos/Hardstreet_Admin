@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
 
 /// Paquete vigente con UN servicio que ya tiene selección de fotos.
 const int _pkgId = 10;
@@ -185,10 +185,7 @@ void main() {
     await _pumpDialog(tester, posts: [], sent: false);
 
     // «Ver fotos» es un botón RELLENO (destacado), no un enlace discreto.
-    expect(
-      find.widgetWithText(FilledButton, 'Ver fotos (2)'),
-      findsOneWidget,
-    );
+    expect(find.widgetWithText(FilledButton, 'Ver fotos (2)'), findsOneWidget);
     // El estudio también puede elegir/cambiar la selección…
     expect(find.text('Cambiar fotos'), findsOneWidget);
     // …y avisar al cliente desde el mismo bloque.

@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido (lo que se vería como miniatura del directorio).
 final Uint8List _png = base64Decode(

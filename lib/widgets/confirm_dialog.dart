@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../app_constants.dart';
+import 'package:hardstreet_admin/app/app_constants.dart';
 
 /// Confirmación MODERNA y compacta (estilo Drive): icono en círculo, título
 /// corto, una sola línea de advertencia y botones Redondeados.
@@ -37,16 +37,17 @@ Future<bool> confirmDelete(
                     color: scheme.error.withValues(alpha: .10),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.delete_outline,
-                      color: scheme.error, size: 26),
+                  child: Icon(
+                    Icons.delete_outline,
+                    color: scheme.error,
+                    size: 26,
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Text(
                   title,
                   textAlign: TextAlign.center,
-                  style: Theme.of(ctx)
-                      .textTheme
-                      .titleMedium
+                  style: Theme.of(ctx).textTheme.titleMedium
                       ?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 6),
@@ -100,8 +101,10 @@ Future<bool> confirmDelete(
     transitionBuilder: (ctx, anim, _, child) => FadeTransition(
       opacity: anim,
       child: ScaleTransition(
-        scale: Tween<double>(begin: .92, end: 1)
-            .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
+        scale: Tween<double>(
+          begin: .92,
+          end: 1,
+        ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
         child: child,
       ),
     ),

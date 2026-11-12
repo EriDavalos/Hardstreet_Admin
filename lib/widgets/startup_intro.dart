@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
-import 'brand_badge.dart';
+import 'package:hardstreet_admin/app/theme.dart';
+
+import 'package:hardstreet_admin/modules/auth/widgets/brand_badge.dart';
 
 /// Animación de ARRANQUE de la app (misma en Windows y en Android).
 ///

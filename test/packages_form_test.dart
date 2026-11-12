@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/packages_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/packages/pages/packages_page.dart';
 
 /// Catálogo falso para el módulo Paquetes (con tiers y categorías).
 void _installMock({
@@ -319,10 +319,7 @@ void main() {
     await tester.dragUntilVisible(
       find.text('Elegir una foto del Drive'),
       find
-          .descendant(
-            of: find.byType(Dialog),
-            matching: find.byType(ListView),
-          )
+          .descendant(of: find.byType(Dialog), matching: find.byType(ListView))
           .first,
       const Offset(0, -240),
     );

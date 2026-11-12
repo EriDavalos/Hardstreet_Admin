@@ -7,9 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
 import 'package:hardstreet_admin/widgets/startup_intro.dart';
 
@@ -31,10 +31,7 @@ MockClient _installMock() {
     }
     if (path.endsWith('/api/admin/permission')) {
       return http.Response(
-        jsonEncode({
-          'isAdmin': true,
-          'modules': <dynamic>[],
-        }),
+        jsonEncode({'isAdmin': true, 'modules': <dynamic>[]}),
         200,
         headers: headers,
       );
@@ -46,8 +43,9 @@ MockClient _installMock() {
 }
 
 void main() {
-  testWidgets('Flujo: login -> panel Dashboard -> abrir menú -> logout',
-      (WidgetTester tester) async {
+  testWidgets('Flujo: login -> panel Dashboard -> abrir menú -> logout', (
+    WidgetTester tester,
+  ) async {
     // El I/O real debe ejecutarse fuera de la zona fake-async del test.
     late Directory tmp;
     await tester.runAsync(() async {
@@ -79,8 +77,11 @@ void main() {
       EnginePhase.sendSemanticsUpdate,
       const Duration(seconds: 5),
     );
-    expect(find.byType(StartupIntro), findsNothing,
-        reason: 'la animación de arranque cede el paso al contenido');
+    expect(
+      find.byType(StartupIntro),
+      findsNothing,
+      reason: 'la animación de arranque cede el paso al contenido',
+    );
 
     // 1. Pantalla de login
     expect(find.text('Bienvenido'), findsOneWidget);

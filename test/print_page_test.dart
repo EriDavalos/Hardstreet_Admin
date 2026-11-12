@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/print_page.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/print/pages/print_page.dart';
 
 Map<String, dynamic> _request({
   int id = 1,
@@ -82,6 +82,49 @@ void main() {
     expect(find.textContaining('2 fotos'), findsWidgets);
     expect(find.text('Enviado'), findsOneWidget);
     expect(find.text('Seleccionar todo'), findsOneWidget);
+  });
+
+  testWidgets('las pestañas filtran los envíos y muestran sus contadores', (
+    tester,
+  ) async {
+    HsApi.client = MockClient((request) async {
+      if (request.url.path.contains('/api/admin/print-requests')) {
+        return http.Response(
+          jsonEncode({
+            'requests': [
+              _request(id: 1, service: 'Sesión Previa'),
+              _request(id: 2, service: 'Boda de Ana', status: 'finished'),
+            ],
+            'formats': const [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    await pump(tester);
+    expect(find.text('Sesión Previa'), findsOneWidget);
+    expect(find.text('Boda de Ana'), findsOneWidget);
+    final tabs = find.byKey(const ValueKey('print-filter-tabs'));
+    expect(find.descendant(of: tabs, matching: find.text('2')), findsOneWidget);
+
+    await tester.tap(find.text('Pendientes'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sesión Previa'), findsOneWidget);
+    expect(find.text('Boda de Ana'), findsNothing);
+
+    await tester.tap(find.text('Terminados'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sesión Previa'), findsNothing);
+    expect(find.text('Boda de Ana'), findsOneWidget);
+
+    await tester.tap(find.text('Todos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sesión Previa'), findsOneWidget);
+    expect(find.text('Boda de Ana'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('las fotos se piden con el token de la sesión', (tester) async {
@@ -238,6 +281,20 @@ void main() {
       expect(find.text('Listo · Descargar'), findsOneWidget);
       expect(find.text('Terminar'), findsOneWidget);
 
+      // La salida CMYK es una opción visible y cambia la etiqueta de descarga,
+      // sin alterar el flujo de guardado ni filtrar la vista previa.
+      expect(find.text('Color de salida'), findsOneWidget);
+      expect(find.text('PNG · RGB'), findsOneWidget);
+      expect(find.text('TIFF · CMYK'), findsOneWidget);
+      await tester.tap(find.text('TIFF · CMYK'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('TIFF CMYK con perfil ICC incrustado'),
+        findsOneWidget,
+      );
+      expect(find.text('VISTA CMYK APROXIMADA'), findsNothing);
+      expect(find.text('Listo · TIFF CMYK'), findsOneWidget);
+
       // Se agrega un formato nuevo desde el propio módulo.
       await tester.tap(find.text('Agregar formato'));
       await tester.pumpAndSettle();
@@ -356,6 +413,50 @@ void main() {
 
     await pump(tester);
     expect(find.text('Sesión Previa'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('la salida CMYK no desborda el modal en el celular', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.reset);
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    HsApi.client = MockClient((request) async {
+      if (request.url.path.contains('/api/admin/print-requests')) {
+        return http.Response(
+          jsonEncode({
+            'requests': [_request()],
+            'formats': [
+              {'id': 2, 'name': '5x7', 'width': 5, 'height': 7, 'unit': 'in'},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    await pump(tester);
+    await tester.tap(find.text('Seleccionar todo'));
+    await tester.pumpAndSettle();
+    final open = find.text('Abrir formatos (2)');
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Color de salida'), findsOneWidget);
+    await tester.tap(find.text('TIFF · CMYK'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('TIFF CMYK con perfil ICC incrustado'),
+      findsOneWidget,
+    );
+    expect(find.text('Listo · TIFF CMYK'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

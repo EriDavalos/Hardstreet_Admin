@@ -15,14 +15,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/app_awake.dart';
-import 'package:hardstreet_admin/drive_api_service.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/app/app_awake.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_api_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 import 'package:hardstreet_admin/main.dart';
-import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/modules/clients/pages/client_dashboard_page.dart';
 
 /// Mete una imagen de verdad en la caché de RAM (una foto ya cargada): se
 /// dibuja un cuadradito y se resuelve, en vez de decodificar un archivo.

@@ -177,9 +177,7 @@ class HsPager extends StatelessWidget {
               // CELULAR: TODO en UNA sola fila al pie —‹ Página X de Y › a la
               // izquierda y el tamaño a la derecha—. Antes había dos líneas
               // (info + tamaño arriba) y se comía el alto de la pantalla.
-              ? Row(
-                  children: [arrows, const Spacer(), sizeChips],
-                )
+              ? Row(children: [arrows, const Spacer(), sizeChips])
               // ESCRITORIO: todo en una línea, alineado a la derecha salvo el
               // resumen, que va a la izquierda.
               : Row(

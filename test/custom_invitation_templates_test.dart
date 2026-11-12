@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/invitation_components/templates/custom_invitation_templates.dart';
-import 'package:hardstreet_admin/invitation_components/templates/invitation_templates.dart';
-import 'package:hardstreet_admin/invitation_model.dart';
+import 'package:hardstreet_admin/modules/invitations/components/templates/custom_invitation_templates.dart';
+import 'package:hardstreet_admin/modules/invitations/components/templates/invitation_templates.dart';
+import 'package:hardstreet_admin/modules/invitations/models/invitation_model.dart';
 
 void main() {
   setUp(() {

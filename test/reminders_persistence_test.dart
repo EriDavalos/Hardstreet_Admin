@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/reminder_notifications_native.dart';
-import 'package:hardstreet_admin/reminders_service.dart';
+import 'package:hardstreet_admin/modules/notifications/services/reminder_notifications_native.dart';
+import 'package:hardstreet_admin/modules/notifications/services/reminders_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ==================================================================
@@ -23,7 +23,8 @@ class _RecordingNotifier implements ReminderNotifier {
 }
 
 /// Aviso SIN LEER, con la forma que devuelve `/api/reminders`.
-Map<String, dynamic> _unread(int id, String title, {String source = 'event'}) => {
+Map<String, dynamic> _unread(int id, String title, {String source = 'event'}) =>
+    {
       'id': id,
       'title': title,
       'body': 'Cuerpo del aviso',
@@ -42,34 +43,47 @@ void main() {
     service.notifier = NativeReminderPlugin.instance;
   });
 
-  test('el mismo aviso no se notifica dos veces, ni tras reabrir la app',
-      () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final notifier = _RecordingNotifier();
-    service.notifier = notifier;
-    service.fetch = () async => [_unread(7, 'Falta 1 semana: Boda - Premium')];
+  test(
+    'el mismo aviso no se notifica dos veces, ni tras reabrir la app',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final notifier = _RecordingNotifier();
+      service.notifier = notifier;
+      service.fetch = () async => [
+        _unread(7, 'Falta 1 semana: Boda - Premium'),
+      ];
 
-    service.start();
-    await service.refresh();
-    expect(notifier.shown, hasLength(1),
-        reason: 'el aviso nuevo se notifica una vez');
+      service.start();
+      await service.refresh();
+      expect(
+        notifier.shown,
+        hasLength(1),
+        reason: 'el aviso nuevo se notifica una vez',
+      );
 
-    await service.refresh();
-    expect(notifier.shown, hasLength(1), reason: 'la misma consulta no repite');
+      await service.refresh();
+      expect(
+        notifier.shown,
+        hasLength(1),
+        reason: 'la misma consulta no repite',
+      );
 
-    // «Cerrar y volver a abrir»: se pierde el set en memoria pero el disco
-    // sigue; el aviso, aún sin leer, NO vuelve a notificarse.
-    service.forgetNotifiedSession();
-    await service.refresh();
-    expect(notifier.shown, hasLength(1),
-        reason: 'reabrir la app no repite el aviso ya mostrado');
+      // «Cerrar y volver a abrir»: se pierde el set en memoria pero el disco
+      // sigue; el aviso, aún sin leer, NO vuelve a notificarse.
+      service.forgetNotifiedSession();
+      await service.refresh();
+      expect(
+        notifier.shown,
+        hasLength(1),
+        reason: 'reabrir la app no repite el aviso ya mostrado',
+      );
 
-    final sp = await SharedPreferences.getInstance();
-    expect(sp.getString('app.notified.reminders'), '7');
-  });
+      final sp = await SharedPreferences.getInstance();
+      expect(sp.getString('app.notified.reminders'), '7');
+    },
+  );
 
-  test('lo que ya avisó el worker nativo (app cerrada) no se repite',
-      () async {
+  test('lo que ya avisó el worker nativo (app cerrada) no se repite', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'app.notified.reminders': '11,12',
     });
@@ -79,8 +93,11 @@ void main() {
 
     service.start();
     await service.refresh();
-    expect(notifier.shown, isEmpty,
-        reason: 'el teléfono ya lo mostró: la app no lo repite');
+    expect(
+      notifier.shown,
+      isEmpty,
+      reason: 'el teléfono ya lo mostró: la app no lo repite',
+    );
   });
 
   test('los avisos de impresión no chocan con los de agenda', () async {
@@ -92,13 +109,16 @@ void main() {
     final notifier = _RecordingNotifier();
     service.notifier = notifier;
     service.fetch = () async => [
-          _unread(9, 'Un cliente envió fotos a impresión', source: 'print'),
-        ];
+      _unread(9, 'Un cliente envió fotos a impresión', source: 'print'),
+    ];
 
     service.start();
     await service.refresh();
-    expect(notifier.shown, hasLength(1),
-        reason: 'es OTRO aviso aunque el id coincida');
+    expect(
+      notifier.shown,
+      hasLength(1),
+      reason: 'es OTRO aviso aunque el id coincida',
+    );
 
     final sp = await SharedPreferences.getInstance();
     expect(sp.getString('app.notified.reminders'), '9,1000009');

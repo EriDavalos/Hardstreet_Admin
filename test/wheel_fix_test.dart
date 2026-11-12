@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/roles_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/roles/pages/roles_page.dart';
 import 'package:hardstreet_admin/widgets/wheel_fix.dart';
 
 // ==================================================================
@@ -30,7 +30,7 @@ void _installMock() {
                 'id': i + 1,
                 'name': 'Rol $i',
                 'permissions': [
-                  {'moduleId': 1, 'permissionId': 2}
+                  {'moduleId': 1, 'permissionId': 2},
                 ],
               },
           ],
@@ -67,11 +67,13 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final previous = HsApi.client;
   addTearDown(() => HsApi.client = previous);
-  await tester.pumpWidget(MaterialApp(
-    // La misma behavior global que usa la app (main.dart).
-    scrollBehavior: const HsScrollBehavior(),
-    home: Scaffold(body: child),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      // La misma behavior global que usa la app (main.dart).
+      scrollBehavior: const HsScrollBehavior(),
+      home: Scaffold(body: child),
+    ),
+  );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -86,43 +88,57 @@ double _pixels(WidgetTester tester) {
   return best;
 }
 
-Future<void> _wheel(WidgetTester tester, Offset position, Offset delta,
-    {int times = 6}) async {
+Future<void> _wheel(
+  WidgetTester tester,
+  Offset position,
+  Offset delta, {
+  int times = 6,
+}) async {
   for (var i = 0; i < times; i++) {
     await tester.sendEventToBinding(
-        PointerScrollEvent(position: position, scrollDelta: delta));
+      PointerScrollEvent(position: position, scrollDelta: delta),
+    );
     await tester.pump();
   }
 }
 
 void main() {
-  testWidgets('regresión: la rueda VERTICAL sigue moviendo la página',
-      (tester) async {
+  testWidgets('regresión: la rueda VERTICAL sigue moviendo la página', (
+    tester,
+  ) async {
     _installMock();
     await _pump(tester, const RolesPage());
     expect(find.text('Rol 0'), findsOneWidget);
 
-    await _wheel(tester, tester.getCenter(find.byType(RolesPage)),
-        const Offset(0, 200));
+    await _wheel(
+      tester,
+      tester.getCenter(find.byType(RolesPage)),
+      const Offset(0, 200),
+    );
     await tester.pump(const Duration(milliseconds: 400));
     expect(_pixels(tester), greaterThan(0));
   });
 
-  testWidgets('fix: rueda con SOLO eje X mueve la página (sin shift)',
-      (tester) async {
+  testWidgets('fix: rueda con SOLO eje X mueve la página (sin shift)', (
+    tester,
+  ) async {
     _installMock();
     await _pump(tester, const RolesPage());
     expect(find.text('Rol 0'), findsOneWidget);
 
     // Misma firma que mandan los drivers problemáticos de Windows.
-    await _wheel(tester, tester.getCenter(find.byType(RolesPage)),
-        const Offset(60, 0));
+    await _wheel(
+      tester,
+      tester.getCenter(find.byType(RolesPage)),
+      const Offset(60, 0),
+    );
     await tester.pump(const Duration(milliseconds: 400));
     expect(_pixels(tester), greaterThan(0));
   });
 
-  testWidgets('fix: rueda con SOLO eje X mueve el diálogo de permisos',
-      (tester) async {
+  testWidgets('fix: rueda con SOLO eje X mueve el diálogo de permisos', (
+    tester,
+  ) async {
     _installMock();
     await _pump(tester, const RolesPage());
     await tester.tap(find.byIcon(Icons.tune).first, warnIfMissed: false);

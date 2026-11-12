@@ -7,10 +7,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/invitation_components/templates/custom_invitation_templates.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/invitations_page.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/modules/invitations/components/templates/custom_invitation_templates.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/invitations/pages/invitations_page.dart';
 
 // ==================================================================
 // MÓDULO INVITACIONES — listado, alta y compartir

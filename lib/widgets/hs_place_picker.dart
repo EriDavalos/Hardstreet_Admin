@@ -20,12 +20,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../hs_access.dart';
-import '../hs_api.dart';
-import '../hs_place.dart';
-import '../theme.dart';
-import 'hs_modal.dart';
-import 'hs_toast.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/core/utils/hs_place.dart';
+import 'package:hardstreet_admin/app/theme.dart';
+
+import 'package:hardstreet_admin/widgets/hs_modal.dart';
+import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Centro de partida cuando la agenda todavía no tiene lugar (Colombia).
 const LatLng _kFallbackCenter = LatLng(4.7110, -74.0721);
@@ -413,9 +414,8 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
   }
 
   /// Punto del lugar (null si no tiene coordenadas válidas).
-  static LatLng? _pointOf(HsPlace place) => place.hasCoords
-      ? LatLng(place.lat!, place.lng!)
-      : null;
+  static LatLng? _pointOf(HsPlace place) =>
+      place.hasCoords ? LatLng(place.lat!, place.lng!) : null;
 
   /// Punto de una ubicación GUARDADA, que llega como mapa del servidor.
   static LatLng? _pointFromMap(Map<String, dynamic> place) {
@@ -734,10 +734,7 @@ class _PlacePickerDialogState extends State<_PlacePickerDialog> {
                             ...otherPins,
                             if (hasPoint)
                               Marker(
-                                point: LatLng(
-                                  _selected!.lat!,
-                                  _selected!.lng!,
-                                ),
+                                point: LatLng(_selected!.lat!, _selected!.lng!),
                                 width: 46,
                                 height: 46,
                                 alignment: Alignment.topCenter,
@@ -1358,11 +1355,7 @@ class HsPlacesField extends StatelessWidget {
 /// número de la fila «Lugar N») y abre el encuadre justo sobre ellos. Sin
 /// coordenadas no se pinta nada: quien llama decide si muestra el nombre solo.
 class HsPlaceMapPreview extends StatelessWidget {
-  const HsPlaceMapPreview({
-    super.key,
-    required this.places,
-    this.height = 190,
-  });
+  const HsPlaceMapPreview({super.key, required this.places, this.height = 190});
 
   final List<HsPlace> places;
   final double height;
@@ -1376,7 +1369,9 @@ class HsPlaceMapPreview extends StatelessWidget {
     ];
     if (marked.isEmpty) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
-    final points = [for (final entry in marked) LatLng(entry.value.lat!, entry.value.lng!)];
+    final points = [
+      for (final entry in marked) LatLng(entry.value.lat!, entry.value.lng!),
+    ];
     final first = marked.first.value;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),

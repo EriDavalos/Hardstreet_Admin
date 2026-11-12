@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido: los archivos del drive se pueden decodificar de verdad.
 final _png = base64Decode(
@@ -42,7 +42,8 @@ void main() {
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      () => Future<void>.delayed(const Duration(milliseconds: 60)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 
@@ -53,7 +54,9 @@ void main() {
     addTearDown(tester.view.reset);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(body: DrivePage(drive: drive)),
+      ),
     );
     await settle(tester);
   }
@@ -78,8 +81,11 @@ void main() {
     expect(find.byType(Dialog), findsOneWidget);
     expect(tester.getSize(find.byType(Dialog)), const Size(1280, 800));
     // …y la imagen NO se recorta con esquinas curvas.
-    expect(inViewer(find.byType(ClipRRect)), findsNothing,
-        reason: 'el visor ya no redondea la foto');
+    expect(
+      inViewer(find.byType(ClipRRect)),
+      findsNothing,
+      reason: 'el visor ya no redondea la foto',
+    );
 
     // La info del archivo y la posición dentro de la carpeta.
     expect(inViewer(find.textContaining('1 de 3')), findsOneWidget);
@@ -96,8 +102,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el visor navega con las flechas del teclado y con Cerrar',
-      (tester) async {
+  testWidgets('el visor navega con las flechas del teclado y con Cerrar', (
+    tester,
+  ) async {
     await pumpDrive(tester);
     await openViewer(tester, 'dos.png');
 

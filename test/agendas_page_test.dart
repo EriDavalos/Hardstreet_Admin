@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/event_widget.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/agendas_page.dart';
+import 'package:hardstreet_admin/core/platform/event_widget.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/agendas/pages/agendas_page.dart';
 import 'package:hardstreet_admin/widgets/form_dialog.dart';
 import 'package:hardstreet_admin/widgets/hs_place_picker.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';

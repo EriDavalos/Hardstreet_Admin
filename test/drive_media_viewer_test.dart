@@ -4,15 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/app_platform.dart';
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/local_share_service.dart';
-import 'package:hardstreet_admin/open_file.dart';
-import 'package:hardstreet_admin/share_permissions.dart';
-import 'package:hardstreet_admin/shared_drive.dart';
-import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
+import 'package:hardstreet_admin/app/app_platform.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/services/local_share_service.dart';
+import 'package:hardstreet_admin/core/platform/open_file.dart';
+import 'package:hardstreet_admin/core/models/share_permissions.dart';
+import 'package:hardstreet_admin/modules/drive/services/shared_drive.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_media_viewer.dart';
 
 // ==================================================================
 // EL VISOR DE ARCHIVOS (vídeo, audio, texto, PDF y "no hay vista previa")
@@ -26,10 +26,10 @@ import 'package:hardstreet_admin/widgets/drive_media_viewer.dart';
 void main() {
   group('pantalla completa: hacia dónde gira el teléfono', () {
     test('un vídeo HORIZONTAL se ve apaisado', () {
-      expect(
-        fullscreenOrientationsFor(horizontal: true),
-        [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
-      );
+      expect(fullscreenOrientationsFor(horizontal: true), [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
     });
 
     test('un vídeo VERTICAL se queda de pie', () {

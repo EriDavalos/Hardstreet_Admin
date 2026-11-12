@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_downloader.dart';
-import 'package:hardstreet_admin/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_downloader.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
 
 /// PNG 1x1 válido.
 final Uint8List _png = base64Decode(
@@ -20,7 +20,9 @@ void main() {
     addTearDown(() async {
       try {
         await tmp.delete(recursive: true);
-      } catch (_) {/* el temporal es prescindible */}
+      } catch (_) {
+        /* el temporal es prescindible */
+      }
     });
 
     final drive = DriveService.testRoot(tmp);

@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
 
 /// Paquete VIGENTE (el que se administra) y uno TERMINADO (solo consulta).
 const int _vigenteId = 10;
@@ -44,7 +44,13 @@ void _installMockClient({
               'categoryName': 'Boda',
               'agendaCount': 1,
               'services': [
-                {'id': 1, 'serviceId': 5, 'name': 'Cobertura en evento', 'description': '', 'status': 'Pendiente'},
+                {
+                  'id': 1,
+                  'serviceId': 5,
+                  'name': 'Cobertura en evento',
+                  'description': '',
+                  'status': 'Pendiente',
+                },
               ],
             },
             {
@@ -98,15 +104,16 @@ void _installMockClient({
 
     if (path.endsWith('/api/admin/package-progress')) {
       if (request.method == 'POST') {
-        posts.add(
-            (jsonDecode(request.body) as Map).cast<String, dynamic>());
-        return http.Response(jsonEncode({'ok': true}), 201,
-            headers: headers);
+        posts.add((jsonDecode(request.body) as Map).cast<String, dynamic>());
+        return http.Response(jsonEncode({'ok': true}), 201, headers: headers);
       }
-      final id = int.tryParse(request.url.queryParameters['purchasedPackageId'] ?? '') ?? 0;
+      final id =
+          int.tryParse(
+            request.url.queryParameters['purchasedPackageId'] ?? '',
+          ) ??
+          0;
       final isVigente = id == _vigenteId;
-      final doneAt =
-          '${now.year}-${_two(now.month)}-${_two(now.day)}T12:00:00';
+      final doneAt = '${now.year}-${_two(now.month)}-${_two(now.day)}T12:00:00';
       return http.Response(
         jsonEncode({
           'package': {
@@ -194,11 +201,13 @@ void _installMockClient({
   });
 }
 
-Future<void> _pumpDialog(WidgetTester tester,
-    {required List<Map<String, dynamic>> posts,
-    Size size = const Size(1250, 940),
-    bool openDetail = true,
-    bool secondFinished = true}) async {
+Future<void> _pumpDialog(
+  WidgetTester tester, {
+  required List<Map<String, dynamic>> posts,
+  Size size = const Size(1250, 940),
+  bool openDetail = true,
+  bool secondFinished = true,
+}) async {
   await tester.binding.setSurfaceSize(size);
   // En pruebas, MediaQuery NO sigue al tamaño de la superficie: hay que
   // declarar la vista para que el modal vea la MISMA ventana que dibuja.
@@ -255,8 +264,9 @@ void main() {
     );
   });
 
-  testWidgets('ventana angosta: el modal se apila sin desbordarse',
-      (tester) async {
+  testWidgets('ventana angosta: el modal se apila sin desbordarse', (
+    tester,
+  ) async {
     await _pumpDialog(tester, posts: [], size: const Size(820, 780));
 
     // Ya no hay columna lateral: la barra de pestañas queda ARRIBA y el
@@ -286,41 +296,49 @@ void main() {
     expect(find.text('MXN \$12,000'), findsOneWidget);
   });
 
-  testWidgets('teléfono: el servicio se EXPANDE y sus acciones van en UNA fila',
-      (tester) async {
-    await _pumpDialog(tester, posts: [], size: const Size(430, 760));
-    await _tap(tester, find.text('Servicios'));
+  testWidgets(
+    'teléfono: el servicio se EXPANDE y sus acciones van en UNA fila',
+    (tester) async {
+      await _pumpDialog(tester, posts: [], size: const Size(430, 760));
+      await _tap(tester, find.text('Servicios'));
 
-    // Completar es discreto en el celular: botón de IMAGEN (solo el tooltip),
-    // sin el texto ni el verde de antes.
-    expect(find.byTooltip('Completar servicio'), findsOneWidget);
-    expect(find.text('Completar servicio'), findsNothing);
+      // Completar es discreto en el celular: botón de IMAGEN (solo el tooltip),
+      // sin el texto ni el verde de antes.
+      expect(find.byTooltip('Completar servicio'), findsOneWidget);
+      expect(find.text('Completar servicio'), findsNothing);
 
-    // Tocar la tarjeta (un servicio PENDIENTE) la despliega: ahí salen sus
-    // datos y sus opciones, sin tener que terminarlo primero.
-    await _tap(tester, find.text('Cobertura en evento'));
-    expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
-
-    // Las acciones quedan en la MISMA línea y en orden horizontal (en el
-    // celular NO se apilan en vertical).
-    // El servicio del mock ya trae su liga base: la acción dice "Editar".
-    const row = ['Añadir nota', 'Editar enlace', 'Compartir'];
-    for (final label in row) {
-      expect(find.text(label), findsOneWidget);
-    }
-    final dy = tester.getCenter(find.text(row.first)).dy;
-    for (final label in row.skip(1)) {
-      expect(tester.getCenter(find.text(label)).dy, dy,
-          reason: '«$label» comparte la fila de «${row.first}»');
-    }
-    for (var i = 1; i < row.length; i++) {
+      // Tocar la tarjeta (un servicio PENDIENTE) la despliega: ahí salen sus
+      // datos y sus opciones, sin tener que terminarlo primero.
+      await _tap(tester, find.text('Cobertura en evento'));
       expect(
-        tester.getCenter(find.text(row[i])).dx,
-        greaterThan(tester.getCenter(find.text(row[i - 1])).dx),
+        find.text('https://drive.google.com/drive/u/0/boda'),
+        findsOneWidget,
       );
-    }
-    expect(tester.takeException(), isNull);
-  });
+
+      // Las acciones quedan en la MISMA línea y en orden horizontal (en el
+      // celular NO se apilan en vertical).
+      // El servicio del mock ya trae su liga base: la acción dice "Editar".
+      const row = ['Añadir nota', 'Editar enlace', 'Compartir'];
+      for (final label in row) {
+        expect(find.text(label), findsOneWidget);
+      }
+      final dy = tester.getCenter(find.text(row.first)).dy;
+      for (final label in row.skip(1)) {
+        expect(
+          tester.getCenter(find.text(label)).dy,
+          dy,
+          reason: '«$label» comparte la fila de «${row.first}»',
+        );
+      }
+      for (var i = 1; i < row.length; i++) {
+        expect(
+          tester.getCenter(find.text(row[i])).dx,
+          greaterThan(tester.getCenter(find.text(row[i - 1])).dx),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('justo en el umbral (1024) ya son dos columnas y nada '
       'desborda', (tester) async {
@@ -361,7 +379,10 @@ void main() {
     expect(find.text('Pago'), findsOneWidget);
     expect(find.text('Terminados'), findsOneWidget);
     expect(find.text('Para finalizar el paquete'), findsOneWidget);
-    expect(find.text('• Falta terminar 1 servicio del paquete'), findsOneWidget);
+    expect(
+      find.text('• Falta terminar 1 servicio del paquete'),
+      findsOneWidget,
+    );
     expect(
       find.text('• El pago está incompleto: falta por abonar 6000.00'),
       findsOneWidget,
@@ -374,8 +395,11 @@ void main() {
         matching: find.byType(FilledButton),
       ),
     );
-    expect(finish.onPressed, isNull,
-        reason: 'no se puede finalizar con servicios o pago incompletos');
+    expect(
+      finish.onPressed,
+      isNull,
+      reason: 'no se puede finalizar con servicios o pago incompletos',
+    );
 
     // La ficha ya NO tiene botones de "Acciones del paquete": todo vive en
     // las pestañas y solo queda Finalizar (verificado arriba).
@@ -386,8 +410,9 @@ void main() {
     expect(find.text('Registrar movimiento'), findsOneWidget);
   });
 
-  testWidgets('un paquete ABIERTO que no es el vigente también se administra',
-      (tester) async {
+  testWidgets('un paquete ABIERTO que no es el vigente también se administra', (
+    tester,
+  ) async {
     await _pumpDialog(tester, posts: [], secondFinished: false);
 
     // Se vuelve al selector y se elige el OTRO paquete, que sigue abierto.
@@ -406,8 +431,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('los paquetes FINALIZADOS se ven como detalle (solo lectura)',
-      (tester) async {
+  testWidgets('los paquetes FINALIZADOS se ven como detalle (solo lectura)', (
+    tester,
+  ) async {
     await _pumpDialog(tester, posts: []);
 
     // Se vuelve al selector de paquetes (la flecha del encabezado) y se elige
@@ -423,8 +449,9 @@ void main() {
     expect(find.text('Finalizar paquete'), findsNothing);
   });
 
-  testWidgets('completar un servicio registra su cierre con descripción',
-      (tester) async {
+  testWidgets('completar un servicio registra su cierre con descripción', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
@@ -433,8 +460,9 @@ void main() {
     expect(find.text('Terminar servicio'), findsOneWidget);
 
     await tester.enterText(
-        find.widgetWithText(TextField, 'Cómo quedó el servicio / observaciones'),
-        'Entrega de la galería completa');
+      find.widgetWithText(TextField, 'Cómo quedó el servicio / observaciones'),
+      'Entrega de la galería completa',
+    );
     await _tap(tester, find.text('Dar por terminado'));
 
     final completar = posts
@@ -445,8 +473,9 @@ void main() {
     expect(completar.first['description'], 'Entrega de la galería completa');
   });
 
-  testWidgets('un servicio pasa a «En proceso» con sus observaciones',
-      (tester) async {
+  testWidgets('un servicio pasa a «En proceso» con sus observaciones', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
@@ -493,8 +522,9 @@ void main() {
     await _tap(tester, find.byTooltip('Cerrar').last);
   });
 
-  testWidgets('los movimientos listan abonos e inversiones con totales',
-      (tester) async {
+  testWidgets('los movimientos listan abonos e inversiones con totales', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
@@ -509,8 +539,11 @@ void main() {
     // esta pestaña enseña el DISPONIBLE (abonado - gastado).
     expect(find.text('DISPONIBLE'), findsOneWidget);
     expect(find.text('AHORRO'), findsOneWidget);
-    expect(find.text('ABONADO'), findsOneWidget,
-        reason: 'solo el de la ficha del paquete (columna izquierda)');
+    expect(
+      find.text('ABONADO'),
+      findsOneWidget,
+      reason: 'solo el de la ficha del paquete (columna izquierda)',
+    );
     // Abonar vive ahora en esta pestaña (ya no en la ficha).
     expect(find.text('Abonar'), findsOneWidget);
 
@@ -525,38 +558,52 @@ void main() {
     final double$ = tester
         .widgetList<TextField>(find.byType(TextField))
         .any((t) => (t.decoration?.prefixText ?? '').contains(r'$'));
-    expect(double$, isFalse,
-        reason: 'el signo de dinero solo puede venir del icono');
+    expect(
+      double$,
+      isFalse,
+      reason: 'el signo de dinero solo puede venir del icono',
+    );
   });
 
-  testWidgets('un ahorro por PORCENTAJE se calcula sobre el disponible',
-      (tester) async {
+  testWidgets('un ahorro se captura en un solo campo y calcula el porcentaje', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
     await _tap(tester, find.text('Movimientos'));
     await _tap(tester, find.text('Registrar movimiento'));
 
-    // El tipo AHORRO ofrece la base del cálculo (disponible = 6000 - 800),
+    // El tipo AHORRO muestra la base del cálculo (disponible = 6000 - 800),
     // que coincide con la tarjeta DISPONIBLE de la pestaña.
     await _tap(tester, find.text('Ahorro'));
-    expect(find.textContaining('Disponible del paquete'), findsOneWidget);
+    expect(find.text('DISPONIBLE PARA AHORRAR'), findsOneWidget);
     expect(find.text('MXN \$5,200'), findsNWidgets(2));
 
-    // Porcentaje: 10 % de 5200 = 520.
-    await _tap(tester, find.text('Porcentaje'));
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Porcentaje'),
-      '10',
-    );
+    // Ya NO hay pestañas "Cantidad / Porcentaje": hay UN monto y un botón
+    // opcional que lo calcula a partir del porcentaje.
+    expect(find.text('Cantidad'), findsNothing);
+    expect(find.text('Porcentaje'), findsNothing);
+    expect(find.byKey(const ValueKey('saving-amount')), findsOneWidget);
+
+    await _tap(tester, find.text('Calcular porcentaje'));
+    await tester.enterText(find.byKey(const ValueKey('saving-percent')), '10');
     await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('10 % de'), findsOneWidget);
+
+    // El botón escribe 10 % de 5200 = 520 en el campo único.
+    await _tap(tester, find.text('Usar monto'));
+    final amount = tester.widget<TextField>(
+      find.byKey(const ValueKey('saving-amount')),
+    );
+    expect(amount.controller!.text, '520');
+    expect(find.text('10 % aplicado'), findsOneWidget);
     expect(find.text('Se ahorrarán'), findsOneWidget);
     expect(find.text('MXN \$520'), findsOneWidget);
 
     await _tap(tester, find.text('Registrar'));
 
-    final movs =
-        posts.where((p) => p['action'] == 'movimiento').toList();
+    final movs = posts.where((p) => p['action'] == 'movimiento').toList();
     expect(movs, hasLength(1));
     expect(movs.first['kind'], 'ahorro');
     expect(movs.first['amount'], 520);
@@ -580,14 +627,16 @@ void main() {
     expect(find.text('Guardar cambios'), findsOneWidget);
     expect(find.text('800'), findsOneWidget); // monto precargado
 
+    await tester.enterText(find.widgetWithText(TextField, 'Monto'), '950');
     await tester.enterText(
-        find.widgetWithText(TextField, 'Monto'), '950');
-    await tester.enterText(
-        find.widgetWithText(TextField, 'Descripción'), 'Renta de lente + trípode');
+      find.widgetWithText(TextField, 'Descripción'),
+      'Renta de lente + trípode',
+    );
     await _tap(tester, find.text('Guardar cambios'));
 
-    final edits =
-        posts.where((p) => p['action'] == 'editar-movimiento').toList();
+    final edits = posts
+        .where((p) => p['action'] == 'editar-movimiento')
+        .toList();
     expect(edits, hasLength(1));
     expect(edits.first['movementId'], 6);
     expect(edits.first['source'], 'movement');
@@ -596,8 +645,9 @@ void main() {
     expect(edits.first['description'], 'Renta de lente + trípode');
   });
 
-  testWidgets('EDITAR un ABONO: solo monto y concepto (sin cambiar el tipo)',
-      (tester) async {
+  testWidgets('EDITAR un ABONO: solo monto y concepto (sin cambiar el tipo)', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
@@ -613,8 +663,9 @@ void main() {
     await tester.enterText(find.widgetWithText(TextField, 'Monto'), '6200');
     await _tap(tester, find.text('Guardar cambios'));
 
-    final edits =
-        posts.where((p) => p['action'] == 'editar-movimiento').toList();
+    final edits = posts
+        .where((p) => p['action'] == 'editar-movimiento')
+        .toList();
     expect(edits, hasLength(1));
     expect(edits.first['movementId'], 5);
     expect(edits.first['source'], 'payment');
@@ -631,7 +682,10 @@ void main() {
     // servicio PENDIENTE: no hace falta completarlo para ver su información).
     await _tap(tester, find.text('Cobertura en evento'));
     // La liga base de su carpeta se ve tal cual, sin terminarlo.
-    expect(find.text('https://drive.google.com/drive/u/0/boda'), findsOneWidget);
+    expect(
+      find.text('https://drive.google.com/drive/u/0/boda'),
+      findsOneWidget,
+    );
 
     // Estado y «Completar» son DOS botones de icono, juntos en la cabecera y
     // en ese orden (el estado a la izquierda de Completar).
@@ -659,8 +713,9 @@ void main() {
     );
     await _tap(tester, find.text('Guardar enlace'));
 
-    final urlPosts =
-        posts.where((p) => p['action'] == 'actualizar-servicio-url').toList();
+    final urlPosts = posts
+        .where((p) => p['action'] == 'actualizar-servicio-url')
+        .toList();
     expect(urlPosts, hasLength(1));
     expect(urlPosts.first['serviceId'], 5);
     expect(urlPosts.first['url'], 'https://drive.google.com/drive/u/0/nuevo');
@@ -691,8 +746,8 @@ void main() {
     expect(find.text('Servicios'), findsNothing);
   });
 
-  testWidgets('repartir pago en PARTES IGUALES: pide el total y a quiénes',
-      (tester) async {
+  testWidgets('repartir pago: total precargado con el disponible y reparto '
+      'por igual desde el botón', (tester) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
@@ -700,66 +755,117 @@ void main() {
     expect(find.text('Repartir pago'), findsOneWidget);
 
     await _tap(tester, find.text('Repartir pago'));
-    // 1) PRIMERO se eligen las personas (ya no salen todas por defecto)…
-    expect(find.text('1. ELIGE A QUIÉNES SE LES PAGA'), findsOneWidget);
-    // …y el modo de reparto aparece DESPUÉS de marcar gente.
-    expect(find.text('2. ¿CÓMO SE REPARTE?'), findsNothing);
+    // Un solo flujo: ya NO hay pestañas de modo.
+    expect(find.text('DISPONIBLE PARA REPARTIR'), findsOneWidget);
+    expect(find.text('MXN \$5,200'), findsWidgets);
+    expect(find.text('1. ¿A QUIÉNES SE LES PAGA?'), findsOneWidget);
+    expect(find.text('Partes iguales'), findsNothing);
+    expect(find.text('Por numeración'), findsNothing);
+
     await _tap(tester, find.text('Yusef Ali'));
     await _tap(tester, find.text('Marta Soto'));
 
-    // Los dos modos, con partes iguales por defecto.
-    expect(find.text('2. ¿CÓMO SE REPARTE?'), findsOneWidget);
-    expect(find.text('Partes iguales'), findsOneWidget);
-    expect(find.text('Por numeración'), findsOneWidget);
-
-    // Monto total a repartir.
-    await tester.enterText(find.widgetWithText(TextField, 'Total'), '900');
+    // El total nace con el disponible y el campo no deja pasar el máximo.
+    final totalFinder = find.byKey(const ValueKey('split-total'));
+    expect(find.text('2. MONTO PARA CADA PERSONA'), findsOneWidget);
+    expect(tester.widget<TextField>(totalFinder).controller!.text, '5200');
+    await tester.enterText(totalFinder, '6000');
     await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      tester.widget<TextField>(totalFinder).controller!.text,
+      '5200',
+      reason: 'el máximo ingresable es el disponible del paquete',
+    );
 
-    // La previsualización dice cuánto le toca a cada uno.
-    expect(find.text('A cada uno de los elegidos le toca'), findsOneWidget);
-    expect(find.text('MXN \$450'), findsWidgets);
+    // El botón reparte el total (el disponible) en partes iguales.
+    await _tap(tester, find.text('Repartir en partes iguales'));
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('split-amount-3')))
+          .controller!
+          .text,
+      '2600',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('split-amount-4')))
+          .controller!
+          .text,
+      '2600',
+    );
+    expect(find.text('Total repartido'), findsOneWidget);
+    expect(find.text('Repartes todo el disponible.'), findsOneWidget);
 
     await _tap(tester, find.text('Repartir'));
 
-    final splits =
-        posts.where((p) => p['action'] == 'repartir-pago').toList();
+    final splits = posts.where((p) => p['action'] == 'repartir-pago').toList();
     expect(splits, hasLength(1));
-    expect(splits.first['mode'], 'iguales');
-    expect(splits.first['total'], 900);
-    expect((splits.first['userIds'] as List).toSet(), {3, 4});
+    expect(splits.first['mode'], 'numeracion');
+    final parts = (splits.first['parts'] as List).cast<Map>();
+    expect(parts.map((p) => p['userId']), containsAll([3, 4]));
+    expect(parts.map((p) => p['amount']), containsAll([2600, 2600]));
   });
 
-  testWidgets('repartir pago por NUMERACIÓN: un monto por persona',
-      (tester) async {
+  testWidgets('repartir pago por numeración: un monto por persona', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     await _pumpDialog(tester, posts: posts);
 
     await _tap(tester, find.text('Movimientos'));
     await _tap(tester, find.text('Repartir pago'));
-    // Primero las personas, después el modo de reparto.
     await _tap(tester, find.text('Yusef Ali'));
     await _tap(tester, find.text('Marta Soto'));
-    await _tap(tester, find.text('Por numeración'));
 
-    // Un monto por destinatario (el campo del concepto va al final).
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(0), '300');
-    await tester.enterText(fields.at(1), '450');
+    await tester.enterText(find.byKey(const ValueKey('split-amount-3')), '300');
+    await tester.enterText(find.byKey(const ValueKey('split-amount-4')), '450');
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(find.text('Total a repartir'), findsOneWidget);
+    expect(find.text('Total repartido'), findsOneWidget);
     expect(find.text('MXN \$750'), findsWidgets);
+    expect(find.text('Quedan MXN \$4,450 disponibles.'), findsOneWidget);
 
     await _tap(tester, find.text('Repartir'));
 
-    final splits =
-        posts.where((p) => p['action'] == 'repartir-pago').toList();
+    final splits = posts.where((p) => p['action'] == 'repartir-pago').toList();
     expect(splits, hasLength(1));
     expect(splits.first['mode'], 'numeracion');
     final parts = (splits.first['parts'] as List).cast<Map>();
     expect(parts.map((p) => p['userId']), containsAll([3, 4]));
     expect(parts.map((p) => p['amount']), containsAll([300, 450]));
+  });
+
+  testWidgets('el reparto no puede superar el disponible del paquete', (
+    tester,
+  ) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Repartir pago'));
+    await _tap(tester, find.text('Yusef Ali'));
+    await _tap(tester, find.text('Marta Soto'));
+
+    // Cada monto es válido por separado, pero la suma supera el disponible.
+    await tester.enterText(
+      find.byKey(const ValueKey('split-amount-3')),
+      '3000',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('split-amount-4')),
+      '3000',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.textContaining('Te pasaste por'), findsOneWidget);
+
+    await _tap(tester, find.text('Repartir'));
+    expect(find.textContaining('supera el disponible'), findsOneWidget);
+    expect(
+      posts.where((p) => p['action'] == 'repartir-pago'),
+      isEmpty,
+      reason: 'no se manda nada si el reparto excede el disponible',
+    );
   });
 
   testWidgets('un movimiento tipo Pago pide el destinatario', (tester) async {
@@ -768,8 +874,7 @@ void main() {
 
     await _tap(tester, find.text('Movimientos'));
     await _tap(tester, find.text('Registrar movimiento'));
-    // «Pago» también existe como etiqueta de la ficha: se toca por su ayuda.
-    await _tap(tester, find.text('Pago a un colaborador o empleado'));
+    await _tap(tester, find.byKey(const ValueKey('movement-kind-pago')));
 
     expect(find.text('¿A QUIÉN SE LE PAGA?'), findsOneWidget);
     await tester.enterText(find.widgetWithText(TextField, 'Monto'), '500');
@@ -781,5 +886,55 @@ void main() {
     expect(movs, hasLength(1));
     expect(movs.first['kind'], 'pago');
     expect(movs.first['userId'], 3);
+  });
+
+  testWidgets('el reparto cabe en el teléfono y muestra el disponible', (
+    tester,
+  ) async {
+    await _pumpDialog(tester, posts: [], size: const Size(430, 760));
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Repartir pago'));
+    expect(find.text('DISPONIBLE PARA REPARTIR'), findsOneWidget);
+
+    await _tap(tester, find.text('Yusef Ali'));
+    expect(find.byKey(const ValueKey('split-total')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('2. MONTO PARA CADA PERSONA')).dy,
+      greaterThan(
+        tester.getTopLeft(find.text('1. ¿A QUIÉNES SE LES PAGA?')).dy,
+      ),
+      reason: 'en el teléfono las secciones se apilan',
+    );
+    await _tap(tester, find.text('Repartir en partes iguales'));
+    expect(find.text('Repartes todo el disponible.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('en escritorio el reparto va en dos columnas', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    await _pumpDialog(tester, posts: posts);
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Repartir pago'));
+    await _tap(tester, find.text('Yusef Ali'));
+
+    final people = tester.getTopLeft(find.text('1. ¿A QUIÉNES SE LES PAGA?'));
+    final amounts = tester.getTopLeft(find.text('2. MONTO PARA CADA PERSONA'));
+    expect(amounts.dx, greaterThan(people.dx));
+    expect((amounts.dy - people.dy).abs(), lessThan(40));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('la calculadora de ahorro cabe en el teléfono', (tester) async {
+    await _pumpDialog(tester, posts: [], size: const Size(430, 760));
+
+    await _tap(tester, find.text('Movimientos'));
+    await _tap(tester, find.text('Registrar movimiento'));
+    await _tap(tester, find.text('Ahorro'));
+    await _tap(tester, find.text('Calcular porcentaje'));
+
+    expect(find.byKey(const ValueKey('saving-percent')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

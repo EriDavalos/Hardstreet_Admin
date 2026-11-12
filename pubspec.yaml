@@ -44,6 +44,8 @@ flutter:
     - assets/covers/
     # Campanita del aviso del paquete («Ya puedes elegir tus fotos»…).
     - assets/sounds/
+    # Perfil ICC que se incrusta en el TIFF CMYK de impresión (SWOP 300 %).
+    - assets/profiles/SWOP2006coated_300_mth.icc
     # El SITIO REAL empaquetado (index.html, CSS, JS e imágenes): el editor
     # HTML del módulo "Sitio web" lo sirve en loopback para que la vista
     # previa sea EXACTAMENTE la web, no una maqueta de Flutter.

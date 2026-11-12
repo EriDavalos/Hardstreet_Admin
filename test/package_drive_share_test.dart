@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
-import 'package:hardstreet_admin/widgets/drive_folder_picker.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/drive_folder_picker.dart';
 
 /// Drive de prueba con un árbol FIJO de carpetas (sin red).
 class _FakeDrive extends DriveBase {
@@ -42,8 +42,10 @@ class _FakeDrive extends DriveBase {
   String absolutePathOf(DriveItem item) => [...path, item.name].join('/');
 
   @override
-  Future<int> uploadFromPaths(List<String> sources, {bool overwrite = false}) async =>
-      0;
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async => 0;
 
   @override
   Future<void> createFolder(String name) async {}
@@ -56,18 +58,20 @@ class _FakeDrive extends DriveBase {
 
   @override
   Future<({int moved, List<String> errors})> moveItems(
-          List<String> names, List<String> targetPath) async =>
-      (moved: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (moved: 0, errors: const <String>[]);
 
   @override
   Future<({int copied, List<String> errors})> copyItems(
-          List<String> names, List<String> targetPath) async =>
-      (copied: 0, errors: const <String>[]);
+    List<String> names,
+    List<String> targetPath,
+  ) async => (copied: 0, errors: const <String>[]);
 
   @override
   Future<({int deleted, List<String> errors})> deleteItems(
-          List<String> names) async =>
-      (deleted: 0, errors: const <String>[]);
+    List<String> names,
+  ) async => (deleted: 0, errors: const <String>[]);
 
   @override
   Future<void> retryUpload(String jobId) async {}
@@ -118,8 +122,11 @@ void _installMock({
     }
 
     if (p.endsWith('/api/admin/agendas')) {
-      return http.Response(jsonEncode({'agendas': const []}), 200,
-          headers: headers);
+      return http.Response(
+        jsonEncode({'agendas': const []}),
+        200,
+        headers: headers,
+      );
     }
 
     if (p.endsWith('/api/admin/package-progress')) {
@@ -225,14 +232,13 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-Finder _inDialog(String text) => find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.text(text),
-    );
+Finder _inDialog(String text) =>
+    find.descendant(of: find.byType(AlertDialog), matching: find.text(text));
 
 void main() {
-  testWidgets('la pestaña Drive comparte LA carpeta del PAQUETE',
-      (tester) async {
+  testWidgets('la pestaña Drive comparte LA carpeta del PAQUETE', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared([]);
     await _pump(tester, posts: posts, paths: paths);
@@ -262,8 +268,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('cambiar la carpeta REEMPLAZA la del paquete (una sola)',
-      (tester) async {
+  testWidgets('cambiar la carpeta REEMPLAZA la del paquete (una sola)', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     // El paquete YA tiene una carpeta.
     final paths = _Shared(['ReynaCoot']);
@@ -301,7 +308,9 @@ void main() {
     expect(find.text('ReynaCoot'), findsOneWidget);
 
     await _tap(
-        tester, find.byTooltip('Dejar de compartir la carpeta del paquete'));
+      tester,
+      find.byTooltip('Dejar de compartir la carpeta del paquete'),
+    );
     await _tap(tester, find.text('Continuar'));
 
     expect(posts, hasLength(1));
@@ -312,8 +321,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('las carpetas compartidas al CLIENTE no se ven en el paquete',
-      (tester) async {
+  testWidgets('las carpetas compartidas al CLIENTE no se ven en el paquete', (
+    tester,
+  ) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared(['ReynaCoot']);
     // El cliente tiene OTRA carpeta compartida directamente con él.
@@ -343,8 +353,11 @@ void main() {
         );
       }
       if (p.endsWith('/api/admin/agendas')) {
-        return http.Response(jsonEncode({'agendas': const []}), 200,
-            headers: headers);
+        return http.Response(
+          jsonEncode({'agendas': const []}),
+          200,
+          headers: headers,
+        );
       }
       if (p.endsWith('/api/admin/package-progress')) {
         return http.Response(
@@ -371,9 +384,15 @@ void main() {
       }
       return http.Response(jsonEncode({'ok': true}), 200, headers: headers);
     });
-    addTearDown(() => HsApi.client = MockClient((_) async =>
-        http.Response(jsonEncode({'ok': true}), 200,
-            headers: {'content-type': 'application/json'})));
+    addTearDown(
+      () => HsApi.client = MockClient(
+        (_) async => http.Response(
+          jsonEncode({'ok': true}),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
 
     await tester.binding.setSurfaceSize(const Size(1250, 940));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -465,12 +484,7 @@ void main() {
       'avisa de dónde se elige', (tester) async {
     final posts = <Map<String, dynamic>>[];
     final paths = _Shared(['ReynaCoot']);
-    await _pump(
-      tester,
-      posts: posts,
-      paths: paths,
-      size: const Size(430, 800),
-    );
+    await _pump(tester, posts: posts, paths: paths, size: const Size(430, 800));
 
     // La tarjeta de la carpeta compartida con el cliente (con su botón de
     // desvincular) también cabe en el teléfono.

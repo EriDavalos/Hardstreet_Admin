@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/companies_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/companies/pages/companies_page.dart';
 
 // ==================================================================
 // EMPRESAS: el Superadministrador ve cada empresa con su carpeta raíz,
@@ -26,9 +26,7 @@ void main() {
       const headers = {'content-type': 'application/json'};
       final path = request.url.path;
       if (path.endsWith('/api/admin/companies') && request.method == 'GET') {
-        requested.add({
-          'company': request.headers['x-company-id'] ?? '',
-        });
+        requested.add({'company': request.headers['x-company-id'] ?? ''});
         return http.Response(
           jsonEncode({
             'ok': true,
@@ -58,11 +56,7 @@ void main() {
                 'users': 3,
                 'clients': 1,
                 'admins': [
-                  {
-                    'id': 20,
-                    'name': 'Ana Ruiz',
-                    'email': 'ana@aurora.com',
-                  },
+                  {'id': 20, 'name': 'Ana Ruiz', 'email': 'ana@aurora.com'},
                 ],
               },
               {
@@ -100,38 +94,44 @@ void main() {
     HsSession.clear();
   });
 
-  testWidgets('muestra carpeta raíz, administradores y estado de cada empresa',
-      (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: CompaniesPage())),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'muestra carpeta raíz, administradores y estado de cada empresa',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: CompaniesPage())),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Hardstreet'), findsOneWidget);
-    expect(find.text('Estudio Aurora'), findsOneWidget);
-    // La primera empresa vive en la raíz del Drive; la segunda en su carpeta.
-    expect(find.text('Drive (raíz)'), findsOneWidget);
-    expect(find.text('Drive /aurora'), findsOneWidget);
-    // Administradores y conteos.
-    expect(find.textContaining('ana@aurora.com'), findsOneWidget);
-    expect(find.text('3 usuarios'), findsOneWidget);
-    // La inactiva se distingue y no ofrece "Trabajar aquí".
-    expect(find.text('Inactiva'), findsOneWidget);
-    expect(find.text('Sin administrador asignado'), findsOneWidget);
-    // Marca de contexto sobre la empresa con la que se está trabajando.
-    expect(find.text('Trabajando aquí'), findsOneWidget);
-  });
+      expect(find.text('Hardstreet'), findsOneWidget);
+      expect(find.text('Estudio Aurora'), findsOneWidget);
+      // La primera empresa vive en la raíz del Drive; la segunda en su carpeta.
+      expect(find.text('Drive (raíz)'), findsOneWidget);
+      expect(find.text('Drive /aurora'), findsOneWidget);
+      // Administradores y conteos.
+      expect(find.textContaining('ana@aurora.com'), findsOneWidget);
+      expect(find.text('3 usuarios'), findsOneWidget);
+      // La inactiva se distingue y no ofrece "Trabajar aquí".
+      expect(find.text('Inactiva'), findsOneWidget);
+      expect(find.text('Sin administrador asignado'), findsOneWidget);
+      // Marca de contexto sobre la empresa con la que se está trabajando.
+      expect(find.text('Trabajando aquí'), findsOneWidget);
+    },
+  );
 
-  testWidgets('las peticiones llevan la empresa activa en X-Company-Id',
-      (tester) async {
+  testWidgets('las peticiones llevan la empresa activa en X-Company-Id', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: CompaniesPage())),
     );
     await tester.pumpAndSettle();
 
     expect(requested, isNotEmpty);
-    expect(requested.first['company'], '2',
-        reason: 'el backend recorta por la empresa activa del Superadmin');
+    expect(
+      requested.first['company'],
+      '2',
+      reason: 'el backend recorta por la empresa activa del Superadmin',
+    );
   });
 
   testWidgets('"Trabajar aquí" cambia la empresa activa', (tester) async {
@@ -139,9 +139,7 @@ void main() {
     var changed = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: CompaniesPage(onCompanyChanged: () => changed++),
-        ),
+        home: Scaffold(body: CompaniesPage(onCompanyChanged: () => changed++)),
       ),
     );
     await tester.pumpAndSettle();

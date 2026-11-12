@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido: los archivos del drive se pueden decodificar de verdad.
 final Uint8List _png = base64Decode(
@@ -36,42 +36,49 @@ void main() {
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      () => Future<void>.delayed(const Duration(milliseconds: 60)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  Future<void> mouseTap(WidgetTester tester, Finder f,
-      {int buttons = kPrimaryButton}) async {
+  Future<void> mouseTap(
+    WidgetTester tester,
+    Finder f, {
+    int buttons = kPrimaryButton,
+  }) async {
     await tester.tap(f, kind: PointerDeviceKind.mouse, buttons: buttons);
     await settle(tester);
   }
 
   testWidgets(
-      'clic derecho con VARIOS seleccionados: solo acciones de la selección',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1280, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
-    );
-    await settle(tester);
+    'clic derecho con VARIOS seleccionados: solo acciones de la selección',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: DrivePage(drive: drive)),
+        ),
+      );
+      await settle(tester);
 
-    // Selecciona dos con ratón (el segundo con Ctrl, como el explorador).
-    await mouseTap(tester, find.text('uno.png'));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await mouseTap(tester, find.text('dos.png'));
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      // Selecciona dos con ratón (el segundo con Ctrl, como el explorador).
+      await mouseTap(tester, find.text('uno.png'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await mouseTap(tester, find.text('dos.png'));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
 
-    await mouseTap(tester, find.text('uno.png'), buttons: kSecondaryButton);
+      await mouseTap(tester, find.text('uno.png'), buttons: kSecondaryButton);
 
-    expect(find.text('Descargar 2 seleccionadas'), findsOneWidget);
-    expect(find.text('Eliminar 2 seleccionadas'), findsOneWidget);
-    // Nada de acciones de un solo elemento.
-    expect(find.text('Abrir'), findsNothing);
-    expect(find.text('Renombrar'), findsNothing);
-    expect(find.text('Descargar'), findsNothing);
+      expect(find.text('Descargar 2 seleccionadas'), findsOneWidget);
+      expect(find.text('Eliminar 2 seleccionadas'), findsOneWidget);
+      // Nada de acciones de un solo elemento.
+      expect(find.text('Abrir'), findsNothing);
+      expect(find.text('Renombrar'), findsNothing);
+      expect(find.text('Descargar'), findsNothing);
 
-    await tester.tapAt(const Offset(8, 770));
-    await settle(tester);
-  });
+      await tester.tapAt(const Offset(8, 770));
+      await settle(tester);
+    },
+  );
 }

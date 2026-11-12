@@ -7,13 +7,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/drive_scope.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/client_dashboard_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_scope.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/client_dashboard_page.dart';
 import 'package:hardstreet_admin/widgets/anim.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
-import 'package:hardstreet_admin/widgets/service_photos_sheet.dart';
+import 'package:hardstreet_admin/modules/services/widgets/service_photos_sheet.dart';
 
 /// Dos paquetes comprados: uno con liga de drive PROPIA y otra externa.
 ///

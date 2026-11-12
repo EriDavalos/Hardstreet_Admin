@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/invitation_model.dart';
-import 'package:hardstreet_admin/widgets/invitation_preview.dart';
+import 'package:hardstreet_admin/modules/invitations/models/invitation_model.dart';
+import 'package:hardstreet_admin/modules/invitations/widgets/invitation_preview.dart';
 
 void main() {
   testWidgets('la portada Carta se abre como sobre', (tester) async {

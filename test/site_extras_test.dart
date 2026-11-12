@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/pages/site_page.dart';
-import 'package:hardstreet_admin/web_content.dart';
-import 'package:hardstreet_admin/web_sections.dart';
+import 'package:hardstreet_admin/modules/site/pages/site_page.dart';
+import 'package:hardstreet_admin/modules/site/models/web_content.dart';
+import 'package:hardstreet_admin/modules/site/models/web_sections.dart';
 
 // ==================================================================
 // SECCIONES AGREGADAS (copias de una plantilla)
@@ -47,10 +47,10 @@ class _FakeSiteApi implements SiteContentApi {
 
   @override
   Future<SiteContext> context() async => SiteContext(
-        categories: categories,
-        gold: '#C9A96E',
-        stored: dbHasContent,
-      );
+    categories: categories,
+    gold: '#C9A96E',
+    stored: dbHasContent,
+  );
 }
 
 /// Una copia de la galería con fotos de una categoría (como la guarda el panel).
@@ -58,19 +58,18 @@ SiteExtraSection _galleryCopy({
   String id = 'gallery-2',
   String title = 'Nuestro Portafolio',
   List<String> items = const ['images/banner.jpg'],
-}) =>
-    SiteExtraSection(
-      id: id,
-      key: 'gallery',
-      order: 8,
-      texts: {'gallery_title': title},
-      props: {
-        'mode': 'custom',
-        'categories': [
-          {'key': 'boda', 'name': 'Boda', 'items': items},
-        ],
-      },
-    );
+}) => SiteExtraSection(
+  id: id,
+  key: 'gallery',
+  order: 8,
+  texts: {'gallery_title': title},
+  props: {
+    'mode': 'custom',
+    'categories': [
+      {'key': 'boda', 'name': 'Boda', 'items': items},
+    ],
+  },
+);
 
 void main() {
   group('documento: secciones agregadas', () {
@@ -85,10 +84,14 @@ void main() {
       expect(extra.id, 'gallery-2');
       expect(extra.key, 'gallery');
       expect(extra.texts['gallery_title'], 'Nuestro Portafolio');
-      expect(siteGalleryCategories(extra.props).single.items,
-          ['images/banner.jpg']);
-      expect(back.sameAs(doc), isTrue,
-          reason: 'lo que va y vuelve tiene que ser lo mismo');
+      expect(siteGalleryCategories(extra.props).single.items, [
+        'images/banner.jpg',
+      ]);
+      expect(
+        back.sameAs(doc),
+        isTrue,
+        reason: 'lo que va y vuelve tiene que ser lo mismo',
+      );
     });
 
     test('lectura tolerante: lo que no sirve se descarta', () {
@@ -120,9 +123,11 @@ void main() {
       // Pantalla alta: así todas las tarjetas están construidas a la vez.
       await tester.binding.setSurfaceSize(const Size(1500, 9000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: SitePage(api: api, supported: true)),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: SitePage(api: api, supported: true)),
+        ),
+      );
       await tester.pumpAndSettle();
     }
 
@@ -163,8 +168,9 @@ void main() {
       expect(find.byKey(const ValueKey('site-add-services')), findsNothing);
     });
 
-    testWidgets('la copia nace con el HTML propio de su original',
-        (tester) async {
+    testWidgets('la copia nace con el HTML propio de su original', (
+      tester,
+    ) async {
       const code = '<div class="packages-grid"><p>Hecho a mano</p></div>';
       final api = _FakeSiteApi(
         stored: const SiteContent(html: {'gallery': code}),
@@ -188,8 +194,9 @@ void main() {
       expect(saved.htmlOf('gallery'), code);
     });
 
-    testWidgets('agregar monta la copia y lo editado se guarda EN LA COPIA',
-        (tester) async {
+    testWidgets('agregar monta la copia y lo editado se guarda EN LA COPIA', (
+      tester,
+    ) async {
       final api = _FakeSiteApi();
       await pumpPage(tester, api);
 
@@ -198,11 +205,17 @@ void main() {
       // La copia es una tarjeta más, con su nombre y su etiqueta.
       expect(cardOf('gallery-2'), findsOneWidget);
       expect(
-        find.descendant(of: cardOf('gallery-2'), matching: find.text('Galería destacada 2')),
+        find.descendant(
+          of: cardOf('gallery-2'),
+          matching: find.text('Galería destacada 2'),
+        ),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: cardOf('gallery-2'), matching: find.text('Agregada')),
+        find.descendant(
+          of: cardOf('gallery-2'),
+          matching: find.text('Agregada'),
+        ),
         findsOneWidget,
       );
       // La original sigue donde estaba.
@@ -229,23 +242,30 @@ void main() {
       expect(saved.textOf('gallery_title'), isNull);
     });
 
-    testWidgets('la copia arranca con las opciones de la original (y aparte)',
-        (tester) async {
+    testWidgets('la copia arranca con las opciones de la original (y aparte)', (
+      tester,
+    ) async {
       // La galería de fábrica ya tiene sus fotos elegidas.
       final api = _FakeSiteApi(
         dbHasContent: true,
-        stored: const SiteContent(sections: {
-          'gallery': SiteSectionState(visible: true, order: 3, props: {
-            'mode': 'custom',
-            'categories': [
-              {
-                'key': 'boda',
-                'name': 'Boda',
-                'items': ['images/banner.jpg'],
+        stored: const SiteContent(
+          sections: {
+            'gallery': SiteSectionState(
+              visible: true,
+              order: 3,
+              props: {
+                'mode': 'custom',
+                'categories': [
+                  {
+                    'key': 'boda',
+                    'name': 'Boda',
+                    'items': ['images/banner.jpg'],
+                  },
+                ],
               },
-            ],
-          }),
-        }),
+            ),
+          },
+        ),
       );
       await pumpPage(tester, api);
 
@@ -253,9 +273,9 @@ void main() {
       await save(tester);
 
       final copy = api.saves.single.extraSections.single;
-      expect(siteGalleryCategories(copy.props).single.items,
-          ['images/banner.jpg'],
-          reason: 'la copia arranca con las fotos que ya tenía la galería');
+      expect(siteGalleryCategories(copy.props).single.items, [
+        'images/banner.jpg',
+      ], reason: 'la copia arranca con las fotos que ya tenía la galería');
       // Y las fotos de la original siguen siendo suyas.
       expect(
         siteGalleryCategories(api.saves.single.propsOf('gallery')).single.items,

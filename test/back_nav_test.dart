@@ -18,12 +18,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/back_nav.dart';
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
-import 'package:hardstreet_admin/theme.dart';
+import 'package:hardstreet_admin/app/back_nav.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
+import 'package:hardstreet_admin/app/theme.dart';
 
 /// PNG 1x1 válido: las fotos del drive se decodifican de verdad.
 final Uint8List _png = base64Decode(
@@ -301,12 +301,14 @@ void main() {
       expect(find.byTooltip('Cerrar'), findsWidgets);
 
       await _pressBack(tester);
-      expect(find.byTooltip('Cerrar'), findsNothing, reason: 'la foto se cierra');
       expect(
-        drive.path,
-        ['Bodas'],
-        reason: 'y la carpeta se queda donde estaba (sin subir un nivel)',
+        find.byTooltip('Cerrar'),
+        findsNothing,
+        reason: 'la foto se cierra',
       );
+      expect(drive.path, [
+        'Bodas',
+      ], reason: 'y la carpeta se queda donde estaba (sin subir un nivel)');
       expect(tester.takeException(), isNull);
     });
 

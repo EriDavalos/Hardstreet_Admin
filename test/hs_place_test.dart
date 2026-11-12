@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/hs_place.dart';
+import 'package:hardstreet_admin/core/utils/hs_place.dart';
 import 'package:hardstreet_admin/widgets/hs_place_picker.dart';
 
 void main() {

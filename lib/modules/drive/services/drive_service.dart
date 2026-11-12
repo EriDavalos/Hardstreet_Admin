@@ -1,0 +1,557 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+
+export 'package:hardstreet_admin/modules/drive/services/drive_base.dart'
+    show
+        DriveItem,
+        // Tipos de archivo (foto, vídeo, audio, PDF, texto…): el Drive ya no
+        // guarda solo imágenes y la vista los distingue con esto.
+        DriveItemKind,
+        driveItemKindOf,
+        driveKindLabel,
+        driveExtensionLabel,
+        kImageExtensions,
+        kRawExtensions,
+        kVideoExtensions,
+        kAudioExtensions,
+        kPdfExtensions,
+        kTextExtensions,
+        DriveConn,
+        DriveBusy,
+        DriveUploadJob;
+
+/// "Drive" local: almacena las imágenes del admin en carpetas reales del
+/// sistema (Documents/HardStreetDrive), estilo Google Drive.
+class DriveService extends DriveBase {
+  DriveService() {
+    _init();
+  }
+
+  /// Constructor para pruebas: usa una carpeta temporal como raíz.
+  @visibleForTesting
+  DriveService.testRoot(Directory root) {
+    _root = root;
+    conn = DriveConn.online;
+    refresh();
+  }
+
+  static const rootName = 'HardStreetDrive';
+
+  /// Es una carpeta real del equipo: sus imágenes se leen del disco
+  /// (`Image.file`), no por HTTP.
+  @override
+  bool get isRemote => false;
+
+  /// Raíz absoluta del drive (p.ej. ...\Documents\HardStreetDrive).
+  Directory? _root;
+  Directory get root {
+    final r = _root;
+    if (r == null) {
+      throw StateError('Drive aun no inicializado');
+    }
+    return r;
+  }
+
+  String _absolute(List<String> rel) =>
+      [root.path, ...rel].join(Platform.pathSeparator);
+
+  Future<void> _init() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final driveRoot = Directory(
+        [docs.path, rootName].join(Platform.pathSeparator),
+      );
+      if (!driveRoot.existsSync()) {
+        await driveRoot.create(recursive: true);
+      }
+      _root = driveRoot;
+      conn = DriveConn.online;
+      await refresh();
+    } catch (e) {
+      error = 'No se pudo iniciar el almacenamiento: $e';
+      conn = DriveConn.offline;
+      notifyListeners();
+    }
+  }
+
+  /// Vuelve a leer la carpeta actual y actualiza la lista.
+  @override
+  Future<void> refresh() async {
+    if (_root == null) return;
+    // TICKET del refresco: si mientras carga el usuario se va a otra carpeta
+    // (o refresca otra vez), lo que llegue después se DESCARTA: si no, el
+    // listado de la carpeta que se dejó aparecería encima de la nueva.
+    final ticket = beginRefresh();
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      final dir = Directory(_absolute(path));
+      if (!dir.existsSync()) {
+        // La carpeta fue borrada por fuera: regresa a la raiz.
+        path = [];
+        await refresh();
+        return;
+      }
+      final entities = dir.listSync();
+      final folders = <DriveItem>[];
+      final files = <DriveItem>[];
+      for (final e in entities) {
+        final name = e.path.split(Platform.pathSeparator).last;
+        if (name.startsWith('.')) continue;
+        if (e is Directory) {
+          folders.add(
+            DriveItem(
+              name: name,
+              isFolder: true,
+              modified: e.statSync().modified,
+              childCount: _countChildren(e),
+            ),
+          );
+        } else if (e is File) {
+          // Cualquier archivo: el Drive ya no guarda solo fotos (vídeos, PDF,
+          // documentos). Antes no aparecían y era imposible verlos.
+          final st = e.statSync();
+          files.add(
+            DriveItem(
+              name: name,
+              isFolder: false,
+              modified: st.modified,
+              size: st.size,
+            ),
+          );
+        }
+      }
+      int byName(DriveItem a, DriveItem b) =>
+          a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      folders.sort(byName);
+      files.sort(byName);
+      if (!applyRefresh(ticket, [...folders, ...files])) return;
+      conn = DriveConn.online;
+    } catch (e) {
+      if (isCurrentRefresh(ticket)) {
+        failRefresh('No se pudo leer la carpeta: $e');
+      }
+    } finally {
+      // El girador lo apaga el ÚLTIMO refresco pedido (un refresco viejo no
+      // puede dejarlo encendido para siempre).
+      if (isLatestRefresh(ticket)) {
+        loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Cuenta lo que hay dentro de cada carpeta compartida que no esté ya en el
+  /// listado de la raíz (las anidadas: `XV/ReynaCoot`), para que la tarjeta del
+  /// cliente diga cuántos elementos tiene de verdad.
+  @override
+  Future<Map<String, int>> sharedRootCounts(List<SharedRoot> entries) async {
+    final out = <String, int>{};
+    for (final e in entries) {
+      if (e.real.length < 2) continue; // ya viene en el listado de la raíz
+      final dir = Directory(_absolute(e.real));
+      if (!dir.existsSync()) continue;
+      out[e.real.join('/')] = _countChildren(dir);
+    }
+    return out;
+  }
+
+  int _countChildren(Directory dir) {
+    try {
+      return dir
+          .listSync()
+          .where(
+            (e) =>
+                !(e.path.split(Platform.pathSeparator).last.startsWith('.')) &&
+                (e is Directory || e is File),
+          )
+          .length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// ¿Nombres ya existen en la carpeta local actual?
+  @override
+  Future<List<String>> filterExisting(List<String> names) async {
+    final dir = Directory(_absolute(path));
+    final existing = <String>[];
+    for (final n in names) {
+      if (File([dir.path, _sanitize(n)].join(Platform.pathSeparator))
+          .existsSync()) {
+        existing.add(n);
+      }
+    }
+    return existing;
+  }
+
+  /// Copia archivos locales a la carpeta actual con panel de progreso
+  /// (no bloquea la UI). Registra TODOS los trabajos primero — el panel
+  /// muestra la lista completa desde el inicio — y hasta [kUploadParallel]
+  /// copias corren en paralelo.
+  /// Con [overwrite] reemplaza el existente en vez de renombrar (foto (1)).
+  /// Los trabajos con `cancelled = true` se saltan.
+  @override
+  Future<int> uploadFromPaths(
+    List<String> sources, {
+    bool overwrite = false,
+  }) async {
+    if (sources.isEmpty) return 0;
+    // Un LOTE por subida: el panel cuenta "subidas / a subir" de este lote.
+    final batch = newUploadBatch();
+    final pending = <(DriveUploadJob, File)>[];
+    var i = 0;
+    for (final src in sources) {
+      final f = File(src);
+      if (!f.existsSync()) continue;
+      // Acepta rutas con / o \ mezclados (drop externo, file_selector…).
+      final fileName = src.split(RegExp(r'[\\/]')).last;
+      final job = DriveUploadJob(
+        id: 'u${DateTime.now().microsecondsSinceEpoch}-$i',
+        name: fileName,
+        thumb: src,
+        total: f.lengthSync(),
+        batch: batch,
+      );
+      i++;
+      addUploadJob(job);
+      pending.add((job, f));
+    }
+    if (pending.isEmpty) return 0;
+
+    var saved = 0;
+    var next = 0;
+    final claimed = <String>{}; // destinos ya elegidos por otros workers
+    Future<void> worker() async {
+      while (next < pending.length) {
+        final (job, f) = pending[next++];
+        // Cancelado mientras esperaba en cola: se salta.
+        if (job.cancelled) {
+          job.status = 'cancelled';
+          job.error = 'Cancelado';
+          notifyUploadProgress();
+          continue;
+        }
+        // Copia con reintentos automáticos: si un archivo falla (bloqueo
+        // momentáneo, disco ocupado…) se vuelve a intentar antes de darlo
+        // por perdido, en vez de dejarlo fallido sin más.
+        final ok = await runUploadWithRetries(
+          job,
+          () => _copyOne(job, f, overwrite: overwrite, claimed: claimed),
+        );
+        if (ok) saved++;
+      }
+    }
+
+    await Future.wait(List.generate(kUploadParallel, (_) => worker()));
+    await refresh();
+    return saved;
+  }
+
+  /// Copia UN archivo a la carpeta actual resolviendo colisiones con los
+  /// existentes y con otros workers en paralelo. Devuelve el nombre final.
+  Future<String> _copyOne(
+    DriveUploadJob job,
+    File source, {
+    required bool overwrite,
+    required Set<String> claimed,
+  }) async {
+    final dir = Directory(_absolute(path));
+    // Normaliza separadores para extraer bien el nombre en cualquier OS.
+    final clean = _sanitize(job.name);
+    final base = clean.contains('.')
+        ? clean.substring(0, clean.lastIndexOf('.'))
+        : clean;
+    final ext = clean.contains('.')
+        ? clean.substring(clean.lastIndexOf('.'))
+        : '';
+    var name = clean;
+    if (!overwrite) {
+      var k = 1;
+      var dest = File([dir.path, name].join(Platform.pathSeparator));
+      // Evita colisión con existentes Y con otros workers en paralelo.
+      while (dest.existsSync() || claimed.contains(name)) {
+        name = '$base ($k)$ext';
+        k++;
+        dest = File([dir.path, name].join(Platform.pathSeparator));
+      }
+    }
+    claimed.add(name);
+    final destPath = [dir.path, name].join(Platform.pathSeparator);
+    await source.copy(destPath);
+    // Verificación: el destino debe tener EXACTAMENTE el mismo tamaño.
+    final written = File(destPath).lengthSync();
+    if (written != source.lengthSync()) {
+      throw 'copia incompleta ($written de ${source.lengthSync()} bytes)';
+    }
+    job.sent = job.total;
+    notifyUploadProgress();
+    return name;
+  }
+
+  /// Resubir a mano un archivo que quedó con error (botón "Resubir").
+  @override
+  Future<void> retryUpload(String jobId) async {
+    final job = uploadJobById(jobId);
+    if (job == null || job.status == 'uploading') return;
+    final source = File(job.thumb);
+    if (!source.existsSync()) {
+      job.restart();
+      finishUploadJob(job, error: 'El archivo original ya no está disponible');
+      return;
+    }
+    job.restart();
+    job.attempts = 0;
+    notifyUploadProgress();
+    await runUploadWithRetries(
+      job,
+      () => _copyOne(job, source, overwrite: false, claimed: <String>{}),
+    );
+    await refresh();
+  }
+
+  /// Crea una subcarpeta en la ubicación actual.
+  @override
+  Future<void> createFolder(String name) async {
+    final safe = _sanitize(name);
+    if (safe.isEmpty) throw 'El nombre de la carpeta no es válido';
+    final dir = Directory(_absolute([...path, safe]));
+    if (dir.existsSync()) throw 'Ya existe una carpeta con ese nombre';
+    await dir.create(recursive: true);
+    await refresh();
+  }
+
+  /// Renombra carpeta o archivo.
+  ///
+  /// Un ARCHIVO conserva su extensión: renombrar `foto.jpg` a `foto` la dejaba
+  /// invisible, y a un `video.mp4` se le pegaba la extensión dos veces.
+  @override
+  Future<void> rename(DriveItem item, String newName) async {
+    var safe = _sanitize(newName);
+    if (safe.isEmpty) throw 'El nombre no es válido';
+    if (!item.isFolder && extOf(safe).isEmpty) {
+      safe = '$safe${extOf(item.name)}';
+    }
+    final oldPath = _absolute([...path, item.name]);
+    final newPath = _absolute([...path, safe]);
+    if (newPath == oldPath) return;
+    if (FileSystemEntity.typeSync(newPath) == FileSystemEntityType.notFound) {
+      // Libre
+    } else {
+      throw 'Ya existe un elemento con ese nombre';
+    }
+    await (item.isFolder ? Directory(oldPath) : File(oldPath)).rename(newPath);
+    renameLocally(item.name, safe);
+    await refresh();
+  }
+
+  @override
+  Future<void> delete(DriveItem item) async {
+    final p = _absolute([...path, item.name]);
+    final e = item.isFolder ? Directory(p) : File(p);
+    await e.delete(recursive: true);
+    await refresh();
+  }
+
+  // ==================== Operaciones en lote (selección múltiple) ====================
+
+  /// Mueve los elementos [names] de la carpeta actual a [targetPath].
+  /// Evita soltar una carpeta dentro de sí misma y renombra si hay colisión.
+  @override
+  Future<({int moved, List<String> errors})> moveItems(
+    List<String> names,
+    List<String> targetPath,
+  ) {
+    return runBusy(DriveBusy.moving, 'Moviendo elementos…', () async {
+      var moved = 0;
+      final errors = <String>[];
+      final targetAbs = _absolute(targetPath);
+
+      for (final name in names) {
+        final srcPath = _absolute([...path, name]);
+        final isFolder =
+            FileSystemEntity.typeSync(srcPath) ==
+            FileSystemEntityType.directory;
+
+        // No mover una carpeta dentro de sí misma ni de sus subcarpetas.
+        final srcNorm = '${srcPath.replaceAll('\\', '/')}/';
+        final tgtNorm = '${targetAbs.replaceAll('\\', '/')}/';
+        if (isFolder && tgtNorm.startsWith(srcNorm)) {
+          errors.add('No puedes mover "$name" dentro de sí misma');
+          continue;
+        }
+        // Ya está ahí
+        if (path.join('/') == targetPath.join('/')) {
+          errors.add('"$name" ya está en esa carpeta');
+          continue;
+        }
+
+        // Renombrar si el destino ya tiene un elemento con el mismo nombre.
+        var destName = name;
+        var i = 1;
+        final base = name.contains('.') && !isFolder
+            ? name.substring(0, name.lastIndexOf('.'))
+            : name;
+        final ext = name.contains('.') && !isFolder
+            ? name.substring(name.lastIndexOf('.'))
+            : '';
+        while (FileSystemEntity.typeSync(
+              [targetAbs, destName].join(Platform.pathSeparator),
+            ) !=
+            FileSystemEntityType.notFound) {
+          destName = '$base ($i)$ext';
+          i++;
+        }
+
+        try {
+          await (isFolder ? Directory(srcPath) : File(srcPath)).rename(
+            [targetAbs, destName].join(Platform.pathSeparator),
+          );
+          moved++;
+        } catch (e) {
+          errors.add('No se pudo mover "$name": $e');
+        }
+      }
+      await refresh();
+      return (moved: moved, errors: errors);
+    });
+  }
+
+  /// Copia los elementos [names] de la carpeta actual a [targetPath]
+  /// (carpetas se copian recursivamente, con renombrado si hay colisión).
+  @override
+  Future<({int copied, List<String> errors})> copyItems(
+    List<String> names,
+    List<String> targetPath,
+  ) {
+    return runBusy(DriveBusy.copying, 'Copiando elementos…', () async {
+      var copied = 0;
+      final errors = <String>[];
+      final targetAbs = _absolute(targetPath);
+
+      for (final name in names) {
+        final srcPath = _absolute([...path, name]);
+        final type = FileSystemEntity.typeSync(srcPath);
+        final isFolder = type == FileSystemEntityType.directory;
+
+        // Copiar una carpeta dentro de sí misma es un ciclo infinito.
+        final srcNorm = '${srcPath.replaceAll('\\', '/')}/';
+        final tgtNorm = '${targetAbs.replaceAll('\\', '/')}/';
+        if (isFolder && tgtNorm.startsWith(srcNorm)) {
+          errors.add('No puedes copiar "$name" dentro de sí misma');
+          continue;
+        }
+
+        // Renombrar si hay colisión en destino.
+        var destName = name;
+        var i = 1;
+        final base = name.contains('.') && !isFolder
+            ? name.substring(0, name.lastIndexOf('.'))
+            : name;
+        final ext = name.contains('.') && !isFolder
+            ? name.substring(name.lastIndexOf('.'))
+            : '';
+        while (FileSystemEntity.typeSync(
+              [targetAbs, destName].join(Platform.pathSeparator),
+            ) !=
+            FileSystemEntityType.notFound) {
+          destName = '$base ($i)$ext';
+          i++;
+        }
+        final destPath = [targetAbs, destName].join(Platform.pathSeparator);
+
+        try {
+          if (isFolder) {
+            await _copyDirectory(Directory(srcPath), Directory(destPath));
+          } else {
+            await File(srcPath).copy(destPath);
+          }
+          copied++;
+        } catch (e) {
+          errors.add('No se pudo copiar "$name": $e');
+        }
+      }
+      await refresh();
+      return (copied: copied, errors: errors);
+    });
+  }
+
+  Future<void> _copyDirectory(Directory src, Directory dst) async {
+    await dst.create(recursive: true);
+    await for (final entity in src.list()) {
+      final name = entity.path.split(Platform.pathSeparator).last;
+      if (name.startsWith('.')) continue;
+      final newPath = [dst.path, name].join(Platform.pathSeparator);
+      if (entity is Directory) {
+        await _copyDirectory(entity, Directory(newPath));
+      } else if (entity is File) {
+        await entity.copy(newPath);
+      }
+    }
+  }
+
+  /// Elimina en lote los elementos [names] de la carpeta actual.
+  @override
+  Future<({int deleted, List<String> errors})> deleteItems(List<String> names) {
+    return runBusy(DriveBusy.deleting, 'Eliminando elementos…', () async {
+      var deleted = 0;
+      final errors = <String>[];
+      for (final name in names) {
+        final p = _absolute([...path, name]);
+        final type = FileSystemEntity.typeSync(p);
+        if (type == FileSystemEntityType.notFound) continue;
+        try {
+          final e = type == FileSystemEntityType.directory
+              ? Directory(p)
+              : File(p) as FileSystemEntity;
+          await e.delete(recursive: true);
+          deleted++;
+        } catch (e) {
+          errors.add('No se pudo eliminar "$name"');
+        }
+      }
+      await refresh();
+      return (deleted: deleted, errors: errors);
+    });
+  }
+
+  String _sanitize(String name) =>
+      name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '').trim();
+
+  /// Nombres de subcarpetas de una ruta relativa (para el selector de destino).
+  @override
+  List<String> listFolders(List<String> rel) {
+    final dir = Directory(_absolute(rel));
+    if (!dir.existsSync()) return const [];
+    final names = dir
+        .listSync()
+        .whereType<Directory>()
+        .map((d) => d.path.split(Platform.pathSeparator).last)
+        .where((n) => !n.startsWith('.'))
+        .toList();
+    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names;
+  }
+
+  /// Subcarpetas directas de [rel] en disco (selector de carpeta del
+  /// administrador del paquete), sin mover la carpeta que se está viendo.
+  @override
+  Future<List<String>> listChildFolders(List<String> rel) async =>
+      listFolders(rel);
+
+  /// Ruta absoluta de un archivo/carpeta para previsualizarlo.
+  @override
+  String absolutePathOf(DriveItem item) => _absolute([...path, item.name]);
+
+  /// Ruta absoluta de un archivo que vive en OTRA carpeta [rel] (el selector
+  /// de fotos navega por su cuenta, sin mover la carpeta que se está viendo).
+  @override
+  String absolutePathIn(List<String> rel, DriveItem item) =>
+      _absolute([...rel, item.name]);
+}

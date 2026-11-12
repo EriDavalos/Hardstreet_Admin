@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/web_content.dart';
-import 'package:hardstreet_admin/web_sections.dart';
+import 'package:hardstreet_admin/modules/site/models/web_content.dart';
+import 'package:hardstreet_admin/modules/site/models/web_sections.dart';
 
 // ==================================================================
 // SECCIONES DEL SITIO — el panel y la web deben ver LO MISMO
@@ -34,8 +34,11 @@ bool get _webAvailable => File(_siteJsPath).existsSync();
 Map<String, dynamic> readWebSectionDefaults() {
   final text = File(_siteJsPath).readAsStringSync();
   final marker = text.indexOf('SITE_SECTIONS_DEFAULT = {');
-  expect(marker, greaterThanOrEqualTo(0),
-      reason: 'site.js debería declarar SITE_SECTIONS_DEFAULT');
+  expect(
+    marker,
+    greaterThanOrEqualTo(0),
+    reason: 'site.js debería declarar SITE_SECTIONS_DEFAULT',
+  );
   final start = text.indexOf('{', marker);
   var depth = 0;
   var end = -1;
@@ -61,8 +64,9 @@ Map<String, dynamic> readWebSectionDefaults() {
       .replaceAll("'", '"')
       // …y con claves sin comillas (válido en JS, no en JSON).
       .replaceAllMapped(
-          RegExp(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:'),
-          (m) => '${m[1]}"${m[2]}":');
+        RegExp(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:'),
+        (m) => '${m[1]}"${m[2]}":',
+      );
   return (jsonDecode(js) as Map).cast<String, dynamic>();
 }
 
@@ -77,19 +81,26 @@ void main() {
       expect(
         jsonEncode(web),
         jsonEncode(kSiteSectionDefaults),
-        reason: 'Los defaults de web_sections.dart y site.js deben ser los '
+        reason:
+            'Los defaults de web_sections.dart y site.js deben ser los '
             'mismos: si no, el panel mostraría algo distinto de la página',
       );
     });
 
     test('cada plantilla tiene sus defaults y viceversa', () {
       for (final t in kSiteSectionTemplates) {
-        expect(kSiteSectionDefaults.containsKey(t.key), isTrue,
-            reason: 'Falta el valor de fábrica de la sección "${t.key}"');
+        expect(
+          kSiteSectionDefaults.containsKey(t.key),
+          isTrue,
+          reason: 'Falta el valor de fábrica de la sección "${t.key}"',
+        );
       }
       for (final key in kSiteSectionDefaults.keys) {
-        expect(siteSectionTemplate(key), isNotNull,
-            reason: 'La sección "$key" tiene defaults pero no plantilla');
+        expect(
+          siteSectionTemplate(key),
+          isNotNull,
+          reason: 'La sección "$key" tiene defaults pero no plantilla',
+        );
       }
     });
 
@@ -105,14 +116,22 @@ void main() {
   group('catálogo de ganchos por sección', () {
     test('todos los textos e imágenes caen en una sección conocida', () {
       for (final f in kSiteTexts) {
-        expect(siteSectionTemplate(f.sectionKey), isNotNull,
-            reason: 'El texto "${f.key}" (grupo "${f.group}") no pertenece a '
-                'ninguna sección: revisa kSiteGroupSections');
+        expect(
+          siteSectionTemplate(f.sectionKey),
+          isNotNull,
+          reason:
+              'El texto "${f.key}" (grupo "${f.group}") no pertenece a '
+              'ninguna sección: revisa kSiteGroupSections',
+        );
       }
       for (final f in kSiteImages) {
-        expect(siteSectionTemplate(f.sectionKey), isNotNull,
-            reason: 'La imagen "${f.key}" (grupo "${f.group}") no pertenece a '
-                'ninguna sección: revisa kSiteGroupSections');
+        expect(
+          siteSectionTemplate(f.sectionKey),
+          isNotNull,
+          reason:
+              'La imagen "${f.key}" (grupo "${f.group}") no pertenece a '
+              'ninguna sección: revisa kSiteGroupSections',
+        );
       }
     });
 
@@ -123,8 +142,11 @@ void main() {
         // La "Sección libre" se edita con su HTML propio (el editor que toda
         // tarjeta trae encima); no tiene campos de texto ni de imagen.
         final htmlOnly = t.key == 'custom';
-        expect(hasTexts || hasImages || t.props.isNotEmpty || htmlOnly, isTrue,
-            reason: 'La sección "${t.key}" no tiene ningún campo editable');
+        expect(
+          hasTexts || hasImages || t.props.isNotEmpty || htmlOnly,
+          isTrue,
+          reason: 'La sección "${t.key}" no tiene ningún campo editable',
+        );
       }
     });
   });
@@ -170,11 +192,13 @@ void main() {
       expect(cats.first.items, ['images/banner.jpg']);
       expect(cats.last.items, isEmpty);
 
-      final stats = siteStats(siteSectionProps('about', {
-        'stats': [
-          {'value': 30, 'label': 'Proyectos'},
-        ],
-      }));
+      final stats = siteStats(
+        siteSectionProps('about', {
+          'stats': [
+            {'value': 30, 'label': 'Proyectos'},
+          ],
+        }),
+      );
       expect(stats.single.value, 30);
       expect(stats.single.label, 'Proyectos');
     });

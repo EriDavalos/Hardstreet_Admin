@@ -6,8 +6,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 import 'package:hardstreet_admin/widgets/anim.dart';
 
 /// PNG 1x1 válido.
@@ -39,50 +39,69 @@ void main() {
     }
   });
 
-  testWidgets('las tarjetas animan su entrada solo al DESLIZAR hacia abajo',
-      (tester) async {
+  testWidgets('las tarjetas animan su entrada solo al DESLIZAR hacia abajo', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1100, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(body: DrivePage(drive: drive)),
+      ),
     );
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      () => Future<void>.delayed(const Duration(milliseconds: 60)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.byType(ScrollReveal), findsWidgets);
 
     // 1. Al abrir la carpeta (sin desplazarse) NADA anima: lo que ya está a la
     //    vista se pinta directo.
-    final antes =
-        tester.widgetList<ScrollReveal>(find.byType(ScrollReveal)).toList();
-    expect(antes.where((r) => r.animate), isEmpty,
-        reason: 'sin desplazamiento ninguna tarjeta debe animarse');
+    final antes = tester
+        .widgetList<ScrollReveal>(find.byType(ScrollReveal))
+        .toList();
+    expect(
+      antes.where((r) => r.animate),
+      isEmpty,
+      reason: 'sin desplazamiento ninguna tarjeta debe animarse',
+    );
 
     // 2. Al bajar (rueda del ratón, la forma real en escritorio) las tarjetas
     //    que van apareciendo entran con animación.
     final grid = find.byType(GridView);
     final scrollable = tester.state<ScrollableState>(
-        find.descendant(of: grid, matching: find.byType(Scrollable)));
+      find.descendant(of: grid, matching: find.byType(Scrollable)),
+    );
     for (var k = 0; k < 4; k++) {
-      await tester.sendEventToBinding(PointerScrollEvent(
-        position: tester.getCenter(grid),
-        scrollDelta: const Offset(0, 200),
-      ));
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: tester.getCenter(grid),
+          scrollDelta: const Offset(0, 200),
+        ),
+      );
       await tester.pump();
     }
     await tester.pump(const Duration(milliseconds: 400));
-    expect(scrollable.position.pixels, greaterThan(0),
-        reason: 'la lista tuvo que desplazarse');
+    expect(
+      scrollable.position.pixels,
+      greaterThan(0),
+      reason: 'la lista tuvo que desplazarse',
+    );
 
-    final despues =
-        tester.widgetList<ScrollReveal>(find.byType(ScrollReveal)).toList();
-    expect(despues.where((r) => r.animate), isNotEmpty,
-        reason: 'lo que aparece al deslizar debe animar su entrada');
+    final despues = tester
+        .widgetList<ScrollReveal>(find.byType(ScrollReveal))
+        .toList();
+    expect(
+      despues.where((r) => r.animate),
+      isNotEmpty,
+      reason: 'lo que aparece al deslizar debe animar su entrada',
+    );
 
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 40)));
+      () => Future<void>.delayed(const Duration(milliseconds: 40)),
+    );
   });
 }

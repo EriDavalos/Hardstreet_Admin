@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_access.dart';
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/packages_page.dart';
-import 'package:hardstreet_admin/site_design.dart';
+import 'package:hardstreet_admin/core/access/hs_access.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/packages/pages/packages_page.dart';
+import 'package:hardstreet_admin/modules/site/models/site_design.dart';
 
 /// El módulo Paquetes abre en la GALERÍA de categorías y de ahí se entra a los
 /// paquetes (de todo el catálogo o de una categoría). Ya dentro, el listado se
@@ -403,10 +403,7 @@ void main() {
         .descendant(of: form, matching: find.byType(Material))
         .first;
     expect(tester.getRect(surface), const Rect.fromLTRB(0, 0, 390, 844));
-    expect(
-      tester.getRect(find.text('Guardar cambios')).bottom,
-      lessThan(844),
-    );
+    expect(tester.getRect(find.text('Guardar cambios')).bottom, lessThan(844));
     expect(tester.takeException(), isNull);
   });
 

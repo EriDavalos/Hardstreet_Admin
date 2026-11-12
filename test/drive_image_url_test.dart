@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/app_constants.dart';
-import 'package:hardstreet_admin/drive_base.dart';
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/app/app_constants.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_base.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 
 // ==================================================================
 // FOTOS DEL DRIVE EN EL PANEL: ¿redimensionada o tal cual?
@@ -53,12 +53,14 @@ void main() {
     });
 
     test('el ancho queda dentro de lo razonable', () {
-      expect(driveImagePreview('https://oriongo.ddns.net/files/a.jpg', width: 0),
-          endsWith('?w=32'));
       expect(
-          driveImagePreview('https://oriongo.ddns.net/files/a.jpg',
-              width: 99999),
-          endsWith('?w=2048'));
+        driveImagePreview('https://oriongo.ddns.net/files/a.jpg', width: 0),
+        endsWith('?w=32'),
+      );
+      expect(
+        driveImagePreview('https://oriongo.ddns.net/files/a.jpg', width: 99999),
+        endsWith('?w=2048'),
+      );
     });
 
     test('la miniatura lleva el token: el servidor sabe de qué EMPRESA es', () {
@@ -92,8 +94,11 @@ void main() {
     });
 
     test('el host interno es el configurado en la app', () {
-      expect(AppConstants.apiBase, contains('oriongo.ddns.net'),
-          reason: 'por defecto el Drive es oriongo.ddns.net');
+      expect(
+        AppConstants.apiBase,
+        contains('oriongo.ddns.net'),
+        reason: 'por defecto el Drive es oriongo.ddns.net',
+      );
       expect(isDriveImageUrl('${AppConstants.apiBase}/files/XV/a.jpg'), isTrue);
     });
   });

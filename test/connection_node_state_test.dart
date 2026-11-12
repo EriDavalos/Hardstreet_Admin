@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/widgets/connection_topology.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/connection_topology.dart';
 
 // ==================================================================
 // COLORES DEL DIAGRAMA DE CONEXIÓN
@@ -54,9 +54,12 @@ void main() {
     expect(node.stateLabel, 'Mantenimiento');
   });
 
-  test('sin respuesta manda sobre bloqueado (está caído, no solo bloqueado)', () {
-    expect(_node(online: false, blocked: true).color, _red);
-  });
+  test(
+    'sin respuesta manda sobre bloqueado (está caído, no solo bloqueado)',
+    () {
+      expect(_node(online: false, blocked: true).color, _red);
+    },
+  );
 
   test('apagado en el Drive va en GRIS', () {
     expect(_node(enabled: false, online: true).color, _grey);

@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/services_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/services/pages/services_page.dart';
 
 /// Catálogo falso: los servicios aún traen `url` en la BD, pero la UI del
 /// catálogo NO debe mostrarla ni mandarla (vive solo en el paquete comprado).

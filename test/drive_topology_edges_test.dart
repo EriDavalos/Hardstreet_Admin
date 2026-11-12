@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/widgets/connection_topology.dart';
+import 'package:hardstreet_admin/modules/drive/widgets/connection_topology.dart';
 
 // ==================================================================
 // DIAGRAMA DE SERVIDORES — ARISTAS DEL GRAFO

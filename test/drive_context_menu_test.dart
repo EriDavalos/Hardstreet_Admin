@@ -6,8 +6,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
-import 'package:hardstreet_admin/pages/drive_page.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/pages/drive_page.dart';
 
 /// PNG 1x1 válido: los archivos del drive se pueden decodificar de verdad.
 final Uint8List _png = base64Decode(
@@ -42,7 +42,8 @@ void main() {
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      () => Future<void>.delayed(const Duration(milliseconds: 60)),
+    );
     await tester.pump(const Duration(milliseconds: 400));
   }
 
@@ -50,14 +51,19 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: DrivePage(drive: drive))),
+      MaterialApp(
+        home: Scaffold(body: DrivePage(drive: drive)),
+      ),
     );
     await settle(tester);
   }
 
   /// Clic de RATÓN (no táctil): así la página selecciona como escritorio.
-  Future<void> mouseTap(WidgetTester tester, Finder f,
-      {int buttons = kPrimaryButton}) async {
+  Future<void> mouseTap(
+    WidgetTester tester,
+    Finder f, {
+    int buttons = kPrimaryButton,
+  }) async {
     await tester.tap(f, kind: PointerDeviceKind.mouse, buttons: buttons);
     await settle(tester);
   }
@@ -69,26 +75,31 @@ void main() {
   }
 
   testWidgets(
-      'clic derecho en una imagen: Abrir, Descargar, Renombrar, Eliminar',
-      (tester) async {
+    'clic derecho en una imagen: Abrir, Descargar, Renombrar, Eliminar',
+    (tester) async {
+      await pumpDrive(tester);
+
+      await mouseTap(tester, find.text('uno.png'), buttons: kSecondaryButton);
+
+      expect(find.text('Abrir'), findsOneWidget);
+      expect(find.text('Descargar'), findsOneWidget);
+      expect(find.text('Renombrar'), findsOneWidget);
+      expect(find.text('Eliminar'), findsOneWidget);
+
+      await closeMenu(tester);
+    },
+  );
+
+  testWidgets('clic derecho → Abrir entra de verdad a la carpeta', (
+    tester,
+  ) async {
     await pumpDrive(tester);
 
-    await mouseTap(tester, find.text('uno.png'), buttons: kSecondaryButton);
-
-    expect(find.text('Abrir'), findsOneWidget);
-    expect(find.text('Descargar'), findsOneWidget);
-    expect(find.text('Renombrar'), findsOneWidget);
-    expect(find.text('Eliminar'), findsOneWidget);
-
-    await closeMenu(tester);
-  });
-
-  testWidgets('clic derecho → Abrir entra de verdad a la carpeta',
-      (tester) async {
-    await pumpDrive(tester);
-
-    await mouseTap(tester, find.text('SesionPrevia'),
-        buttons: kSecondaryButton);
+    await mouseTap(
+      tester,
+      find.text('SesionPrevia'),
+      buttons: kSecondaryButton,
+    );
     await tester.tap(find.text('Abrir'));
     await settle(tester);
 

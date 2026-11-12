@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 
 void main() {
   late List<Map<String, dynamic>> posts;

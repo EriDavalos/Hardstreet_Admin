@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/users_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/users/pages/users_page.dart';
 
 // ==================================================================
 // FORMULARIO DE USUARIO: contraseña y rol
@@ -65,11 +65,7 @@ void _installMockClient() {
     }
     if (path.endsWith('/api/admin/users') && request.method == 'PUT') {
       _lastPut = jsonDecode(request.body) as Map<String, dynamic>;
-      return http.Response(
-        jsonEncode({'item': _user}),
-        200,
-        headers: headers,
-      );
+      return http.Response(jsonEncode({'item': _user}), 200, headers: headers);
     }
     if (path.endsWith('/api/admin/roles')) {
       return http.Response(

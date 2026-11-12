@@ -109,8 +109,11 @@ La pestaña **Movimientos** concentra el dinero del paquete:
   fila) según el ancho.
 - **Abonar** (tabla de abonos: mantiene el total pagado) y **Registrar
   movimiento**: inversión, gasto, **ahorro** o abono externo.
-- El **ahorro** se captura como cantidad o como **porcentaje del disponible**,
-  que además deja constancia del % aplicado en su concepto.
+- **Repartir pago**: el total se precarga con el **disponible** y no deja
+  superarlo; **Repartir en partes iguales** llena el monto de cada persona.
+- El **ahorro** se captura en un solo monto. Si se quiere, **Calcular
+  porcentaje** lo llena con el % del disponible y deja constancia en su
+  concepto.
 - **Disponible = abonado − gastado − ahorro + abono externo**: el ahorro se
   APARTA del disponible y el abono externo (dinero que entra por fuera) se le
   SUMA, igual que en el módulo Finanzas.
@@ -171,8 +174,9 @@ Todo lo monetario del negocio en una vista moderna con **cuatro pestañas**
   dinero actual, ni en el ahorro, ni en los gastos del negocio. La tabla
   anterior (`purchased_packages_estimates`, por paquete comprado y con
   inversión + gasto) se elimina y ya no se usa.
-- **Registrar movimiento**: gasto, inversión, ahorro (cantidad o porcentaje
-  del dinero actual), abono externo o **retiro del ahorro**. El paquete es
+- **Registrar movimiento**: gasto, inversión, ahorro (un monto, con
+  calculadora de porcentaje del dinero actual), abono externo o **retiro del
+  ahorro**. El paquete es
   **opcional** — viene en "General (todo el negocio)". Los abonos se capturan
   en el paquete y los pagos se reparten desde el administrador del paquete
   (Movimientos → Repartir pago).

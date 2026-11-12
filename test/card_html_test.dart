@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/card_html.dart';
-import 'package:hardstreet_admin/site_design.dart';
+import 'package:hardstreet_admin/modules/site/services/card_html.dart';
+import 'package:hardstreet_admin/modules/site/models/site_design.dart';
 
 // ==================================================================
 // LA TARJETA EN HTML (vista previa real del diseñador)

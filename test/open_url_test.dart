@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/open_url.dart';
+import 'package:hardstreet_admin/core/platform/open_url.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

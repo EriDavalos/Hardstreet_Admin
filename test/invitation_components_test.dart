@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/invitation_components/component_catalog.dart';
-import 'package:hardstreet_admin/invitation_components/templates/invitation_templates.dart';
-import 'package:hardstreet_admin/invitation_html.dart';
-import 'package:hardstreet_admin/invitation_model.dart';
-import 'package:hardstreet_admin/widgets/invitation_html_editor.dart';
+import 'package:hardstreet_admin/modules/invitations/components/component_catalog.dart';
+import 'package:hardstreet_admin/modules/invitations/components/templates/invitation_templates.dart';
+import 'package:hardstreet_admin/modules/invitations/templates/invitation_html.dart';
+import 'package:hardstreet_admin/modules/invitations/models/invitation_model.dart';
+import 'package:hardstreet_admin/modules/invitations/widgets/invitation_html_editor.dart';
 
 // ==================================================================
 // PLANTILLAS COMPUESTAS — catálogo, recetas y HTML por componente

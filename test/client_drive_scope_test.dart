@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/drive_service.dart';
+import 'package:hardstreet_admin/modules/drive/services/drive_service.dart';
 
 /// El drive de un CLIENTE solo muestra las carpetas que el estudio le
 /// comparte en sus paquetes; el resto del Drive no existe para él.
@@ -67,10 +67,11 @@ void main() {
     });
 
     test('la ruta compartida se normaliza y se ve con SU nombre', () async {
-      await drive.setSharedRoots(
-        ['/ReynaCoot/SesionPrevia/', 'Cliente', 'Cliente'],
-        isClient: true,
-      );
+      await drive.setSharedRoots([
+        '/ReynaCoot/SesionPrevia/',
+        'Cliente',
+        'Cliente',
+      ], isClient: true);
       // `ReynaCoot/SesionPrevia` se ve como `SesionPrevia` (su carpeta: la
       // `ReynaCoot` del estudio es solo el camino, no se muestra).
       expect(drive.sharedRoots, ['SesionPrevia', 'Cliente']);
@@ -87,8 +88,8 @@ void main() {
       await Directory([root.path, 'XV'].join('/')).create(recursive: true);
       await Directory([root.path, 'XV', 'ReynaCoot'].join('/'))
           .create(recursive: true);
-      await Directory([root.path, 'XV', 'Ana'].join('/')).create(
-          recursive: true);
+      await Directory([root.path, 'XV', 'Ana'].join('/'))
+          .create(recursive: true);
       await Directory([root.path, 'XV', 'ReynaCoot', 'Seleccion'].join('/'))
           .create(recursive: true);
       await drive.refresh();
@@ -103,8 +104,11 @@ void main() {
       await drive.openFolder('ReynaCoot');
       expect(drive.path, ['XV', 'ReynaCoot']);
       expect(names(), contains('Seleccion'));
-      expect(names(), isNot(contains('Ana')),
-          reason: 'la carpeta hermana del estudio no se ve');
+      expect(
+        names(),
+        isNot(contains('Ana')),
+        reason: 'la carpeta hermana del estudio no se ve',
+      );
 
       // Y para atrás se vuelve a SU raíz, nunca a la carpeta del estudio.
       await drive.goUp();
@@ -116,27 +120,31 @@ void main() {
       expect(drive.hiddenPathPrefix, 1);
     });
 
-    test('el cliente ve TODAS sus compartidas (de todos sus paquetes)',
-        () async {
-      await Directory([root.path, 'XV'].join('/')).create(recursive: true);
-      await Directory([root.path, 'XV', 'ReynaCoot'].join('/'))
-          .create(recursive: true);
-      await drive.refresh();
+    test(
+      'el cliente ve TODAS sus compartidas (de todos sus paquetes)',
+      () async {
+        await Directory([root.path, 'XV'].join('/')).create(recursive: true);
+        await Directory([root.path, 'XV', 'ReynaCoot'].join('/'))
+            .create(recursive: true);
+        await drive.refresh();
 
-      // Una anidada de un paquete y otra del primer nivel de otro paquete.
-      await drive.setSharedRoots(['XV/ReynaCoot', 'Cliente'], isClient: true);
-      expect(names(), containsAll(['ReynaCoot', 'Cliente']));
-      expect(names(), isNot(contains('XV')));
-    });
+        // Una anidada de un paquete y otra del primer nivel de otro paquete.
+        await drive.setSharedRoots(['XV/ReynaCoot', 'Cliente'], isClient: true);
+        expect(names(), containsAll(['ReynaCoot', 'Cliente']));
+        expect(names(), isNot(contains('XV')));
+      },
+    );
 
-    test('al dejar de compartir, el drive vuelve a mostrarse completo',
-        () async {
-      await drive.setSharedRoots(['ReynaCoot'], isClient: true);
-      expect(names(), hasLength(1));
+    test(
+      'al dejar de compartir, el drive vuelve a mostrarse completo',
+      () async {
+        await drive.setSharedRoots(['ReynaCoot'], isClient: true);
+        expect(names(), hasLength(1));
 
-      await drive.setSharedRoots(const [], isClient: false);
-      expect(drive.scoped, isFalse);
-      expect(names(), hasLength(3));
-    });
+        await drive.setSharedRoots(const [], isClient: false);
+        expect(drive.scoped, isFalse);
+        expect(names(), hasLength(3));
+      },
+    );
   });
 }

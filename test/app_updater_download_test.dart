@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/app_updater.dart';
+import 'package:hardstreet_admin/app/app_updater.dart';
 
 /// NOTA: estas pruebas usan `test()` plano (NO `testWidgets`): el binding de
 /// widgets intercepta TODO HttpClient y responde 400, lo que impide probar

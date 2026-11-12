@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:hardstreet_admin/invitation_html.dart';
-import 'package:hardstreet_admin/invitation_model.dart';
+import 'package:hardstreet_admin/modules/invitations/templates/invitation_html.dart';
+import 'package:hardstreet_admin/modules/invitations/models/invitation_model.dart';
 
 // ==================================================================
 // INVITACIONES — catálogo, HTML público y liga para compartir
@@ -101,6 +101,18 @@ void main() {
     }
   });
 
+  test('Marfil añade la capa de boda solo a la invitación', () {
+    final html = buildInvitationHtml(Invitation.sample('boda-marfil'));
+    expect(html, contains('mf-branch left'));
+    expect(html, contains('mf-branch right'));
+    expect(html, contains('mf-sprig'));
+    expect(html, contains('mf-hero-ornament'));
+    expect(html, contains('CAPA «BODA EDITORIAL»'));
+    expect(html, contains('mf-head::before'));
+    expect(html, contains('mf-card::after'));
+    expect(html, isNot(contains('{{')));
+  });
+
   test('la portada toma la paleta de la plantilla', () {
     final rosa = buildInvitationHtml(Invitation.sample('sobre-xv'));
     expect(rosa, contains('--hs-cover-accent: #B76E79'));
@@ -115,7 +127,7 @@ void main() {
     expect(marfil, contains("cover.classList.add('opening')"));
   });
 
-  test('la Carta tiene tres tintes y usa sus propios recursos', () {
+  test('la Carta tiene cinco fondos y usa sus propios recursos', () {
     final marfil = Invitation.sample('boda-marfil');
     expect(marfil.coverBackdropKey, 'marfil');
 

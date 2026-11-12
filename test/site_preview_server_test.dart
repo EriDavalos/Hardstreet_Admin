@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hardstreet_admin/site_preview_server_io.dart';
+import 'package:hardstreet_admin/modules/site/services/site_preview_server_io.dart';
 
 // ==================================================================
 // SERVIDOR DE LA VISTA PREVIA (sitio real empaquetado)
@@ -37,7 +37,10 @@ void main() {
     final client = HttpClient();
     addTearDown(client.close);
 
-    Future<HttpClientResponse> fetch(String path, {String method = 'GET'}) async {
+    Future<HttpClientResponse> fetch(
+      String path, {
+      String method = 'GET',
+    }) async {
       final req = await client.openUrl(method, Uri.parse('$base$path'));
       return req.close();
     }
@@ -69,7 +72,11 @@ void main() {
     await img.drain<void>();
 
     // No se sale de la carpeta del sitio.
-    for (final path in ['/../pubspec.yaml', '/..%2Fpubspec.yaml', '/%2e%2e/x']) {
+    for (final path in [
+      '/../pubspec.yaml',
+      '/..%2Fpubspec.yaml',
+      '/%2e%2e/x',
+    ]) {
       final bad = await fetch(path);
       expect(bad.statusCode, 404, reason: 'No debe servir $path');
       await bad.drain<void>();

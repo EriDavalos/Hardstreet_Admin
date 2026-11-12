@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
 import 'package:hardstreet_admin/widgets/hs_toast.dart';
 
 /// Instala una respuesta fija para CUALQUIER llamada a la API.

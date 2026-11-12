@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:hardstreet_admin/hs_api.dart';
-import 'package:hardstreet_admin/pages/clients_page.dart';
+import 'package:hardstreet_admin/core/api/hs_api.dart';
+import 'package:hardstreet_admin/modules/clients/pages/clients_page.dart';
 
 /// Cliente falso con 2 paquetes + lo que pide el administrador de paquetes
 /// al abrirse (paquetes del cliente, agendas y el detalle del vigente).
@@ -34,7 +34,7 @@ void _installMockClient() {
               'email': 'luis@correo.com',
               'packagesCount': 0,
             },
-          ]
+          ],
         }),
         200,
         headers: headers,
@@ -68,8 +68,11 @@ void _installMockClient() {
       );
     }
     if (path.endsWith('/api/admin/agendas')) {
-      return http.Response(jsonEncode({'agendas': const []}), 200,
-          headers: headers);
+      return http.Response(
+        jsonEncode({'agendas': const []}),
+        200,
+        headers: headers,
+      );
     }
     if (path.endsWith('/api/admin/user-drive')) {
       // Una carpeta viene de un paquete (se copia a su usuario) y otra está
@@ -124,8 +127,11 @@ void _installMockClient() {
   });
 }
 
-Future<void> _pumpClients(WidgetTester tester, Size size,
-    {String query = ''}) async {
+Future<void> _pumpClients(
+  WidgetTester tester,
+  Size size, {
+  String query = '',
+}) async {
   await tester.binding.setSurfaceSize(size);
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
@@ -188,8 +194,9 @@ void main() {
     expect(find.text('Finalizar paquete'), findsNothing);
   });
 
-  testWidgets('el botón "Paquetes" sigue abriendo el administrador',
-      (tester) async {
+  testWidgets('el botón "Paquetes" sigue abriendo el administrador', (
+    tester,
+  ) async {
     await _pumpClients(tester, const Size(1280, 900));
 
     expect(find.byTooltip('Paquetes'), findsNWidgets(2));
@@ -199,8 +206,9 @@ void main() {
     expect(_adminOpen, findsNothing);
   });
 
-  testWidgets('los botones Editar y Eliminar NO abren el administrador',
-      (tester) async {
+  testWidgets('los botones Editar y Eliminar NO abren el administrador', (
+    tester,
+  ) async {
     await _pumpClients(tester, const Size(1280, 900));
 
     await _tap(tester, find.byTooltip('Editar').first);
@@ -214,8 +222,9 @@ void main() {
     await _tap(tester, find.text('Cancelar'));
   });
 
-  testWidgets('el icono de carpetas del Drive abre el diálogo del cliente',
-      (tester) async {
+  testWidgets('el icono de carpetas del Drive abre el diálogo del cliente', (
+    tester,
+  ) async {
     await _pumpClients(tester, const Size(1280, 900));
 
     // Mismo icono que en el módulo Usuarios: el cliente es un usuario de tipo
@@ -241,8 +250,9 @@ void main() {
     expect(find.text('Compartir otra carpeta'), findsNothing);
   });
 
-  testWidgets('la búsqueda sigue funcionando y en móvil no desborda',
-      (tester) async {
+  testWidgets('la búsqueda sigue funcionando y en móvil no desborda', (
+    tester,
+  ) async {
     await _pumpClients(tester, const Size(390, 844), query: 'Luis');
 
     expect(find.text('Luis Gómez'), findsOneWidget);

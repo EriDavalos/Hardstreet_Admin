@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../app_platform.dart';
-import '../app_updater.dart';
+import 'package:hardstreet_admin/app/app_platform.dart';
+import 'package:hardstreet_admin/app/app_updater.dart';
 
 /// Fases del flujo de actualización dentro del MISMO modal.
 enum _Phase { idle, downloading, installing, installed, error }
@@ -190,7 +190,10 @@ class _ForceUpdateDialogState extends State<ForceUpdateDialog> {
       _Phase.idle => (Icons.system_update_alt_rounded, scheme.primary),
       _Phase.downloading => (Icons.downloading_rounded, scheme.primary),
       _Phase.installing => (Icons.install_desktop_rounded, scheme.primary),
-      _Phase.installed => (Icons.check_circle_outline_rounded, Color(0xFF2F6BFF)),
+      _Phase.installed => (
+        Icons.check_circle_outline_rounded,
+        Color(0xFF2F6BFF),
+      ),
       _Phase.error => (Icons.error_outline_rounded, scheme.error),
     };
     return Container(
